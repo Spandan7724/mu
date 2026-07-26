@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { AgentMessage, AnyTool, Profile } from "@mu/core";
+import { type AgentMessage, type AnyTool, ProcessManager, type Profile } from "@mu/core";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingEnvironment, contextMessages, environmentMessage } from "./context.ts";
 import { CODING_PERMISSION_DEFAULTS, layerPermissions, loadProjectConfig } from "./permissions.ts";
@@ -8,6 +8,7 @@ import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
 import { globTool, grepTool } from "./tools/search.ts";
+import { shellSpawner, taskTools } from "./tools/tasks.ts";
 import { TodoStore, todoTool } from "./tools/todo.ts";
 
 export interface CodingProfileOptions {
@@ -15,11 +16,14 @@ export interface CodingProfileOptions {
   root?: string;
   // Injected in tests so no real process is ever spawned.
   spawn?: Parameters<typeof bashTool>[0]["spawn"];
+  spawner?: ConstructorParameters<typeof ProcessManager>[0];
+  processEvents?: ConstructorParameters<typeof ProcessManager>[1];
 }
 
 export interface CodingProfile extends Profile {
   fileState: FileState;
   todos: TodoStore;
+  processes: ProcessManager;
 }
 
 export async function codingProfile(options: CodingProfileOptions = {}): Promise<CodingProfile> {
@@ -27,6 +31,10 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   const fileState = new FileState();
   const todos = new TodoStore();
   const deps = { root, state: fileState };
+  const processes = new ProcessManager(
+    options.spawner ?? shellSpawner(root),
+    options.processEvents ?? {},
+  );
 
   const toolset: AnyTool[] = [
     readTool(deps),
@@ -35,8 +43,9 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     lsTool(deps),
     globTool(deps),
     grepTool(deps),
-    bashTool({ root, ...(options.spawn ? { spawn: options.spawn } : {}) }),
+    bashTool({ root, processes, ...(options.spawn ? { spawn: options.spawn } : {}) }),
     todoTool(todos),
+    ...taskTools(processes),
   ] as AnyTool[];
 
   const projectConfig = await loadProjectConfig(root);
@@ -61,6 +70,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     checkpointProvider: new ShadowCheckpointProvider({ root }),
     fileState,
     todos,
+    processes,
   };
 }
 
@@ -83,6 +93,7 @@ export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
 export { globTool, globToRegExp, grepTool } from "./tools/search.ts";
+export { shellSpawner, taskTools } from "./tools/tasks.ts";
 export type { TodoItem } from "./tools/todo.ts";
 export { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";
 export { MAX_OUTPUT_CHARS, truncateOutput, withNotice } from "./truncate.ts";

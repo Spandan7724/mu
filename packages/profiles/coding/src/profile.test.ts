@@ -21,7 +21,20 @@ describe("codingProfile", () => {
   test("ships the documented toolset", async () => {
     const profile = await codingProfile({ root: await scratch() });
     const names = profile.toolset.map((t) => t.name).sort();
-    expect(names).toEqual(["bash", "edit", "glob", "grep", "ls", "read", "todo", "write"]);
+    expect(names).toEqual([
+      "bash",
+      "edit",
+      "glob",
+      "grep",
+      "ls",
+      "read",
+      "task_kill",
+      "task_list",
+      "task_output",
+      "task_write_stdin",
+      "todo",
+      "write",
+    ]);
   });
 
   test("read-only tools are marked concurrency-safe, mutating ones are not", async () => {

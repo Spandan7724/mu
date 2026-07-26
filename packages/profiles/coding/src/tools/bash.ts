@@ -1,4 +1,4 @@
-import { errorResult, type ToolResult } from "@mu/core";
+import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { truncateOutput, withNotice } from "../truncate.ts";
@@ -8,6 +8,8 @@ const MAX_TIMEOUT_MS = 600_000;
 
 export interface BashDeps {
   root: string;
+  // When present, `run_in_background: true` hands the command to it.
+  processes?: ProcessManager;
   // Injectable so tests never spawn real processes.
   spawn?: (
     command: string,
@@ -64,9 +66,32 @@ export function bashTool(deps: BashDeps) {
         .optional()
         .describe("A short description of what this command does, for the user"),
       timeoutMs: z.number().int().positive().max(MAX_TIMEOUT_MS).optional(),
+      run_in_background: z
+        .boolean()
+        .optional()
+        .describe("Start the command in the background and return a task id immediately"),
     }),
-    execute: async ({ command, timeoutMs }, { signal }): Promise<ToolResult | string> => {
+    execute: async (
+      { command, timeoutMs, run_in_background },
+      { signal },
+    ): Promise<ToolResult | string> => {
       if (signal.aborted) return errorResult("Aborted before the command started.");
+
+      if (run_in_background) {
+        if (!deps.processes) {
+          return errorResult("Background execution is not available in this session.");
+        }
+        const task = deps.processes.start(command);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Started ${task.id} in the background. Use task_output to read it, task_kill to stop it.`,
+            },
+          ],
+          details: { taskId: task.id, command, background: true },
+        };
+      }
 
       const result = await spawn(command, deps.root, signal, timeoutMs ?? DEFAULT_TIMEOUT_MS);
 

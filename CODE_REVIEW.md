@@ -2,17 +2,17 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 21:34 UTC
-- **Current milestone:** Tracker claims M7 complete and points to M8. This review verifies
-  neither M6 nor M7 completion because checked acceptance criteria for both are
-  contradicted by open findings below.
-- **Reviewed revision:** `433a5b2` (`add context accounting and llm compaction with
-  profile carryover`) plus the newly started M8 worktree; M7 findings below were
-  reproduced against the committed state.
-- **Scope this cycle:** M6 terminal/input/rendering/integration; M7 context accounting,
-  compaction, resume/carryover/commands/usage; initial M8 checkpoint interface,
-  shadow-git provider, SDK undo/redo/history integration
-- **Open findings:** P0: 0 · P1: 19 · P2: 11 · P3: 1
+- **Reviewed at:** 2026-07-26 21:38 UTC
+- **Current milestone:** Tracker claims M8 complete and points to M9. This review verifies
+  neither M6, M7, nor M8 completion because checked acceptance criteria for all three are
+  contradicted by open findings below. M9 is now changing in the worktree.
+- **Reviewed revision:** `c109c65` (`add checkpointing with shadow git provider and paired
+  undo`) plus the newly started M9 worktree. M8 findings were rechecked against the
+  committed revision with focused tests and temporary-directory reproductions.
+- **Scope this cycle:** Revalidation of M8 shadow restore/diff, checkpoint history,
+  persistence, profile/CLI wiring, commands, and failure handling; initial observation of
+  M9 process-manager work only where needed to distinguish transient validation failures.
+- **Open findings:** P0: 0 · P1: 23 · P2: 13 · P3: 1
 - **Possibly fixed:** 0
 - **Verified fixed:** 0
 - **Accepted:** 0
@@ -22,18 +22,21 @@
 - M6 commit gate: `bun run ci` **passed** — 342 tests, 836 assertions.
 - In-progress M7 focused tests: **passed** — 27 tests, 48 assertions; `tsc -b` passed.
   Focused multi-turn and resume reproductions below expose gaps not covered by them.
-- Current M8 worktree: `tsc -b` passed before the latest checkpoint delta;
-  `bun run ci` currently stops at two formatting/import-order errors in the in-progress
-  checkpoint files. Focused shadow-checkpoint tests: **8 passed, 2 failed** (diff sees
-  shadow metadata in the test worktree; the “user repo untouched” assertion sees
-  `.shadow-git/`). The supposedly passing created-file restore test is insufficient, as
-  shown by MU-CR-026.
+- Committed M8 focused validation: checkpoint/profile/session tests **passed** — 41 tests,
+  89 assertions. The tests do not exercise the actual coding-profile-to-Agent route, exact
+  multi-step state transitions, resume, ignored files, untracked-file diffs, restore
+  failure atomicity, `/fork`, or TUI diff-cell integration.
+- `bun run ci` against the concurrently changing post-M8 worktree currently stops in
+  typecheck on newly started M9 imports/types (`ManagedProcessHandle`, `ProcessManager`,
+  and `Spawner`). This is recorded as transient in-progress M9 state, not an M8 defect or
+  a new finding.
 - Focused read-only reproductions confirmed MU-CR-001 through MU-CR-008,
   MU-CR-010, MU-CR-011, MU-CR-014, and MU-CR-019. MU-CR-009, MU-CR-012,
   MU-CR-013, and MU-CR-015 through MU-CR-018 are direct code-path or
   contract/architecture contradictions. MU-CR-020 through MU-CR-025 remain confirmed
-  against committed M7 revision `433a5b2`; MU-CR-026 through MU-CR-031 are confirmed
-  against the current M8 worktree and must be rechecked as it changes.
+  against committed M7 revision `433a5b2`. MU-CR-026 through MU-CR-037 are confirmed
+  against committed M8 revision `c109c65`; the narrow ordinary-untracked-file portion of
+  MU-CR-026 changed, but ignored paths still reproduce the underlying restore failure.
 
 ### Highest-priority unresolved issues
 
@@ -47,17 +50,24 @@
 8. MU-CR-020 — compaction is only a one-request transform and repeats every tool turn.
 9. MU-CR-021 — persisted compaction drops the intended tail and carryover on resume.
 10. MU-CR-022 — empty or length-truncated summaries can silently discard history.
-11. MU-CR-026 — shadow restore cannot remove files created by an agent action.
+11. MU-CR-026 — shadow restore does not capture or restore ignored workspace files.
 12. MU-CR-027 / MU-CR-028 — undo/redo refs and conversation checkpoints are paired
     incorrectly and are not persisted.
+13. MU-CR-032 — the coding profile's checkpoint provider is dropped before Agent creation,
+    so the real CLI reports checkpoint commands unsupported.
+14. MU-CR-033 — aggregate `/diff` omits newly created files.
+15. MU-CR-035 — the claimed `/fork` command does not exist.
+16. MU-CR-036 — a restore error consumes history and breaks atomic undo.
 
-`TODO.md` marks M6 and M7 complete. Its M6 claims about streaming, Esc abort, clean
+`TODO.md` marks M6, M7, and M8 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
 differential rendering, and profile-independent renderer behavior conflict with the M6
 findings. Its M7 claims about real accounting, one coherent compaction transition,
-tail/carryover fidelity, and resume conflict with MU-CR-020 through MU-CR-025. M8 should
-not be treated as the only remaining work. Later milestones were not reported merely for
-being unfinished.
+tail/carryover fidelity, and resume conflict with MU-CR-020 through MU-CR-025. Its M8
+claims about profile-backed snapshots, persisted refs, exact/atomic undo-redo,
+dirty-change preservation, aggregate diff, TUI diff rendering, and `/fork` conflict with
+MU-CR-026 through MU-CR-037. M9 should not be treated as the only remaining work. Later
+milestones are not reported merely for being unfinished.
 
 ---
 
@@ -691,10 +701,10 @@ being unfinished.
 - **Tests to add:** Coding todos with multiple statuses, nested objects, strings containing
   commas/newlines, empty values, and exact live/resume equivalence.
 
-### MU-CR-026 — P1 — Open — Shadow restore does not remove files created after a checkpoint
+### MU-CR-026 — P1 — Open — Shadow restore does not capture or restore ignored files
 
-- **Affected:** `packages/profiles/coding/src/checkpoint.ts:123-132`,
-  `packages/profiles/coding/src/checkpoint.test.ts:38-52`
+- **Affected:** `packages/profiles/coding/src/checkpoint.ts:115-147`,
+  `packages/profiles/coding/src/checkpoint.test.ts:24-207`
 - **Requirement:** M8 AC requires `/undo` to restore files and the user's dirty state
   faithfully.
 - **Defect:** `git checkout <ref> -- .` restores paths present in the target tree but does
@@ -715,6 +725,14 @@ being unfinished.
 - **Tests to add:** Assert actual absence of one and nested newly created files, renamed
   files, ignored files that must remain, odd filenames, and a mix of pre-existing dirty
   files plus agent-created files.
+- **Revalidation / resolution evidence (2026-07-26, `c109c65`):** The committed change
+  adds `git clean -fd`, and the strengthened ordinary-untracked-file test now passes.
+  That fixes the exact `added-later.txt` example, but not the underlying fidelity issue:
+  `git add -A` excludes ignored paths and `git clean` deliberately excludes them. In a
+  temporary worktree with `*.secret` ignored, a pre-existing `user.secret` overwritten
+  after the snapshot remained overwritten after restore, and a newly created
+  `created.secret` remained present. `diff(ref)` then returned `[]`. The finding remains
+  Open because both edits are realistic results of `write`, `edit`, or `bash`.
 
 ### MU-CR-027 — P1 — Open — CheckpointHistory skips states and cannot redo an action
 
@@ -817,6 +835,147 @@ being unfinished.
   have no name-based domain default.
 - **Tests to add:** Custom mutating tool with a non-coding name, argument-dependent
   mutation, and a coding profile asserting its own policy.
+
+### MU-CR-032 — P1 — Open — Profile checkpointing is dropped before the real Agent is created
+
+- **Affected:** `packages/sdk/src/profile.ts:8-24`,
+  `packages/cli/src/interactive.ts:22-39`,
+  `packages/profiles/coding/src/index.ts:58-62`
+- **Requirement:** M8 requires the coding profile's shadow provider to back live
+  snapshotting and `/undo`, `/redo`, and `/diff`.
+- **Defect:** `codingProfile()` returns `checkpointProvider`, but `optionsFromProfile()`
+  copies prompt, tools, permissions, context messages, and carryover only. It never copies
+  `profile.checkpointProvider`. The interactive CLI then creates its Agent from those
+  converted options. The committed checkpoint implementation is therefore unreachable
+  in the normal coding-profile CLI path.
+- **Failure scenario / impact:** A user starts normal interactive mu, performs edits, and
+  invokes `/undo`. No snapshot was ever taken and the command reports “This profile does
+  not support undo.” `/redo` and `/diff` are likewise unavailable/empty despite M8 being
+  marked complete.
+- **Evidence / reproduction (2026-07-26, `c109c65`):** For
+  `p = await codingProfile({root})` and
+  `o = await optionsFromProfile(p, "fake/fake-1")`,
+  `{profileHasCheckpoint: !!p.checkpointProvider, optionsHasCheckpoint:
+  !!o.checkpointProvider}` evaluated to `{true, false}`.
+- **Recommended correction:** Propagate the provider through `optionsFromProfile`, with an
+  explicit override rule consistent with all other profile options. Propagate the
+  profile-owned mutation policy as part of the same contract rather than relying on SDK
+  coding-name defaults.
+- **Tests to add:** Construct the Agent through the exact coding profile → options →
+  interactive wiring path, execute a real mutating tool in a temporary root, and verify
+  `/undo`, `/redo`, and `/diff` use that provider.
+
+### MU-CR-033 — P1 — Open — Aggregate session diff omits newly created files
+
+- **Affected:** `packages/profiles/coding/src/checkpoint.ts:149-167`,
+  `packages/sdk/src/agent.ts:216-222`
+- **Requirement:** M8 AC says `/diff` shows the aggregate session diff from the first
+  checkpoint to the current workspace.
+- **Defect:** `git diff --numstat <ref>` does not include untracked files. Files created by
+  the first mutating action remain untracked in the shadow repository until some later
+  snapshot stages them, and ignored files are never staged. The aggregate diff can
+  therefore report no changes immediately after a successful file-creation action.
+- **Failure scenario / impact:** The agent creates `src/new.ts` and the user immediately
+  invokes `/diff`. The command says “No changes yet,” concealing the session's primary
+  change. Ignored created files remain invisible indefinitely.
+- **Evidence / reproduction (2026-07-26, `c109c65`):** In a temporary root, snapshot
+  `base.txt`, create `new.ts`, then call `diff(ref)`. The returned array was `[]`.
+- **Recommended correction:** Compute the worktree comparison including untracked files
+  without mutating the persistent shadow index, and include ignored paths that the
+  checkpoint ownership model determines were changed by the session. Use NUL-delimited
+  path handling and produce patches/counts for additions.
+- **Tests to add:** Invoke diff immediately after creating ordinary, nested, binary,
+  ignored, and oddly named files; mix additions with tracked modifications and deletions.
+
+### MU-CR-034 — P2 — Open — `/diff` bypasses the required TUI diff cell
+
+- **Affected:** `packages/cli/src/interactive.ts:43-56`,
+  `packages/cli/src/interactive.ts:95-107`,
+  `packages/sdk/src/commands.ts:73-81`
+- **Requirement:** M8 AC explicitly requires `/diff` to show the aggregate session diff
+  “in the TUI diff cell.”
+- **Defect:** The CLI maps each `CheckpointDiffFile` to path/add/remove counts, discarding
+  `hunks`. The command joins those counts into plain text, and `runCommand` commits it as a
+  raw prefixed line. It never calls the existing `diffCell` renderer.
+- **Failure scenario / impact:** Even for tracked edits that the provider detects, `/diff`
+  shows only `path · +N −N`; users cannot inspect the actual patch, and the documented
+  diff styling/color fallback is absent.
+- **Evidence:** Direct committed-path inspection; there is no `diffCell` or `hunks`
+  reference in `packages/cli/src/interactive.ts`.
+- **Recommended correction:** Preserve the structured per-file patch through the command
+  hook and route it to `diffCell` using the active width/color context. Keep a structured
+  result for non-TUI surfaces instead of reducing it prematurely to prose.
+- **Tests to add:** Interactive command integration asserting actual hunk lines, diff-cell
+  rule prefix and color-depth fallback; multiple files and empty diff.
+
+### MU-CR-035 — P1 — Open — The claimed `/fork` command does not exist
+
+- **Affected:** `packages/sdk/src/commands.ts:12-100`,
+  `packages/sdk/src/agent.ts:224-226`,
+  `packages/cli/src/interactive.ts:43-80`
+- **Requirement:** M8 is titled `/undo` `/redo` `/fork` `/diff`; its AC requires `/fork`
+  to branch the session tree from a chosen point. `TODO.md` marks that item and AC
+  complete at `c109c65`.
+- **Defect:** Agent exposes a low-level `fork(entryId)` method, but the core command
+  registry contains no command named `fork`, no hook for one, and the interactive command
+  list cannot invoke it. No surface presents selectable branch points or accepts an entry
+  ID.
+- **Failure scenario / impact:** Typing `/fork` yields the registry's unknown-command
+  result. The only implemented API requires an internal entry ID that ordinary CLI users
+  are never shown, so the claimed user feature is absent.
+- **Evidence:** Repository search at `c109c65` finds no `name: "fork"` in any command.
+- **Recommended correction:** Define the command and a surface-appropriate branch-point
+  selection/argument contract, validate that the target belongs to the current session,
+  call Agent.fork, and persist the resulting active branch when it next changes.
+- **Tests to add:** Invoke `/fork` through the interactive/core registry at multiple valid
+  points; reject unknown/foreign IDs; verify old branches remain and the next message
+  descends from the selected node.
+
+### MU-CR-036 — P1 — Open — Restore failure consumes undo history and violates atomic pairing
+
+- **Affected:** `packages/sdk/src/agent.ts:194-213`,
+  `packages/core/src/checkpoint.ts:50-63`
+- **Requirement:** M8 AC claims workspace and conversation are rewound atomically and redo
+  reverses undo.
+- **Defect:** `undo()` pops/moves the history entry before awaiting workspace restore.
+  When restore throws, the conversation remains on its old head but history says the step
+  was undone (`canUndo=false`, `canRedo=true` for a one-step run). `redo()` mutates its
+  history before restore in the same way. There is no rollback or transaction protocol.
+- **Failure scenario / impact:** A file permission error, missing shadow object, or disk
+  fault makes `/undo` throw. Retrying says nothing is available, while `/redo` is offered
+  for a step that was never undone. Workspace, conversation, and history now disagree.
+- **Evidence / reproduction (2026-07-26, `c109c65`):** With a one-entry history and a
+  provider whose `restore()` throws `restore failed`, `agent.undo()` threw and left
+  `{canUndo:false, canRedo:true}` while the active path remained unchanged.
+- **Recommended correction:** Peek and validate a transition without mutating history,
+  restore the workspace, fork the conversation, persist it, and only then commit the
+  history cursor. If a later phase fails, restore/roll back the earlier phase or report a
+  recoverable partial state without lying about the cursor.
+- **Tests to add:** Throwing restore on undo and redo, invalid conversation target,
+  session-store save failure, retry after each failure, and assertions across all three
+  states (workspace, tree head, history cursor).
+
+### MU-CR-037 — P2 — Open — Denied mutating calls create false checkpoint steps
+
+- **Affected:** `packages/sdk/src/agent.ts:370-418`
+- **Requirement:** M8 snapshots mutating tool batches so actual state changes are
+  reversible; permission denial must not be represented as a successful mutation.
+- **Defect:** `snapshotIfMutating()` runs immediately after rule evaluation, before a
+  static deny is returned and before an `ask` result is known. A denied call therefore
+  records a checkpoint and consumes the batch's one-snapshot flag even though its tool
+  never executes.
+- **Failure scenario / impact:** The user denies a requested `bash` or `write`, then invokes
+  `/undo`. Mu reports that it undid the step and rewinds conversation even though no
+  workspace action occurred. In mixed batches, the false checkpoint can also stand in for
+  later allowed mutations without accurately labeling what happened.
+- **Evidence:** Direct committed control-flow inspection: the snapshot call is at line 393,
+  static deny returns at 395-398, and ask resolution occurs at 399-417.
+- **Recommended correction:** Resolve permission first, then take one snapshot immediately
+  before the first call that will actually execute. For parallel batches, coordinate this
+  in the loop as a batch-level pre-execution operation rather than racing per-call hooks.
+- **Tests to add:** Static deny and denied ask produce no checkpoint/history; mixed
+  denied/allowed batches produce exactly one correctly labeled checkpoint before the
+  allowed mutation; all-denied batches leave undo unavailable.
 
 ---
 

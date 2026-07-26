@@ -62,6 +62,15 @@ export {
 } from "./messages.ts";
 export type { PermissionAction, PermissionRequest, PermissionRule } from "./permission.ts";
 export { evaluate } from "./permission.ts";
+export type {
+  ManagedProcessHandle,
+  ProcessEvents,
+  Spawner,
+  SpawnRequest,
+  TaskInfo,
+  TaskStatus,
+} from "./process.ts";
+export { exitNotification, OutputBuffer, ProcessManager } from "./process.ts";
 export type { Profile, ProfileFactory } from "./profile.ts";
 export type { NewTreeEntry, SessionEntry, SessionStore, TreeEntry } from "./session.ts";
 export {

@@ -136,6 +136,7 @@ export class Agent {
   private compactRequested = false;
   private lastContextPercent = 0;
   private readonly checkpoints = new CheckpointHistory();
+  private externalEvents: AgentEvent[] = [];
   private snapshottedThisTurn = false;
 
   constructor(options: AgentOptions = {}) {
@@ -174,6 +175,12 @@ export class Agent {
   // Wake a run that would otherwise stop (also how background work resumes it).
   followUp(message: string): void {
     this.followUps.push(userMessage(message));
+  }
+
+  // Surfaces forward background-task events here: task_started/task_output/
+  // task_exited reach consumers, and an exit wakes an idle run.
+  emitTaskEvent(event: AgentEvent): void {
+    this.externalEvents.push(event);
   }
 
   abort(): void {
@@ -363,6 +370,9 @@ export class Agent {
         return pending;
       },
       getFollowUpMessages: () => {
+        // Drain any background-task events onto the stream first, so the
+        // consumer sees why the agent woke up.
+        for (const event of this.externalEvents.splice(0)) emit(event);
         const pending = this.followUps;
         this.followUps = [];
         return pending;

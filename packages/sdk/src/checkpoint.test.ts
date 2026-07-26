@@ -290,3 +290,34 @@ describe("commands", () => {
     expect((await registry.execute("/undo", ctx().ctx)).message).toContain("not available");
   });
 });
+
+describe("background task events reach the stream and wake the agent", () => {
+  test("a task exit delivered as a follow-up continues an idle run", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "started the build" }] },
+      { content: [{ type: "text", text: "the build finished" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+
+    // The surface owns the process manager; on exit it forwards the event and
+    // queues the notification, which is what wakes the loop.
+    let woken = false;
+    const stream = agent.stream("start the build");
+    const events: string[] = [];
+    const pump = (async () => {
+      for await (const event of stream) {
+        events.push(event.type);
+        if (event.type === "message_end" && !woken) {
+          woken = true;
+          agent.emitTaskEvent({ type: "task_exited", taskId: "task_1", exitCode: 0 });
+          agent.followUp("Background task task_1 finished successfully.");
+        }
+      }
+    })();
+    await pump;
+    await stream.result();
+
+    expect(provider.callCount).toBe(2);
+    expect(events).toContain("task_exited");
+  });
+});
