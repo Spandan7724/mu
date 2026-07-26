@@ -21,6 +21,7 @@ export interface CommandResult {
 export interface Command {
   name: string; // without the leading slash
   description: string;
+  // biome-ignore lint/suspicious/noConfusingVoidType: a command may legitimately return nothing
   run: (ctx: CommandContext) => CommandResult | void | Promise<CommandResult | void>;
 }
 

@@ -30,6 +30,7 @@ export function globToRegExp(pattern: string): RegExp {
       }
     } else if (char === "?") {
       out += "[^/]";
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: these are regex metacharacters to escape
     } else if (".+^${}()|[]\\".includes(char)) {
       out += `\\${char}`;
     } else {

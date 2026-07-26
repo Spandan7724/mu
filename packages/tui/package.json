@@ -6,6 +6,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@mu/core": "workspace:*",
     "mu": "workspace:*"
   }
 }

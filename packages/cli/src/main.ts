@@ -2,6 +2,7 @@
 import { Agent } from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
+import { runInteractive } from "./interactive.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 
 const VERSION = "0.0.1";
@@ -56,8 +57,7 @@ async function main(): Promise<number> {
       return 0;
     }
     default:
-      io.stderr("mu: the interactive terminal app is not implemented yet (M6). Use -p for now.\n");
-      return EXIT.usage;
+      return runInteractive(args);
   }
 }
 

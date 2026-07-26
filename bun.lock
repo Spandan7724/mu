@@ -57,6 +57,7 @@
       "name": "@mu/tui",
       "version": "0.0.1",
       "dependencies": {
+        "@mu/core": "workspace:*",
         "mu": "workspace:*",
       },
     },
