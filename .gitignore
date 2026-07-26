@@ -1,3 +1,7 @@
 # internal planning docs (kept local, not committed)
 docs/
 TODO.md
+
+node_modules/
+dist/
+*.tsbuildinfo

@@ -1,0 +1,16 @@
+{
+  "name": "@mu/cli",
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "mu": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mu/profile-coding": "workspace:*",
+    "@mu/tui": "workspace:*",
+    "mu": "workspace:*"
+  }
+}
