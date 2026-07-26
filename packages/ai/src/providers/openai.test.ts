@@ -1,0 +1,135 @@
+import { describe, expect, test } from "bun:test";
+import { findModel } from "../catalog.ts";
+import textCassette from "../fixtures/openai-text.json" with { type: "json" };
+import toolCassette from "../fixtures/openai-tool.json" with { type: "json" };
+import { replayFetch } from "../testing/replay.ts";
+import type { LlmContext, ModelInfo, ProviderStreamEvent } from "../types.ts";
+import { streamOpenAI } from "./openai.ts";
+
+const model = findModel("openai/gpt-5.1") as ModelInfo;
+
+const ctx: LlmContext = {
+  systemPrompt: [{ text: "You are mu." }],
+  messages: [{ role: "user", content: [{ type: "text", text: "Hi" }], timestamp: 1 }],
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get weather",
+      inputSchema: { type: "object", properties: { city: { type: "string" } } },
+    },
+  ],
+};
+
+describe("streamOpenAI", () => {
+  test("streams reasoning + text with usage split into cached/uncached", async () => {
+    const replay = replayFetch(textCassette);
+    const events: ProviderStreamEvent[] = [];
+    const stream = streamOpenAI(model, ctx, {
+      apiKey: "test",
+      fetch: replay.fetch,
+      thinkingLevel: "medium",
+    });
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(events.map((e) => e.type)).toEqual([
+      "start",
+      "thinking_start",
+      "thinking_delta",
+      "thinking_end",
+      "text_start",
+      "text_delta",
+      "text_delta",
+      "text_end",
+      "done",
+    ]);
+    expect(result.stopReason).toBe("end");
+    expect(result.content[0]).toEqual({
+      type: "thinking",
+      thinking: "Considering the question.",
+      signature: JSON.stringify({ id: "rs_1", encrypted_content: "ENC_XYZ" }),
+    });
+    expect(result.content[1]).toEqual({ type: "text", text: "Hello world" });
+    expect(result.usage.inputTokens).toBe(80); // 120 total - 40 cached
+    expect(result.usage.cacheReadTokens).toBe(40);
+    expect(result.usage.outputTokens).toBe(20);
+
+    const body = JSON.parse(replay.calls[0]?.body ?? "{}");
+    expect(body.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    expect(body.include).toEqual(["reasoning.encrypted_content"]);
+    expect(body.instructions).toBe("You are mu.");
+    expect(body.store).toBe(false);
+    expect(replay.calls[0]?.headers.authorization).toBe("Bearer test");
+  });
+
+  test("streams a function call and maps stopReason to toolUse", async () => {
+    const replay = replayFetch(toolCassette);
+    const stream = streamOpenAI(model, ctx, { apiKey: "test", fetch: replay.fetch });
+    const result = await stream.result();
+    expect(result.stopReason).toBe("toolUse");
+    expect(result.content).toEqual([
+      { type: "toolCall", id: "call_abc", name: "get_weather", arguments: { city: "Paris" } },
+    ]);
+  });
+
+  test("replays reasoning items and tool results into the input", async () => {
+    const replay = replayFetch(textCassette);
+    const history: LlmContext = {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "check" }], timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "prior thoughts",
+              signature: JSON.stringify({ id: "rs_0", encrypted_content: "ENC_0" }),
+            },
+            { type: "toolCall", id: "call_1", name: "get_weather", arguments: { city: "Nice" } },
+          ],
+          model: "openai/gpt-5.1",
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call_1",
+          toolName: "get_weather",
+          content: [{ type: "text", text: "sunny" }],
+          isError: false,
+          timestamp: 3,
+        },
+      ],
+    };
+    const stream = streamOpenAI(model, history, { apiKey: "test", fetch: replay.fetch });
+    await stream.result();
+    const body = JSON.parse(replay.calls[0]?.body ?? "{}");
+    expect(body.input[1]).toEqual({
+      type: "reasoning",
+      id: "rs_0",
+      summary: [],
+      encrypted_content: "ENC_0",
+    });
+    expect(body.input[2]).toEqual({
+      type: "function_call",
+      call_id: "call_1",
+      name: "get_weather",
+      arguments: '{"city":"Nice"}',
+    });
+    expect(body.input[3]).toEqual({
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "sunny",
+    });
+  });
+
+  test("oauth credential is a designed-in branch that errors until M10", async () => {
+    const stream = streamOpenAI(model, ctx, {
+      getCredentials: async () => ({ type: "oauth", accessToken: "tok" }),
+    });
+    const result = await stream.result();
+    expect(result.stopReason).toBe("error");
+    expect(result.errorMessage).toContain("M10");
+  });
+});

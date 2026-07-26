@@ -1,0 +1,77 @@
+{
+  "models": [
+    {
+      "provider": "anthropic",
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "thinkingMode": "adaptive",
+      "pricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 }
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "thinkingMode": "adaptive",
+      "pricing": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 }
+    },
+    {
+      "provider": "anthropic",
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "contextWindow": 200000,
+      "maxOutput": 64000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "thinkingMode": "budget",
+      "pricing": { "input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": 1.25 }
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "contextWindow": 400000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 1.25, "output": 10, "cacheRead": 0.125, "cacheWrite": 0 }
+    },
+    {
+      "provider": "openai",
+      "id": "gpt-5-mini",
+      "name": "GPT-5 mini",
+      "contextWindow": 400000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 0.25, "output": 2, "cacheRead": 0.025, "cacheWrite": 0 }
+    },
+    {
+      "provider": "google",
+      "id": "gemini-2.5-pro",
+      "name": "Gemini 2.5 Pro",
+      "contextWindow": 1048576,
+      "maxOutput": 65536,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 1.25, "output": 10, "cacheRead": 0.31, "cacheWrite": 0 }
+    },
+    {
+      "provider": "google",
+      "id": "gemini-2.5-flash",
+      "name": "Gemini 2.5 Flash",
+      "contextWindow": 1048576,
+      "maxOutput": 65536,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 0.3, "output": 2.5, "cacheRead": 0.075, "cacheWrite": 0 }
+    }
+  ]
+}
