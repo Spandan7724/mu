@@ -14,6 +14,10 @@ import {
   type AgentEvent,
   type AgentMessage,
   type AnyTool,
+  AUTO_COMPACT_THRESHOLD,
+  applyCompaction,
+  compact,
+  contextState,
   type ExtensionHost,
   evaluate,
   type LoopConfig,
@@ -24,6 +28,7 @@ import {
   SESSION_VERSION,
   type SessionStore,
   SessionTree,
+  shouldCompact,
   type TurnInfo,
   type UserContent,
   userMessage,
@@ -64,6 +69,11 @@ export interface AgentOptions {
   // Typed context messages seeded once at the start of a session (profiles use
   // this for environment + project instructions — never a system-prompt edit).
   initialMessages?: AgentMessage[];
+  // Compaction (M7). Auto-compaction runs when the context crosses the
+  // threshold; the profile supplies what its domain must not lose.
+  carryoverExtractor?: (messages: AgentMessage[]) => unknown;
+  autoCompact?: boolean;
+  compactThreshold?: number;
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
@@ -114,6 +124,8 @@ export class Agent {
   private steering: AgentMessage[] = [];
   private followUps: AgentMessage[] = [];
   private totals: Usage = zeroUsage();
+  private compactRequested = false;
+  private lastContextPercent = 0;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -155,6 +167,15 @@ export class Agent {
 
   abort(): void {
     this.controller.abort();
+  }
+
+  // Requests compaction before the next LLM call (what /compact invokes).
+  requestCompaction(): void {
+    this.compactRequested = true;
+  }
+
+  get contextPercent(): number {
+    return this.lastContextPercent;
   }
 
   async run(prompt: string | UserContent[]): Promise<RunResult>;
@@ -321,6 +342,52 @@ export class Agent {
               reason: `Permission denied for ${info.toolCall.name}`,
             };
       },
+      transformContext: async (messages) => {
+        const transformed = host ? await host.runContextHooks(messages) : messages;
+        const state = contextState(this.model, transformed);
+        this.lastContextPercent = state.percent;
+
+        const auto = this.options.autoCompact !== false;
+        const due =
+          this.compactRequested ||
+          (auto && shouldCompact(state, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
+        if (!due) return transformed;
+
+        this.compactRequested = false;
+        emit({ type: "compaction_start", layer: 2 });
+        try {
+          const result = await compact(transformed, {
+            provider: this.provider,
+            model: this.model,
+            ...(this.options.carryoverExtractor
+              ? { carryoverExtractor: this.options.carryoverExtractor }
+              : {}),
+            signal: this.controller.signal,
+          });
+          const compacted = applyCompaction(result);
+          emit({
+            type: "compaction_end",
+            layer: 2,
+            tokensFreed: result.tokensFreed,
+          });
+          // Record the boundary in the session tree so a resume rebuilds
+          // context as summary + tail rather than replaying everything.
+          if (result.summary.length > 0) {
+            this.tree.append({
+              type: "compaction",
+              summary: result.summary,
+              ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
+              firstKeptEntryId: this.tree.head ?? "",
+            });
+          }
+          return compacted;
+        } catch {
+          // A failed summarization must not take the run down: carry on
+          // uncompacted and let the provider surface any context error.
+          emit({ type: "compaction_end", layer: 2, tokensFreed: 0 });
+          return transformed;
+        }
+      },
       ...(host
         ? {
             afterToolCall: async (info) => {
@@ -337,7 +404,6 @@ export class Agent {
                 ...(directive.isError !== undefined ? { isError: directive.isError } : {}),
               };
             },
-            transformContext: (messages) => host.runContextHooks(messages),
           }
         : {}),
       shouldStopAfterTurn: (turn: TurnInfo) => {

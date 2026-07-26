@@ -1,8 +1,13 @@
 import { findModel, listModels } from "@mu/ai";
-import { type Command, CommandRegistry, customMessage } from "@mu/core";
+import { type Command, CommandRegistry } from "@mu/core";
 
 // Built-in commands available on every surface (TUI, RPC, headless).
-export function coreCommands(): Command[] {
+export interface CoreCommandHooks {
+  requestCompaction?: () => void;
+  usage?: () => { costUsd: number; contextPercent: number };
+}
+
+export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
   return [
     {
       name: "help",
@@ -35,32 +40,33 @@ export function coreCommands(): Command[] {
     {
       name: "compact",
       description: "Summarize the conversation so far to free context",
-      run: (ctx) => {
-        // Full compaction lands in M7; this wires the command end-to-end so the
-        // surfaces can call it today.
-        ctx.inject(
-          customMessage(
-            "system-reminder",
-            "The user requested compaction. Summarize the conversation so far, preserving decisions, task state and open threads.",
-          ),
-        );
-        return { handled: true, message: "Compaction requested (summary pass runs in M7)." };
+      run: () => {
+        if (!hooks.requestCompaction) {
+          return { handled: true, message: "Compaction is not available on this surface." };
+        }
+        hooks.requestCompaction();
+        return { handled: true, message: "Compacting before the next turn." };
       },
     },
     {
       name: "cost",
       description: "Show token usage and cost for this session",
       run: (ctx) => {
-        ctx.print("Usage is reported by the surface that owns the session.");
+        const usage = hooks.usage?.();
+        ctx.print(
+          usage
+            ? `$${usage.costUsd.toFixed(4)} · ${Math.round(usage.contextPercent * 100)}% ctx`
+            : "Usage is reported by the surface that owns the session.",
+        );
         return { handled: true };
       },
     },
   ];
 }
 
-export function registryWithCoreCommands(): CommandRegistry {
+export function registryWithCoreCommands(hooks: CoreCommandHooks = {}): CommandRegistry {
   const registry = new CommandRegistry();
-  for (const command of coreCommands()) registry.register(command);
+  for (const command of coreCommands(hooks)) registry.register(command);
   registry.register({
     name: "help",
     description: "List available commands",

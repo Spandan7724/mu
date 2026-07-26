@@ -369,11 +369,31 @@ describe("core commands", () => {
     expect(harness.getModelValue()).toBe("fake/fake-1");
   });
 
-  test("/compact injects a summarization request", async () => {
-    const registry = registryWithCoreCommands();
+  test("/compact asks the surface to compact before the next turn", async () => {
+    let requested = false;
+    const registry = registryWithCoreCommands({
+      requestCompaction: () => {
+        requested = true;
+      },
+    });
+    const result = await registry.execute("/compact", ctx().ctx);
+    expect(requested).toBe(true);
+    expect(result.message).toContain("Compacting");
+  });
+
+  test("/compact says so plainly when the surface cannot compact", async () => {
+    const result = await registryWithCoreCommands().execute("/compact", ctx().ctx);
+    expect(result.message).toContain("not available");
+  });
+
+  test("/cost reports live usage when the surface provides it", async () => {
+    const registry = registryWithCoreCommands({
+      usage: () => ({ costUsd: 0.1234, contextPercent: 0.42 }),
+    });
     const harness = ctx();
-    await registry.execute("/compact", harness.ctx);
-    expect(harness.injected.length).toBe(1);
+    await registry.execute("/cost", harness.ctx);
+    expect(harness.printed[0]).toContain("$0.1234");
+    expect(harness.printed[0]).toContain("42% ctx");
   });
 
   test("/help lists registered commands", async () => {

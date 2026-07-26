@@ -1,6 +1,22 @@
 export type { Command, CommandContext, CommandResult } from "./commands.ts";
 export { CommandRegistry } from "./commands.ts";
 export type {
+  CompactionRequest,
+  CompactionResult,
+  CompactorOptions,
+  ContextState,
+} from "./compaction.ts";
+export {
+  AUTO_COMPACT_THRESHOLD,
+  applyCompaction,
+  compact,
+  contextState,
+  estimateTokens,
+  planCompaction,
+  SUMMARY_PROMPT,
+  shouldCompact,
+} from "./compaction.ts";
+export type {
   AgentEndReason,
   AgentEvent,
   AgentEventType,

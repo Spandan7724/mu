@@ -40,7 +40,13 @@ export async function runInteractive(
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
-  const commands = registryWithCoreCommands();
+  const commands = registryWithCoreCommands({
+    requestCompaction: () => agent.requestCompaction(),
+    usage: () => ({
+      costUsd: agent.usage.costUsd ?? 0,
+      contextPercent: agent.contextPercent,
+    }),
+  });
 
   const renderer = new InlineRenderer(terminal);
   let exiting = false;

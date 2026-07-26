@@ -2,13 +2,12 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 21:21 UTC
-- **Current milestone:** M6 — TUI (in progress)
-- **Reviewed revision:** `3ef83510b0d4` plus the untracked M6 worktree files under
-  `packages/tui/src/` (`cells.ts`, `components.ts`, `input.ts`, `renderer.ts`, `style.ts`,
-  `terminal.ts`, `width.ts`, `wrap.ts`, and tests), followed by the newly added `app.ts`
-  and `registry.ts` integration, then the new default CLI wiring in
-  `packages/cli/src/interactive.ts`
+- **Reviewed at:** 2026-07-26 21:24 UTC
+- **Current milestone:** Tracker claims M6 complete and points to M7; this review does not
+  verify M6 completion because its checked acceptance criteria are contradicted by open
+  findings below.
+- **Reviewed revision:** `b899f43f3829` (`add tui with terminal layer, input decoder,
+  renderer and transcript cells`), clean worktree before this report update
 - **Scope this cycle:** terminal lifecycle, input decoding, width/grapheme handling,
   ANSI-aware wrapping, inline rendering, transcript cells, and initial components
 - **Open findings:** P0: 0 · P1: 11 · P2: 7 · P3: 1
@@ -39,8 +38,11 @@
 6. MU-CR-014 — a lone Esc is never flushed, so the advertised interrupt key does nothing.
 7. MU-CR-015 — input during a run starts overlapping runs instead of steering.
 
-The M6 milestone remains in progress. Later M6 components and milestones M7–M10 were not
-reported merely for being unfinished.
+`TODO.md` marks M6 complete and specifically claims streaming, Esc abort, clean
+Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
+differential rendering, and profile-independent renderer behavior. Current evidence
+contradicts several of those claims, so M7 should not be treated as the only remaining
+work. Milestones M7–M10 were not reported merely for being unfinished.
 
 ---
 
