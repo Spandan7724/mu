@@ -1,5 +1,12 @@
 #!/usr/bin/env bun
-import { Agent, loadMarkdownCommands, registryWithCoreCommands, toCommand } from "mu";
+import {
+  Agent,
+  defaultModelRef,
+  loadMarkdownCommands,
+  refreshModels,
+  registryWithCoreCommands,
+  toCommand,
+} from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
@@ -18,6 +25,12 @@ async function main(): Promise<number> {
     for (const error of args.errors) io.stderr(`mu: ${error}\n`);
     io.stderr(HELP_TEXT);
     return EXIT.usage;
+  }
+
+  if (args.mode === "tui" || args.mode === "headless" || args.mode === "rpc") {
+    await refreshModels().catch(() => {
+      // The bundled catalog remains available when discovery is offline.
+    });
   }
 
   switch (args.mode) {
@@ -65,7 +78,7 @@ async function main(): Promise<number> {
             const result = await commands.execute(text, {
               inject: () => {},
               print: () => {},
-              getModel: () => args.model ?? "anthropic/claude-opus-5",
+              getModel: () => args.model ?? defaultModelRef(),
               setModel: () => {},
             });
             return result.message;

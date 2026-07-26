@@ -1,5 +1,6 @@
 import {
   addUsage,
+  defaultModelRef,
   findModel,
   getProvider,
   type ModelInfo,
@@ -45,8 +46,6 @@ import {
   structuredOutputPrompt,
   structuredOutputTool,
 } from "./structured-output.ts";
-
-const DEFAULT_MODEL = "anthropic/claude-opus-5";
 
 // Tool names that change state and therefore deserve a checkpoint first.
 const DEFAULT_MUTATING_TOOLS = ["write", "edit", "bash"];
@@ -101,7 +100,7 @@ export interface RunResult {
 
 function resolveModel(model: AgentOptions["model"]): ModelInfo {
   if (model && typeof model !== "string") return model;
-  const ref = model ?? DEFAULT_MODEL;
+  const ref = model ?? defaultModelRef();
   const found = findModel(ref);
   if (!found) throw new Error(`Unknown model: ${ref}. Pass a ModelInfo to use a custom model.`);
   return found;

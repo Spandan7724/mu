@@ -1,5 +1,13 @@
-export type { ModelInfo, Provider, ThinkingLevel, Usage } from "@mu/ai";
-export { findModel, listModels, registerModels, registerProvider } from "@mu/ai";
+export type { ModelDiscoveryOptions, ModelInfo, Provider, ThinkingLevel, Usage } from "@mu/ai";
+export {
+  defaultModelRef,
+  discoverModels,
+  findModel,
+  listModels,
+  refreshModels,
+  registerModels,
+  registerProvider,
+} from "@mu/ai";
 // Re-exported so SDK users never need to reach into the kernel packages.
 export type {
   AgentEvent,

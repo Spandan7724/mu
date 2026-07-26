@@ -1,4 +1,4 @@
-import { Agent, type AgentOptions, type HaltReason, optionsFromProfile } from "mu";
+import { Agent, type AgentOptions, defaultModelRef, type HaltReason, optionsFromProfile } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
@@ -35,11 +35,7 @@ export async function runHeadless(
   if (!options.tools) {
     try {
       const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
-      resolved = await optionsFromProfile(
-        profile,
-        args.model ?? "anthropic/claude-opus-5",
-        options,
-      );
+      resolved = await optionsFromProfile(profile, args.model ?? defaultModelRef(), options);
     } catch (error) {
       io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
       return EXIT.usage;

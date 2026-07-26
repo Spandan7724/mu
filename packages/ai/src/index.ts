@@ -1,5 +1,14 @@
 export { resolveCredential } from "./auth.ts";
-export { findModel, listModels, modelRef, registerModels } from "./catalog.ts";
+export type { ModelDiscoveryOptions } from "./catalog.ts";
+export {
+  defaultModelRef,
+  discoverModels,
+  findModel,
+  listModels,
+  modelRef,
+  refreshModels,
+  registerModels,
+} from "./catalog.ts";
 export { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
 export type { AiErrorKind } from "./errors.ts";
 export { AiError, classifyHttpError, isContextTooLongMessage } from "./errors.ts";

@@ -10,6 +10,7 @@ import {
 import {
   Agent,
   type AgentOptions,
+  defaultModelRef,
   loadMarkdownCommands,
   optionsFromProfile,
   registryWithCoreCommands,
@@ -30,7 +31,7 @@ export async function runInteractive(
     return 2;
   }
 
-  const modelRef = args.model ?? "anthropic/claude-opus-5";
+  const modelRef = args.model ?? defaultModelRef();
   let resolved = options;
   if (!options.tools) {
     const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
