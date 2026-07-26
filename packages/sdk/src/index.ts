@@ -38,6 +38,14 @@ export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";
 export type { FileSessionStoreOptions } from "./file-store.ts";
 export { FileSessionStore } from "./file-store.ts";
+export type { MarkdownCommand, MarkdownCommandOptions } from "./markdown-commands.ts";
+export {
+  loadMarkdownCommands,
+  parseFrontmatter,
+  parseMarkdownCommand,
+  substituteArguments,
+  toCommand,
+} from "./markdown-commands.ts";
 export type { Profile, ProfileImporter } from "./profile.ts";
 export { loadProfile, optionsFromProfile } from "./profile.ts";
 export type { HookEvent, HookRunner, HookSpec } from "./shell-hooks.ts";

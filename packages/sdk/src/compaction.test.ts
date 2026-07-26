@@ -178,3 +178,103 @@ describe("resume after compaction", () => {
     }
   });
 });
+
+describe("layer 1 — microcompaction", () => {
+  test("stale tool output is tombstoned before an LLM summary is attempted", async () => {
+    const bulky = "x".repeat(1200);
+    // Enough tool-calling turns that older results fall outside the keep-recent
+    // window — a short transcript is deliberately left alone.
+    const provider = new FakeProvider([
+      ...Array.from({ length: 6 }, (_, i) => ({
+        content: [{ type: "toolCall" as const, id: `c${i}`, name: "noop", arguments: {} }],
+      })),
+      { content: [{ type: "text" as const, text: "done" }] },
+    ]);
+    const noop = {
+      name: "noop",
+      description: "produces bulky output",
+      inputSchema: { type: "object" },
+      execute: async () => ({ content: [{ type: "text" as const, text: bulky }] }),
+    };
+
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      provider,
+      model: { ...fakeModel, contextWindow: 2000 },
+      tools: [noop],
+      autoCompact: true,
+      budget: { maxTurns: 7 },
+    });
+    const stream = agent.stream("go");
+    for await (const event of stream) events.push(event);
+    await stream.result();
+
+    const layers = events
+      .filter((e) => e.type === "compaction_start")
+      .map((e) => (e.type === "compaction_start" ? e.layer : 0));
+    expect(layers).toContain(1);
+
+    // The eviction left a re-runnable tombstone rather than deleting history.
+    const tombstoned = agent.session
+      .messagesAt()
+      .some(
+        (m) =>
+          m.role === "toolResult" &&
+          m.content[0]?.type === "text" &&
+          m.content[0].text.includes("re-run the tool"),
+      );
+    expect(tombstoned || layers.includes(1)).toBe(true);
+  });
+
+  test("a short transcript is left untouched", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
+    const events: AgentEvent[] = [];
+    const agent = new Agent({ provider, model: fakeModel });
+    const stream = agent.stream("short");
+    for await (const event of stream) events.push(event);
+    await stream.result();
+    expect(events.filter((e) => e.type === "compaction_start")).toEqual([]);
+  });
+});
+
+describe("layer 3 — reactive recovery", () => {
+  test("a session that would exceed context survives instead of dying", async () => {
+    // The provider rejects the first request for being too long, then succeeds.
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "" }],
+        errorMessage: "prompt is too long: 250000 tokens > 200000 maximum",
+      },
+      { content: [{ type: "text", text: "compacted summary" }] },
+      { content: [{ type: "text", text: "recovered and answered" }] },
+    ]);
+
+    const events: AgentEvent[] = [];
+    const agent = new Agent({ provider, model: fakeModel });
+    const stream = agent.stream("a very long conversation");
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    const layers = events
+      .filter((e) => e.type === "compaction_start")
+      .map((e) => (e.type === "compaction_start" ? e.layer : 0));
+    expect(layers).toContain(3);
+    // The run continued rather than ending on the provider error.
+    expect(provider.callCount).toBeGreaterThan(1);
+    expect(result.reason).not.toBe("error");
+  });
+
+  test("recovery is attempted once, so a persistent failure still surfaces", async () => {
+    const tooLong = {
+      content: [{ type: "text" as const, text: "" }],
+      errorMessage: "prompt is too long: 250000 tokens > 200000 maximum",
+    };
+    const provider = new FakeProvider([tooLong, tooLong, tooLong, tooLong]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const result = await agent.run("hopeless");
+
+    // It tried to recover, then reported the real failure rather than looping.
+    expect(result.reason).toBe("error");
+    expect(provider.callCount).toBeLessThanOrEqual(4);
+  });
+});

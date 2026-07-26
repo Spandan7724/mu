@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Agent } from "mu";
+import { Agent, loadMarkdownCommands, registryWithCoreCommands, toCommand } from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
@@ -41,10 +41,35 @@ async function main(): Promise<number> {
         onPermission: (request) =>
           new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
       });
+      const commands = registryWithCoreCommands({
+        requestCompaction: () => agent.requestCompaction(),
+        usage: () => ({ costUsd: agent.usage.costUsd ?? 0, contextPercent: agent.contextPercent }),
+        undo: () => agent.undo(),
+        redo: () => agent.redo(),
+        diff: async () =>
+          (await agent.sessionDiff()).map((f) => ({
+            path: f.path,
+            added: f.added,
+            removed: f.removed,
+          })),
+      });
+      for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
+        commands.register(toCommand(markdown, (prompt) => void agent.run(prompt)));
+      }
+
       await runRpc(
         { write: io.stdout, lines: linesFrom(process.stdin) },
         {
           agent,
+          runCommand: async (text) => {
+            const result = await commands.execute(text, {
+              inject: () => {},
+              print: () => {},
+              getModel: () => args.model ?? "anthropic/claude-opus-5",
+              setModel: () => {},
+            });
+            return result.message;
+          },
           resolvePermission: (requestId, outcome) => {
             const resolve = pending.get(requestId);
             if (!resolve) return false;

@@ -60,6 +60,13 @@ export {
   toAiMessages,
   userMessage,
 } from "./messages.ts";
+export type { MicrocompactionOptions, MicrocompactionResult } from "./microcompaction.ts";
+export {
+  IMAGE_TOMBSTONE,
+  MICROCOMPACT_THRESHOLD,
+  microcompact,
+  TOMBSTONE,
+} from "./microcompaction.ts";
 export type { PermissionAction, PermissionRequest, PermissionRule } from "./permission.ts";
 export { evaluate } from "./permission.ts";
 export type {
@@ -72,6 +79,12 @@ export type {
 } from "./process.ts";
 export { exitNotification, OutputBuffer, ProcessManager } from "./process.ts";
 export type { Profile, ProfileFactory } from "./profile.ts";
+export type { RecoveryAttempt } from "./recovery.ts";
+export {
+  isContextTooLongError,
+  isContextTooLongResult,
+  withContextRecovery,
+} from "./recovery.ts";
 export type { NewTreeEntry, SessionEntry, SessionStore, TreeEntry } from "./session.ts";
 export {
   isTreeEntry,

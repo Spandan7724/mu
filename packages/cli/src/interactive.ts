@@ -7,7 +7,14 @@ import {
   RendererRegistry,
   Terminal,
 } from "@mu/tui";
-import { Agent, type AgentOptions, optionsFromProfile, registryWithCoreCommands } from "mu";
+import {
+  Agent,
+  type AgentOptions,
+  loadMarkdownCommands,
+  optionsFromProfile,
+  registryWithCoreCommands,
+  toCommand,
+} from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
@@ -77,6 +84,10 @@ export async function runInteractive(
       },
     },
   });
+  // User- and project-authored markdown commands join the built-ins.
+  for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
+    commands.register(toCommand(markdown, (prompt) => void startRun(prompt)));
+  }
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
   const paint = () => renderer.render(app.renderBottom());

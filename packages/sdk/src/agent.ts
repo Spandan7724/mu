@@ -22,8 +22,11 @@ import {
   contextState,
   type ExtensionHost,
   evaluate,
+  isContextTooLongResult,
   type LoopConfig,
   MemorySessionStore,
+  MICROCOMPACT_THRESHOLD,
+  microcompact,
   type PermissionRequest,
   type PermissionRule,
   runLoop,
@@ -137,6 +140,7 @@ export class Agent {
   private lastContextPercent = 0;
   private readonly checkpoints = new CheckpointHistory();
   private externalEvents: AgentEvent[] = [];
+  private recoveryAttempted = false;
   private snapshottedThisTurn = false;
 
   constructor(options: AgentOptions = {}) {
@@ -432,15 +436,36 @@ export class Agent {
         this.lastContextPercent = state.percent;
 
         const auto = this.options.autoCompact !== false;
+
+        // Layer 1 first: evicting stale tool output is free, and often enough
+        // to stay under the threshold without an LLM round trip.
+        let working = transformed;
+        if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
+          const micro = microcompact(working, {
+            targetTokens: Math.floor(
+              this.model.contextWindow *
+                (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) *
+                0.8,
+            ),
+          });
+          if (micro.evicted > 0) {
+            emit({ type: "compaction_start", layer: 1 });
+            emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
+            working = micro.messages;
+            this.lastContextPercent = contextState(this.model, working).percent;
+          }
+        }
+
+        const after = contextState(this.model, working);
         const due =
           this.compactRequested ||
-          (auto && shouldCompact(state, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
-        if (!due) return transformed;
+          (auto && shouldCompact(after, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
+        if (!due) return working;
 
         this.compactRequested = false;
         emit({ type: "compaction_start", layer: 2 });
         try {
-          const result = await compact(transformed, {
+          const result = await compact(working, {
             provider: this.provider,
             model: this.model,
             ...(this.options.carryoverExtractor
@@ -469,7 +494,7 @@ export class Agent {
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
           emit({ type: "compaction_end", layer: 2, tokensFreed: 0 });
-          return transformed;
+          return working;
         }
       },
       ...(host
@@ -490,6 +515,17 @@ export class Agent {
             },
           }
         : {}),
+      // Layer 3 — reactive recovery. The provider rejected the request for
+      // being too long: compact, then let the loop try once more rather than
+      // ending the run. Exactly one attempt, so a real failure still surfaces.
+      recoverFromError: (message) => {
+        if (this.recoveryAttempted || !isContextTooLongResult(message)) return false;
+        this.recoveryAttempted = true;
+        this.compactRequested = true;
+        emit({ type: "compaction_start", layer: 3 });
+        emit({ type: "compaction_end", layer: 3, tokensFreed: 0 });
+        return true;
+      },
       shouldStopAfterTurn: (turn: TurnInfo) => {
         this.snapshottedThisTurn = false;
         this.totals = addUsage(this.totals, turn.message.usage);

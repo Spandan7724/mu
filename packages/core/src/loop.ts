@@ -77,6 +77,10 @@ export interface LoopConfig {
     signal: AbortSignal,
   ) => ToolResult | undefined | Promise<ToolResult | undefined>;
   shouldStopAfterTurn?: (turn: TurnInfo) => boolean | Promise<boolean>;
+  // Called when a turn ends in a provider error. Returning true continues the
+  // loop instead of ending the run — this is where reactive context recovery
+  // hooks on. It runs before the loop would otherwise give up.
+  recoverFromError?: (message: AssistantMessage) => boolean | Promise<boolean>;
   prepareNextTurn?: (
     turn: TurnInfo,
   ) => NextTurnDirective | undefined | Promise<NextTurnDirective | undefined>;
@@ -175,6 +179,14 @@ export async function runLoop(
 
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         await emit({ type: "turn_end", message, toolResults: [] });
+        if (
+          message.stopReason === "error" &&
+          (await currentConfig.recoverFromError?.(message)) === true
+        ) {
+          // The hook took responsibility for making the next attempt viable.
+          hasMoreToolCalls = true;
+          continue;
+        }
         return finish(message.stopReason === "aborted" ? "aborted" : "error");
       }
 

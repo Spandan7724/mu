@@ -1,20 +1,24 @@
+import { codingProfile } from "@mu/profile-coding";
 import { loadProfile, type Profile } from "mu";
 
-// Friendly profile names shipped with mu. Anything else is treated as a module
-// specifier, so users can point --profile at their own package.
-const BUILT_IN: Record<string, string> = {
-  coding: "@mu/profile-coding",
+// Profiles shipped with mu are imported statically so the bundler can see them.
+// A runtime-string import works under `bun run` but not inside a
+// `bun build --compile` binary, where it fails with "cannot find module".
+const BUILT_IN: Record<string, (options: Record<string, unknown>) => Promise<Profile>> = {
+  coding: (options) => codingProfile(options as Parameters<typeof codingProfile>[0]),
 };
 
-// The importer is bound here, in the package that actually depends on the
-// shipped profiles.
+// Anything not shipped with mu is a module specifier the user supplies, loaded
+// dynamically against this package's resolution.
 const importer = (specifier: string) => import(specifier) as Promise<Record<string, unknown>>;
 
 export async function resolveProfile(
   name: string,
   options: Record<string, unknown> = {},
 ): Promise<Profile> {
-  return loadProfile(BUILT_IN[name] ?? name, options, importer);
+  const builtIn = BUILT_IN[name];
+  if (builtIn) return builtIn(options);
+  return loadProfile(name, options, importer);
 }
 
 export const DEFAULT_PROFILE = "coding";

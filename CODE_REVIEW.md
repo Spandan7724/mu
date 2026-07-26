@@ -2,17 +2,18 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 21:38 UTC
-- **Current milestone:** Tracker claims M8 complete and points to M9. This review verifies
-  neither M6, M7, nor M8 completion because checked acceptance criteria for all three are
-  contradicted by open findings below. M9 is now changing in the worktree.
-- **Reviewed revision:** `c109c65` (`add checkpointing with shadow git provider and paired
-  undo`) plus the newly started M9 worktree. M8 findings were rechecked against the
-  committed revision with focused tests and temporary-directory reproductions.
-- **Scope this cycle:** Revalidation of M8 shadow restore/diff, checkpoint history,
-  persistence, profile/CLI wiring, commands, and failure handling; initial observation of
-  M9 process-manager work only where needed to distinguish transient validation failures.
-- **Open findings:** P0: 0 · P1: 23 · P2: 13 · P3: 1
+- **Reviewed at:** 2026-07-26 21:42 UTC
+- **Current milestone:** Tracker claims M9 complete and points to M10. This review verifies
+  neither M6, M7, M8, nor M9 completion because checked acceptance criteria for all four
+  are contradicted by open findings below. M10 is now changing in the worktree.
+- **Reviewed revision:** `82d595d` (`add background process manager with task tools and
+  exit wake`) plus the newly started M10 worktree. M8 and M9 findings were rechecked
+  against their committed revisions with focused tests and temporary-process
+  reproductions.
+- **Scope this cycle:** M8 revalidation plus M9 process manager, pipe/spawner behavior,
+  head/tail and incremental output, idle wake integration, process lifecycle, permissions,
+  and TUI task presentation.
+- **Open findings:** P0: 0 · P1: 28 · P2: 16 · P3: 1
 - **Possibly fixed:** 0
 - **Verified fixed:** 0
 - **Accepted:** 0
@@ -26,10 +27,13 @@
   89 assertions. The tests do not exercise the actual coding-profile-to-Agent route, exact
   multi-step state transitions, resume, ignored files, untracked-file diffs, restore
   failure atomicity, `/fork`, or TUI diff-cell integration.
-- `bun run ci` against the concurrently changing post-M8 worktree currently stops in
-  typecheck on newly started M9 imports/types (`ManagedProcessHandle`, `ProcessManager`,
-  and `Spawner`). This is recorded as transient in-progress M9 state, not an M8 defect or
-  a new finding.
+- Committed M9-focused process/profile/SDK/TUI tests **passed** — 90 tests, 216 assertions.
+  Focused reproductions nevertheless showed: no PTY (`stdin isatty=false`), lost
+  incremental output after tail rollover, split UTF-8 becoming three replacement
+  characters, and a child `sleep` surviving `task_kill`.
+- Full `bun run ci` has not been re-established against the current M10 worktree: an
+  intermediate run reached an in-progress Layer-1 reference before its import was added.
+  This is treated as transient M10 work, not an M9 finding.
 - Focused read-only reproductions confirmed MU-CR-001 through MU-CR-008,
   MU-CR-010, MU-CR-011, MU-CR-014, and MU-CR-019. MU-CR-009, MU-CR-012,
   MU-CR-013, and MU-CR-015 through MU-CR-018 are direct code-path or
@@ -37,6 +41,7 @@
   against committed M7 revision `433a5b2`. MU-CR-026 through MU-CR-037 are confirmed
   against committed M8 revision `c109c65`; the narrow ordinary-untracked-file portion of
   MU-CR-026 changed, but ignored paths still reproduce the underlying restore failure.
+  MU-CR-038 through MU-CR-045 are confirmed against committed M9 revision `82d595d`.
 
 ### Highest-priority unresolved issues
 
@@ -58,6 +63,12 @@
 14. MU-CR-033 — aggregate `/diff` omits newly created files.
 15. MU-CR-035 — the claimed `/fork` command does not exist.
 16. MU-CR-036 — a restore error consumes history and breaks atomic undo.
+17. MU-CR-038 — background processes are pipe-backed, not the required PTY sessions.
+18. MU-CR-039 — task exit is not connected to the live Agent and cannot wake a genuinely
+    idle/completed run.
+19. MU-CR-040 / MU-CR-043 — session shutdown never calls process cleanup, and killing the
+    shell leaves child processes alive.
+20. MU-CR-041 — incremental task output silently loses new data once the tail rolls over.
 
 `TODO.md` marks M6, M7, and M8 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
@@ -66,7 +77,9 @@ findings. Its M7 claims about real accounting, one coherent compaction transitio
 tail/carryover fidelity, and resume conflict with MU-CR-020 through MU-CR-025. Its M8
 claims about profile-backed snapshots, persisted refs, exact/atomic undo-redo,
 dirty-change preservation, aggregate diff, TUI diff rendering, and `/fork` conflict with
-MU-CR-026 through MU-CR-037. M9 should not be treated as the only remaining work. Later
+MU-CR-026 through MU-CR-037. Its M9 claims about REPL support, honest/incremental
+head+tail output, idle wake, session-scoped cleanup, and live task cells conflict with
+MU-CR-038 through MU-CR-045. M10 should not be treated as the only remaining work. Later
 milestones are not reported merely for being unfinished.
 
 ---
@@ -976,6 +989,195 @@ milestones are not reported merely for being unfinished.
 - **Tests to add:** Static deny and denied ask produce no checkpoint/history; mixed
   denied/allowed batches produce exactly one correctly labeled checkpoint before the
   allowed mutation; all-denied batches leave undo unavailable.
+
+### MU-CR-038 — P1 — Open — Background sessions are pipes, not PTYs
+
+- **Affected:** `packages/profiles/coding/src/tools/tasks.ts:11-39`,
+  `packages/profiles/coding/src/tasks.test.ts:83-99`
+- **Requirement:** `docs/ARCHITECTURE.md` §10 and M9 explicitly require PTY-backed
+  sessions so dev servers, prompts, and REPLs behave interactively.
+- **Defect:** `shellSpawner()` uses `Bun.spawn` with separate pipe stdin/stdout/stderr.
+  It allocates no pseudo-terminal. The acceptance test uses `cat`, which is a pipe echo
+  test, not a TTY-dependent REPL. The tracker acknowledges this gap while still marking
+  M9 complete.
+- **Failure scenario / impact:** Programs disable color/progress UI, change buffering,
+  decline interactive mode, or fail with “not a tty.” Full-screen/line-editing REPLs and
+  prompts cannot be driven as the milestone requires.
+- **Evidence / reproduction (2026-07-26, `82d595d`):** Starting
+  `if [ -t 0 ]; then echo tty; else echo notty; fi` through `shellSpawner` produced
+  `notty`.
+- **Recommended correction:** Add an injected PTY backend with terminal size, merged
+  ordered output, stdin, resize, exit, and process-group semantics. Keep pipes only as an
+  explicitly selected noninteractive mode.
+- **Tests to add:** Assert `isatty(0/1)` inside the child; drive a real TTY-sensitive REPL
+  and interactive prompt; resize; ANSI output; EOF and signal behavior.
+
+### MU-CR-039 — P1 — Open — Task exit cannot wake a genuinely idle Agent
+
+- **Affected:** `packages/profiles/coding/src/index.ts:29-74`,
+  `packages/sdk/src/profile.ts:8-24`,
+  `packages/sdk/src/agent.ts:175-184`, `packages/sdk/src/agent.ts:372-379`,
+  `packages/cli/src/interactive.ts:26-39`,
+  `packages/sdk/src/checkpoint.test.ts:299-324`
+- **Requirement:** M9 AC requires a process exit to wake an idle agent via the follow-up
+  queue and surface task events.
+- **Defect:** The coding profile owns `ProcessManager`, but `optionsFromProfile` and the
+  CLI retain neither the manager nor event hooks, so no production path calls
+  `agent.emitTaskEvent()` or `agent.followUp()` on exit. Even if a caller manually does so,
+  Agent only polls those arrays before `runLoop` returns. Once an ordinary run is actually
+  idle/completed, queuing data starts no new loop and emits no event. The fixture injects
+  the follow-up from a `message_end` handler while the original loop is still running,
+  so it does not test idle wake.
+- **Failure scenario / impact:** The agent starts a build/server and answers that it will
+  wait. The build exits after that response. Mu remains idle forever and the TUI never
+  receives `task_exited`; the user must poll manually.
+- **Evidence:** No production call site for `emitTaskEvent` exists. The only call is the
+  test's synchronous event-stream pump; ProcessManager's real-process test merely appends
+  a string to a local array.
+- **Recommended correction:** Define a session-owned event/wake channel that survives
+  between turns, wire ProcessManager when the profile/session is constructed, and have
+  Agent/surface start a continuation when an exit arrives after loop completion. Avoid
+  binding core to a single active stream closure.
+- **Tests to add:** Let `stream.result()` fully resolve first, then resolve a fake process;
+  assert a new continuation/model call and visible task event without user input. Repeat
+  for the exact coding-profile/interactive path and for exits during an active turn.
+
+### MU-CR-040 — P1 — Open — Session exit does not clean up owned processes or offer detach
+
+- **Affected:** `packages/core/src/process.ts:182-191`,
+  `packages/profiles/coding/src/index.ts:29-74`,
+  `packages/cli/src/interactive.ts:127-140`,
+  `packages/cli/src/headless.ts:72-104`
+- **Requirement:** M9 AC requires session-scoped lifecycle: kill owned processes by
+  default and provide an explicit escape hatch.
+- **Defect:** `ProcessManager.killAll()` exists, but no CLI/SDK session shutdown path calls
+  it. The profile manager is discarded during option conversion, leaving surfaces unable
+  to clean it up. There is also no detach flag/API; `task_kill` is termination, not an
+  escape hatch allowing a process to survive session exit. The acceptance test manually
+  invokes `killAll()` and labels that “what a surface calls,” without testing a surface.
+- **Failure scenario / impact:** Start a dev server in interactive or headless mu and exit
+  with Ctrl+C, EOF, normal completion, or an exception. The process continues consuming
+  ports/resources after its owning session is gone, with no task registry left to manage
+  it.
+- **Evidence:** Repository search at `82d595d` finds `killAll()` calls only in tests; the
+  CLI `finally` restores terminal state but performs no process cleanup.
+- **Recommended correction:** Make ProcessManager/session resources part of a disposable
+  profile/session lifecycle, invoke cleanup in every exit/error/abort path, await
+  termination with escalation, and add an explicit audited detach option.
+- **Tests to add:** Spawn a long-lived child through the real CLI lifecycle and verify it
+  dies on normal exit, SIGINT, error, and abort; verify an explicitly detached task alone
+  survives.
+
+### MU-CR-041 — P1 — Open — Incremental polling loses output after tail rollover
+
+- **Affected:** `packages/core/src/process.ts:28-76`,
+  `packages/core/src/process.test.ts:54-66`
+- **Requirement:** M9 requires bounded head+tail buffering and incremental
+  `task_output`; the gap must be reported honestly.
+- **Defect:** `readSince` uses an offset into the rendered `read()` string. Once the tail
+  reaches its limit, subsequent appends replace old tail bytes rather than lengthening
+  the rendered string. A prior offset is then at or beyond the new string length, so the
+  method returns empty text even though fresh output arrived.
+- **Failure scenario / impact:** After a chatty server fills 16 KB, every normal
+  incremental `task_output` poll can report “no new output,” hiding fresh test failures,
+  logs, or readiness signals.
+- **Evidence / reproduction (2026-07-26, `82d595d`):** With
+  `OutputBuffer(2,2)`, append `abcdef`, read since zero (offset 29), append `gh`, then read
+  since 29. The second result was empty while full output ended in `gh`. The existing
+  incremental test never crosses a truncation boundary.
+- **Recommended correction:** Track monotonic source byte positions and retained tail
+  spans separately from the presentation string. If a reader falls behind discarded
+  data, return a gap marker plus all retained new tail data and advance its cursor.
+- **Tests to add:** Repeated incremental reads across multiple tail rollovers, omission
+  digit-width changes, readers that fall behind, and exact once-only delivery of retained
+  chunks.
+
+### MU-CR-042 — P2 — Open — Output buffering corrupts split Unicode and misreports bytes
+
+- **Affected:** `packages/profiles/coding/src/tools/tasks.ts:21-27`,
+  `packages/core/src/process.ts:25-67`
+- **Requirement:** M9's buffer limits and omission notices are specified in bytes; task
+  output must remain valid text.
+- **Defect:** Each pipe chunk is decoded with a fresh non-streaming `TextDecoder`, so a
+  UTF-8 character split across reads becomes replacement characters. OutputBuffer then
+  measures/slices JavaScript UTF-16 code units while naming them bytes, and can retain an
+  unpaired surrogate at a head/tail boundary. `outputBytes` and omitted-byte counts are
+  therefore false for non-ASCII output.
+- **Failure scenario / impact:** A background compiler/test emits emoji, CJK, or any
+  multibyte text at a chunk boundary. Mu corrupts its logs; truncation can leave invalid
+  Unicode and misleading counts.
+- **Evidence / reproduction (2026-07-26, `82d595d`):** A child wrote the first two and
+  final two bytes of `😀` in separate writes; captured output was `���`. With
+  `OutputBuffer(1,1)`, appending `😀` then `a` retained a lone high surrogate and reported
+  3 “bytes” for five actual UTF-8 bytes.
+- **Recommended correction:** Keep a persistent decoder per stream with
+  `{stream:true}` and flush it at EOF. Buffer raw bytes (or track byte counts and segment
+  decoded graphemes safely) so limits, gaps, and cursors use one real unit.
+- **Tests to add:** Split every boundary of 2/3/4-byte UTF-8 sequences, invalid byte input,
+  head/tail cuts around astral characters, and byte-accurate counts.
+
+### MU-CR-043 — P1 — Open — Killing a task leaves descendant processes alive
+
+- **Affected:** `packages/profiles/coding/src/tools/tasks.ts:12-38`,
+  `packages/core/src/process.ts:169-190`
+- **Requirement:** `task_kill` and session cleanup must stop the managed background task,
+  including dev-server/build process trees.
+- **Defect:** The spawner launches `bash -c` without an isolated process group and
+  `kill()` signals only the Bash process handle. Child/grandchild processes survive. The
+  manager immediately labels the task killed without verifying tree termination.
+- **Failure scenario / impact:** `bash` starts a server, watcher, or pipeline. `/task_kill`
+  reports success and session exit appears clean, but descendants retain ports, files,
+  CPU, and credentials.
+- **Evidence / reproduction (2026-07-26, `82d595d`):** Start
+  `sleep 30 & child=$!; echo $child; wait`, capture the child PID, and call
+  `ProcessManager.kill`. The task status became `killed` while `kill(pid, 0)` confirmed
+  the child was still alive. The reproduction explicitly terminated that child afterward.
+- **Recommended correction:** Spawn each task in an isolated process group/session and
+  signal the group, with graceful timeout/escalation and platform-specific handling.
+  Mark killed only after observed termination.
+- **Tests to add:** Shell child, grandchild, pipeline, and server subprocess; assert all
+  PIDs are gone after `task_kill` and session cleanup.
+
+### MU-CR-044 — P2 — Open — TUI has no live task cells
+
+- **Affected:** `packages/tui/src/app.ts:159-174`,
+  `packages/tui/src/app.test.ts:175-181`
+- **Requirement:** M9 AC requires task cells showing live tail then collapsed summary, in
+  addition to the footer background count.
+- **Defect:** App only increments/decrements a footer number on task start/exit.
+  `task_output` is ignored by the default switch, and start/exit return no transcript
+  lines. The tracker changes the requirement to “generic cell for now” while marking the
+  docs AC complete, but generic tool cells do not consume asynchronous task events.
+- **Failure scenario / impact:** Even if event wiring is fixed, a running build's output
+  is invisible unless the model explicitly polls it; users see only `1 bg`, with no live
+  tail or completion summary.
+- **Evidence:** The only M9 TUI test asserts footer text. No test sends `task_output` or
+  checks a task transcript cell.
+- **Recommended correction:** Add session/task-keyed cell state driven by started/output/
+  exited events, bound its live tail, and replace it with a collapsed completion summary
+  on exit.
+- **Tests to add:** Interleaved tasks, streaming output, truncation/gap, success/failure/
+  killed summaries, and footer/cell consistency.
+
+### MU-CR-045 — P2 — Open — Read-only task inspection unnecessarily requires approval
+
+- **Affected:** `packages/profiles/coding/src/permissions.ts:8-17`,
+  `packages/profiles/coding/src/tools/tasks.ts:42-72`,
+  `packages/profiles/coding/src/tools/tasks.ts:97-111`
+- **Requirement:** The coding permission policy allows read/search operations and asks for
+  writes/exec; background task inspection should preserve that distinction.
+- **Defect:** The profile adds `task_output` and `task_list` but adds no allow rules for
+  them. The wildcard ask rule therefore prompts on every output poll/list even though
+  both tools are marked concurrency-safe and only read session-owned state.
+- **Failure scenario / impact:** Monitoring a build requires repeated manual approvals,
+  undermining incremental polling and making unattended follow-up behavior fail by
+  default.
+- **Evidence:** Permission evaluation uses last-match wins; neither new read-only tool has
+  a matching allow rule after the initial wildcard ask.
+- **Recommended correction:** Explicitly allow session-local `task_output` and
+  `task_list`. Keep stdin, kill, and command start behind ask rules.
+- **Tests to add:** Permission evaluation for all four task tools plus background Bash,
+  including project overrides and unattended mode.
 
 ---
 
