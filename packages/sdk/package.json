@@ -6,6 +6,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@mu/core": "workspace:*"
+    "@mu/core": "workspace:*",
+    "zod": "4.4.3",
+    "@mu/ai": "workspace:*"
   }
 }
