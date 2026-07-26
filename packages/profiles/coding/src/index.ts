@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { AgentMessage, AnyTool, Profile } from "@mu/core";
+import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingEnvironment, contextMessages, environmentMessage } from "./context.ts";
 import { CODING_PERMISSION_DEFAULTS, layerPermissions, loadProjectConfig } from "./permissions.ts";
 import { codingPrompt } from "./prompts.ts";
@@ -57,11 +58,14 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    checkpointProvider: new ShadowCheckpointProvider({ root }),
     fileState,
     todos,
   };
 }
 
+export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
+export { ShadowCheckpointProvider } from "./checkpoint.ts";
 export {
   codingEnvironment,
   contextMessages,

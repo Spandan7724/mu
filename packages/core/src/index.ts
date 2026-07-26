@@ -1,3 +1,9 @@
+export type {
+  CheckpointDiffFile,
+  CheckpointEntry,
+  CheckpointProvider,
+} from "./checkpoint.ts";
+export { CheckpointHistory } from "./checkpoint.ts";
 export type { Command, CommandContext, CommandResult } from "./commands.ts";
 export { CommandRegistry } from "./commands.ts";
 export type {

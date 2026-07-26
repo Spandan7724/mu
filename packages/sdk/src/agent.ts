@@ -16,6 +16,8 @@ import {
   type AnyTool,
   AUTO_COMPACT_THRESHOLD,
   applyCompaction,
+  CheckpointHistory,
+  type CheckpointProvider,
   compact,
   contextState,
   type ExtensionHost,
@@ -42,6 +44,9 @@ import {
 } from "./structured-output.ts";
 
 const DEFAULT_MODEL = "anthropic/claude-opus-5";
+
+// Tool names that change state and therefore deserve a checkpoint first.
+const DEFAULT_MUTATING_TOOLS = ["write", "edit", "bash"];
 
 // Per : tools reach the SDK only because the user registered them in their
 // own code, so the bare SDK allows them. Restrictive rules come from profiles.
@@ -74,6 +79,10 @@ export interface AgentOptions {
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
   autoCompact?: boolean;
   compactThreshold?: number;
+  // Snapshot/restore backing for /undo and /redo (profiles supply it).
+  checkpointProvider?: CheckpointProvider;
+  // Tools whose calls mutate state and must be snapshotted first.
+  mutatingTools?: string[];
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
@@ -126,6 +135,8 @@ export class Agent {
   private totals: Usage = zeroUsage();
   private compactRequested = false;
   private lastContextPercent = 0;
+  private readonly checkpoints = new CheckpointHistory();
+  private snapshottedThisTurn = false;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -172,6 +183,46 @@ export class Agent {
   // Requests compaction before the next LLM call (what /compact invokes).
   requestCompaction(): void {
     this.compactRequested = true;
+  }
+
+  get checkpointHistory(): CheckpointHistory {
+    return this.checkpoints;
+  }
+
+  // Undo restores the workspace AND rewinds the conversation together — either
+  // alone would leave the session lying about its own state.
+  async undo(): Promise<{ ok: boolean; message: string }> {
+    const provider = this.options.checkpointProvider;
+    if (!provider) return { ok: false, message: "This profile does not support undo." };
+    const step = this.checkpoints.popForUndo();
+    if (!step) return { ok: false, message: "Nothing to undo." };
+
+    await provider.restore(step.restoreTo.ref);
+    this.tree.fork(step.undone.entryId);
+    return { ok: true, message: `Undid ${step.undone.label ?? "the last step"}.` };
+  }
+
+  async redo(): Promise<{ ok: boolean; message: string }> {
+    const provider = this.options.checkpointProvider;
+    if (!provider) return { ok: false, message: "This profile does not support redo." };
+    const entry = this.checkpoints.popForRedo();
+    if (!entry) return { ok: false, message: "Nothing to redo." };
+
+    await provider.restore(entry.ref);
+    this.tree.fork(entry.entryId);
+    return { ok: true, message: `Redid ${entry.label ?? "the step"}.` };
+  }
+
+  // Aggregate diff for the session: first checkpoint → now.
+  async sessionDiff(): Promise<Awaited<ReturnType<CheckpointProvider["diff"]>>> {
+    const provider = this.options.checkpointProvider;
+    const first = this.checkpoints.first();
+    if (!provider || !first) return [];
+    return provider.diff(first.ref);
+  }
+
+  fork(entryId: string): void {
+    this.tree.fork(entryId);
   }
 
   get contextPercent(): number {
@@ -230,6 +281,28 @@ export class Agent {
       },
       result: () => finished,
     };
+  }
+
+  // One snapshot per turn, taken before the first mutating call in it.
+  private async snapshotIfMutating(toolName: string): Promise<void> {
+    const provider = this.options.checkpointProvider;
+    if (!provider || this.snapshottedThisTurn) return;
+    const mutating = this.options.mutatingTools ?? DEFAULT_MUTATING_TOOLS;
+    if (!mutating.includes(toolName)) return;
+
+    this.snapshottedThisTurn = true;
+    try {
+      const ref = await provider.snapshot(`before ${toolName}`);
+      if (ref) {
+        this.checkpoints.record({
+          entryId: this.tree.head ?? "",
+          ref,
+          label: toolName,
+        });
+      }
+    } catch {
+      // A checkpoint failure must not block the user's work.
+    }
   }
 
   private async execute<T>(
@@ -317,6 +390,7 @@ export class Agent {
           info.toolCall.name,
           pattern,
         );
+        await this.snapshotIfMutating(info.toolCall.name);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
         if (action === "allow") return rewritten;
         if (action === "deny") {
@@ -407,6 +481,7 @@ export class Agent {
           }
         : {}),
       shouldStopAfterTurn: (turn: TurnInfo) => {
+        this.snapshottedThisTurn = false;
         this.totals = addUsage(this.totals, turn.message.usage);
         emit({
           type: "usage_updated",

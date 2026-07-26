@@ -1,4 +1,5 @@
 import type { PromptSection } from "@mu/ai";
+import type { CheckpointProvider } from "./checkpoint.ts";
 import type { Command } from "./commands.ts";
 import type { ToolRenderer } from "./extensions.ts";
 import type { AgentMessage } from "./messages.ts";
@@ -24,6 +25,8 @@ export interface Profile {
   contextMessages?: () => Promise<AgentMessage[]> | AgentMessage[];
   // Compaction carryover: what this domain must not forget when summarizing.
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
+  // Snapshot/restore for this domain (coding: a shadow repository).
+  checkpointProvider?: CheckpointProvider;
   // Session scope key, used by file-backed stores to group sessions.
   scope?: () => Promise<string> | string;
 }

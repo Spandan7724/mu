@@ -46,6 +46,14 @@ export async function runInteractive(
       costUsd: agent.usage.costUsd ?? 0,
       contextPercent: agent.contextPercent,
     }),
+    undo: () => agent.undo(),
+    redo: () => agent.redo(),
+    diff: async () =>
+      (await agent.sessionDiff()).map((file) => ({
+        path: file.path,
+        added: file.added,
+        removed: file.removed,
+      })),
   });
 
   const renderer = new InlineRenderer(terminal);

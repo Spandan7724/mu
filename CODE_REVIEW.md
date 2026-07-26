@@ -2,31 +2,38 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 21:24 UTC
-- **Current milestone:** Tracker claims M6 complete and points to M7; this review does not
-  verify M6 completion because its checked acceptance criteria are contradicted by open
-  findings below.
-- **Reviewed revision:** `b899f43f3829` (`add tui with terminal layer, input decoder,
-  renderer and transcript cells`), clean worktree before this report update
-- **Scope this cycle:** terminal lifecycle, input decoding, width/grapheme handling,
-  ANSI-aware wrapping, inline rendering, transcript cells, and initial components
-- **Open findings:** P0: 0 · P1: 11 · P2: 7 · P3: 1
+- **Reviewed at:** 2026-07-26 21:34 UTC
+- **Current milestone:** Tracker claims M7 complete and points to M8. This review verifies
+  neither M6 nor M7 completion because checked acceptance criteria for both are
+  contradicted by open findings below.
+- **Reviewed revision:** `433a5b2` (`add context accounting and llm compaction with
+  profile carryover`) plus the newly started M8 worktree; M7 findings below were
+  reproduced against the committed state.
+- **Scope this cycle:** M6 terminal/input/rendering/integration; M7 context accounting,
+  compaction, resume/carryover/commands/usage; initial M8 checkpoint interface,
+  shadow-git provider, SDK undo/redo/history integration
+- **Open findings:** P0: 0 · P1: 19 · P2: 11 · P3: 1
 - **Possibly fixed:** 0
 - **Verified fixed:** 0
 - **Accepted:** 0
 
 ### Validation
 
-- `tsc -b`: **passed**
-- `bun test`: **passed** — 342 tests, 836 assertions
-- `bun scripts/kernel-purity.ts`: **passed**
-- `biome check .`: **passed with two warnings** — unused imports in the pre-existing
-  coding-profile test and an unused local in the new terminal test.
-- `bun run ci`: **passed** — typecheck, lint, all tests, and kernel-purity check.
+- M6 commit gate: `bun run ci` **passed** — 342 tests, 836 assertions.
+- In-progress M7 focused tests: **passed** — 27 tests, 48 assertions; `tsc -b` passed.
+  Focused multi-turn and resume reproductions below expose gaps not covered by them.
+- Current M8 worktree: `tsc -b` passed before the latest checkpoint delta;
+  `bun run ci` currently stops at two formatting/import-order errors in the in-progress
+  checkpoint files. Focused shadow-checkpoint tests: **8 passed, 2 failed** (diff sees
+  shadow metadata in the test worktree; the “user repo untouched” assertion sees
+  `.shadow-git/`). The supposedly passing created-file restore test is insufficient, as
+  shown by MU-CR-026.
 - Focused read-only reproductions confirmed MU-CR-001 through MU-CR-008,
   MU-CR-010, MU-CR-011, MU-CR-014, and MU-CR-019. MU-CR-009, MU-CR-012,
   MU-CR-013, and MU-CR-015 through MU-CR-018 are direct code-path or
-  contract/architecture contradictions.
+  contract/architecture contradictions. MU-CR-020 through MU-CR-025 remain confirmed
+  against committed M7 revision `433a5b2`; MU-CR-026 through MU-CR-031 are confirmed
+  against the current M8 worktree and must be rechecked as it changes.
 
 ### Highest-priority unresolved issues
 
@@ -37,12 +44,20 @@
 5. MU-CR-011 — concurrent permission requests overwrite each other and can deadlock a run.
 6. MU-CR-014 — a lone Esc is never flushed, so the advertised interrupt key does nothing.
 7. MU-CR-015 — input during a run starts overlapping runs instead of steering.
+8. MU-CR-020 — compaction is only a one-request transform and repeats every tool turn.
+9. MU-CR-021 — persisted compaction drops the intended tail and carryover on resume.
+10. MU-CR-022 — empty or length-truncated summaries can silently discard history.
+11. MU-CR-026 — shadow restore cannot remove files created by an agent action.
+12. MU-CR-027 / MU-CR-028 — undo/redo refs and conversation checkpoints are paired
+    incorrectly and are not persisted.
 
-`TODO.md` marks M6 complete and specifically claims streaming, Esc abort, clean
+`TODO.md` marks M6 and M7 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
-differential rendering, and profile-independent renderer behavior. Current evidence
-contradicts several of those claims, so M7 should not be treated as the only remaining
-work. Milestones M7–M10 were not reported merely for being unfinished.
+differential rendering, and profile-independent renderer behavior conflict with the M6
+findings. Its M7 claims about real accounting, one coherent compaction transition,
+tail/carryover fidelity, and resume conflict with MU-CR-020 through MU-CR-025. M8 should
+not be treated as the only remaining work. Later milestones were not reported merely for
+being unfinished.
 
 ---
 
@@ -530,6 +545,278 @@ work. Milestones M7–M10 were not reported merely for being unfinished.
 - **Tests to add:** A delayed fake-agent event script asserting visible intermediate text,
   thinking, partial tool output, bounded tails, Markdown formatting, coalescing, final
   commit without duplication, and abort mid-stream.
+
+### MU-CR-020 — P1 — Open — Compaction is not installed into live loop state and repeats
+
+- **Affected:** `packages/sdk/src/agent.ts:342-393`,
+  `packages/core/src/loop.ts:305-307`
+- **Requirement:** M7 AC requires auto-compaction to replace old context with summary +
+  carryover + tail and let the session continue coherently.
+- **Defect:** Compaction is implemented in `transformContext`, whose return value is used
+  only for one provider request. `runLoop` retains its original
+  `currentContext.messages`; neither the compacted messages nor a compaction boundary are
+  installed into that live state. Since the full context still exceeds the threshold,
+  every following LLM call in the same tool-using run summarizes it again.
+- **Failure scenario / impact:** A long prompt yields a tool call. Mu compacts before that
+  call, executes the tool, then compacts the original long history again before returning
+  the tool result. This adds latency/cost, produces inconsistent summaries, and can loop
+  on every tool step.
+- **Evidence / reproduction (2026-07-26 M7 worktree):** A tiny-window FakeProvider script
+  with one tool-use turn required four provider requests:
+  `summary1 → tool call → summary2 → final`, proving two compactions in a single run.
+- **Recommended correction:** Make compaction a loop state transition, not a stateless
+  pre-request transform. Add a control directive/API that atomically replaces
+  `currentContext.messages` with summary + tail and records the same boundary. Extension
+  context transforms may remain request-local and should not be conflated with persistent
+  transcript replacement.
+- **Tests to add:** A threshold-crossing tool-use conversation with multiple tool turns
+  must compact exactly once, and every subsequent provider request must receive the same
+  summary plus the growing post-compaction tail, never any summarized message.
+
+### MU-CR-021 — P1 — Open — Resume keeps the wrong tail and omits carryover
+
+- **Affected:** `packages/sdk/src/agent.ts:371-386`,
+  `packages/core/src/session.ts:175-194`
+- **Requirement:** M7 AC requires compaction to survive resume as summary + carryover file
+  lists + untouched recent tail only.
+- **Defect:** The compaction entry stores `firstKeptEntryId: this.tree.head`, which is the
+  most recent pre-compaction entry, not the first entry of `result.keptMessages`.
+  `SessionTree.messagesAt()` then resumes from that one ID. It also reconstructs the
+  summary from `entry.summary` alone and ignores `entry.carryover`, unlike
+  `applyCompaction()`.
+- **Failure scenario / impact:** Immediate post-compaction context keeps 30% of history,
+  but reopening the session keeps only the last old message (which can be an orphan tool
+  result) and silently drops coding carryover. Resume behavior therefore differs from the
+  running session and loses relevant work state.
+- **Evidence / reproduction (2026-07-26):** After five user/assistant pairs, manual
+  compaction planned a three-message tail. JSONL reload produced only
+  `["summary", "continue", "final"]`, dropping the two earlier tail messages. The stored
+  entry contained `modifiedFiles` and structured todos, but the resumed summary text was
+  only `"summary"`.
+- **Recommended correction:** Preserve a mapping from compacted message indices to session
+  entry IDs and write the actual first-kept ID. Rebuild the exact same typed summary
+  message in both live and resume paths, including deterministically serialized carryover.
+  Validate that the first kept entry is on the compaction entry's ancestor path.
+- **Tests to add:** Assert exact message identities/content for a multi-message tail before
+  and after JSONL round-trip; cover a tool-call/result boundary, carryover file lists and
+  todos, and malformed/missing first-kept IDs.
+
+### MU-CR-022 — P1 — Open — Empty and length-truncated summaries are accepted as successful
+
+- **Affected:** `packages/core/src/compaction.ts:129-150`,
+  `packages/core/src/compaction.ts:155-175`
+- **Requirement:** Full compaction replaces history; omitted content is lost. It must fail
+  safely rather than discard history unless a complete usable summary exists.
+- **Defect:** `compact()` rejects only `error` and `aborted`. A normal response with no text
+  returns `summary: ""`, and a `stopReason: "length"` response is accepted as a complete
+  summary. `applyCompaction()` treats an empty summary by returning only
+  `keptMessages`, not the original input, so the summarized head is silently removed.
+- **Failure scenario / impact:** A provider returns no textual block, a safety refusal, or
+  hits the output limit. Mu reports compaction success and loses decisions/task state from
+  the head of the conversation.
+- **Evidence / reproduction (2026-07-26):** Compacting ten messages with a successful
+  empty FakeProvider response yielded an empty summary and `applyCompaction()` returned
+  only the three kept messages. A `length` response containing `"partial"` was accepted as
+  the summary. The existing “empty summary leaves transcript untouched” test supplies the
+  already-trimmed tail as `keptMessages`, so it does not test preservation.
+- **Recommended correction:** Require `stopReason === "end"` and a non-empty text summary;
+  otherwise throw and keep the complete original transcript. Consider validation/minimum
+  content and an explicit retry policy for length truncation.
+- **Tests to add:** Empty content, thinking-only/tool-call/refusal output, `length`,
+  whitespace-only text, and failure fallback asserting every original message remains.
+
+### MU-CR-023 — P1 — Open — Layer-0 accounting does not use real provider context usage
+
+- **Affected:** `packages/sdk/src/agent.ts:342-352`,
+  `packages/sdk/src/agent.ts:407-418`,
+  `packages/core/src/compaction.ts:34-47`
+- **Requirement:** M7 AC says footer ctx% tracks real usage; architecture says Layer 0 uses
+  API usage plus estimation to drive thresholds.
+- **Defect:** Although `contextState()` accepts `lastUsage`, Agent never passes it, so the
+  auto threshold is always based on the character heuristic. Later `usage_updated`
+  reports only `turn.message.usage.inputTokens`, omitting normalized cache-read and
+  cache-write input tokens. `lastContextPercent` is set to the pre-request estimate and is
+  not recomputed after compaction, while the footer event uses a different formula.
+- **Failure scenario / impact:** A heavily cached Anthropic/OpenAI session can display a
+  tiny context percentage and trigger compaction too late or inconsistently; `/cost` and
+  the footer disagree about ctx%. After successful compaction, the reported percentage
+  remains at the threshold-crossing value.
+- **Evidence:** Provider adapters deliberately split uncached input from cache read/write;
+  Agent ignores those fields in the emitted context count and never supplies any Usage to
+  `contextState`.
+- **Recommended correction:** Track the most recent assistant Usage, compute context tokens
+  as uncached + cacheRead + cacheWrite (plus a conservative delta for messages added since
+  that request), and use one authoritative `ContextState` for auto-trigger, public getter,
+  and `usage_updated`. Recompute after compaction/provider completion.
+- **Tests to add:** Dominant cached input, uncached input, new tool results after the last
+  report, post-compaction percentage drop, and equality among event/footer/getter values.
+
+### MU-CR-024 — P2 — Open — Compaction cost is omitted and tokens-freed is overstated
+
+- **Affected:** `packages/core/src/compaction.ts:129-150`,
+  `packages/sdk/src/agent.ts:361-370`, `packages/sdk/src/agent.ts:407-418`
+- **Requirement:** Usage/cost tracking and budgets cover the agent's provider work;
+  `compaction_end.tokensFreed` is a factual event field.
+- **Defect:** The summarizer's assistant Usage is discarded, so session totals, max-cost
+  budgets, `/cost`, and footer cost omit every compaction request. `tokensFreed` is simply
+  the estimate of the removed head and does not subtract the newly inserted summary and
+  carryover.
+- **Failure scenario / impact:** Repeated/large compactions incur unreported spend and can
+  exceed `maxCostUsd`; UI claims more context was freed than actually was.
+- **Evidence:** `compact()` awaits the assistant result but returns no Usage; Agent only
+  adds normal turn usage in `shouldStopAfterTurn`. The calculation subtracts
+  `estimateTokens([])`, always zero.
+- **Recommended correction:** Return compactor Usage, add it to session totals and budget
+  checks, and compute freed tokens as `old-context estimate - compacted-context estimate`
+  (clamped at zero), or use provider counts when available.
+- **Tests to add:** Exact totals and budget crossing with a priced compaction response;
+  summary/carryover large enough to materially reduce the freed count.
+
+### MU-CR-025 — P2 — Open — Structured carryover is stringified as `[object Object]`
+
+- **Affected:** `packages/core/src/compaction.ts:155-186`,
+  `packages/profiles/coding/src/index.ts:48-53`
+- **Requirement:** M7 coding carryover must preserve read/modified files and task state
+  coherently.
+- **Defect:** `formatCarryover()` joins arrays with `value.join(", ")`. Coding carryover's
+  `todos` is an array of objects, so immediate compacted context renders every task as
+  `[object Object]`. Non-array nested objects are also coerced with `String(value)`.
+- **Failure scenario / impact:** The post-compaction model loses todo content/status even
+  before resume; arbitrary profile carryover becomes ambiguous or unusable.
+- **Evidence:** Direct comparison of `codingProfile().carryoverExtractor` with
+  `formatCarryover`.
+- **Recommended correction:** Define a JSON-serializable carryover contract and serialize
+  it deterministically (or let each profile provide model-visible carryover text alongside
+  structured persistence). Preserve nesting and escape delimiters.
+- **Tests to add:** Coding todos with multiple statuses, nested objects, strings containing
+  commas/newlines, empty values, and exact live/resume equivalence.
+
+### MU-CR-026 — P1 — Open — Shadow restore does not remove files created after a checkpoint
+
+- **Affected:** `packages/profiles/coding/src/checkpoint.ts:123-132`,
+  `packages/profiles/coding/src/checkpoint.test.ts:38-52`
+- **Requirement:** M8 AC requires `/undo` to restore files and the user's dirty state
+  faithfully.
+- **Defect:** `git checkout <ref> -- .` restores paths present in the target tree but does
+  not delete worktree paths absent from it. The following `git reset <ref> -- .` only
+  updates the shadow index; a file created after the checkpoint remains as untracked
+  content. The test named “restore removes files created after the snapshot” never asserts
+  that `added-later.txt` is absent.
+- **Failure scenario / impact:** `write` creates a source file or `bash` generates several
+  files. `/undo` reports success but all created files remain, leaving workspace and
+  conversation out of sync.
+- **Evidence / reproduction (2026-07-26 M8 worktree):** In a temporary worktree,
+  snapshot `keep.txt`, create `added.txt`, then `restore(ref)`. `readdir` still returned
+  `["keep.txt", ".shadow-git", "added.txt"]`; `access("added.txt")` succeeded.
+- **Recommended correction:** Compute the exact path delta and remove only paths that were
+  introduced after the target snapshot, using NUL-delimited literal pathspecs and explicit
+  safety checks. Do not run a broad clean that could delete ignored/user-owned files.
+  Restore tracked content and deletions atomically as far as possible.
+- **Tests to add:** Assert actual absence of one and nested newly created files, renamed
+  files, ignored files that must remain, odd filenames, and a mix of pre-existing dirty
+  files plus agent-created files.
+
+### MU-CR-027 — P1 — Open — CheckpointHistory skips states and cannot redo an action
+
+- **Affected:** `packages/core/src/checkpoint.ts:31-63`,
+  `packages/sdk/src/agent.ts:283-305` (snapshot occurs before tool execution)
+- **Requirement:** M8 says snapshots occur before mutating batches and `/undo`/`/redo`
+  reverse each other.
+- **Defect:** History records pre-action refs. `popForUndo()` pops the last pre-action
+  checkpoint but returns the *previous* ref as `restoreTo`. With checkpoints A(state 0),
+  B(state 1), C(state 2) and current state 3, undo should restore C but restores B,
+  removing two actions. `popForRedo()` returns C, which restores state 2 rather than the
+  missing post-action state 3; the implementation never captured a ref capable of redoing
+  the last action.
+- **Failure scenario / impact:** After two or more mutating turns, one `/undo` reverts too
+  much. `/redo` only advances to a pre-action state and cannot recreate the action that was
+  just undone.
+- **Evidence:** Direct state-machine analysis of `record`, `popForUndo`, `popForRedo`, and
+  the pre-execution call to `snapshotIfMutating`.
+- **Recommended correction:** Represent each reversible step with explicit before and
+  after refs (or reversible patches) plus before/after conversation IDs. Move a cursor
+  through immutable steps; undo restores `before`, redo restores `after`. A fresh action
+  truncates only the forward branch.
+- **Tests to add:** Three distinct filesystem states with consecutive undo/undo/redo/redo,
+  asserting exact content and conversation head after every operation; fresh mutation
+  after undo invalidates only redo.
+
+### MU-CR-028 — P1 — Open — Checkpoint refs are not persisted and undo rewinds to an invalid node
+
+- **Affected:** `packages/sdk/src/agent.ts:185-215`,
+  `packages/sdk/src/agent.ts:283-305`,
+  `packages/core/src/session.ts:119-137`
+- **Requirement:** M8 AC requires `checkpointRef` on session entries, paired
+  conversation/workspace rewind, and trustworthy resume.
+- **Defect:** Snapshot refs exist only in the Agent's in-memory `CheckpointHistory`; no
+  session message is written or updated with `checkpointRef`. The recorded `entryId` is
+  `tree.head` after the assistant tool-call message has already been appended. Undo forks
+  to that same assistant entry, retaining tool calls while removing their results instead
+  of rewinding to the pre-step parent. Reloading a session reconstructs no history at all.
+- **Failure scenario / impact:** Immediate undo leaves a provider-invalid orphan tool call
+  in context. After restart `/undo`, `/redo`, and `/diff` have no checkpoint history even
+  though shadow commits exist.
+- **Evidence:** No call passes a ref to `SessionTree.appendMessage(..., checkpointRef)`;
+  `CheckpointHistory` has no reconstruction path. Event ordering appends the assistant
+  message before `beforeToolCall` snapshots and records `tree.head`.
+- **Recommended correction:** Persist the ref on the precise session step and record both
+  the pre-step conversation parent and post-step node. Rebuild checkpoint history from the
+  active JSONL branch on resume. Undo must validate the target before changing either
+  workspace or conversation and avoid orphan tool protocol messages.
+- **Tests to add:** Inspect JSONL for refs, resume a fresh Agent and undo/redo, assert
+  provider-valid message pairing after rewind, and branch/fork histories.
+
+### MU-CR-029 — P2 — Open — Checkpoint failures are silently ignored while mutations proceed
+
+- **Affected:** `packages/sdk/src/agent.ts:283-305`
+- **Requirement:** Checkpointing exists to make mutating steps recoverable; errors must not
+  produce misleading guarantees.
+- **Defect:** Snapshot exceptions and undefined refs are swallowed. The mutating tool then
+  runs normally, no event or warning is emitted, and `snapshottedThisTurn` remains true so
+  later mutations in the turn do not retry.
+- **Failure scenario / impact:** Disk-full, missing-git, permissions, or repository
+  corruption disables undo for a write while the UI continues as if the step were
+  checkpointed.
+- **Recommended correction:** Emit a typed/user-visible checkpoint failure and define a
+  policy: block mutation by default or require an explicit proceed-without-undo choice.
+  At minimum do not mark the turn snapshotted until a valid ref exists.
+- **Tests to add:** Throwing/undefined provider, retry in the same turn, surface behavior,
+  and a mutation proving no false history entry or success claim.
+
+### MU-CR-030 — P1 — Open — Sanitized workspace keys can collide and share shadow history
+
+- **Affected:** `packages/profiles/coding/src/checkpoint.ts:62-67`
+- **Requirement:** Shadow state must be isolated per workspace and never restore unrelated
+  user data.
+- **Defect:** The default directory key replaces every non-alphanumeric run with `-`.
+  Distinct roots such as `/tmp/a-b/c` and `/tmp/a/b-c` map to the same key. Both providers
+  then use one Git directory with different work trees.
+- **Failure scenario / impact:** Snapshots from one project become ancestors of another;
+  diff/restore can introduce paths/content from the wrong workspace or erase files based
+  on foreign history. This is a cross-project confidentiality and integrity issue.
+- **Recommended correction:** Key by a collision-resistant hash of the canonical absolute
+  root, optionally prefixed with a readable basename. Store and validate the canonical
+  root in shadow metadata before every operation.
+- **Tests to add:** Known sanitization collisions and symlink/case-normalization variants;
+  assert separate repositories and refusal when metadata/root disagree.
+
+### MU-CR-031 — P2 — Open — SDK hard-codes coding tool names as the mutation contract
+
+- **Affected:** `packages/sdk/src/agent.ts:45-48`,
+  `packages/sdk/src/agent.ts:283-291`
+- **Requirement:** Profiles bundle domain behavior; SDK/custom profiles must support
+  arbitrary tools without coding assumptions.
+- **Defect:** The bare Agent defaults mutation detection to `write`, `edit`, and `bash`.
+  A custom profile's mutating tool (database/API/computer-use) is not checkpointed, while
+  a read-only command named `bash` is. The coding profile currently does not explicitly
+  supply this policy.
+- **Failure scenario / impact:** Non-coding users configure a CheckpointProvider and
+  believe undo covers their state-changing tools, but no snapshot is taken.
+- **Recommended correction:** Put mutation/checkpoint metadata on the Tool contract or in
+  the profile bundle (prefer a predicate over parsed args where needed). The SDK should
+  have no name-based domain default.
+- **Tests to add:** Custom mutating tool with a non-coding name, argument-dependent
+  mutation, and a coding profile asserting its own policy.
 
 ---
 
