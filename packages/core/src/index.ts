@@ -1,3 +1,5 @@
+export type { Command, CommandContext, CommandResult } from "./commands.ts";
+export { CommandRegistry } from "./commands.ts";
 export type {
   AgentEndReason,
   AgentEvent,
@@ -5,6 +7,18 @@ export type {
   EventSink,
   StreamDelta,
 } from "./events.ts";
+export type {
+  Extension,
+  ExtensionAPI,
+  InputDirective,
+  LifecycleEvent,
+  ToolCallDirective,
+  ToolCallHookInfo,
+  ToolRenderer,
+  ToolResultDirective,
+  ToolResultHookInfo,
+} from "./extensions.ts";
+export { ExtensionHost } from "./extensions.ts";
 export type {
   AfterToolCallInfo,
   AgentContext,

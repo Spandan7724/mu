@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
+import { Agent } from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
+import { linesFrom, runRpc } from "./rpc.ts";
 
 const VERSION = "0.0.1";
 
@@ -26,9 +28,33 @@ async function main(): Promise<number> {
       return 0;
     case "headless":
       return runHeadless(args, {}, io);
-    case "rpc":
-      io.stderr("mu: --rpc is not implemented yet (M4)\n");
-      return EXIT.usage;
+    case "rpc": {
+      // Permission asks are forwarded to the embedder, which answers with a
+      // permission_reply op; nothing is auto-denied in RPC mode.
+      const pending = new Map<string, (outcome: "allow" | "deny") => void>();
+      const agent = new Agent({
+        ...(args.model ? { model: args.model } : {}),
+        permissions: args.allowAll
+          ? [{ permission: "*", pattern: "*", action: "allow" as const }]
+          : [{ permission: "*", pattern: "*", action: "ask" as const }],
+        onPermission: (request) =>
+          new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
+      });
+      await runRpc(
+        { write: io.stdout, lines: linesFrom(process.stdin) },
+        {
+          agent,
+          resolvePermission: (requestId, outcome) => {
+            const resolve = pending.get(requestId);
+            if (!resolve) return false;
+            pending.delete(requestId);
+            resolve(outcome);
+            return true;
+          },
+        },
+      );
+      return 0;
+    }
     default:
       io.stderr("mu: the interactive terminal app is not implemented yet (M6). Use -p for now.\n");
       return EXIT.usage;

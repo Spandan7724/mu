@@ -14,6 +14,7 @@ import {
   type AgentEvent,
   type AgentMessage,
   type AnyTool,
+  type ExtensionHost,
   evaluate,
   type LoopConfig,
   MemorySessionStore,
@@ -60,6 +61,9 @@ export interface AgentOptions {
   sessionId?: string;
   thinkingLevel?: ThinkingLevel;
   apiKey?: string;
+  // Extensions registered on this host observe events and may block/modify
+  // tool calls, results and the pre-LLM context.
+  extensions?: ExtensionHost;
 }
 
 export interface RunResult {
@@ -217,7 +221,11 @@ export class Agent {
         : { role: "user", content: prompt, timestamp: Date.now() };
 
     let captured: T | undefined;
-    const tools: AnyTool[] = [...(this.options.tools ?? [])];
+    const host = this.options.extensions;
+    const tools: AnyTool[] = [
+      ...(this.options.tools ?? []),
+      ...(host ? [...host.tools.values()] : []),
+    ];
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
 
     if (opts?.output) {
@@ -260,13 +268,28 @@ export class Agent {
       beforeToolCall: async (info) => {
         // The structured-output tool is internal plumbing, never gated.
         if (info.toolCall.name === STRUCTURED_OUTPUT_TOOL) return undefined;
-        const pattern = JSON.stringify(info.args);
+
+        let args = info.args;
+        if (host) {
+          const directive = await host.runToolCallHooks({
+            toolName: info.toolCall.name,
+            toolCallId: info.toolCall.id,
+            args,
+          });
+          if (directive?.block) {
+            return { block: true, reason: directive.reason ?? "Blocked by an extension" };
+          }
+          if (directive?.args) args = directive.args;
+        }
+
+        const pattern = JSON.stringify(args);
         const action = evaluate(
           this.options.permissions ?? DEFAULT_PERMISSIONS,
           info.toolCall.name,
           pattern,
         );
-        if (action === "allow") return undefined;
+        const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
+        if (action === "allow") return rewritten;
         if (action === "deny") {
           return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
         }
@@ -284,12 +307,31 @@ export class Agent {
           : "deny";
         emit({ type: "permission_resolved", requestId: request.id, outcome });
         return outcome === "allow"
-          ? undefined
+          ? rewritten
           : {
               block: true,
               reason: `Permission denied for ${info.toolCall.name}`,
             };
       },
+      ...(host
+        ? {
+            afterToolCall: async (info) => {
+              const directive = await host.runToolResultHooks({
+                toolName: info.toolCall.name,
+                toolCallId: info.toolCall.id,
+                result: info.result,
+                isError: info.isError,
+              });
+              if (!directive) return undefined;
+              return {
+                ...info.result,
+                ...(directive.content ? { content: directive.content } : {}),
+                ...(directive.isError !== undefined ? { isError: directive.isError } : {}),
+              };
+            },
+            transformContext: (messages) => host.runContextHooks(messages),
+          }
+        : {}),
       shouldStopAfterTurn: (turn: TurnInfo) => {
         this.totals = addUsage(this.totals, turn.message.usage);
         emit({
@@ -313,6 +355,7 @@ export class Agent {
       config,
       (event) => {
         emit(event);
+        host?.emit(event);
         if (event.type === "message_end") this.tree.appendMessage(event.message);
       },
       this.controller.signal,

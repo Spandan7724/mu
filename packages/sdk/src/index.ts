@@ -5,16 +5,24 @@ export type {
   AgentEvent,
   AgentMessage,
   AnyTool,
+  Command,
+  CommandContext,
+  CommandResult,
   CustomMessage,
+  Extension,
+  ExtensionAPI,
   PermissionRequest,
   PermissionRule,
   SessionStore,
   StreamDelta,
   Tool,
+  ToolRenderer,
   UserContent,
 } from "@mu/core";
 export {
+  CommandRegistry,
   customMessage,
+  ExtensionHost,
   errorResult,
   MemorySessionStore,
   SessionTree,
@@ -25,8 +33,13 @@ export type { AgentOptions, HaltReason, RunResult } from "./agent.ts";
 export { Agent } from "./agent.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
+export { coreCommands, registryWithCoreCommands } from "./commands.ts";
+export type { LoadOptions, LoadReport } from "./extension-loader.ts";
+export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";
 export type { FileSessionStoreOptions } from "./file-store.ts";
 export { FileSessionStore } from "./file-store.ts";
+export type { HookEvent, HookRunner, HookSpec } from "./shell-hooks.ts";
+export { shellHooksExtension } from "./shell-hooks.ts";
 export {
   STRUCTURED_OUTPUT_TOOL,
   structuredOutputPrompt,
