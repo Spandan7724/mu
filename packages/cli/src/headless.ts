@@ -1,5 +1,6 @@
-import { Agent, type AgentOptions, type HaltReason } from "mu";
+import { Agent, type AgentOptions, type HaltReason, optionsFromProfile } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
 // 130 aborted — so callers can branch on how a run ended.
@@ -28,8 +29,25 @@ export async function runHeadless(
     return EXIT.usage;
   }
 
+  // The profile supplies the toolset, prompt and — importantly — the
+  // restrictive permission defaults the bare SDK does not have.
+  let resolved: AgentOptions = options;
+  if (!options.tools) {
+    try {
+      const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+      resolved = await optionsFromProfile(
+        profile,
+        args.model ?? "anthropic/claude-opus-5",
+        options,
+      );
+    } catch (error) {
+      io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
+      return EXIT.usage;
+    }
+  }
+
   const agent = new Agent({
-    ...options,
+    ...resolved,
     ...(args.model ? { model: args.model } : {}),
     ...(args.maxTurns !== undefined || args.maxCostUsd !== undefined
       ? {
@@ -39,9 +57,15 @@ export async function runHeadless(
           },
         }
       : {}),
-    // Headless is unattended: asks resolve to deny unless --allow-all is passed.
+    // Headless is unattended: profile "ask" rules resolve to deny (no callback)
+    // unless --allow-all is passed.
     ...(args.allowAll
-      ? { permissions: [{ permission: "*", pattern: "*", action: "allow" as const }] }
+      ? {
+          permissions: [
+            ...(resolved.permissions ?? []),
+            { permission: "*", pattern: "*", action: "allow" as const },
+          ],
+        }
       : {}),
   });
 

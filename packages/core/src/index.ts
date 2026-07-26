@@ -40,6 +40,7 @@ export {
 } from "./messages.ts";
 export type { PermissionAction, PermissionRequest, PermissionRule } from "./permission.ts";
 export { evaluate } from "./permission.ts";
+export type { Profile, ProfileFactory } from "./profile.ts";
 export type { NewTreeEntry, SessionEntry, SessionStore, TreeEntry } from "./session.ts";
 export {
   isTreeEntry,

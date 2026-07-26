@@ -61,6 +61,9 @@ export interface AgentOptions {
   sessionId?: string;
   thinkingLevel?: ThinkingLevel;
   apiKey?: string;
+  // Typed context messages seeded once at the start of a session (profiles use
+  // this for environment + project instructions — never a system-prompt edit).
+  initialMessages?: AgentMessage[];
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
@@ -237,9 +240,14 @@ export class Agent {
       systemPrompt.push({ text: structuredOutputPrompt(), dynamic: true });
     }
 
+    const seeded = this.tree.messagesAt();
+    const initial =
+      seeded.length === 0 && this.options.initialMessages ? this.options.initialMessages : [];
+    for (const message of initial) this.tree.appendMessage(message);
+
     const context: AgentContext = {
       systemPrompt,
-      messages: this.tree.messagesAt(),
+      messages: [...initial, ...seeded],
       ...(tools.length > 0 ? { tools } : {}),
     };
 

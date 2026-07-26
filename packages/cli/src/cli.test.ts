@@ -58,7 +58,9 @@ describe("parseArgs", () => {
 });
 
 describe("runHeadless", () => {
-  const base = (provider: FakeProvider) => ({ provider, model: fakeModel });
+  // Passing tools explicitly opts out of profile loading, so these tests
+  // exercise the headless plumbing rather than the coding profile.
+  const base = (provider: FakeProvider) => ({ provider, model: fakeModel, tools: [] });
 
   test("streams assistant text and exits 0", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "the answer" }] }]);

@@ -38,8 +38,10 @@
       "name": "@mu/profile-coding",
       "version": "0.0.1",
       "dependencies": {
+        "@mu/ai": "workspace:*",
         "@mu/core": "workspace:*",
         "mu": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/sdk": {
