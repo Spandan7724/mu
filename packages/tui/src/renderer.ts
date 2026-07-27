@@ -10,7 +10,7 @@ export class FullScreenRenderer {
   private previous: string[] = [];
   private viewportTop = 0;
   private frameTimer: ReturnType<typeof setTimeout> | undefined;
-  private pending: string[] | undefined;
+  private pending: (() => string[]) | undefined;
   private lastWidth: number;
   private lastHeight: number;
 
@@ -23,13 +23,21 @@ export class FullScreenRenderer {
   }
 
   render(lines: string[]): void {
-    this.pending = lines;
+    this.requestRender(() => lines);
+  }
+
+  // Defers both component layout and terminal painting until the next frame.
+  // Streaming providers can emit many deltas inside one frame interval; doing
+  // the expensive layout before coalescing would still parse and wrap every
+  // intermediate state even though none of them can reach the terminal.
+  requestRender(produceLines: () => string[]): void {
+    this.pending = produceLines;
     if (this.frameTimer) return;
     this.frameTimer = setTimeout(() => {
       this.frameTimer = undefined;
-      const next = this.pending;
+      const produceNext = this.pending;
       this.pending = undefined;
-      if (next) this.paint(next);
+      if (produceNext) this.paint(produceNext());
     }, this.throttleMs);
   }
 

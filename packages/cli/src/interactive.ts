@@ -520,7 +520,10 @@ export async function runInteractive(
 
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
-  const paint = () => renderer.render(app.renderScreen());
+  // Layout is intentionally deferred into the renderer's throttled frame.
+  // Provider streams often deliver several deltas in one frame interval; an
+  // eager app.renderScreen() here would parse and wrap every discarded state.
+  const paint = () => renderer.requestRender(() => app.renderScreen());
   const commitLines = (lines: string[]) => {
     app.appendTranscript(lines);
     paint();

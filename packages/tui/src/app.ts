@@ -95,6 +95,57 @@ const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
 const EXPANDED_TOOL_ROWS = 24;
 const PENDING_INPUT_ROWS = 3;
+const MIN_STREAMING_PREVIEW_CHARS = 8_000;
+const MAX_STREAMING_PREVIEW_CHARS = 16_000;
+const STREAMING_VIEWPORTS = 2;
+
+interface MarkdownFence {
+  marker: string;
+  language?: string;
+}
+
+// A completed response is always rendered in full. While it is still growing,
+// cap the expensive Markdown/syntax-highlight pass to a few viewports. If the
+// retained suffix is inside a fence, recreate that fence so live code keeps
+// its language-aware highlighting.
+function streamingMarkdownPreview(
+  text: string,
+  maxChars: number,
+): { text: string; omittedChars: number } {
+  if (text.length <= maxChars) return { text, omittedChars: 0 };
+
+  let start = text.length - maxChars;
+  const nextLine = text.indexOf("\n", start);
+  if (nextLine !== -1) start = nextLine + 1;
+
+  const prefix = text.slice(0, start);
+  const tail = text.slice(start);
+  const fence = openFenceAtEnd(prefix);
+  const context = fence ? `${fence.marker}${fence.language ? fence.language : ""}\n${tail}` : tail;
+  return {
+    text: `… ${start.toLocaleString()} earlier characters retained while streaming\n\n${context}`,
+    omittedChars: start,
+  };
+}
+
+function openFenceAtEnd(text: string): MarkdownFence | undefined {
+  let open: MarkdownFence | undefined;
+  for (const line of text.split("\n")) {
+    if (!open) {
+      const match = /^\s*(`{3,}|~{3,})\s*([^ ]*)?.*$/.exec(line);
+      if (match?.[1]) {
+        open = {
+          marker: match[1],
+          ...(match[2]?.trim() ? { language: match[2].trim() } : {}),
+        };
+      }
+      continue;
+    }
+    const close = new RegExp(`^\\s*${open.marker[0]}{${open.marker.length},}\\s*$`);
+    if (close.test(line)) open = undefined;
+  }
+  return open;
+}
 
 class LiveToolOutput {
   private lines: string[] = [];
@@ -146,8 +197,16 @@ type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
   | { kind: "user"; text: string }
-  | { kind: "assistant"; message: AssistantMessage }
-  | { kind: "tool"; info: ToolRenderInfo };
+  | {
+      kind: "assistant";
+      message: AssistantMessage;
+      rendered?: { width: number; lines: string[] };
+    }
+  | {
+      kind: "tool";
+      info: ToolRenderInfo;
+      rendered?: { width: number; expanded: boolean; lines: string[] };
+    };
 
 export class App {
   readonly editor = new Editor();
@@ -164,10 +223,27 @@ export class App {
   private pendingTools = new Map<string, PendingTool>();
   private pendingInputs: PendingInput[] = [];
   private transcript: TranscriptItem[] = [];
+  private transcriptVersion = 0;
+  private transcriptCache:
+    | {
+        version: number;
+        width: number;
+        expanded: boolean;
+        rows: string[];
+      }
+    | undefined;
   private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
+  private streamingCache:
+    | {
+        text: string;
+        width: number;
+        height: number;
+        rows: string[];
+      }
+    | undefined;
   private lastError: string | undefined;
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
@@ -285,12 +361,14 @@ export class App {
       case "message_start":
         if (event.message.role === "assistant") {
           this.streaming = "";
+          this.streamingCache = undefined;
         }
         return [];
 
       case "message_update":
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
+          this.streamingCache = undefined;
         } else if (
           event.delta.kind === "toolcall_start" ||
           event.delta.kind === "toolcall_delta" ||
@@ -337,16 +415,23 @@ export class App {
                 )
               : pendingIndex;
           if (deliveredIndex !== -1) this.pendingInputs.splice(deliveredIndex, 1);
-          this.transcript.push({ kind: "user", text });
+          this.pushTranscript({ kind: "user", text });
           return [...userCell(text, this.ctx), ""];
         }
         if (message.role === "assistant") {
           this.streaming = undefined;
+          this.streamingCache = undefined;
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
           const lines = this.assistantRows(message);
-          if (lines.length > 0) this.transcript.push({ kind: "assistant", message });
+          if (lines.length > 0) {
+            this.pushTranscript({
+              kind: "assistant",
+              message,
+              rendered: { width: this.options.width, lines },
+            });
+          }
           return lines.length > 0 ? [...lines, ""] : [];
         }
         return [];
@@ -372,8 +457,17 @@ export class App {
           args: pending?.args ?? {},
           result: event.result,
         };
-        this.transcript.push({ kind: "tool", info });
-        return this.registry.render(info, this.ctx);
+        const lines = this.registry.render(info, this.ctx);
+        this.pushTranscript({
+          kind: "tool",
+          info,
+          rendered: {
+            width: this.options.width,
+            expanded: false,
+            lines,
+          },
+        });
+        return lines;
       }
 
       case "permission_asked":
@@ -495,14 +589,17 @@ export class App {
   }
 
   appendTranscript(lines: string[]): void {
-    if (lines.length > 0) this.transcript.push({ kind: "lines", lines: [...lines] });
+    if (lines.length > 0) this.pushTranscript({ kind: "lines", lines: [...lines] });
   }
 
   replaceTranscript(messages: readonly AgentMessage[], prefix: string[] = []): void {
     this.transcript = prefix.length > 0 ? [{ kind: "lines", lines: [...prefix] }] : [];
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
     this.pendingTools.clear();
     this.pendingInputs = [];
     this.streaming = undefined;
+    this.streamingCache = undefined;
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
     for (const message of messages) {
@@ -511,12 +608,17 @@ export class App {
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("");
-        if (text) this.transcript.push({ kind: "user", text });
+        if (text) this.pushTranscript({ kind: "user", text });
         continue;
       }
       if (message.role === "assistant") {
-        if (this.assistantRows(message).length > 0) {
-          this.transcript.push({ kind: "assistant", message });
+        const lines = this.assistantRows(message);
+        if (lines.length > 0) {
+          this.pushTranscript({
+            kind: "assistant",
+            message,
+            rendered: { width: this.options.width, lines },
+          });
         }
         for (const block of message.content) {
           if (block.type === "toolCall") {
@@ -527,7 +629,7 @@ export class App {
       }
       if (message.role === "toolResult") {
         const call = calls.get(message.toolCallId);
-        this.transcript.push({
+        this.pushTranscript({
           kind: "tool",
           info: {
             toolName: call?.toolName ?? message.toolName,
@@ -541,11 +643,11 @@ export class App {
   }
 
   renderScreen(): string[] {
-    return this.toTerminalRows([...this.transcriptRows(), ...this.renderManaged()]);
+    return [...this.transcriptRows(), ...this.toTerminalRows(this.renderManaged())];
   }
 
   renderTranscript(): string[] {
-    return this.toTerminalRows(this.transcriptRows());
+    return [...this.transcriptRows()];
   }
 
   renderBottom(): string[] {
@@ -553,12 +655,49 @@ export class App {
   }
 
   private transcriptRows(): string[] {
-    return this.transcript.flatMap((item) => {
+    const cached = this.transcriptCache;
+    if (
+      cached?.version === this.transcriptVersion &&
+      cached.width === this.options.width &&
+      cached.expanded === this.toolOutputExpanded
+    ) {
+      return cached.rows;
+    }
+    const logical = this.transcript.flatMap((item) => {
       if (item.kind === "lines") return item.lines;
       if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
-      if (item.kind === "assistant") return [...this.assistantRows(item.message), ""];
-      return this.registry.render({ ...item.info, expanded: this.toolOutputExpanded }, this.ctx);
+      if (item.kind === "assistant") {
+        if (item.rendered?.width !== this.options.width) {
+          item.rendered = {
+            width: this.options.width,
+            lines: this.assistantRows(item.message),
+          };
+        }
+        return [...item.rendered.lines, ""];
+      }
+      if (
+        item.rendered?.width !== this.options.width ||
+        item.rendered.expanded !== this.toolOutputExpanded
+      ) {
+        item.rendered = {
+          width: this.options.width,
+          expanded: this.toolOutputExpanded,
+          lines: this.registry.render(
+            { ...item.info, expanded: this.toolOutputExpanded },
+            this.ctx,
+          ),
+        };
+      }
+      return item.rendered.lines;
     });
+    const rows = this.toTerminalRows(logical);
+    this.transcriptCache = {
+      version: this.transcriptVersion,
+      width: this.options.width,
+      expanded: this.toolOutputExpanded,
+      rows,
+    };
+    return rows;
   }
 
   // The live activity and composer region, rebuilt from state on every paint.
@@ -708,7 +847,34 @@ export class App {
 
   private streamingRows(): string[] {
     if (!this.streaming) return [];
-    return this.toTerminalRows(agentCell(this.streaming, this.ctx));
+    const height = this.options.height ?? 24;
+    const cached = this.streamingCache;
+    if (
+      cached?.text === this.streaming &&
+      cached.width === this.options.width &&
+      cached.height === height
+    ) {
+      return cached.rows;
+    }
+    const maxChars = Math.max(
+      MIN_STREAMING_PREVIEW_CHARS,
+      Math.min(MAX_STREAMING_PREVIEW_CHARS, this.options.width * height * STREAMING_VIEWPORTS),
+    );
+    const preview = streamingMarkdownPreview(this.streaming, maxChars);
+    const rows = this.toTerminalRows(agentCell(preview.text, this.ctx));
+    this.streamingCache = {
+      text: this.streaming,
+      width: this.options.width,
+      height,
+      rows,
+    };
+    return rows;
+  }
+
+  private pushTranscript(item: TranscriptItem): void {
+    this.transcript.push(item);
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
   }
 
   private assistantRows(message: AssistantMessage): string[] {
@@ -763,6 +929,7 @@ export class App {
 
     if (key.ctrl && key.name === "o") {
       this.toolOutputExpanded = !this.toolOutputExpanded;
+      this.transcriptCache = undefined;
       return;
     }
 

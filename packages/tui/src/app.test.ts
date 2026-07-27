@@ -1250,6 +1250,33 @@ describe("full-screen renderer", () => {
     expect(written.length).toBe(1);
     expect(written[0]).toContain("3");
   });
+
+  test("requested renders defer expensive frame production until after coalescing", async () => {
+    const written: string[] = [];
+    const terminal = new Terminal({
+      write: (data) => written.push(data),
+      columns: 80,
+      rows: 24,
+      isTty: true,
+    });
+    const renderer = new FullScreenRenderer(terminal, 10);
+    let produced = 0;
+    renderer.requestRender(() => {
+      produced++;
+      return ["discarded"];
+    });
+    renderer.requestRender(() => {
+      produced++;
+      return ["latest"];
+    });
+
+    expect(produced).toBe(0);
+    await Bun.sleep(25);
+    expect(produced).toBe(1);
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain("latest");
+    expect(written[0]).not.toContain("discarded");
+  });
 });
 
 describe("@-file mention popup", () => {
@@ -1599,6 +1626,85 @@ describe("live streaming region", () => {
     expect(live.some((line) => line.includes("word-79"))).toBe(true);
     expect(final.length).toBeGreaterThan(0);
     expect(screen.filter((line) => line.startsWith("  mu  "))).toHaveLength(1);
+  });
+
+  test("very large live Markdown renders a bounded tail and completes in full", () => {
+    const { app } = harness();
+    const code = [
+      "```ts",
+      "const firstGeneratedLine = 0;",
+      ...Array.from(
+        { length: 2_000 },
+        (_, index) => `const generatedValue${index}: number = ${index};`,
+      ),
+      "const finalGeneratedLine = true;",
+      "```",
+    ].join("\n");
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({ type: "message_start", message: assistant("") });
+    app.handleEvent({
+      type: "message_update",
+      message: assistant(code),
+      delta: { kind: "text_delta", contentIndex: 0, text: code },
+    });
+
+    const live = app.renderScreen().map(stripAnsi);
+    expect(live.join("\n")).toContain("earlier characters retained while streaming");
+    expect(live.join("\n")).not.toContain("firstGeneratedLine");
+    expect(live.join("\n")).toContain("finalGeneratedLine");
+    expect(live.length).toBeLessThan(1_000);
+
+    app.handleEvent({ type: "message_end", message: assistant(code) });
+    const completed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(completed).toContain("firstGeneratedLine");
+    expect(completed).toContain("finalGeneratedLine");
+    expect(completed).not.toContain("earlier characters retained while streaming");
+  });
+
+  test("streaming updates do not rerender unchanged transcript tools", () => {
+    const registry = new RendererRegistry();
+    let toolRenders = 0;
+    registry.register("counted", () => {
+      toolRenders++;
+      return ["  │ counted"];
+    });
+    const app = new App({
+      width: 80,
+      height: 24,
+      depth: "none",
+      model: "fake/fake-1",
+      registry,
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+      },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "counted-1",
+      result: {
+        role: "toolResult",
+        toolCallId: "counted-1",
+        toolName: "counted",
+        content: [{ type: "text", text: "done" }],
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    app.renderScreen();
+    const afterInitialRender = toolRenders;
+    app.renderScreen();
+    app.handleEvent({ type: "message_start", message: assistant("") });
+    app.handleEvent({
+      type: "message_update",
+      message: assistant("new streamed text"),
+      delta: { kind: "text_delta", contentIndex: 0, text: "new streamed text" },
+    });
+    app.renderScreen();
+
+    expect(afterInitialRender).toBeGreaterThan(0);
+    expect(toolRenders).toBe(afterInitialRender);
   });
 
   test("a running tool shows a live cell with its output tail", () => {
