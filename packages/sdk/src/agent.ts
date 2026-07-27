@@ -179,6 +179,7 @@ export class Agent {
   private readonly subscribers = new Set<EventSink>();
   private readonly idleWaiters = new Set<() => void>();
   private shutdownPromise: Promise<void> | undefined;
+  private sessionStarted = false;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -240,6 +241,7 @@ export class Agent {
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
     this.tree.append({ type: "settings-change", model: this.modelRef });
+    this.options.extensions?.emitLifecycle({ type: "model_select", model: this.modelRef });
   }
 
   setThinking(level: ThinkingLevel): void {
@@ -267,6 +269,7 @@ export class Agent {
     this.steering = [];
     this.followUps = [];
     this.pendingCheckpoint = undefined;
+    this.sessionStarted = false;
     this.controller = new AbortController();
     this.model = resolveModel(this.options.model);
     this.provider = this.providerFor(this.model);
@@ -310,8 +313,11 @@ export class Agent {
   // them immediately; persistent subscribers also see them while the Agent is
   // idle, rather than receiving a stale event on some later user turn.
   emitTaskEvent(event: AgentEvent): void {
-    if (this.activeEmit) this.activeEmit(event);
-    else this.publishToSubscribers(event);
+    if (this.activeEmit) {
+      this.activeEmit(event);
+      return;
+    }
+    this.publishToSubscribers(event);
     this.options.extensions?.emit(event);
   }
 
@@ -351,6 +357,10 @@ export class Agent {
     this.stop();
     this.shutdownPromise = (async () => {
       await this.activeExecution?.catch(() => {});
+      this.options.extensions?.emitLifecycle({
+        type: "session_shutdown",
+        sessionId: this._sessionId,
+      });
       await Promise.allSettled([
         Promise.resolve().then(() => this.options.runtime?.shutdown?.()),
         Promise.resolve().then(() => this.options.extensions?.shutdown()),
@@ -841,6 +851,14 @@ export class Agent {
     const publish = (event: AgentEvent) => {
       emit(event);
       this.publishToSubscribers(event);
+      if (event.type === "agent_start" && !this.sessionStarted) {
+        this.sessionStarted = true;
+        this.options.extensions?.emitLifecycle({
+          type: "session_start",
+          sessionId: this._sessionId,
+        });
+      }
+      this.options.extensions?.emit(event);
     };
     this.activeEmit = publish;
     const execution = this.executeRun(prompt, opts, publish).finally(() => {
@@ -865,13 +883,39 @@ export class Agent {
     this.recoveryAttempted = false;
     this.reactiveRecoveryPending = false;
 
+    const host = this.options.extensions;
+    let effectivePrompt = prompt;
+    if (typeof prompt === "string" && host) {
+      host.emitLifecycle({ type: "input", text: prompt });
+      const directive = await host.runInputHooks(prompt);
+      if (directive?.consume) {
+        if (opts?.output) {
+          throw new Error(
+            "Structured output is unavailable because an extension consumed the input.",
+          );
+        }
+        const events: AgentEvent[] = [
+          { type: "agent_start" },
+          { type: "agent_end", messages: [], reason: "done" },
+        ];
+        for (const event of events) emit(event);
+        return {
+          text: "",
+          messages: [],
+          usage: this.totals,
+          reason: "done",
+          sessionId: this._sessionId,
+        };
+      }
+      if (directive?.text !== undefined) effectivePrompt = directive.text;
+    }
+
     const promptMessage: AgentMessage =
-      typeof prompt === "string"
-        ? userMessage(prompt)
-        : { role: "user", content: prompt, timestamp: Date.now() };
+      typeof effectivePrompt === "string"
+        ? userMessage(effectivePrompt)
+        : { role: "user", content: effectivePrompt, timestamp: Date.now() };
 
     let captured: T | undefined;
-    const host = this.options.extensions;
     let tools: AnyTool[] = [
       ...(this.options.tools ?? []),
       ...(host ? [...host.tools.values()] : []),
@@ -1195,7 +1239,6 @@ export class Agent {
           config,
           (event) => {
             emit(event);
-            host?.emit(event);
             if (event.type === "message_end") this.tree.appendMessage(event.message);
           },
           this.controller.signal,

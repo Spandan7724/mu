@@ -35,8 +35,12 @@ export type {
 export type {
   Extension,
   ExtensionAPI,
+  ExtensionEvent,
+  ExtensionEventFor,
+  ExtensionEventType,
   InputDirective,
   LifecycleEvent,
+  LifecycleNotification,
   ToolCallDirective,
   ToolCallHookInfo,
   ToolRenderer,

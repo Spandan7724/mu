@@ -1,6 +1,6 @@
 import type { Provider } from "@mu/ai";
 import { type Command, CommandRegistry } from "./commands.ts";
-import type { AgentEvent, AgentEventType } from "./events.ts";
+import type { AgentEvent } from "./events.ts";
 import type { AgentMessage } from "./messages.ts";
 import type { AnyTool, ToolResult } from "./tools.ts";
 
@@ -34,7 +34,16 @@ export interface ToolResultHookInfo {
   isError: boolean;
 }
 
-export type LifecycleEvent = "session_start" | "session_shutdown" | "input" | "model_select";
+export type LifecycleNotification =
+  | { type: "session_start"; sessionId: string }
+  | { type: "session_shutdown"; sessionId: string }
+  | { type: "input"; text: string }
+  | { type: "model_select"; model: string };
+
+export type LifecycleEvent = LifecycleNotification["type"];
+export type ExtensionEvent = AgentEvent | LifecycleNotification;
+export type ExtensionEventType = ExtensionEvent["type"];
+export type ExtensionEventFor<T extends ExtensionEventType> = Extract<ExtensionEvent, { type: T }>;
 
 // Renderers are declared here so profiles/extensions can register them before
 // the TUI exists; the TUI consumes this registry in M6.
@@ -43,7 +52,7 @@ export interface ToolRenderer {
 }
 
 export interface ExtensionAPI {
-  on(event: AgentEventType | LifecycleEvent, handler: (event: AgentEvent) => void): void;
+  on<T extends ExtensionEventType>(event: T, handler: (event: ExtensionEventFor<T>) => void): void;
   onToolCall(
     handler: (
       info: ToolCallHookInfo,
@@ -82,7 +91,7 @@ export class ExtensionHost {
   readonly logs: string[] = [];
 
   private extensions: Extension[] = [];
-  private eventHandlers = new Map<string, ((event: AgentEvent) => void)[]>();
+  private eventHandlers = new Map<string, ((event: ExtensionEvent) => void)[]>();
   private toolCallHooks: ((
     info: ToolCallHookInfo,
   ) => ToolCallDirective | undefined | Promise<ToolCallDirective | undefined>)[] = [];
@@ -99,7 +108,7 @@ export class ExtensionHost {
     const api: ExtensionAPI = {
       on: (event, handler) => {
         const list = this.eventHandlers.get(event) ?? [];
-        list.push(handler);
+        list.push(handler as (event: ExtensionEvent) => void);
         this.eventHandlers.set(event, list);
       },
       onToolCall: (handler) => void this.toolCallHooks.push(handler),
@@ -125,8 +134,8 @@ export class ExtensionHost {
     for (const handler of this.eventHandlers.get(event.type) ?? []) handler(event);
   }
 
-  emitLifecycle(event: LifecycleEvent, payload: AgentEvent): void {
-    for (const handler of this.eventHandlers.get(event) ?? []) handler(payload);
+  emitLifecycle(event: LifecycleNotification): void {
+    for (const handler of this.eventHandlers.get(event.type) ?? []) handler(event);
   }
 
   // First extension to block wins; arg rewrites chain through all of them.

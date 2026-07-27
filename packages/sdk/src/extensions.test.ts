@@ -139,6 +139,38 @@ describe("extensions driving a real run", () => {
     );
   });
 
+  test("input hooks rewrite and consume real Agent runs", async () => {
+    const rewriting = new ExtensionHost();
+    await rewriting.register({
+      name: "input-rewrite",
+      activate: (api) => api.onInput((text) => ({ text: `${text} expanded` })),
+    });
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    await new Agent({ provider, model: fakeModel, extensions: rewriting }).run("short");
+    const sent = provider.requests[0]?.messages[0];
+    expect(sent?.role === "user" && sent.content[0]?.type === "text" && sent.content[0].text).toBe(
+      "short expanded",
+    );
+
+    const consuming = new ExtensionHost();
+    await consuming.register({
+      name: "input-consume",
+      activate: (api) => api.onInput(() => ({ consume: true })),
+    });
+    const untouched = new FakeProvider([]);
+    const events: string[] = [];
+    const agent = new Agent({ provider: untouched, model: fakeModel, extensions: consuming });
+    agent.subscribe((event) => {
+      events.push(event.type);
+    });
+    const result = await agent.run("do not send");
+
+    expect(result.reason).toBe("done");
+    expect(result.messages).toEqual([]);
+    expect(untouched.callCount).toBe(0);
+    expect(events).toEqual(["agent_start", "agent_end"]);
+  });
+
   test("extension-registered tools are callable by the model", async () => {
     const host = new ExtensionHost();
     await host.register({
@@ -195,12 +227,53 @@ describe("extensions driving a real run", () => {
       name: "observer",
       activate(api) {
         api.on("agent_start", () => seen.push("start"));
+        api.on("usage_updated", () => seen.push("usage"));
         api.on("agent_end", () => seen.push("end"));
       },
     });
     const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
     await new Agent({ provider, model: fakeModel, extensions: host }).run("go");
-    expect(seen).toEqual(["start", "end"]);
+    expect(seen).toEqual(["start", "usage", "end"]);
+  });
+
+  test("session lifecycle events fire once per adopted session", async () => {
+    const host = new ExtensionHost();
+    const seen: string[] = [];
+    await host.register({
+      name: "lifecycle",
+      activate(api) {
+        api.on("session_start", (event) => seen.push(`${event.type}:${event.sessionId}`));
+        api.on("session_shutdown", (event) => seen.push(`${event.type}:${event.sessionId}`));
+      },
+    });
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "one" }] },
+      { content: [{ type: "text", text: "two" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel, extensions: host });
+
+    await agent.run("first");
+    await agent.run("second");
+    await agent.shutdown();
+
+    expect(seen).toEqual([
+      `session_start:${agent.sessionId}`,
+      `session_shutdown:${agent.sessionId}`,
+    ]);
+  });
+
+  test("model selection emits its typed lifecycle notification", async () => {
+    const host = new ExtensionHost();
+    const selected: string[] = [];
+    await host.register({
+      name: "model-observer",
+      activate: (api) => api.on("model_select", (event) => selected.push(event.model)),
+    });
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel, extensions: host });
+
+    agent.setModel(fakeModel);
+
+    expect(selected).toEqual(["fake/fake-1"]);
   });
 });
 
