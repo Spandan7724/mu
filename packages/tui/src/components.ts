@@ -305,6 +305,52 @@ export class Spinner {
   }
 }
 
+export type QueuedInputKind = "steer" | "follow-up";
+
+function boundQueuedInput(
+  lines: string[],
+  indent: string,
+  width: number,
+  depth: ColorDepth,
+): string[] {
+  if (lines.length <= 3) return lines;
+  const hidden = lines.length - 2;
+  const notice = truncateToWidth(
+    `… +${hidden} row${hidden === 1 ? "" : "s"}`,
+    Math.max(1, width - stringWidth(indent)),
+  );
+  return [...lines.slice(0, 2), `${indent}${dim(notice, depth)}`];
+}
+
+export function queuedInputPreview(
+  kind: QueuedInputKind,
+  text: string,
+  width: number,
+  depth: ColorDepth,
+): string[] {
+  const safe = sanitizeUntrusted(text);
+  const label = `${kind} ${GLYPHS.separator} `;
+  const prefixWidth = 2 + stringWidth(label);
+  const available = width - MARGIN.length - prefixWidth;
+
+  if (available < 4) {
+    const maxWidth = Math.max(1, width - MARGIN.length);
+    const headerLabel = truncateToWidth(kind, Math.max(1, maxWidth - 2));
+    const header = `${MARGIN}${accent(GLYPHS.userMarker, depth)}${dim(` ${headerLabel}`, depth)}`;
+    const bodyWidth = Math.max(1, maxWidth - 2);
+    const indent = `${MARGIN}  `;
+    const lines = [header, ...wrapText(safe, bodyWidth).map((line) => `${indent}${line}`)];
+    return boundQueuedInput(lines, indent, width, depth);
+  }
+
+  const prefix = `${accent(GLYPHS.userMarker, depth)} ${dim(label, depth)}`;
+  const indent = `${MARGIN}${" ".repeat(prefixWidth)}`;
+  const lines = wrapText(safe, available).map((line, index) =>
+    index === 0 ? `${MARGIN}${prefix}${line}` : `${MARGIN}${" ".repeat(prefixWidth)}${line}`,
+  );
+  return boundQueuedInput(lines, indent, width, depth);
+}
+
 export interface FooterData {
   cwd: string;
   model: string;

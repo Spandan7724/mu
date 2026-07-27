@@ -19,6 +19,7 @@ import {
   footer,
   formatCwdForFooter,
   formatTokens,
+  queuedInputPreview,
   renderMarkdown,
   SelectList,
   Spinner,
@@ -332,6 +333,24 @@ describe("components", () => {
     const second = stripAnsi(spinner.render("none"));
     expect(first).toBe("▸▹▹");
     expect(second).toBe("▹▸▹");
+  });
+
+  test("queued input is labeled, sanitized, and width-safe", () => {
+    expect(visible(queuedInputPreview("follow-up", "run tests when done", 60, "none"))).toEqual([
+      "  ▸ follow-up · run tests when done",
+    ]);
+
+    const narrow = queuedInputPreview("steer", "change direction now", 14, "truecolor");
+    expect(visible(narrow)[0]).toBe("  ▸ steer");
+    for (const line of narrow) expect(stringWidth(line)).toBeLessThanOrEqual(14);
+
+    const long = visible(queuedInputPreview("follow-up", "word ".repeat(40), 24, "none"));
+    expect(long).toHaveLength(3);
+    expect(long.at(-1)).toContain("… +");
+
+    expect(
+      visible(queuedInputPreview("follow-up", "safe\u001b[2J text", 60, "none")).join(""),
+    ).toContain("safe text");
   });
 
   test("approval overlay lists the three options without a box", () => {

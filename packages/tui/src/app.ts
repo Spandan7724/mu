@@ -20,6 +20,8 @@ import {
   Editor,
   type FooterData,
   footer,
+  type QueuedInputKind,
+  queuedInputPreview,
   SelectList,
   Spinner,
 } from "./components.ts";
@@ -48,8 +50,8 @@ export interface InputPromptRequest {
 
 export interface AppCallbacks {
   onSubmit: (text: string) => void;
-  // While a run is active, Tab queues work for after the current run settles.
-  onFollowUp?: (text: string) => void;
+  onSteer?: (text: string) => boolean;
+  onFollowUp?: (text: string) => boolean;
   // Explicit user shell escape. The leading `!` stays in editor history, but
   // only the command text is passed to the surface.
   onShell?: (command: string) => void;
@@ -81,10 +83,16 @@ interface LiveTask {
   partial: string;
 }
 
+interface PendingInput {
+  kind: QueuedInputKind;
+  text: string;
+}
+
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
 const EXPANDED_TOOL_ROWS = 24;
+const PENDING_INPUT_ROWS = 3;
 
 class LiveToolOutput {
   private lines: string[] = [];
@@ -152,6 +160,7 @@ export class App {
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
   private pendingTools = new Map<string, PendingTool>();
+  private pendingInputs: PendingInput[] = [];
   private transcript: TranscriptItem[] = [];
   private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
@@ -316,6 +325,16 @@ export class App {
             .map((block) => block.text)
             .join("");
           if (!text) return [];
+          const pendingIndex = this.pendingInputs.findIndex(
+            (pending) => pending.kind === "steer" && pending.text === text,
+          );
+          const deliveredIndex =
+            pendingIndex === -1
+              ? this.pendingInputs.findIndex(
+                  (pending) => pending.kind === "follow-up" && pending.text === text,
+                )
+              : pendingIndex;
+          if (deliveredIndex !== -1) this.pendingInputs.splice(deliveredIndex, 1);
           this.transcript.push({ kind: "user", text });
           return [...userCell(text, this.ctx), ""];
         }
@@ -480,6 +499,7 @@ export class App {
   replaceTranscript(messages: readonly AgentMessage[], prefix: string[] = []): void {
     this.transcript = prefix.length > 0 ? [{ kind: "lines", lines: [...prefix] }] : [];
     this.pendingTools.clear();
+    this.pendingInputs = [];
     this.streaming = undefined;
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
@@ -581,6 +601,22 @@ export class App {
     }
 
     lines.push(composerRule(width, depth));
+
+    const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
+    const hiddenPending = this.pendingInputs.length - visiblePending.length;
+    if (hiddenPending > 0) {
+      lines.push(
+        MARGIN +
+          styleText(
+            `… ${hiddenPending} earlier queued input${hiddenPending === 1 ? "" : "s"}`,
+            { dim: true },
+            depth,
+          ),
+      );
+    }
+    for (const pending of visiblePending) {
+      lines.push(...queuedInputPreview(pending.kind, pending.text, width, depth));
+    }
 
     if (this.mode === "approval" && this.approvals[0]) {
       const request = this.approvals[0];
@@ -764,14 +800,23 @@ export class App {
         } else if (text.startsWith("/") && this.options.callbacks.onCommand) {
           this.options.callbacks.onCommand(text);
         } else {
-          this.options.callbacks.onSubmit(text);
+          const accepted =
+            this.running && this.options.callbacks.onSteer
+              ? this.options.callbacks.onSteer(text)
+              : this.options.callbacks.onSubmit(text);
+          if (this.running && accepted !== false) {
+            this.pendingInputs.push({ kind: "steer", text });
+          }
         }
         return;
       }
       case "tab": {
         if (!this.running || !this.options.callbacks.onFollowUp) return;
         const text = this.editor.submit();
-        if (text.trim().length > 0) this.options.callbacks.onFollowUp(text);
+        if (text.trim().length === 0) return;
+        if (this.options.callbacks.onFollowUp(text) !== false) {
+          this.pendingInputs.push({ kind: "follow-up", text });
+        }
         return;
       }
       case "backspace":

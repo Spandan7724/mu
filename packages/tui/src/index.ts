@@ -27,7 +27,7 @@ export {
   toolOutputCell,
   userCell,
 } from "./cells.ts";
-export type { ApprovalData, FooterData, SelectItem } from "./components.ts";
+export type { ApprovalData, FooterData, QueuedInputKind, SelectItem } from "./components.ts";
 export {
   APPROVAL_OPTIONS,
   approvalOverlay,
@@ -36,6 +36,7 @@ export {
   footer,
   formatCwdForFooter,
   formatTokens,
+  queuedInputPreview,
   renderMarkdown,
   SelectList,
   Spinner,

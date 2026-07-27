@@ -14,6 +14,7 @@ const ESC = "\u001b";
 
 function harness(overrides: Partial<AppCallbacks> = {}) {
   const submitted: string[] = [];
+  const steers: string[] = [];
   const followUps: string[] = [];
   const commands: string[] = [];
   const replies: { id: string; outcome: string; remember: boolean }[] = [];
@@ -32,7 +33,14 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
     registry,
     callbacks: {
       onSubmit: (text) => submitted.push(text),
-      onFollowUp: (text) => followUps.push(text),
+      onSteer: (text) => {
+        steers.push(text);
+        return true;
+      },
+      onFollowUp: (text) => {
+        followUps.push(text);
+        return true;
+      },
       onAbort: () => {
         aborted = true;
       },
@@ -48,6 +56,7 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
   return {
     app,
     submitted,
+    steers,
     followUps,
     commands,
     replies,
@@ -266,6 +275,58 @@ describe("input handling", () => {
     expect(h.followUps).toEqual(["not yet"]);
     expect(h.submitted).toEqual([]);
     expect(h.app.editor.text).toBe("");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("▸ follow-up · not yet");
+
+    h.app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "not yet" }],
+        timestamp: 1,
+      },
+    });
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("follow-up · not yet");
+  });
+
+  test("pending steers and follow-ups stay labeled until each is delivered", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "same\t");
+    feed(h.app, "same\r");
+
+    expect(h.followUps).toEqual(["same"]);
+    expect(h.steers).toEqual(["same"]);
+    let pending = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(pending).toContain("▸ steer · same");
+    expect(pending).toContain("▸ follow-up · same");
+
+    h.app.handleEvent({
+      type: "message_end",
+      message: { role: "user", content: [{ type: "text", text: "same" }], timestamp: 1 },
+    });
+    pending = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(pending).not.toContain("▸ steer · same");
+    expect(pending).toContain("▸ follow-up · same");
+  });
+
+  test("rejected follow-ups are not displayed as queued", () => {
+    const h = harness({ onFollowUp: () => false });
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "cannot queue\t");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("cannot queue");
+  });
+
+  test("the pending area keeps the newest inputs and summarizes older ones", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+    for (const text of ["first", "second", "third", "fourth"]) feed(h.app, `${text}\t`);
+
+    const pending = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(pending).toContain("… 1 earlier queued input");
+    expect(pending).not.toContain("follow-up · first");
+    expect(pending).toContain("follow-up · second");
+    expect(pending).toContain("follow-up · third");
+    expect(pending).toContain("follow-up · fourth");
   });
 
   test("a multi-line paste does not submit", () => {
