@@ -1,12 +1,19 @@
 export type { AppCallbacks, AppMode, AppOptions } from "./app.ts";
 export { App } from "./app.ts";
-export type { DiffFile, DiffLine, RenderContext, ToolCellOptions } from "./cells.ts";
+export type {
+  DiffFile,
+  DiffLine,
+  RenderContext,
+  TaskCellOptions,
+  ToolCellOptions,
+} from "./cells.ts";
 export {
   agentCell,
   compactionCell,
   diffCell,
   diffLinesFromHunks,
   errorCell,
+  taskCell,
   thinkingCell,
   toolCell,
   userCell,

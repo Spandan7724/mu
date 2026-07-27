@@ -6,6 +6,7 @@ import {
   diffLinesFromHunks,
   errorCell,
   type RenderContext,
+  taskCell,
   thinkingCell,
   toolCell,
   userCell,
@@ -85,6 +86,92 @@ describe("transcript cells (golden lines)", () => {
     );
     expect(lines.length).toBe(3);
     expect(lines[1]).toBe("  │ ok 1");
+  });
+
+  test("a background task has a live tail and a compact exit outcome", () => {
+    expect(
+      visible(
+        taskCell(
+          {
+            taskId: "task_1",
+            command: "bun test",
+            status: "running",
+            tail: ["test output"],
+          },
+          plain,
+        ),
+      ),
+    ).toEqual(["  │ task_1 · bun test", "  │ test output"]);
+
+    expect(
+      visible(
+        taskCell(
+          {
+            taskId: "task_1",
+            command: "bun test",
+            status: "exited",
+            exitCode: 0,
+            durationMs: 340,
+          },
+          plain,
+        ),
+      ),
+    ).toEqual(["  │ task_1 · bun test · ✓ · 340ms"]);
+  });
+
+  test("background task failures and kills are explicit", () => {
+    expect(
+      visible(
+        taskCell(
+          {
+            taskId: "task_2",
+            command: "bun test",
+            status: "exited",
+            exitCode: 3,
+            durationMs: 1_200,
+          },
+          plain,
+        ),
+      )[0],
+    ).toBe("  │ task_2 · bun test · ✗ · exit 3 · 1.2s");
+    expect(
+      visible(
+        taskCell(
+          {
+            taskId: "task_3",
+            command: "bun dev",
+            status: "killed",
+            durationMs: 60_000,
+          },
+          plain,
+        ),
+      )[0],
+    ).toBe("  │ task_3 · bun dev · ✗ · killed · 1m");
+  });
+
+  test("background task summaries fit narrow terminals and color outcomes semantically", () => {
+    const narrow = taskCell(
+      {
+        taskId: "task_123456789",
+        command: "a very long background command that keeps going",
+        status: "exited",
+        exitCode: 3,
+        durationMs: 12_000,
+      },
+      { width: 40, depth: "none" },
+    );
+    expect(stringWidth(narrow[0] ?? "")).toBeLessThanOrEqual(40);
+
+    const ok = taskCell(
+      { taskId: "t1", command: "test", status: "exited", exitCode: 0 },
+      colored,
+    )[0];
+    const failed = taskCell(
+      { taskId: "t2", command: "test", status: "exited", exitCode: 1 },
+      colored,
+    )[0];
+    expect(ok).toContain("[32m");
+    expect(failed).toContain("[31m");
   });
 
   test("thinking collapses to one dim line by default", () => {

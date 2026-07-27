@@ -109,7 +109,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     );
   },
   bash: (info, ctx) => {
-    const details = info.result?.details as { exitCode?: number | null } | undefined;
+    const details = info.result?.details as
+      | { exitCode?: number | null; background?: boolean; taskId?: string }
+      | undefined;
     const ok = details?.exitCode === 0;
     return toolCell(
       {
@@ -119,7 +121,13 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           : {}),
         ...(info.result?.isError ? { isError: true } : {}),
         ...(info.result
-          ? { summary: ok ? "✓" : `exit ${details?.exitCode ?? "?"}` }
+          ? {
+              summary: details?.background
+                ? `${details.taskId ?? "task"} bg`
+                : ok
+                  ? "✓"
+                  : `exit ${details?.exitCode ?? "?"}`,
+            }
           : { summary: "running" }),
       },
       ctx,

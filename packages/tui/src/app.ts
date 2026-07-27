@@ -7,6 +7,7 @@ import {
   compactionCell,
   errorCell,
   type RenderContext,
+  taskCell,
   thinkingCell,
   userCell,
 } from "./cells.ts";
@@ -53,6 +54,17 @@ export interface AppOptions {
   registry?: RendererRegistry;
 }
 
+interface LiveTask {
+  taskId: string;
+  command: string;
+  startedAt: number;
+  tail: string[];
+  partial: string;
+}
+
+const TASK_TAIL_LINES = 5;
+const TASK_PARTIAL_CHARS = 2_000;
+
 export class App {
   readonly editor = new Editor();
   readonly registry: RendererRegistry;
@@ -66,6 +78,7 @@ export class App {
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
   private pendingTools = new Map<string, ToolRenderInfo & { tail: string[] }>();
+  private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
   private lastError: string | undefined;
@@ -248,19 +261,58 @@ export class App {
         };
         return [];
 
-      case "task_started":
+      case "task_started": {
+        this.backgroundTasks.set(event.taskId, {
+          taskId: event.taskId,
+          command: event.command,
+          startedAt: Date.now(),
+          tail: [],
+          partial: "",
+        });
         this.footerData = {
           ...this.footerData,
-          backgroundTasks: (this.footerData.backgroundTasks ?? 0) + 1,
+          backgroundTasks: this.backgroundTasks.size,
         };
         return [];
+      }
 
-      case "task_exited":
+      case "task_output": {
+        const task = this.backgroundTasks.get(event.taskId);
+        if (!task) return [];
+        const parts = `${task.partial}${event.chunk}`.split(/\r\n|\n|\r/);
+        task.partial = parts.pop() ?? "";
+        if (task.partial.length > TASK_PARTIAL_CHARS) {
+          task.partial = `…${task.partial.slice(-(TASK_PARTIAL_CHARS - 1))}`;
+        }
+        task.tail.push(...parts);
+        if (task.tail.length > TASK_TAIL_LINES) {
+          task.tail = task.tail.slice(-TASK_TAIL_LINES);
+        }
+        return [];
+      }
+
+      case "task_exited": {
+        const task = this.backgroundTasks.get(event.taskId);
+        this.backgroundTasks.delete(event.taskId);
         this.footerData = {
           ...this.footerData,
-          backgroundTasks: Math.max(0, (this.footerData.backgroundTasks ?? 0) - 1),
+          backgroundTasks: this.backgroundTasks.size,
         };
-        return [];
+        if (!task) return [];
+        return [
+          ...taskCell(
+            {
+              taskId: task.taskId,
+              command: task.command,
+              status: event.status === "killed" ? "killed" : "exited",
+              exitCode: event.exitCode,
+              durationMs: Date.now() - task.startedAt,
+            },
+            this.ctx,
+          ),
+          "",
+        ];
+      }
 
       default:
         return [];
@@ -311,6 +363,20 @@ export class App {
       for (const line of pending.tail.slice(-3)) {
         if (line.trim().length > 0) lines.push(`${MARGIN}${GLYPHS.rule} ${line}`);
       }
+    }
+    for (const task of this.backgroundTasks.values()) {
+      const tail = [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])].slice(-3);
+      lines.push(
+        ...taskCell(
+          {
+            taskId: task.taskId,
+            command: task.command,
+            status: "running",
+            tail,
+          },
+          this.ctx,
+        ),
+      );
     }
 
     lines.push(composerRule(width, depth));

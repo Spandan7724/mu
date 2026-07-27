@@ -87,6 +87,89 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   return lines;
 }
 
+export interface TaskCellOptions {
+  taskId: string;
+  command: string;
+  status: "running" | "exited" | "killed";
+  exitCode?: number | null;
+  durationMs?: number;
+  tail?: string[];
+}
+
+function formatDuration(durationMs: number): string {
+  const ms = Math.max(0, durationMs);
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  if (ms < 10_000) return `${(ms / 1_000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1_000);
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
+// Background process cells live in the managed region while running and are
+// committed as a one-line outcome when they exit.
+export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[] {
+  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const taskId = truncateToWidth(
+    sanitizeUntrusted(options.taskId),
+    Math.max(4, Math.min(12, Math.floor(body(ctx) / 4))),
+  );
+  const metadata: { text: string; rendered: string; optional?: boolean }[] = [];
+
+  if (options.status === "killed") {
+    metadata.push({
+      text: GLYPHS.error,
+      rendered: styleText(GLYPHS.error, { red: true }, ctx.depth),
+    });
+    metadata.push({ text: "killed", rendered: dim("killed", ctx.depth), optional: true });
+  } else if (options.status === "exited") {
+    if (options.exitCode === 0) {
+      metadata.push({
+        text: GLYPHS.ok,
+        rendered: styleText(GLYPHS.ok, { green: true }, ctx.depth),
+      });
+    } else {
+      metadata.push({
+        text: GLYPHS.error,
+        rendered: styleText(GLYPHS.error, { red: true }, ctx.depth),
+      });
+      const detail = `exit ${options.exitCode ?? "?"}`;
+      metadata.push({ text: detail, rendered: dim(detail, ctx.depth), optional: true });
+    }
+  }
+  if (options.durationMs !== undefined) {
+    const duration = formatDuration(options.durationMs);
+    metadata.push({ text: duration, rendered: dim(duration, ctx.depth), optional: true });
+  }
+
+  const command = sanitizeUntrusted(options.command);
+  const separatorWidth = stringWidth(` ${GLYPHS.separator} `);
+  const commandBudget = () =>
+    body(ctx) -
+    stringWidth(`${GLYPHS.rule} `) -
+    stringWidth(taskId) -
+    metadata.reduce((total, item) => total + stringWidth(item.text), 0) -
+    separatorWidth * (metadata.length + 1);
+  while (commandBudget() < 5) {
+    const index = metadata.findLastIndex((item) => item.optional);
+    if (index === -1) break;
+    metadata.splice(index, 1);
+  }
+  const parts = [
+    dim(taskId, ctx.depth),
+    truncateToWidth(command, Math.max(1, commandBudget())),
+    ...metadata.map((item) => item.rendered),
+  ];
+  const lines = [MARGIN + rule + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth))];
+  for (const line of options.tail ?? []) {
+    if (line.length === 0) continue;
+    lines.push(
+      MARGIN + rule + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
+    );
+  }
+  return lines;
+}
+
 export function errorCell(message: string, ctx: RenderContext): string[] {
   const glyph = styleText(GLYPHS.error, { red: true }, ctx.depth);
   return wrapText(sanitizeUntrusted(message), body(ctx) - 2, "  ").map((line, i) =>

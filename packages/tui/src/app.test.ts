@@ -184,6 +184,62 @@ describe("fake-agent session", () => {
     app.handleEvent({ type: "task_exited", taskId: "t1", exitCode: 0 });
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("1 bg");
   });
+
+  test("background task output streams in a bounded live cell then collapses", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "task_started",
+      taskId: "task_1",
+      command: "bun test",
+      background: true,
+    });
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "one\ntwo\nthr" });
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "ee\n" });
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("three");
+    app.handleEvent({
+      type: "task_output",
+      taskId: "task_1",
+      chunk: "four\nfive\nsix\nseven",
+    });
+
+    const live = app.renderBottom().map(stripAnsi).join("\n");
+    expect(live).toContain("task_1 · bun test");
+    expect(live).toContain("five");
+    expect(live).toContain("seven");
+    expect(live).not.toContain("one");
+
+    const completed = app
+      .handleEvent({
+        type: "task_exited",
+        taskId: "task_1",
+        exitCode: 0,
+        status: "exited",
+      })
+      .map(stripAnsi)
+      .join("\n");
+    expect(completed).toContain("task_1 · bun test · ✓");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("task_1");
+  });
+
+  test("a killed background task commits an explicit killed summary", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "task_started",
+      taskId: "task_2",
+      command: "bun dev",
+      background: true,
+    });
+    const completed = app
+      .handleEvent({
+        type: "task_exited",
+        taskId: "task_2",
+        exitCode: null,
+        status: "killed",
+      })
+      .map(stripAnsi)
+      .join("\n");
+    expect(completed).toContain("✗ · killed");
+  });
 });
 
 describe("input handling", () => {
