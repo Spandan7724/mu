@@ -1,4 +1,4 @@
-import type { Provider } from "@mu/ai";
+import type { ModelInfo, Provider } from "@mu/ai";
 import { type Command, CommandRegistry } from "./commands.ts";
 import type { AgentEvent } from "./events.ts";
 import type { AgentMessage } from "./messages.ts";
@@ -70,6 +70,7 @@ export interface ExtensionAPI {
   registerTool(tool: AnyTool): void;
   registerCommand(command: Command): void;
   registerProvider(provider: Provider): void;
+  registerModels(models: ModelInfo[]): void;
   registerRenderer(toolName: string, renderer: ToolRenderer): void;
   log(message: string): void;
 }
@@ -87,6 +88,7 @@ export class ExtensionHost {
   readonly tools = new Map<string, AnyTool>();
   readonly commands = new CommandRegistry();
   readonly providers = new Map<string, Provider>();
+  readonly models = new Map<string, ModelInfo>();
   readonly renderers = new Map<string, ToolRenderer>();
   readonly logs: string[] = [];
 
@@ -118,6 +120,9 @@ export class ExtensionHost {
       registerTool: (tool) => void this.tools.set(tool.name, tool),
       registerCommand: (command) => this.commands.register(command),
       registerProvider: (provider) => void this.providers.set(provider.id, provider),
+      registerModels: (models) => {
+        for (const model of models) this.models.set(`${model.provider}/${model.id}`, model);
+      },
       registerRenderer: (name, renderer) => void this.renderers.set(name, renderer),
       log: (message) => void this.logs.push(`[${extension.name}] ${message}`),
     };
@@ -136,6 +141,12 @@ export class ExtensionHost {
 
   emitLifecycle(event: LifecycleNotification): void {
     for (const handler of this.eventHandlers.get(event.type) ?? []) handler(event);
+  }
+
+  findModel(ref: string): ModelInfo | undefined {
+    const slash = ref.indexOf("/");
+    if (slash !== -1) return this.models.get(ref);
+    return [...this.models.values()].find((model) => model.id === ref);
   }
 
   // First extension to block wins; arg rewrites chain through all of them.

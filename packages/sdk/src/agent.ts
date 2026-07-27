@@ -126,10 +126,10 @@ export interface AgentRunOptions<T = unknown> {
   allowedTools?: string[];
 }
 
-function resolveModel(model: AgentOptions["model"]): ModelInfo {
+function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
   if (model && typeof model !== "string") return model;
   const ref = model ?? defaultModelRef();
-  const found = findModel(ref);
+  const found = extensions?.findModel(ref) ?? findModel(ref);
   if (!found) throw new Error(`Unknown model: ${ref}. Pass a ModelInfo to use a custom model.`);
   return found;
 }
@@ -184,7 +184,7 @@ export class Agent {
   constructor(options: AgentOptions = {}) {
     this.options = options;
     this.currentThinking = options.thinkingLevel ?? "off";
-    this.model = resolveModel(options.model);
+    this.model = resolveModel(options.model, options.extensions);
     this.provider = this.providerFor(this.model);
     this.store = options.session ?? new MemorySessionStore();
     this._sessionId = options.sessionId ?? `s${Date.now().toString(36)}`;
@@ -236,7 +236,7 @@ export class Agent {
 
   // Switching model also switches provider — they travel together.
   setModel(ref: string | ModelInfo): void {
-    this.model = resolveModel(ref);
+    this.model = resolveModel(ref, this.options.extensions);
     this.provider = this.providerFor(this.model);
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
@@ -271,14 +271,14 @@ export class Agent {
     this.pendingCheckpoint = undefined;
     this.sessionStarted = false;
     this.controller = new AbortController();
-    this.model = resolveModel(this.options.model);
+    this.model = resolveModel(this.options.model, this.options.extensions);
     this.provider = this.providerFor(this.model);
     this.currentThinking = this.options.thinkingLevel ?? "off";
     for (const entry of candidate.activePath()) {
       if (entry.type !== "settings-change") continue;
       if (entry.model) {
         try {
-          this.model = resolveModel(entry.model);
+          this.model = resolveModel(entry.model, this.options.extensions);
           this.provider = this.providerFor(this.model);
         } catch {
           // A removed catalog model must not make an otherwise valid session
@@ -931,7 +931,7 @@ export class Agent {
       const allowed = new Set(opts.allowedTools);
       tools = tools.filter((tool) => allowed.has(tool.name));
     }
-    const runModel = opts?.model ? resolveModel(opts.model) : this.model;
+    const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;

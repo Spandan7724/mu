@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { RendererRegistry, stripAnsi } from "@mu/tui";
+import { ExtensionHost, type ModelInfo } from "mu";
 import {
+  availableModels,
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
@@ -106,5 +108,26 @@ describe("declared tool renderers", () => {
         { width: 80, depth: "none" },
       ),
     ).toEqual(["custom:42:true"]);
+  });
+});
+
+describe("interactive model catalog", () => {
+  test("extension models join the picker", async () => {
+    const model: ModelInfo = {
+      provider: "extension",
+      id: "model-1",
+      name: "Extension Model",
+      contextWindow: 64_000,
+      maxOutput: 8_000,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const host = new ExtensionHost();
+    await host.register({
+      name: "model",
+      activate: (api) => api.registerModels([model]),
+    });
+
+    expect(availableModels(host)).toContain(model);
   });
 });

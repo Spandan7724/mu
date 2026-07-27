@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Provider } from "@mu/ai";
+import type { ModelInfo, Provider } from "@mu/ai";
 import { ExtensionHost } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
@@ -217,6 +217,35 @@ describe("extensions driving a real run", () => {
     }).run("go");
 
     expect(result.text).toBe("custom provider");
+    expect(backing.callCount).toBe(1);
+  });
+
+  test("an extension-registered model resolves by string reference", async () => {
+    const backing = new FakeProvider([{ content: [{ type: "text", text: "custom model" }] }]);
+    const provider: Provider = {
+      id: "custom-model-provider",
+      stream: (model, context, options) => backing.stream(model, context, options),
+    };
+    const model: ModelInfo = {
+      ...fakeModel,
+      provider: provider.id,
+      id: "extension-model",
+    };
+    const host = new ExtensionHost();
+    await host.register({
+      name: "custom-model",
+      activate(api) {
+        api.registerProvider(provider);
+        api.registerModels([model]);
+      },
+    });
+
+    const result = await new Agent({
+      model: `${provider.id}/${model.id}`,
+      extensions: host,
+    }).run("go");
+
+    expect(result.text).toBe("custom model");
     expect(backing.callCount).toBe(1);
   });
 

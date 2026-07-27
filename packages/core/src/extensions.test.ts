@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ModelInfo } from "@mu/ai";
 import { CommandRegistry } from "./commands.ts";
 import { type Extension, ExtensionHost } from "./extensions.ts";
 import { userMessage } from "./messages.ts";
@@ -31,6 +32,25 @@ describe("ExtensionHost registrations", () => {
     expect(host.commands.has("demo")).toBe(true);
     expect(host.renderers.has("demo_tool")).toBe(true);
     expect(host.logs[0]).toBe("[demo] activated");
+  });
+
+  test("an extension registers models without mutating the global catalog", async () => {
+    const model: ModelInfo = {
+      provider: "demo",
+      id: "demo-1",
+      contextWindow: 32_000,
+      maxOutput: 4_000,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const host = new ExtensionHost();
+    await host.register({
+      name: "models",
+      activate: (api) => api.registerModels([model]),
+    });
+
+    expect(host.findModel("demo/demo-1")).toBe(model);
+    expect(host.findModel("demo-1")).toBe(model);
   });
 
   test("deactivate runs on shutdown", async () => {

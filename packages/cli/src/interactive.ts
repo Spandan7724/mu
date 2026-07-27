@@ -26,6 +26,7 @@ import {
   listModels,
   loadMarkdownCommands,
   type MarkdownCommandRun,
+  type ModelInfo,
   optionsFromProfile,
   registryWithCoreCommands,
   saveApiKey,
@@ -80,6 +81,14 @@ export function renderCheckpointCommand(
     },
     { width, depth },
   );
+}
+
+export function availableModels(extensions: ExtensionHost): ModelInfo[] {
+  const models = new Map<string, ModelInfo>(
+    listModels().map((model) => [`${model.provider}/${model.id}`, model] as const),
+  );
+  for (const [ref, model] of extensions.models) models.set(ref, model);
+  return [...models.values()];
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -246,7 +255,7 @@ export async function runInteractive(
           renderer.commit([`  ${refresh.cacheWarning}`]);
         }
       }
-      const models = listModels();
+      const models = availableModels(extensions);
       const source = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
       app.openPicker({
         title: `select a model · ${models.length} available${source}`,
@@ -445,7 +454,7 @@ export async function runInteractive(
   }
 
   async function selectProviderModel(provider: string): Promise<void> {
-    const model = listModels().find((candidate) => candidate.provider === provider);
+    const model = availableModels(extensions).find((candidate) => candidate.provider === provider);
     if (!model) return;
     const ref = `${model.provider}/${model.id}`;
     agent.setModel(ref);
