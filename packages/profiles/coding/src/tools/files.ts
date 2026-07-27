@@ -83,7 +83,7 @@ export function readTool(deps: ToolDeps) {
   return tool({
     name: "read",
     description:
-      "Read a file from the filesystem. Returns the contents with line numbers. Read a file before editing it.",
+      "Read a file from the filesystem. Returns contents with line numbers for grounded path:line citations. Read a file before editing it.",
     inputSchema: z.object({
       path: z.string().describe("Path to the file, absolute or relative to the session root"),
       offset: z.number().int().min(1).optional().describe("First line to read (1-based)"),

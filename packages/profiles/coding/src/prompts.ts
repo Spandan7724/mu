@@ -17,6 +17,10 @@ Tools:
 
 Communication:
 - Lead with the outcome, then the detail. Answer what was asked without padding.
+- When explaining, reviewing, or quoting existing repository code, cite each relevant
+  claim or excerpt with its workspace-relative \`path:line\` using the 1-based starting
+  line from tool output. Put the citation beside the claim or immediately before its code
+  block, repeat the path for separate references, and never invent a line number.
 - Only write code comments that state something the code cannot — never narrate what a line does.
 - If you cannot complete something, say so plainly and explain what is blocking you.`;
 

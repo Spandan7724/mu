@@ -241,6 +241,13 @@ describe("prompts", () => {
     expect(sections[0]?.text.split("\n").length).toBeLessThan(40);
   });
 
+  test("the base prompt requires grounded file and line citations", () => {
+    const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
+    expect(base).toContain("workspace-relative `path:line`");
+    expect(base).toContain("1-based starting");
+    expect(base).toContain("never invent a line number");
+  });
+
   test("GPT-family models get an extra literal-instruction section", () => {
     const sections = codingPrompt("openai/gpt-5.1");
     expect(sections.length).toBe(2);

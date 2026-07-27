@@ -340,7 +340,7 @@ export function grepTool(deps: ToolDeps, options: SearchToolOptions = {}) {
   return tool({
     name: "grep",
     description:
-      "Search file contents with a regular expression. Returns matching lines with their file and line number.",
+      "Search file contents with a regular expression. Returns matching lines with file and line numbers for grounded path:line citations.",
     inputSchema: z.object({
       pattern: z.string().describe("Regular expression to search for"),
       path: z.string().optional().describe("Directory to search; defaults to the session root"),
