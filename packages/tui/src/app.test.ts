@@ -845,6 +845,67 @@ describe("terminal safety", () => {
 });
 
 describe("inline renderer", () => {
+  class VirtualScreen {
+    readonly scrollback: string[] = [];
+    readonly lines: string[];
+    private row = 0;
+    private column = 0;
+
+    constructor(private height: number) {
+      this.lines = Array.from({ length: height }, () => "");
+    }
+
+    write(data: string): void {
+      for (let index = 0; index < data.length; ) {
+        const char = data[index] ?? "";
+        if (char === ESC && data[index + 1] === "[") {
+          const sequence = data.slice(index + 2);
+          const commandOffset = sequence.search(/[A-Za-z]/);
+          if (commandOffset < 0) {
+            index += 1;
+            continue;
+          }
+          this.control(sequence.slice(0, commandOffset), sequence[commandOffset] ?? "");
+          index += commandOffset + 3;
+          continue;
+        }
+        if (char === "\r") {
+          this.column = 0;
+        } else if (char === "\n") {
+          this.lineFeed();
+        } else {
+          const line = this.lines[this.row] ?? "";
+          this.lines[this.row] =
+            line.slice(0, this.column) + char + line.slice(this.column + char.length);
+          this.column += 1;
+        }
+        index += 1;
+      }
+    }
+
+    private control(params: string, command: string): void {
+      const count = Math.max(1, Number.parseInt(params, 10) || 1);
+      if (command === "A") {
+        this.row = Math.max(0, this.row - count);
+      } else if (command === "B") {
+        this.row = Math.min(this.height - 1, this.row + count);
+      } else if (command === "K") {
+        this.lines[this.row] = "";
+      } else if (command === "J") {
+        for (let row = this.row; row < this.height; row++) this.lines[row] = "";
+      }
+    }
+
+    private lineFeed(): void {
+      if (this.row < this.height - 1) {
+        this.row += 1;
+        return;
+      }
+      this.scrollback.push(this.lines.shift() ?? "");
+      this.lines.push("");
+    }
+  }
+
   function setup() {
     const written: string[] = [];
     const terminal = new Terminal({
@@ -886,6 +947,28 @@ describe("inline renderer", () => {
 
     renderer.renderNow(["replacement"]);
     expect(written.at(-1)).toContain(`${ESC}[2A`);
+  });
+
+  test("growing and repainting a viewport-sized frame never leaks it into scrollback", () => {
+    const screen = new VirtualScreen(8);
+    const terminal = new Terminal({
+      write: (data) => screen.write(data),
+      columns: 80,
+      rows: 8,
+      isTty: true,
+    });
+    const renderer = new InlineRenderer(terminal, 0);
+    renderer.commit(Array.from({ length: 6 }, (_, index) => `history ${index + 1}`));
+    renderer.renderNow(["old 1", "old 2"]);
+
+    const expanded = Array.from({ length: 7 }, (_, index) => `expanded ${index + 1}`);
+    renderer.renderNow(expanded);
+    const repainted = expanded.map((line) => `${line} updated`);
+    renderer.renderNow(repainted);
+
+    expect(screen.lines.slice(-7)).toEqual(repainted);
+    expect(screen.scrollback.join("\n")).not.toContain("old");
+    expect(screen.scrollback.join("\n")).not.toContain("expanded");
   });
 
   test("committing with the next frame replaces stale pending output atomically", async () => {

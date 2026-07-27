@@ -25,7 +25,10 @@ export class InlineRenderer {
     const managed = next ? this.rows(next) : this.current;
     if (next) this.cancelPending();
     const body =
-      this.clearRegion() + committed.map((line) => `${line}\n`).join("") + this.draw(managed);
+      this.clearRegion() +
+      committed.map((line) => `${line}\r\n`).join("") +
+      this.reserveFromAnchor(managed.length) +
+      this.draw(managed);
     this.current = [...managed];
     this.lastWidth = this.terminal.columns;
     this.terminal.frame(body);
@@ -58,7 +61,7 @@ export class InlineRenderer {
     // Nothing to do when the region is identical and the terminal did not resize.
     if (!widthChanged && sameLines(this.current, rows)) return;
 
-    const body = this.clearRegion() + this.draw(rows);
+    const body = this.clearRegion() + this.reserveGrowth(rows.length) + this.draw(rows);
     this.current = [...rows];
     this.terminal.frame(body);
   }
@@ -81,8 +84,20 @@ export class InlineRenderer {
     return `\r${CURSOR.up(this.current.length - 1)}${CURSOR.clearBelow}`;
   }
 
+  private reserveGrowth(nextRows: number): string {
+    const currentRows = Math.max(1, this.current.length);
+    if (nextRows <= currentRows) return "";
+    const growth = nextRows - currentRows;
+    return CURSOR.down(currentRows - 1) + "\r\n".repeat(growth) + CURSOR.up(nextRows - 1);
+  }
+
+  private reserveFromAnchor(rows: number): string {
+    if (rows <= 1) return "";
+    return "\r\n".repeat(rows - 1) + CURSOR.up(rows - 1);
+  }
+
   private draw(lines: string[]): string {
-    return lines.join("\n");
+    return lines.join("\r\n");
   }
 
   clear(): void {
