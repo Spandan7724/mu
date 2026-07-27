@@ -2,12 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { MemorySessionStore, SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
 import { resumePickerItems, sessionPickerLabel } from "./session-picker.ts";
 
-function session(id: string, firstPrompt?: string): SessionTree {
+function session(
+  id: string,
+  firstPrompt?: string,
+  createdAt = "2026-07-27T00:00:00.000Z",
+): SessionTree {
   const tree = new SessionTree({
     type: "session",
     version: SESSION_VERSION,
     id,
-    createdAt: "2026-07-27T00:00:00.000Z",
+    createdAt,
     profile: "coding",
     environment: {},
   });
@@ -43,6 +47,19 @@ describe("resume picker labels", () => {
     expect(await resumePickerItems(store)).toEqual([
       { label: "same prompt", value: "session-a" },
       { label: "same prompt", value: "session-b" },
+    ]);
+  });
+
+  test("orders sessions from newest to oldest regardless of store order", async () => {
+    const store = new MemorySessionStore();
+    await store.save("oldest", session("oldest", "old work", "2026-07-25T12:00:00.000Z"));
+    await store.save("newest", session("newest", "new work", "2026-07-27T12:00:00.000Z"));
+    await store.save("middle", session("middle", "middle work", "2026-07-26T12:00:00.000Z"));
+
+    expect((await resumePickerItems(store)).map((item) => item.value)).toEqual([
+      "newest",
+      "middle",
+      "oldest",
     ]);
   });
 
