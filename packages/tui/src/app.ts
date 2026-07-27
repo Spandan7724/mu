@@ -25,13 +25,21 @@ import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 
-export type AppMode = "composing" | "approval" | "select" | "mention" | "picker";
+export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
 
 export interface PickerRequest {
   title: string;
   items: { label: string; description?: string }[];
   onChoose: (label: string) => void;
+  onCancel?: () => void;
   filterable?: boolean;
+}
+
+export interface InputPromptRequest {
+  title: string;
+  secret?: boolean;
+  onSubmit: (value: string) => void;
+  onCancel?: () => void;
 }
 
 export interface AppCallbacks {
@@ -88,6 +96,8 @@ export class App {
   private thinkingLevel = "off";
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
+  private prompt: InputPromptRequest | undefined;
+  private promptEditor = new Editor();
   private mentionStart = -1;
 
   constructor(private options: AppOptions) {
@@ -138,6 +148,12 @@ export class App {
     this.pickerQuery = "";
     this.commandList.setItems(request.items);
     this.mode = "picker";
+  }
+
+  openPrompt(request: InputPromptRequest): void {
+    this.prompt = request;
+    this.promptEditor.setText("");
+    this.mode = "prompt";
   }
 
   get isRunning(): boolean {
@@ -404,6 +420,13 @@ export class App {
             : "";
         lines.push(MARGIN + styleText(`${this.picker.title}${query}`, { bold: true }, depth));
         lines.push(...this.commandList.render(width, depth));
+      } else if (this.mode === "prompt" && this.prompt) {
+        lines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
+        lines.push(
+          ...(this.prompt.secret
+            ? this.promptEditor.renderMasked(width, depth)
+            : this.promptEditor.render(width, depth)),
+        );
       } else {
         lines.push(...this.editor.render(width, depth));
         if (this.mode === "select" || this.mode === "mention") {
@@ -421,6 +444,10 @@ export class App {
 
   handleInput(event: InputEvent): void {
     if (event.type === "paste") {
+      if (this.mode === "prompt") {
+        this.promptEditor.insert(event.text.replace(/[\r\n]+/g, ""));
+        return;
+      }
       if (this.mode === "picker" && this.picker?.filterable) {
         this.pickerQuery += event.text.replace(/\s+/g, " ");
         this.refreshPicker();
@@ -454,6 +481,11 @@ export class App {
 
     if (this.mode === "picker") {
       this.handlePickerKey(key);
+      return;
+    }
+
+    if (this.mode === "prompt") {
+      this.handlePromptKey(key);
       return;
     }
 
@@ -545,9 +577,11 @@ export class App {
       return;
     }
     if (key.name === "escape") {
+      const onCancel = picker.onCancel;
       this.picker = undefined;
       this.pickerQuery = "";
       this.mode = "composing";
+      onCancel?.();
       return;
     }
     if (picker.filterable && key.name === "backspace") {
@@ -568,6 +602,40 @@ export class App {
       this.pickerQuery += key.text;
       this.refreshPicker();
     }
+  }
+
+  private handlePromptKey(key: Key): void {
+    const prompt = this.prompt;
+    if (!prompt) return;
+    if (key.name === "escape") {
+      this.prompt = undefined;
+      this.promptEditor.setText("");
+      this.mode = "composing";
+      prompt.onCancel?.();
+      return;
+    }
+    if (key.name === "return") {
+      const value = this.promptEditor.text;
+      if (!value.trim()) return;
+      this.prompt = undefined;
+      this.promptEditor.setText("");
+      this.mode = "composing";
+      prompt.onSubmit(value);
+      return;
+    }
+    if (key.name === "backspace") {
+      this.promptEditor.backspace();
+      return;
+    }
+    if (key.name === "left" || key.name === "right" || key.name === "home" || key.name === "end") {
+      this.promptEditor.move(key.name);
+      return;
+    }
+    if (key.name === "space") {
+      this.promptEditor.insert(" ");
+      return;
+    }
+    if (!key.ctrl && !key.alt && key.text) this.promptEditor.insert(key.text);
   }
 
   private refreshPicker(): void {

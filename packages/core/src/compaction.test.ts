@@ -146,6 +146,17 @@ describe("compact", () => {
     expect(prompt).toContain("Current task state");
   });
 
+  test("compaction receives the same credential resolver as ordinary turns", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "summary" }] }]);
+    const getCredentials = async () => ({ type: "apiKey" as const, apiKey: "fresh" });
+    await compact(longHistory(), {
+      provider,
+      model: fakeModel,
+      streamOpts: { getCredentials },
+    });
+    expect(provider.streamOptions[0]?.getCredentials).toBe(getCredentials);
+  });
+
   test("profile carryover is captured", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "summary" }] }]);
     const result = await compact(longHistory(), {

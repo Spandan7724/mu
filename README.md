@@ -23,11 +23,13 @@ curl -fsSL -o mu https://github.com/…/releases/latest/download/mu-linux-x64
 chmod +x mu && ./mu --help
 ```
 
-Set a provider key and go:
+Start mu and run `/login` to choose account sign-in or a stored API key. OpenAI
+account sign-in uses your ChatGPT plan. Environment variables remain available for
+unattended use:
 
 ```sh
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
-mu                             # interactive
+mu                             # interactive; /login configures authentication
 mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```

@@ -1,5 +1,6 @@
 import {
   addUsage,
+  type Credential,
   defaultModelRef,
   findModel,
   getProvider,
@@ -75,6 +76,9 @@ export interface AgentOptions {
   sessionId?: string;
   thinkingLevel?: ThinkingLevel;
   apiKey?: string;
+  // Resolved for the active provider before every model request. Returning
+  // undefined preserves that provider's explicit/env API-key fallback.
+  getCredentials?: (provider: string) => Promise<Credential | undefined>;
   // Typed context messages seeded once at the start of a session (profiles use
   // this for environment + project instructions — never a system-prompt edit).
   initialMessages?: AgentMessage[];
@@ -816,10 +820,20 @@ export class Agent {
       return breach;
     };
 
+    const credentialResolver = this.options.getCredentials;
     const config: LoopConfig = {
       provider: runProvider,
       model: runModel,
-      ...(this.options.apiKey ? { streamOpts: { apiKey: this.options.apiKey } } : {}),
+      ...(this.options.apiKey || this.options.getCredentials
+        ? {
+            streamOpts: {
+              ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
+              ...(credentialResolver
+                ? { getCredentials: () => credentialResolver(runModel.provider) }
+                : {}),
+            },
+          }
+        : {}),
       thinkingLevel: this.currentThinking,
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
@@ -946,6 +960,7 @@ export class Agent {
           const result = await compact(working, {
             provider: runProvider,
             model: runModel,
+            ...(config.streamOpts ? { streamOpts: config.streamOpts } : {}),
             ...(this.options.carryoverExtractor
               ? { carryoverExtractor: this.options.carryoverExtractor }
               : {}),

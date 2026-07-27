@@ -24,11 +24,19 @@ import {
   type MarkdownCommandRun,
   optionsFromProfile,
   registryWithCoreCommands,
+  saveApiKey,
   toCommand,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel, saveDefaultModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
+import {
+  type AccountLoginProvider,
+  accountLoginProviders,
+  apiKeyLoginProviders,
+  loginMethods,
+} from "./login.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 const SPINNER_INTERVAL_MS = 120;
@@ -78,6 +86,7 @@ export async function runInteractive(
     const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
     resolved = await optionsFromProfile(profile, modelRef, options);
   }
+  resolved = withStoredCredentials(resolved);
 
   const builtIns = useBuiltIns
     ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
@@ -113,11 +122,13 @@ export async function runInteractive(
   const renderer = new InlineRenderer(terminal);
   let exiting = false;
   let activeRun: Promise<void> | undefined;
+  let loginController: AbortController | undefined;
 
   // Leaving must not strand an in-flight run or a permission promise: abort the
   // run and deny anything still waiting, or the process lingers after the UI
   // is gone.
   const shutdown = () => {
+    loginController?.abort();
     agent.stop();
     for (const [id, resolve] of pendingPermissions) {
       resolve("deny");
@@ -188,6 +199,20 @@ export async function runInteractive(
           paint();
         },
       });
+      return { handled: true };
+    },
+  });
+  commands.register({
+    name: "login",
+    description: "Configure provider authentication",
+    run: (ctx) => {
+      if (ctx.args.trim()) {
+        return { handled: true, message: "Run /login, then choose an authentication method." };
+      }
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot change authentication during a run." };
+      }
+      openLoginMethodPicker();
       return { handled: true };
     },
   });
@@ -296,6 +321,139 @@ export async function runInteractive(
     activeRun = startRun(text, options).finally(() => {
       activeRun = undefined;
     });
+  }
+
+  function openLoginMethodPicker(): void {
+    app.openPicker({
+      title: "Select authentication method:",
+      items: loginMethods.map(({ label, description }) => ({ label, description })),
+      onChoose: (label) => {
+        const method = loginMethods.find((candidate) => candidate.label === label);
+        if (method?.id === "account") openAccountProviderPicker();
+        else if (method?.id === "apiKey") openApiKeyProviderPicker();
+      },
+    });
+  }
+
+  function openAccountProviderPicker(): void {
+    app.openPicker({
+      title: "Select account provider:",
+      items: accountLoginProviders.map((provider) => ({
+        label: provider.name,
+        description: provider.description,
+      })),
+      onChoose: (label) => {
+        const provider = accountLoginProviders.find((candidate) => candidate.name === label);
+        if (provider) void signInWithAccount(provider);
+      },
+      onCancel: openLoginMethodPicker,
+    });
+  }
+
+  function openApiKeyProviderPicker(): void {
+    const providers = apiKeyLoginProviders();
+    app.openPicker({
+      title: "Select API key provider:",
+      items: providers.map(({ name }) => ({ label: name })),
+      filterable: true,
+      onChoose: (label) => {
+        const provider = providers.find((candidate) => candidate.name === label);
+        if (!provider) return;
+        app.openPrompt({
+          title: `Enter API key for ${provider.name}:`,
+          secret: true,
+          onSubmit: (apiKey) => void storeApiKey(provider.id, provider.name, apiKey),
+          onCancel: openApiKeyProviderPicker,
+        });
+      },
+      onCancel: openLoginMethodPicker,
+    });
+  }
+
+  async function selectProviderModel(provider: string): Promise<void> {
+    const model = listModels().find((candidate) => candidate.provider === provider);
+    if (!model) return;
+    const ref = `${model.provider}/${model.id}`;
+    agent.setModel(ref);
+    app.setModel(ref, agent.contextWindow);
+    try {
+      await saveDefaultModel(ref);
+    } catch (error) {
+      renderer.commit([
+        `  could not save ${ref} as the default model: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ]);
+    }
+  }
+
+  async function storeApiKey(provider: string, label: string, apiKey: string): Promise<void> {
+    try {
+      await saveApiKey(provider, apiKey);
+      await selectProviderModel(provider);
+      renderer.commit([`  Saved API key for ${label}.`, `  model set to ${agent.modelRef}`]);
+    } catch (error) {
+      renderer.commit([
+        `  Could not save API key for ${label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ]);
+    }
+    paint();
+  }
+
+  function openBrowser(url: string): boolean {
+    const command =
+      process.platform === "darwin"
+        ? ["open", url]
+        : process.platform === "win32"
+          ? ["cmd", "/c", "start", "", url]
+          : ["xdg-open", url];
+    try {
+      Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  let loginInProgress = false;
+  async function signInWithAccount(provider: AccountLoginProvider): Promise<void> {
+    if (loginInProgress) {
+      renderer.commit(["  A login is already in progress."]);
+      paint();
+      return;
+    }
+    loginInProgress = true;
+    const controller = new AbortController();
+    loginController = controller;
+    try {
+      await provider.login({
+        signal: controller.signal,
+        onAuthUrl: (url) => {
+          const opened = openBrowser(url);
+          renderer.commit([
+            opened
+              ? "  Complete the OpenAI sign-in in your browser."
+              : "  Could not open a browser. Open this URL to continue:",
+            `  ${url}`,
+          ]);
+          paint();
+        },
+      });
+      await selectProviderModel(provider.id);
+      renderer.commit([`  ${provider.successMessage}`, `  model set to ${agent.modelRef}`]);
+    } catch (error) {
+      renderer.commit([
+        `  ${provider.name} login failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ]);
+    } finally {
+      if (loginController === controller) loginController = undefined;
+      loginInProgress = false;
+      paint();
+    }
   }
 
   async function startRun(text: string, options?: AgentRunOptions): Promise<void> {

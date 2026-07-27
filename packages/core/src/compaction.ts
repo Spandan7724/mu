@@ -1,4 +1,4 @@
-import type { LlmContext, ModelInfo, Provider, Usage } from "@mu/ai";
+import type { LlmContext, ModelInfo, Provider, StreamOpts, Usage } from "@mu/ai";
 import type { AgentMessage } from "./messages.ts";
 import { toAiMessages } from "./messages.ts";
 
@@ -117,6 +117,7 @@ export interface CompactorOptions {
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
   keepRatio?: number;
   signal?: AbortSignal;
+  streamOpts?: StreamOpts;
 }
 
 // Layer 2 — full compaction. Core owns the machinery; the profile injects what
@@ -160,6 +161,7 @@ export async function compact(
   };
 
   const stream = options.provider.stream(options.model, context, {
+    ...options.streamOpts,
     ...(options.signal ? { signal: options.signal } : {}),
   });
   const result = await stream.result();

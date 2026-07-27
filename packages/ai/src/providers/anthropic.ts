@@ -186,21 +186,23 @@ export function streamAnthropic(
   opts?: StreamOpts,
 ): AssistantStream {
   return driveStream(model, opts, async (stream, output) => {
-    const credential = await resolveCredential("anthropic", "ANTHROPIC_API_KEY", opts);
-    const headers: Record<string, string> = {
-      "anthropic-version": API_VERSION,
-      ...(credential.type === "apiKey"
-        ? { "x-api-key": credential.apiKey }
-        : {
-            authorization: `Bearer ${credential.accessToken}`,
-            "anthropic-beta": "oauth-2025-04-20",
-          }),
-      ...opts?.headers,
-    };
     const baseUrl = opts?.baseUrl ?? model.baseUrl ?? DEFAULT_BASE_URL;
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
-      () => postSse(`${baseUrl}/v1/messages`, headers, body, opts),
+      async () => {
+        const credential = await resolveCredential("anthropic", "ANTHROPIC_API_KEY", opts);
+        const headers: Record<string, string> = {
+          "anthropic-version": API_VERSION,
+          ...(credential.type === "apiKey"
+            ? { "x-api-key": credential.apiKey }
+            : {
+                authorization: `Bearer ${credential.accessToken}`,
+                "anthropic-beta": "oauth-2025-04-20",
+              }),
+          ...opts?.headers,
+        };
+        return postSse(`${baseUrl}/v1/messages`, headers, body, opts);
+      },
       {
         ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),

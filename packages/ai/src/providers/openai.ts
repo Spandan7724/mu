@@ -1,5 +1,4 @@
 import { resolveCredential } from "../auth.ts";
-import { AiError } from "../errors.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -15,6 +14,7 @@ import type {
 import { driveStream, postSse, updateCost } from "./shared.ts";
 
 const API_BASE_URL = "https://api.openai.com";
+const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 
 type Json = Record<string, unknown>;
 
@@ -24,12 +24,18 @@ function resolveAuthMode(
   model?: ModelInfo,
 ): { url: string; headers: Record<string, string> } {
   if (credential.type === "oauth") {
-    throw new AiError(
-      "auth",
-      "OpenAI ChatGPT-plan OAuth is not wired up yet (lands in M10) — use an API key",
-    );
+    const base = (opts?.baseUrl ?? CODEX_BASE_URL).replace(/\/+$/, "");
+    return {
+      url: `${base}/responses`,
+      headers: {
+        authorization: `Bearer ${credential.accessToken}`,
+        "chatgpt-account-id": credential.accountId,
+        originator: "mu",
+        "openai-beta": "responses=experimental",
+      },
+    };
   }
-  const base = opts?.baseUrl ?? model?.baseUrl ?? API_BASE_URL;
+  const base = (opts?.baseUrl ?? model?.baseUrl ?? API_BASE_URL).replace(/\/+$/, "");
   return {
     url: `${base}/v1/responses`,
     headers: { authorization: `Bearer ${credential.apiKey}` },
@@ -131,11 +137,13 @@ export function streamOpenAI(
   opts?: StreamOpts,
 ): AssistantStream {
   return driveStream(model, opts, async (stream, output) => {
-    const credential = await resolveCredential("openai", "OPENAI_API_KEY", opts);
-    const { url, headers } = resolveAuthMode(credential, opts, model);
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
-      () => postSse(url, { ...headers, ...opts?.headers }, body, opts),
+      async () => {
+        const credential = await resolveCredential("openai", "OPENAI_API_KEY", opts);
+        const { url, headers } = resolveAuthMode(credential, opts, model);
+        return postSse(url, { ...headers, ...opts?.headers }, body, opts);
+      },
       {
         ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),

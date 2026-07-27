@@ -114,12 +114,13 @@ export interface ModelInfo {
 export type ThinkingLevel = "off" | "low" | "medium" | "high";
 
 // Per : resolved before every request; clients never cache tokens.
-// v1 ships apiKey only; the oauth arm is the post-v1 seam.
 export type Credential =
   | { type: "apiKey"; apiKey: string }
-  | { type: "oauth"; accessToken: string };
+  | { type: "oauth"; accessToken: string; accountId: string };
 
-export type CredentialResolver = () => Promise<Credential>;
+// Returning undefined falls through to explicit/env API-key resolution. This
+// lets one provider-aware resolver serve a multi-provider Agent.
+export type CredentialResolver = () => Promise<Credential | undefined>;
 
 export interface StreamOpts {
   apiKey?: string;

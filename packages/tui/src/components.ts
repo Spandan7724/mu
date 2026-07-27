@@ -208,6 +208,25 @@ export class Editor {
     }
     return out;
   }
+
+  // Secret prompts keep the real value in the editor for normal cursor and
+  // deletion behavior, but never render it (or add it to command history).
+  renderMasked(width: number, depth: ColorDepth): string[] {
+    const marker = `${accent(GLYPHS.userMarker, depth)} `;
+    const available = width - MARGIN.length - 2;
+    const flat = this.text.replace(/\n/g, "");
+    const beforeCount = graphemes(flat.slice(0, this.offset)).length;
+    const total = graphemes(flat).length;
+    const masked =
+      "•".repeat(beforeCount) +
+      BLOCK_CURSOR_ON +
+      (beforeCount < total ? "•" : " ") +
+      BLOCK_CURSOR_OFF +
+      "•".repeat(Math.max(0, total - beforeCount - 1));
+    return wrapText(masked, available).map((chunk, index) =>
+      index === 0 ? MARGIN + marker + chunk : `${MARGIN}  ${chunk}`,
+    );
+  }
 }
 
 export interface SelectItem {

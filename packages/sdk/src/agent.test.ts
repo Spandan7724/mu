@@ -28,6 +28,24 @@ describe("Agent", () => {
     expect(result.usage.costUsd).toBeGreaterThan(0);
   });
 
+  test("resolves credentials for the provider active on each request", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const providers: string[] = [];
+    const agent = agentWith(provider, {
+      getCredentials: async (providerId: string) => {
+        providers.push(providerId);
+        return { type: "apiKey" as const, apiKey: "fresh" };
+      },
+    });
+    await agent.run("go");
+
+    expect(await provider.streamOptions[0]?.getCredentials?.()).toEqual({
+      type: "apiKey",
+      apiKey: "fresh",
+    });
+    expect(providers).toEqual(["fake"]);
+  });
+
   test("a custom tool is registered in a few lines and receives validated args", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "add", arguments: { a: 2, b: 3 } }] },

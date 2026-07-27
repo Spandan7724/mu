@@ -1,4 +1,10 @@
-export type { AppCallbacks, AppMode, AppOptions } from "./app.ts";
+export type {
+  AppCallbacks,
+  AppMode,
+  AppOptions,
+  InputPromptRequest,
+  PickerRequest,
+} from "./app.ts";
 export { App } from "./app.ts";
 export type {
   DiffFile,

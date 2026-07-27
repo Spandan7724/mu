@@ -7,7 +7,8 @@ export async function resolveCredential(
   envVar: string,
   opts?: StreamOpts,
 ): Promise<Credential> {
-  if (opts?.getCredentials) return opts.getCredentials();
+  const resolved = await opts?.getCredentials?.();
+  if (resolved) return resolved;
   const apiKey = opts?.apiKey ?? process.env[envVar];
   if (!apiKey) {
     throw new AiError("auth", `No API key for provider "${provider}" (set ${envVar})`);

@@ -695,6 +695,51 @@ describe("selection pickers (/model, /resume)", () => {
   });
 });
 
+describe("credential prompts", () => {
+  test("a secret prompt never renders the API key and submits it once", () => {
+    const h = harness();
+    const submitted: string[] = [];
+    h.app.openPrompt({
+      title: "Enter API key for OpenAI:",
+      secret: true,
+      onSubmit: (value) => submitted.push(value),
+    });
+
+    feed(h.app, "sk-secret-value");
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("Enter API key for OpenAI:");
+    expect(rendered).not.toContain("sk-secret-value");
+    expect(rendered).toContain("••••");
+
+    feed(h.app, "\r");
+    expect(submitted).toEqual(["sk-secret-value"]);
+    expect(h.app.currentMode).toBe("composing");
+    expect(h.app.editor.text).toBe("");
+  });
+
+  test("escape cancels a secret prompt without submitting", () => {
+    const h = harness();
+    let cancelled = false;
+    const submitted: string[] = [];
+    h.app.openPrompt({
+      title: "Enter key:",
+      secret: true,
+      onSubmit: (value) => submitted.push(value),
+      onCancel: () => {
+        cancelled = true;
+      },
+    });
+    feed(h.app, "secret");
+    h.app.handleInput({
+      type: "key",
+      key: { name: "escape", ctrl: false, alt: false, shift: false },
+    });
+    expect(cancelled).toBe(true);
+    expect(submitted).toEqual([]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+});
+
 describe("error reporting", () => {
   test("the real provider error is shown, not a generic line", () => {
     const { app } = harness();

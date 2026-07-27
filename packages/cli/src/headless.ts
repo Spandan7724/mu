@@ -1,5 +1,6 @@
 import { Agent, type AgentOptions, type HaltReason, optionsFromProfile } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
@@ -44,6 +45,7 @@ export async function runHeadless(
       return EXIT.usage;
     }
   }
+  resolved = withStoredCredentials(resolved);
 
   const builtIns = useBuiltIns
     ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)

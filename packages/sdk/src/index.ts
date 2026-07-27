@@ -1,4 +1,11 @@
-export type { ModelDiscoveryOptions, ModelInfo, Provider, ThinkingLevel, Usage } from "@mu/ai";
+export type {
+  Credential,
+  ModelDiscoveryOptions,
+  ModelInfo,
+  Provider,
+  ThinkingLevel,
+  Usage,
+} from "@mu/ai";
 export {
   defaultModelRef,
   discoverModels,
@@ -41,6 +48,25 @@ export {
 } from "@mu/core";
 export type { AgentOptions, AgentRunOptions, HaltReason, RunResult } from "./agent.ts";
 export { Agent } from "./agent.ts";
+export type {
+  AuthFile,
+  AuthStoreOptions,
+  OpenAiCallbackServer,
+  OpenAiLoginOptions,
+  OpenAiLoginResult,
+  StoredApiKey,
+  StoredCredential,
+  StoredOpenAiOAuth,
+} from "./auth.ts";
+export {
+  createCredentialResolver,
+  defaultAuthFile,
+  loginOpenAI,
+  preferredAuthProvider,
+  readAuthFile,
+  saveApiKey,
+  storedAuthProviders,
+} from "./auth.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
 export type { DiffCommandData, ForkPoint } from "./commands.ts";

@@ -152,15 +152,17 @@ export function streamGemini(
   opts?: StreamOpts,
 ): AssistantStream {
   return driveStream(model, opts, async (stream, output) => {
-    const credential = await resolveCredential("google", "GEMINI_API_KEY", opts);
-    if (credential.type !== "apiKey") {
-      throw new AiError("auth", "Gemini supports API-key auth only in v1");
-    }
     const baseUrl = opts?.baseUrl ?? model.baseUrl ?? DEFAULT_BASE_URL;
     const url = `${baseUrl}/v1beta/models/${model.id}:streamGenerateContent?alt=sse`;
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
-      () => postSse(url, { "x-goog-api-key": credential.apiKey, ...opts?.headers }, body, opts),
+      async () => {
+        const credential = await resolveCredential("google", "GEMINI_API_KEY", opts);
+        if (credential.type !== "apiKey") {
+          throw new AiError("auth", "Gemini supports API-key auth only in v1");
+        }
+        return postSse(url, { "x-goog-api-key": credential.apiKey, ...opts?.headers }, body, opts);
+      },
       {
         ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),

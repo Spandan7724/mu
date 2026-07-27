@@ -8,6 +8,7 @@ import {
   toCommand,
 } from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
+import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { EXIT, runHeadless } from "./headless.ts";
@@ -50,7 +51,9 @@ async function main(): Promise<number> {
       // permission_reply op; nothing is auto-denied in RPC mode.
       const pending = new Map<string, (outcome: "allow" | "deny") => void>();
       const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
-      const resolved = await optionsFromProfile(profile, await resolveCliModel(args.model));
+      const resolved = withStoredCredentials(
+        await optionsFromProfile(profile, await resolveCliModel(args.model)),
+      );
       const builtIns = await loadBuiltInExtensions(process.cwd(), resolved.extensions);
       for (const warning of builtIns.warnings) io.stderr(`mu: mcp: ${warning}\n`);
       const agent = new Agent({

@@ -124,12 +124,57 @@ describe("streamOpenAI", () => {
     });
   });
 
-  test("oauth credential is a designed-in branch that errors until M10", async () => {
+  test("routes OAuth credentials through the ChatGPT Codex backend", async () => {
+    const cassette = {
+      interactions: textCassette.interactions.map((interaction) => ({
+        ...interaction,
+        request: {
+          ...interaction.request,
+          url: "https://chatgpt.com/backend-api/codex/responses",
+        },
+      })),
+    };
+    const replay = replayFetch(cassette);
     const stream = streamOpenAI(model, ctx, {
-      getCredentials: async () => ({ type: "oauth", accessToken: "tok" }),
+      getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
+      fetch: replay.fetch,
     });
     const result = await stream.result();
-    expect(result.stopReason).toBe("error");
-    expect(result.errorMessage).toContain("M10");
+    expect(result.stopReason).toBe("end");
+    expect(replay.calls[0]?.headers.authorization).toBe("Bearer tok");
+    expect(replay.calls[0]?.headers["chatgpt-account-id"]).toBe("acc");
+    expect(replay.calls[0]?.headers.originator).toBe("mu");
+    expect(replay.calls[0]?.headers["openai-beta"]).toBe("responses=experimental");
+  });
+
+  test("re-resolves credentials for each retried HTTP request", async () => {
+    let resolutions = 0;
+    const authorizations: string[] = [];
+    const recorded = textCassette.interactions[0];
+    const retryFetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (authorizations.length === 1) {
+        return new Response("slow down", {
+          status: 429,
+          headers: { "retry-after-ms": "1" },
+        });
+      }
+      return new Response(recorded?.response.body ?? "", {
+        status: recorded?.response.status ?? 200,
+        ...(recorded?.response.headers ? { headers: recorded.response.headers } : {}),
+      });
+    }) as typeof fetch;
+    const stream = streamOpenAI(model, ctx, {
+      getCredentials: async () => ({
+        type: "apiKey",
+        apiKey: `key-${++resolutions}`,
+      }),
+      fetch: retryFetch,
+      maxRetries: 1,
+    });
+
+    expect((await stream.result()).stopReason).toBe("end");
+    expect(resolutions).toBe(2);
+    expect(authorizations).toEqual(["Bearer key-1", "Bearer key-2"]);
   });
 });

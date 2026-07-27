@@ -34,6 +34,7 @@ export const fakeModel: ModelInfo = {
 export class FakeProvider implements Provider {
   readonly id = "fake";
   readonly requests: LlmContext[] = [];
+  readonly streamOptions: (StreamOpts | undefined)[] = [];
   private index = 0;
 
   constructor(private turns: ScriptedTurn[]) {}
@@ -44,6 +45,7 @@ export class FakeProvider implements Provider {
 
   stream(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): AssistantStream {
     this.requests.push(structuredClone(ctx));
+    this.streamOptions.push(opts);
     const turn = this.turns[this.index] ?? { content: [{ type: "text", text: "" }] };
     this.index++;
     const stream = new AssistantStream();
