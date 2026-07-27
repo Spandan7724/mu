@@ -106,6 +106,8 @@ describe("colour depth", () => {
     expect(styleText("code", { code: true }, "truecolor")).toContain("38;2;212;212;212");
     expect(styleText("code", { code: true }, "ansi256")).toContain("38;5;188");
     expect(styleText("code", { code: true }, "ansi16")).toBe("code");
-    expect(styleText("code", { codeAccent: true }, "ansi16")).toContain("[95m");
+    expect(styleText("rule", { codeAccent: true }, "truecolor")).toContain("38;2;205;214;244");
+    expect(styleText("rule", { codeAccent: true }, "ansi256")).toContain("38;5;189");
+    expect(styleText("rule", { codeAccent: true }, "ansi16")).toBe("rule");
   });
 });

@@ -400,7 +400,7 @@ describe("components", () => {
     expect(rendered).toContain("38;2;250;204;21");
     expect(rendered).toContain("38;2;96;165;250");
     expect(rendered).toContain("38;2;212;212;212");
-    expect(rendered).toContain("38;2;192;132;252");
+    expect(rendered).toContain("38;2;205;214;244");
     expect(rendered).toContain("\u001b[1m");
     expect(rendered).toContain("\u001b[3m");
     expect(rendered).toContain("\u001b[9m");
@@ -603,7 +603,7 @@ describe("style conformance", () => {
       "38;2;250;204;21",
       "38;2;96;165;250",
       "38;2;212;212;212",
-      "38;2;192;132;252",
+      "38;2;205;214;244",
     ]) {
       expect(everything).not.toContain(color);
     }

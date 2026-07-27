@@ -254,8 +254,7 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
     if (fence) {
       const marker = fence[1] ?? "```";
       const language = fence[2]?.trim();
-      if (language)
-        out.push(styleText(language, { codeAccent: true, dim: true, italic: true }, depth));
+      if (language) out.push(styleText(language, { codeAccent: true, italic: true }, depth));
       index++;
       const codeLines: string[] = [];
       while (
@@ -265,7 +264,7 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         codeLines.push(source[index] ?? "");
         index++;
       }
-      const rule = styleText(`${GLYPHS.rule} `, { codeAccent: true, dim: true }, depth);
+      const rule = styleText(`${GLYPHS.rule} `, { codeAccent: true }, depth);
       for (const highlighted of highlightCode(codeLines.join("\n"), language, depth)) {
         const wrapped = wrapLine(highlighted, Math.max(1, width - 2));
         out.push(...wrapped.map((line) => rule + line));

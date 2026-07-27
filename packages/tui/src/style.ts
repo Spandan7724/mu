@@ -26,8 +26,8 @@ const LINK_RGB = [96, 165, 250] as const;
 const LINK_256 = 75;
 const CODE_RGB = [212, 212, 212] as const;
 const CODE_256 = 188;
-const CODE_ACCENT_RGB = [192, 132, 252] as const;
-const CODE_ACCENT_256 = 177;
+const CODE_ACCENT_RGB = [205, 214, 244] as const;
+const CODE_ACCENT_256 = 189;
 
 export type SyntaxRole =
   | "comment"
@@ -102,7 +102,6 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${CODE_ACCENT_RGB[0]};${CODE_ACCENT_RGB[1]};${CODE_ACCENT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${CODE_ACCENT_256}`);
-    else codes.push("95");
   }
   if (style.syntax) {
     const color = SYNTAX_COLORS[style.syntax];
