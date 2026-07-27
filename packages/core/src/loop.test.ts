@@ -311,6 +311,36 @@ describe("control hooks", () => {
       "redacted",
     );
   });
+
+  test("prepareContext replaces live state while transformContext stays request-local", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "toolCall", id: "c1", name: "echo", arguments: { value: "x" } }],
+      },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const { emit } = collector();
+    let preparations = 0;
+    await runLoop(
+      [userMessage("secret")],
+      ctx([echoTool()]),
+      baseConfig(provider, {
+        prepareContext: (messages) => {
+          preparations++;
+          return preparations === 1 ? [userMessage("persisted")] : messages;
+        },
+        transformContext: (messages) => [...messages, userMessage(`request-only-${preparations}`)],
+      }),
+      emit,
+    );
+
+    const second = provider.requests[1]?.messages ?? [];
+    const text = JSON.stringify(second);
+    expect(text).toContain("persisted");
+    expect(text).toContain("request-only-2");
+    expect(text).not.toContain("request-only-1");
+    expect(text).not.toContain("secret");
+  });
 });
 
 describe("tool batching", () => {

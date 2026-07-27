@@ -9,7 +9,7 @@ import {
   shouldCompact,
 } from "./compaction.ts";
 import { type AgentMessage, customMessage, userMessage } from "./messages.ts";
-import { FakeProvider, fakeModel } from "./testing/fake-provider.ts";
+import { FakeProvider, fakeModel, type ScriptedTurn } from "./testing/fake-provider.ts";
 
 function assistant(text: string): AgentMessage {
   return {
@@ -57,6 +57,23 @@ describe("token accounting", () => {
     });
     expect(state.tokens).toBe(60_000);
     expect(state.percent).toBeCloseTo(60_000 / fakeModel.contextWindow, 5);
+  });
+
+  test("reported cache usage plus estimated growth drives the context state", () => {
+    const baseline = [userMessage("short")];
+    const grown = [...baseline, toolResult("x".repeat(350))];
+    const state = contextState(
+      fakeModel,
+      grown,
+      {
+        inputTokens: 10,
+        outputTokens: 1,
+        cacheReadTokens: 1_000,
+        cacheWriteTokens: 200,
+      },
+      estimateTokens(baseline),
+    );
+    expect(state.tokens).toBe(1_210 + estimateTokens(grown) - estimateTokens(baseline));
   });
 
   test("threshold fires at the documented level", () => {
@@ -150,6 +167,63 @@ describe("compact", () => {
       "Compaction failed",
     );
   });
+
+  const unusableSummaries: { name: string; turn: ScriptedTurn }[] = [
+    {
+      name: "empty text",
+      turn: { content: [{ type: "text" as const, text: "" }] },
+    },
+    {
+      name: "whitespace text",
+      turn: { content: [{ type: "text" as const, text: " \n " }] },
+    },
+    {
+      name: "thinking only",
+      turn: { content: [{ type: "thinking" as const, thinking: "draft" }] },
+    },
+    {
+      name: "tool call only",
+      turn: {
+        content: [{ type: "toolCall" as const, id: "c", name: "noop", arguments: {} }],
+        stopReason: "toolUse" as const,
+      },
+    },
+    {
+      name: "length-truncated",
+      turn: {
+        content: [{ type: "text" as const, text: "partial summary" }],
+        stopReason: "length" as const,
+      },
+    },
+  ];
+
+  test.each(unusableSummaries)("rejects an unusable $name summary", async ({ turn }) => {
+    const provider = new FakeProvider([turn]);
+    await expect(compact(longHistory(), { provider, model: fakeModel })).rejects.toThrow(
+      "Compaction failed",
+    );
+  });
+
+  test("returns compactor usage and subtracts summary plus carryover from tokens freed", async () => {
+    const messages = longHistory();
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "A deliberately substantial retained summary." }],
+        usage: { inputTokens: 321, outputTokens: 45, costUsd: 0.25 },
+      },
+    ]);
+    const result = await compact(messages, {
+      provider,
+      model: fakeModel,
+      carryoverExtractor: () => ({ files: ["a.ts", "b.ts"] }),
+    });
+    expect(result.usage.inputTokens).toBe(321);
+    expect(result.usage.costUsd).toBe(0.25);
+    expect(result.tokensFreed).toBe(
+      Math.max(0, estimateTokens(messages) - estimateTokens(applyCompaction(result))),
+    );
+    expect(result.tokensFreed).toBeLessThan(estimateTokens(messages.slice(0, 7)));
+  });
 });
 
 describe("applyCompaction", () => {
@@ -183,9 +257,36 @@ describe("applyCompaction", () => {
       messages[0]?.role === "custom" && messages[0].content[0]?.type === "text"
         ? messages[0].content[0].text
         : "";
-    expect(text).toContain("modifiedFiles: a.ts, b.ts");
-    // Empty lists are not noise-printed.
-    expect(text).not.toContain("readFiles");
+    expect(text).toContain('"modifiedFiles"');
+    expect(text).toContain('"a.ts"');
+    expect(text).toContain('"readFiles": []');
+  });
+
+  test("structured carryover is deterministic and preserves nested values", () => {
+    const carryover = {
+      todos: [
+        { status: "done", content: "handle commas, and\nnewlines" },
+        { content: "next", status: "pending" },
+      ],
+      metadata: { z: true, a: null },
+    };
+    const first = applyCompaction({
+      summary: "s",
+      carryover,
+      keptMessages: [],
+      tokensFreed: 0,
+    });
+    const second = applyCompaction({
+      summary: "s",
+      carryover: {
+        metadata: { a: null, z: true },
+        todos: carryover.todos,
+      },
+      keptMessages: [],
+      tokensFreed: 0,
+    });
+    expect(first[0]?.content).toEqual(second[0]?.content);
+    expect(JSON.stringify(first)).not.toContain("[object Object]");
   });
 
   test("an empty summary leaves the transcript untouched", () => {

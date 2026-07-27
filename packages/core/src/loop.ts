@@ -28,6 +28,7 @@ export interface TurnInfo {
   message: AssistantMessage;
   toolResults: ToolResultMessage[];
   context: AgentContext;
+  requestMessages: AgentMessage[];
   newMessages: AgentMessage[];
 }
 
@@ -47,6 +48,11 @@ export interface NextTurnDirective {
   model?: ModelInfo;
   thinkingLevel?: ThinkingLevel;
   context?: AgentContext;
+}
+
+export interface ContextPreparation {
+  messages: AgentMessage[];
+  stop?: boolean;
 }
 
 export interface LoopConfig {
@@ -84,7 +90,13 @@ export interface LoopConfig {
   prepareNextTurn?: (
     turn: TurnInfo,
   ) => NextTurnDirective | undefined | Promise<NextTurnDirective | undefined>;
-  // Transforms the message list just before the LLM call (compaction hooks here).
+  // Persistent context transitions, such as compaction, replace the live loop
+  // state before a request. A preparation may stop the run before that request.
+  prepareContext?: (
+    messages: AgentMessage[],
+  ) => ContextPreparation | AgentMessage[] | Promise<ContextPreparation | AgentMessage[]>;
+  // Request-local transforms (redaction, extension injection) do not replace
+  // the loop's transcript.
   transformContext?: (messages: AgentMessage[]) => AgentMessage[] | Promise<AgentMessage[]>;
 }
 
@@ -173,7 +185,15 @@ export async function runLoop(
       }
       pending = [];
 
-      const message = await streamAssistant(currentContext, currentConfig, emit, abort);
+      if (currentConfig.prepareContext) {
+        const prepared = await currentConfig.prepareContext(currentContext.messages);
+        const preparation = Array.isArray(prepared) ? { messages: prepared } : prepared;
+        currentContext = { ...currentContext, messages: preparation.messages };
+        if (preparation.stop) return finish("budget");
+      }
+
+      const request = await streamAssistant(currentContext, currentConfig, emit, abort);
+      const message = request.message;
       currentContext.messages.push(message);
       newMessages.push(message);
 
@@ -219,7 +239,13 @@ export async function runLoop(
 
       await emit({ type: "turn_end", message, toolResults });
 
-      const turn: TurnInfo = { message, toolResults, context: currentContext, newMessages };
+      const turn: TurnInfo = {
+        message,
+        toolResults,
+        context: currentContext,
+        requestMessages: request.messages,
+        newMessages,
+      };
 
       const directive = await currentConfig.prepareNextTurn?.(turn);
       if (directive) {
@@ -313,7 +339,7 @@ async function streamAssistant(
   config: LoopConfig,
   emit: EventSink,
   signal: AbortSignal,
-): Promise<AssistantMessage> {
+): Promise<{ message: AssistantMessage; messages: AgentMessage[] }> {
   const messages = config.transformContext
     ? await config.transformContext(context.messages)
     : context.messages;
@@ -355,7 +381,7 @@ async function streamAssistant(
   const final = await stream.result();
   if (!started) await emit({ type: "message_start", message: { ...final } });
   await emit({ type: "message_end", message: final });
-  return final;
+  return { message: final, messages };
 }
 
 interface ToolBatch {

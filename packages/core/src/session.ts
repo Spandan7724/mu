@@ -1,3 +1,4 @@
+import { compactionSummaryMessage } from "./compaction.ts";
 import type { AgentMessage } from "./messages.ts";
 
 export const SESSION_VERSION = 1;
@@ -24,7 +25,14 @@ export type SessionEntry =
       parentId: string | null;
       summary: string;
       carryover?: unknown;
-      firstKeptEntryId: string;
+      firstKeptEntryId: string | null;
+      timestamp?: number;
+    }
+  | {
+      type: "microcompaction";
+      id: string;
+      parentId: string | null;
+      replacements: { entryId: string; message: AgentMessage }[];
     }
   | {
       type: "checkpoint";
@@ -181,33 +189,64 @@ export class SessionTree {
     return this.headId ? this.pathTo(this.headId) : [];
   }
 
+  entryIdForMessage(message: AgentMessage): string | undefined {
+    const path = this.activePath();
+    for (let i = path.length - 1; i >= 0; i--) {
+      const entry = path[i];
+      if (entry?.type === "message" && entry.message === message) return entry.id;
+      if (entry?.type === "microcompaction") {
+        const replacement = entry.replacements.find((item) => item.message === message);
+        if (replacement) return replacement.entryId;
+      }
+    }
+    return undefined;
+  }
+
   // Rebuilds the model-visible transcript for a branch. A compaction entry
   // replaces everything before it with its summary (context = summary + tail).
   messagesAt(id: string | null = this.headId): AgentMessage[] {
     if (!id) return [];
     const path = this.pathTo(id);
-    let start = 0;
-    let summary: AgentMessage | undefined;
-    for (let i = path.length - 1; i >= 0; i--) {
-      const entry = path[i];
-      if (entry?.type === "compaction") {
-        summary = {
-          role: "custom",
-          customType: "compaction-summary",
-          content: [{ type: "text", text: entry.summary }],
-          display: false,
-          timestamp: Date.now(),
-        };
-        const keptIndex = path.findIndex((e) => e.id === entry.firstKeptEntryId);
-        start = keptIndex === -1 ? i + 1 : keptIndex;
-        break;
+    let visible: { message: AgentMessage; entryId?: string }[] = [];
+    for (const entry of path) {
+      if (entry.type === "message") {
+        visible.push({ message: entry.message, entryId: entry.id });
+        continue;
+      }
+      if (entry.type === "microcompaction") {
+        for (const replacement of entry.replacements) {
+          const index = visible.findIndex((item) => item.entryId === replacement.entryId);
+          if (index !== -1) {
+            visible[index] = {
+              message: replacement.message,
+              entryId: replacement.entryId,
+            };
+          }
+        }
+        continue;
+      }
+      if (entry.type === "compaction") {
+        if (entry.firstKeptEntryId === null) {
+          visible = [
+            {
+              message: compactionSummaryMessage(entry.summary, entry.carryover, entry.timestamp),
+            },
+          ];
+          continue;
+        }
+        const keptIndex = visible.findIndex((item) => item.entryId === entry.firstKeptEntryId);
+        // A corrupt boundary must never discard history. Only apply it when
+        // its kept-tail anchor is a real ancestor message.
+        if (keptIndex === -1) continue;
+        visible = [
+          {
+            message: compactionSummaryMessage(entry.summary, entry.carryover, entry.timestamp),
+          },
+          ...visible.slice(keptIndex),
+        ];
       }
     }
-    const messages: AgentMessage[] = summary ? [summary] : [];
-    for (const entry of path.slice(start)) {
-      if (entry.type === "message") messages.push(entry.message);
-    }
-    return messages;
+    return visible.map((item) => item.message);
   }
 
   // Branches from an arbitrary entry: subsequent appends descend from it.

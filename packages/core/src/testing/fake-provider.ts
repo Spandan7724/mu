@@ -7,6 +7,7 @@ import {
   type Provider,
   type StopReason,
   type StreamOpts,
+  type Usage,
 } from "@mu/ai";
 
 // Scripted provider for loop tests: each turn yields the next scripted
@@ -15,6 +16,7 @@ export interface ScriptedTurn {
   content: AssistantContent[];
   stopReason?: StopReason;
   errorMessage?: string;
+  usage?: Partial<Usage>;
   // Resolves before the stream produces anything — lets a test await mid-turn.
   delayMs?: number;
 }
@@ -57,6 +59,7 @@ export class FakeProvider implements Provider {
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
           costUsd: 0.0001,
+          ...turn.usage,
         },
         stopReason:
           turn.stopReason ?? (turn.content.some((c) => c.type === "toolCall") ? "toolUse" : "end"),

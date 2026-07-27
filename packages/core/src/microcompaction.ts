@@ -38,7 +38,9 @@ export function microcompact(
   const before = estimateTokens(messages);
   const target = options.targetTokens;
 
-  const result = messages.map((message) => ({ ...message }));
+  // Preserve identity for untouched messages. Session persistence uses the
+  // changed identities to record only the exact replacements.
+  const result = [...messages];
   const cutoff = Math.max(0, result.length - keepRecent);
   let evicted = 0;
 
@@ -53,9 +55,12 @@ export function microcompact(
     const hasImage = message.content.some(isEvictableImage);
     if (!hasImage) continue;
 
-    message.content = message.content.map((block) =>
-      isEvictableImage(block) ? { type: "text" as const, text: IMAGE_TOMBSTONE } : block,
-    );
+    result[i] = {
+      ...message,
+      content: message.content.map((block) =>
+        isEvictableImage(block) ? { type: "text" as const, text: IMAGE_TOMBSTONE } : block,
+      ),
+    };
     evicted++;
   }
 
@@ -75,8 +80,11 @@ export function microcompact(
       .join("");
     if (text.length < TOMBSTONE.length) continue; // already smaller than the marker
 
-    message.content = [{ type: "text", text: TOMBSTONE }];
-    message.evicted = true;
+    result[i] = {
+      ...message,
+      content: [{ type: "text", text: TOMBSTONE }],
+      evicted: true,
+    };
     evicted++;
   }
 

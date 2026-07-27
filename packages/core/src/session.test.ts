@@ -128,8 +128,60 @@ describe("SessionTree", () => {
           : ""
         : "",
     );
-    expect(texts).toEqual(["Earlier discussion summarized.", "kept", "after"]);
+    expect(texts[0]).toContain("Earlier discussion summarized.");
+    expect(texts[0]).toContain('"files"');
+    expect(texts.slice(1)).toEqual(["kept", "after"]);
     expect(messages[0]?.role).toBe("custom");
+  });
+
+  test("a malformed compaction anchor preserves the original transcript", () => {
+    const tree = newTree();
+    tree.appendMessage(userMessage("old-1"));
+    tree.appendMessage(userMessage("old-2"));
+    tree.append({
+      type: "compaction",
+      summary: "must not replace history",
+      firstKeptEntryId: "missing",
+    });
+    tree.appendMessage(userMessage("after"));
+
+    const texts = tree
+      .messagesAt()
+      .filter((message) => message.role === "user")
+      .map((message) => (message.content[0]?.type === "text" ? message.content[0].text : ""));
+    expect(texts).toEqual(["old-1", "old-2", "after"]);
+    expect(tree.messagesAt().some((message) => message.role === "custom")).toBe(false);
+  });
+
+  test("microcompaction replacements survive a JSONL round-trip", () => {
+    const tree = newTree();
+    const result = tree.appendMessage({
+      role: "toolResult",
+      toolCallId: "call",
+      toolName: "read",
+      content: [{ type: "text", text: "large output" }],
+      isError: false,
+      timestamp: 1,
+    });
+    tree.append({
+      type: "microcompaction",
+      replacements: [
+        {
+          entryId: result.id,
+          message: {
+            role: "toolResult",
+            toolCallId: "call",
+            toolName: "read",
+            content: [{ type: "text", text: "[cleared]" }],
+            isError: false,
+            evicted: true,
+            timestamp: 1,
+          },
+        },
+      ],
+    });
+
+    expect(SessionTree.fromJsonl(tree.toJsonl()).messagesAt()).toEqual(tree.messagesAt());
   });
 
   test("checkpointRef is preserved on message entries", () => {

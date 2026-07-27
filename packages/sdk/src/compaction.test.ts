@@ -100,6 +100,42 @@ describe("auto compaction", () => {
       .join("\n");
     expect(joined).toContain("src/client.ts");
   });
+
+  test("a tool-using run installs one summary into every later request", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "one stable summary" }] },
+      {
+        content: [{ type: "toolCall", id: "c1", name: "noop", arguments: {} }],
+      },
+      { content: [{ type: "text", text: "finished" }] },
+    ]);
+    const events: AgentEvent[] = [];
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      tools: [
+        {
+          name: "noop",
+          description: "no-op",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
+        },
+      ],
+    });
+
+    const stream = agent.stream(longPrompt());
+    for await (const event of stream) events.push(event);
+    await stream.result();
+
+    const layer2Starts = events.filter(
+      (event) => event.type === "compaction_start" && event.layer === 2,
+    );
+    expect(layer2Starts).toHaveLength(1);
+    expect(provider.callCount).toBe(3);
+    const lastRequest = JSON.stringify(provider.requests[2]?.messages);
+    expect(lastRequest).toContain("one stable summary");
+    expect(lastRequest).not.toContain("context filler");
+  });
 });
 
 describe("/compact on demand", () => {
@@ -135,6 +171,63 @@ describe("context accounting", () => {
     const usage = events.find((e) => e.type === "usage_updated");
     expect(usage?.type === "usage_updated" && usage.contextPercent).toBeGreaterThanOrEqual(0);
     expect(usage?.type === "usage_updated" && usage.contextPercent).toBeLessThanOrEqual(1);
+  });
+
+  test("cached input, compactor usage, events, and the public getter agree", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "summary" }],
+        usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.2 },
+      },
+      {
+        content: [{ type: "text", text: "answer" }],
+        usage: {
+          inputTokens: 10,
+          outputTokens: 4,
+          cacheReadTokens: 300,
+          cacheWriteTokens: 20,
+          costUsd: 0.1,
+        },
+      },
+    ]);
+    const events: AgentEvent[] = [];
+    const agent = new Agent({ provider, model: smallModel });
+    const stream = agent.stream(longPrompt());
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(result.usage).toEqual({
+      inputTokens: 110,
+      outputTokens: 24,
+      cacheReadTokens: 300,
+      cacheWriteTokens: 20,
+      costUsd: 0.30000000000000004,
+    });
+    const updates = events.filter((event) => event.type === "usage_updated");
+    const last = updates.at(-1);
+    expect(updates).toHaveLength(2);
+    expect(last?.type === "usage_updated" && last.contextTokens).toBeGreaterThanOrEqual(330);
+    expect(last?.type === "usage_updated" && last.contextPercent).toBe(agent.contextPercent);
+  });
+
+  test("a compaction request that crosses the budget stops before the main request", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "summary" }],
+        usage: { costUsd: 0.2 },
+      },
+      { content: [{ type: "text", text: "must not run" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      budget: { maxCostUsd: 0.1 },
+    });
+    const result = await agent.run(longPrompt());
+
+    expect(result.reason).toBe("maxCostUsd");
+    expect(provider.callCount).toBe(1);
+    expect(result.usage.costUsd).toBe(0.2);
   });
 });
 
@@ -176,6 +269,45 @@ describe("resume after compaction", () => {
         "persisted summary",
       );
     }
+  });
+
+  test("live and reloaded contexts preserve the exact tail and structured carryover", async () => {
+    const provider = new FakeProvider([
+      ...Array.from({ length: 5 }, (_, index) => ({
+        content: [{ type: "text" as const, text: `answer-${index}` }],
+      })),
+      { content: [{ type: "text", text: "persisted summary" }] },
+      { content: [{ type: "text", text: "after compact" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      autoCompact: false,
+      carryoverExtractor: () => ({
+        modifiedFiles: ["src/a.ts"],
+        todos: [{ content: "finish", status: "pending" }],
+      }),
+    });
+    for (let index = 0; index < 5; index++) {
+      await agent.run(`prompt-${index}`);
+    }
+    agent.requestCompaction();
+    await agent.run("continue");
+
+    const live = agent.session.messagesAt();
+    const reloaded = SessionTree.fromJsonl(agent.session.toJsonl()).messagesAt();
+    expect(reloaded).toEqual(live);
+    const serialized = JSON.stringify(reloaded);
+    const summaryText =
+      reloaded[0]?.role === "custom" && reloaded[0].content[0]?.type === "text"
+        ? reloaded[0].content[0].text
+        : "";
+    expect(serialized).toContain("src/a.ts");
+    expect(summaryText).toContain('"status": "pending"');
+    expect(serialized).not.toContain("[object Object]");
+    expect(serialized).toContain("answer-4");
+    expect(serialized).toContain("continue");
+    expect(serialized).toContain("after compact");
   });
 });
 
@@ -223,7 +355,10 @@ describe("layer 1 — microcompaction", () => {
           m.content[0]?.type === "text" &&
           m.content[0].text.includes("re-run the tool"),
       );
-    expect(tombstoned || layers.includes(1)).toBe(true);
+    expect(tombstoned).toBe(true);
+    expect(agent.session.all().some((entry) => entry.type === "microcompaction")).toBe(true);
+    const reloaded = SessionTree.fromJsonl(agent.session.toJsonl());
+    expect(reloaded.messagesAt()).toEqual(agent.session.messagesAt());
   });
 
   test("a short transcript is left untouched", async () => {

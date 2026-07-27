@@ -20,9 +20,11 @@ import {
   type CheckpointEntry,
   CheckpointHistory,
   type CheckpointProvider,
+  CompactionError,
   compact,
   contextState,
   type ExtensionHost,
+  estimateTokens,
   evaluate,
   isContextTooLongResult,
   type LoopConfig,
@@ -133,6 +135,7 @@ export class Agent {
   private totals: Usage = zeroUsage();
   private compactRequested = false;
   private lastContextPercent = 0;
+  private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
   private externalEvents: AgentEvent[] = [];
   private recoveryAttempted = false;
@@ -607,6 +610,39 @@ export class Agent {
 
     let budgetHalt: HaltReason | undefined;
 
+    const currentContextState = (messages: AgentMessage[]) =>
+      contextState(
+        this.model,
+        messages,
+        this.lastContextUsage?.usage,
+        this.lastContextUsage?.estimatedTokensAtUsage,
+      );
+
+    const recordUsage = (
+      usage: Usage,
+      messages: AgentMessage[],
+      requestMessages?: AgentMessage[],
+    ): HaltReason | undefined => {
+      this.totals = addUsage(this.totals, usage);
+      if (requestMessages) {
+        this.lastContextUsage = {
+          usage,
+          estimatedTokensAtUsage: estimateTokens(requestMessages),
+        };
+      }
+      const state = currentContextState(messages);
+      this.lastContextPercent = state.percent;
+      emit({
+        type: "usage_updated",
+        sessionTotals: this.totals,
+        contextTokens: state.tokens,
+        contextPercent: state.percent,
+      });
+      const breach = checkBudget(this.options.budget, this.totals);
+      if (breach) budgetHalt = breach;
+      return breach;
+    };
+
     const config: LoopConfig = {
       provider: this.provider,
       model: this.model,
@@ -682,16 +718,15 @@ export class Agent {
           reason: `Permission denied for ${info.toolCall.name}`,
         };
       },
-      transformContext: async (messages) => {
-        const transformed = host ? await host.runContextHooks(messages) : messages;
-        const state = contextState(this.model, transformed);
+      prepareContext: async (messages) => {
+        const state = currentContextState(messages);
         this.lastContextPercent = state.percent;
 
         const auto = this.options.autoCompact !== false;
 
         // Layer 1 first: evicting stale tool output is free, and often enough
         // to stay under the threshold without an LLM round trip.
-        let working = transformed;
+        let working = messages;
         if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
           const micro = microcompact(working, {
             targetTokens: Math.floor(
@@ -701,21 +736,40 @@ export class Agent {
             ),
           });
           if (micro.evicted > 0) {
-            emit({ type: "compaction_start", layer: 1 });
-            emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
-            working = micro.messages;
-            this.lastContextPercent = contextState(this.model, working).percent;
+            const changed = micro.messages.flatMap((message, index) => {
+              const prior = working[index];
+              if (!prior || message === prior) return [];
+              const entryId = this.tree.entryIdForMessage(prior);
+              return entryId ? [{ entryId, message }] : [];
+            });
+            const changedCount = micro.messages.filter(
+              (message, index) => message !== working[index],
+            ).length;
+            // Apply only a transition we can replay exactly after resume.
+            if (changed.length === changedCount) {
+              emit({ type: "compaction_start", layer: 1 });
+              this.tree.append({
+                type: "microcompaction",
+                replacements: changed,
+              });
+              working = micro.messages;
+              this.lastContextUsage = undefined;
+              this.lastContextPercent = currentContextState(working).percent;
+              emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
+            }
           }
         }
 
-        const after = contextState(this.model, working);
+        const after = currentContextState(working);
         const due =
           this.compactRequested ||
           (auto && shouldCompact(after, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
-        if (!due) return working;
+        if (!due) return { messages: working };
 
         this.compactRequested = false;
         emit({ type: "compaction_start", layer: 2 });
+        let compactionUsage: Usage | undefined;
+        let usageRecorded = false;
         try {
           const result = await compact(working, {
             provider: this.provider,
@@ -725,30 +779,58 @@ export class Agent {
               : {}),
             signal: this.controller.signal,
           });
+          compactionUsage = result.usage;
           const compacted = applyCompaction(result);
+          let summaryEntryId: string | undefined;
+
+          // Record the boundary only when its exact tail can be anchored to
+          // an ancestor entry. Otherwise retain the complete context.
+          if (result.summary.length > 0) {
+            const firstKept = result.keptMessages[0];
+            let firstKeptEntryId: string | null = null;
+            if (firstKept) {
+              const mapped = this.tree.entryIdForMessage(firstKept);
+              if (!mapped) {
+                throw new Error("Compaction tail could not be mapped to the session");
+              }
+              firstKeptEntryId = mapped;
+            }
+            const summaryMessage = compacted[0];
+            const boundary = this.tree.append({
+              type: "compaction",
+              summary: result.summary,
+              ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
+              firstKeptEntryId,
+              ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+            });
+            summaryEntryId = boundary.id;
+          }
+
+          this.lastContextUsage = undefined;
+          recordUsage(result.usage, compacted);
+          usageRecorded = true;
           emit({
             type: "compaction_end",
             layer: 2,
             tokensFreed: result.tokensFreed,
+            ...(summaryEntryId ? { summaryEntryId } : {}),
           });
-          // Record the boundary in the session tree so a resume rebuilds
-          // context as summary + tail rather than replaying everything.
-          if (result.summary.length > 0) {
-            this.tree.append({
-              type: "compaction",
-              summary: result.summary,
-              ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
-              firstKeptEntryId: this.tree.head ?? "",
-            });
-          }
-          return compacted;
-        } catch {
+          return { messages: compacted, stop: budgetHalt !== undefined };
+        } catch (error) {
+          const failedUsage =
+            compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
+          if (failedUsage && !usageRecorded) recordUsage(failedUsage, working);
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
           emit({ type: "compaction_end", layer: 2, tokensFreed: 0 });
-          return working;
+          return { messages: working, stop: budgetHalt !== undefined };
         }
       },
+      ...(host
+        ? {
+            transformContext: (messages: AgentMessage[]) => host.runContextHooks(messages),
+          }
+        : {}),
       ...(host
         ? {
             afterToolCall: async (info) => {
@@ -781,16 +863,8 @@ export class Agent {
       shouldStopAfterTurn: async (turn: TurnInfo) => {
         await this.finishCheckpoint();
         this.snapshottedThisTurn = false;
-        this.totals = addUsage(this.totals, turn.message.usage);
-        emit({
-          type: "usage_updated",
-          sessionTotals: this.totals,
-          contextTokens: turn.message.usage.inputTokens,
-          contextPercent: turn.message.usage.inputTokens / this.model.contextWindow,
-        });
-        const breach = checkBudget(this.options.budget, this.totals);
+        const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);
         if (breach) {
-          budgetHalt = breach;
           return true;
         }
         return false;

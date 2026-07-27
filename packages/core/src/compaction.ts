@@ -37,11 +37,17 @@ export function contextState(
   model: ModelInfo,
   messages: AgentMessage[],
   lastUsage?: Usage,
+  estimatedTokensAtLastUsage?: number,
 ): ContextState {
+  const estimated = estimateTokens(messages);
   const reported = lastUsage
     ? lastUsage.inputTokens + lastUsage.cacheReadTokens + lastUsage.cacheWriteTokens
     : 0;
-  const tokens = Math.max(reported, estimateTokens(messages));
+  const estimatedGrowth =
+    lastUsage && estimatedTokensAtLastUsage !== undefined
+      ? Math.max(0, estimated - estimatedTokensAtLastUsage)
+      : 0;
+  const tokens = Math.max(reported + estimatedGrowth, estimated);
   const limit = model.contextWindow;
   return { tokens, limit, percent: limit > 0 ? tokens / limit : 0 };
 }
@@ -64,6 +70,19 @@ export interface CompactionResult {
   carryover?: unknown;
   keptMessages: AgentMessage[];
   tokensFreed: number;
+  usage: Usage;
+}
+
+type CompactionTranscript = Omit<CompactionResult, "usage">;
+
+export class CompactionError extends Error {
+  constructor(
+    message: string,
+    readonly usage?: Usage,
+  ) {
+    super(message);
+    this.name = "CompactionError";
+  }
 }
 
 // Keeps a recent tail intact so the model retains immediate working state.
@@ -111,8 +130,22 @@ export async function compact(
   const keptMessages = messages.slice(keepFromIndex);
 
   if (toSummarize.length === 0) {
-    return { summary: "", keptMessages: messages, tokensFreed: 0 };
+    return {
+      summary: "",
+      keptMessages: messages,
+      tokensFreed: 0,
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 0,
+      },
+    };
   }
+
+  const carryover = options.carryoverExtractor?.(toSummarize);
+  if (carryover !== undefined) assertJsonSerializable(carryover);
 
   const context: LlmContext = {
     systemPrompt: [{ text: SUMMARY_PROMPT }],
@@ -131,8 +164,11 @@ export async function compact(
   });
   const result = await stream.result();
 
-  if (result.stopReason === "error" || result.stopReason === "aborted") {
-    throw new Error(`Compaction failed: ${result.errorMessage ?? result.stopReason}`);
+  if (result.stopReason !== "end") {
+    throw new CompactionError(
+      `Compaction failed: ${result.errorMessage ?? `incomplete response (${result.stopReason})`}`,
+      result.usage,
+    );
   }
 
   const summary = result.content
@@ -141,49 +177,100 @@ export async function compact(
     .join("")
     .trim();
 
-  const carryover = options.carryoverExtractor?.(toSummarize);
-  return {
+  if (summary.length === 0) {
+    throw new CompactionError(
+      "Compaction failed: the provider returned no usable summary",
+      result.usage,
+    );
+  }
+
+  const compacted: CompactionResult = {
     summary,
     ...(carryover !== undefined ? { carryover } : {}),
     keptMessages,
-    tokensFreed: Math.max(0, estimateTokens(toSummarize) - estimateTokens([])),
+    tokensFreed: 0,
+    usage: result.usage,
   };
+  compacted.tokensFreed = Math.max(
+    0,
+    estimateTokens(messages) - estimateTokens(applyCompaction(compacted)),
+  );
+  return compacted;
 }
 
 // Renders a completed compaction back into a transcript: a typed summary
 // message followed by the untouched tail.
-export function applyCompaction(result: CompactionResult): AgentMessage[] {
+export function applyCompaction(result: CompactionTranscript): AgentMessage[] {
   if (result.summary.length === 0) return result.keptMessages;
 
-  const carryoverText =
-    result.carryover === undefined
-      ? ""
-      : `\n\nCarried forward:\n${formatCarryover(result.carryover)}`;
-
-  return [
-    {
-      role: "custom",
-      customType: "compaction-summary",
-      content: [
-        {
-          type: "text",
-          text: `Summary of the earlier conversation:\n\n${result.summary}${carryoverText}`,
-        },
-      ],
-      display: false,
-      timestamp: Date.now(),
-    },
-    ...result.keptMessages,
-  ];
+  return [compactionSummaryMessage(result.summary, result.carryover), ...result.keptMessages];
 }
 
-function formatCarryover(carryover: unknown): string {
+export function compactionSummaryMessage(
+  summary: string,
+  carryover?: unknown,
+  timestamp = Date.now(),
+): AgentMessage {
+  const carryoverText =
+    carryover === undefined ? "" : `\n\nCarried forward:\n${formatCarryover(carryover)}`;
+  return {
+    role: "custom",
+    customType: "compaction-summary",
+    content: [
+      {
+        type: "text",
+        text: `Summary of the earlier conversation:\n\n${summary}${carryoverText}`,
+      },
+    ],
+    display: false,
+    timestamp,
+  };
+}
+
+export function formatCarryover(carryover: unknown): string {
   if (typeof carryover === "string") return carryover;
-  if (carryover && typeof carryover === "object") {
-    return Object.entries(carryover as Record<string, unknown>)
-      .filter(([, value]) => (Array.isArray(value) ? value.length > 0 : value !== undefined))
-      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : String(value)}`)
-      .join("\n");
+  assertJsonSerializable(carryover);
+  return JSON.stringify(sortJson(carryover), null, 2);
+}
+
+function assertJsonSerializable(value: unknown, seen = new Set<object>()): void {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return;
   }
-  return JSON.stringify(carryover);
+  if (typeof value !== "object") {
+    throw new CompactionError("Compaction failed: carryover must be JSON-serializable");
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
+    throw new CompactionError("Compaction failed: carryover must contain only plain objects");
+  }
+  if (seen.has(value)) {
+    throw new CompactionError("Compaction failed: carryover must not contain cycles");
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) assertJsonSerializable(item, seen);
+  } else {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      assertJsonSerializable(item, seen);
+    }
+  }
+  seen.delete(value);
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, sortJson(item)]),
+    );
+  }
+  return value;
 }
