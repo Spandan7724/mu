@@ -126,6 +126,7 @@ export interface StreamOpts {
   apiKey?: string;
   getCredentials?: CredentialResolver;
   baseUrl?: string;
+  sessionId?: string;
   maxTokens?: number;
   temperature?: number;
   thinkingLevel?: ThinkingLevel;

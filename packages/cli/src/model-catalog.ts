@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { type ModelDiscoveryOptions, type ModelInfo, refreshModels, registerModels } from "mu";
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 2;
 

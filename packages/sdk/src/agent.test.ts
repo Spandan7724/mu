@@ -46,6 +46,15 @@ describe("Agent", () => {
     expect(providers).toEqual(["fake"]);
   });
 
+  test("passes the stable session id to every provider request", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const agent = agentWith(provider, { sessionId: "session-for-provider" });
+
+    await agent.run("go");
+
+    expect(provider.streamOptions[0]?.sessionId).toBe("session-for-provider");
+  });
+
   test("a custom tool is registered in a few lines and receives validated args", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "add", arguments: { a: 2, b: 3 } }] },

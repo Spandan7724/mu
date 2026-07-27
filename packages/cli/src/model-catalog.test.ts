@@ -25,7 +25,7 @@ function model(id: string): ModelInfo {
 
 function cacheBody(models: ModelInfo[]): string {
   return JSON.stringify({
-    version: 1,
+    version: 2,
     updatedAt: "2026-07-27T00:00:00.000Z",
     models,
   });
@@ -56,7 +56,7 @@ describe("model catalog cache", () => {
       version: number;
       models: ModelInfo[];
     };
-    expect(stored.version).toBe(1);
+    expect(stored.version).toBe(2);
     expect(stored.models).toEqual(discovered);
 
     const secondRegistered: ModelInfo[][] = [];
@@ -73,7 +73,7 @@ describe("model catalog cache", () => {
   test("a malformed cache is ignored without poisoning the registry", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-bad-"));
     const file = join(root, "models.json");
-    await writeFile(file, JSON.stringify({ version: 1, models: [{ id: "broken" }] }));
+    await writeFile(file, JSON.stringify({ version: 2, models: [{ id: "broken" }] }));
     const registered: ModelInfo[][] = [];
     const catalog = new ModelCatalog({
       cacheFile: file,
@@ -85,6 +85,29 @@ describe("model catalog cache", () => {
     expect(registered).toEqual([]);
     expect(catalog.fallback).toBe("bundled");
     expect(catalog.cacheWarning).toContain("Invalid model catalog cache");
+  });
+
+  test("ignores the previous cache version after bundled compatibility metadata changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-stale-"));
+    const file = join(root, "models.json");
+    await writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-07-27T00:00:00.000Z",
+        models: [model("gpt-stale")],
+      }),
+    );
+    const registered: ModelInfo[][] = [];
+    const catalog = new ModelCatalog({
+      cacheFile: file,
+      refresh: async () => [],
+      register: (models) => registered.push(models),
+    });
+
+    expect(await catalog.loadCache()).toBe(0);
+    expect(registered).toEqual([]);
+    expect(catalog.fallback).toBe("bundled");
   });
 
   test("a cached fallback survives a failed remote refresh", async () => {

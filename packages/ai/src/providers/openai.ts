@@ -15,8 +15,14 @@ import { driveStream, postSse, updateCost } from "./shared.ts";
 
 const API_BASE_URL = "https://api.openai.com";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+const MAX_OPENAI_CACHE_KEY_LENGTH = 64;
 
 type Json = Record<string, unknown>;
+
+function codexSessionId(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized.slice(0, MAX_OPENAI_CACHE_KEY_LENGTH) : undefined;
+}
 
 function resolveAuthMode(
   credential: Credential,
@@ -25,6 +31,7 @@ function resolveAuthMode(
 ): { url: string; headers: Record<string, string> } {
   if (credential.type === "oauth") {
     const base = (opts?.baseUrl ?? CODEX_BASE_URL).replace(/\/+$/, "");
+    const sessionId = codexSessionId(opts?.sessionId);
     return {
       url: `${base}/responses`,
       headers: {
@@ -32,6 +39,12 @@ function resolveAuthMode(
         "chatgpt-account-id": credential.accountId,
         originator: "mu",
         "openai-beta": "responses=experimental",
+        ...(sessionId
+          ? {
+              "session-id": sessionId,
+              "x-client-request-id": sessionId,
+            }
+          : {}),
       },
     };
   }
@@ -98,15 +111,18 @@ function convertInput(messages: AiMessage[]): Json[] {
 }
 
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
+  const isCodex = model.provider === "openai-codex";
   const body: Json = {
     model: model.id,
     input: convertInput(ctx.messages),
     stream: true,
     store: false,
-    max_output_tokens: opts?.maxTokens ?? model.maxOutput,
   };
+  if (!isCodex) body.max_output_tokens = opts?.maxTokens ?? model.maxOutput;
   if (ctx.systemPrompt && ctx.systemPrompt.length > 0) {
     body.instructions = ctx.systemPrompt.map((s) => s.text).join("\n\n");
+  } else if (isCodex) {
+    body.instructions = "You are a helpful assistant.";
   }
   if (ctx.tools && ctx.tools.length > 0) {
     body.tools = ctx.tools.map((tool) => ({
@@ -114,13 +130,21 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
       name: tool.name,
       description: tool.description,
       parameters: tool.inputSchema,
-      strict: false,
+      strict: isCodex ? null : false,
     }));
+  }
+  if (isCodex) {
+    body.text = { verbosity: "low" };
+    body.include = ["reasoning.encrypted_content"];
+    body.tool_choice = "auto";
+    body.parallel_tool_calls = true;
+    const sessionId = codexSessionId(opts?.sessionId);
+    if (sessionId) body.prompt_cache_key = sessionId;
   }
   if (opts?.temperature !== undefined) body.temperature = opts.temperature;
   if (model.thinking && opts?.thinkingLevel && opts.thinkingLevel !== "off") {
     body.reasoning = { effort: opts.thinkingLevel, summary: "auto" };
-    body.include = ["reasoning.encrypted_content"];
+    if (!isCodex) body.include = ["reasoning.encrypted_content"];
   }
   return body;
 }

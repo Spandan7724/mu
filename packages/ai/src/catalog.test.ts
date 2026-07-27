@@ -33,6 +33,12 @@ describe("catalog", () => {
     }
   });
 
+  test("uses the Codex backend context limit for ChatGPT-plan models", () => {
+    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      expect(findModel(`openai-codex/${id}`)?.contextWindow).toBe(272_000);
+    }
+  });
+
   test("discovers compatible provider models and maps their metadata", async () => {
     const payload = {
       anthropic: {

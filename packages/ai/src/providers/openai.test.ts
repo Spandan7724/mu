@@ -59,6 +59,7 @@ describe("streamOpenAI", () => {
     expect(body.include).toEqual(["reasoning.encrypted_content"]);
     expect(body.instructions).toBe("You are mu.");
     expect(body.store).toBe(false);
+    expect(body.max_output_tokens).toBe(model.maxOutput);
     expect(replay.calls[0]?.headers.authorization).toBe("Bearer test");
   });
 
@@ -138,6 +139,8 @@ describe("streamOpenAI", () => {
     const stream = streamOpenAI({ ...model, provider: "openai-codex" }, ctx, {
       getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
       fetch: replay.fetch,
+      maxTokens: 1234,
+      sessionId: "session-123",
     });
     const result = await stream.result();
     expect(result.stopReason).toBe("end");
@@ -145,6 +148,44 @@ describe("streamOpenAI", () => {
     expect(replay.calls[0]?.headers["chatgpt-account-id"]).toBe("acc");
     expect(replay.calls[0]?.headers.originator).toBe("mu");
     expect(replay.calls[0]?.headers["openai-beta"]).toBe("responses=experimental");
+    expect(replay.calls[0]?.headers["session-id"]).toBe("session-123");
+    expect(replay.calls[0]?.headers["x-client-request-id"]).toBe("session-123");
+
+    const body = JSON.parse(replay.calls[0]?.body ?? "{}");
+    expect(body).not.toHaveProperty("max_output_tokens");
+    expect(body).toMatchObject({
+      model: "gpt-5.1",
+      store: false,
+      stream: true,
+      text: { verbosity: "low" },
+      include: ["reasoning.encrypted_content"],
+      prompt_cache_key: "session-123",
+      tool_choice: "auto",
+      parallel_tool_calls: true,
+    });
+    expect(body.tools[0].strict).toBeNull();
+  });
+
+  test("clamps Codex request correlation ids to the backend limit", async () => {
+    const cassette = {
+      interactions: textCassette.interactions.map((interaction) => ({
+        ...interaction,
+        request: {
+          ...interaction.request,
+          url: "https://chatgpt.com/backend-api/codex/responses",
+        },
+      })),
+    };
+    const replay = replayFetch(cassette);
+    const stream = streamOpenAI({ ...model, provider: "openai-codex" }, ctx, {
+      getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
+      fetch: replay.fetch,
+      sessionId: "x".repeat(100),
+    });
+
+    expect((await stream.result()).stopReason).toBe("end");
+    expect(replay.calls[0]?.headers["session-id"]).toBe("x".repeat(64));
+    expect(JSON.parse(replay.calls[0]?.body ?? "{}").prompt_cache_key).toBe("x".repeat(64));
   });
 
   test("re-resolves credentials for each retried HTTP request", async () => {

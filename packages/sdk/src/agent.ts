@@ -1069,16 +1069,13 @@ export class Agent {
     const config: LoopConfig = {
       provider: runProvider,
       model: runModel,
-      ...(this.options.apiKey || this.options.getCredentials
-        ? {
-            streamOpts: {
-              ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
-              ...(credentialResolver
-                ? { getCredentials: () => credentialResolver(runModel.provider) }
-                : {}),
-            },
-          }
-        : {}),
+      streamOpts: {
+        sessionId: this._sessionId,
+        ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
+        ...(credentialResolver
+          ? { getCredentials: () => credentialResolver(runModel.provider) }
+          : {}),
+      },
       thinkingLevel: this.currentThinking,
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
