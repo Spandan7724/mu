@@ -34,6 +34,7 @@ function mergeStyle(base: Style, addition: Style): Style {
     addition.heading ||
     addition.link ||
     addition.code ||
+    addition.codeAccent ||
     addition.syntax !== undefined;
   const { syntax: _syntax, ...baseWithoutSyntax } = base;
   return {
@@ -46,6 +47,7 @@ function mergeStyle(base: Style, addition: Style): Style {
           heading: false,
           link: false,
           code: false,
+          codeAccent: false,
         }
       : {}),
     ...addition,
@@ -252,7 +254,8 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
     if (fence) {
       const marker = fence[1] ?? "```";
       const language = fence[2]?.trim();
-      if (language) out.push(styleText(language, { code: true, dim: true, italic: true }, depth));
+      if (language)
+        out.push(styleText(language, { codeAccent: true, dim: true, italic: true }, depth));
       index++;
       const codeLines: string[] = [];
       while (
@@ -262,7 +265,7 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         codeLines.push(source[index] ?? "");
         index++;
       }
-      const rule = styleText(`${GLYPHS.rule} `, { code: true, dim: true }, depth);
+      const rule = styleText(`${GLYPHS.rule} `, { codeAccent: true, dim: true }, depth);
       for (const highlighted of highlightCode(codeLines.join("\n"), language, depth)) {
         const wrapped = wrapLine(highlighted, Math.max(1, width - 2));
         out.push(...wrapped.map((line) => rule + line));

@@ -399,6 +399,7 @@ describe("components", () => {
     ).join("\n");
     expect(rendered).toContain("38;2;250;204;21");
     expect(rendered).toContain("38;2;96;165;250");
+    expect(rendered).toContain("38;2;212;212;212");
     expect(rendered).toContain("38;2;192;132;252");
     expect(rendered).toContain("\u001b[1m");
     expect(rendered).toContain("\u001b[3m");
@@ -457,8 +458,8 @@ describe("components", () => {
 
     expect(visible(unknown)).toEqual(["not-a-language", "│ const value = 1;"]);
     expect(visible(languageLess)).toEqual(["│ const value = 1;"]);
-    expect(unknown.join("\n")).toContain("38;2;192;132;252mconst value = 1;");
-    expect(languageLess.join("\n")).toContain("38;2;192;132;252mconst value = 1;");
+    expect(unknown.join("\n")).toContain("38;2;212;212;212mconst value = 1;");
+    expect(languageLess.join("\n")).toContain("38;2;212;212;212mconst value = 1;");
     expect(unknown.join("\n")).not.toContain("38;2;86;156;214mconst");
     expect(languageLess.join("\n")).not.toContain("38;2;86;156;214mconst");
   });
@@ -598,7 +599,12 @@ describe("style conformance", () => {
   ].join("\n");
 
   test("the extended palette stays scoped to assistant Markdown", () => {
-    for (const color of ["38;2;250;204;21", "38;2;96;165;250", "38;2;192;132;252"]) {
+    for (const color of [
+      "38;2;250;204;21",
+      "38;2;96;165;250",
+      "38;2;212;212;212",
+      "38;2;192;132;252",
+    ]) {
       expect(everything).not.toContain(color);
     }
     const markdown = agentCell("# heading\n\n[link](https://example.com) and `code`", colored).join(
@@ -606,7 +612,7 @@ describe("style conformance", () => {
     );
     expect(markdown).toContain("38;2;250;204;21");
     expect(markdown).toContain("38;2;96;165;250");
-    expect(markdown).toContain("38;2;192;132;252");
+    expect(markdown).toContain("38;2;212;212;212");
   });
 
   test("no borders or box drawing in the transcript", () => {

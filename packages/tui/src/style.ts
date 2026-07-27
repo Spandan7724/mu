@@ -24,8 +24,10 @@ const HEADING_RGB = [250, 204, 21] as const;
 const HEADING_256 = 220;
 const LINK_RGB = [96, 165, 250] as const;
 const LINK_256 = 75;
-const CODE_RGB = [192, 132, 252] as const;
-const CODE_256 = 177;
+const CODE_RGB = [212, 212, 212] as const;
+const CODE_256 = 188;
+const CODE_ACCENT_RGB = [192, 132, 252] as const;
+const CODE_ACCENT_256 = 177;
 
 export type SyntaxRole =
   | "comment"
@@ -61,6 +63,7 @@ export interface Style {
   heading?: boolean;
   link?: boolean;
   code?: boolean;
+  codeAccent?: boolean;
   syntax?: SyntaxRole;
 }
 
@@ -94,6 +97,11 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
   if (style.code) {
     if (depth === "truecolor") codes.push(`38;2;${CODE_RGB[0]};${CODE_RGB[1]};${CODE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${CODE_256}`);
+  }
+  if (style.codeAccent) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${CODE_ACCENT_RGB[0]};${CODE_ACCENT_RGB[1]};${CODE_ACCENT_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${CODE_ACCENT_256}`);
     else codes.push("95");
   }
   if (style.syntax) {

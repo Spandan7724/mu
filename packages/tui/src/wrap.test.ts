@@ -103,6 +103,9 @@ describe("colour depth", () => {
   test("the Markdown palette degrades by terminal colour depth", () => {
     expect(styleText("heading", { heading: true }, "truecolor")).toContain("38;2;250;204;21");
     expect(styleText("link", { link: true }, "ansi256")).toContain("38;5;75");
-    expect(styleText("code", { code: true }, "ansi16")).toContain("[95m");
+    expect(styleText("code", { code: true }, "truecolor")).toContain("38;2;212;212;212");
+    expect(styleText("code", { code: true }, "ansi256")).toContain("38;5;188");
+    expect(styleText("code", { code: true }, "ansi16")).toBe("code");
+    expect(styleText("code", { codeAccent: true }, "ansi16")).toContain("[95m");
   });
 });
