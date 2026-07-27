@@ -73,6 +73,18 @@ export async function runInteractive(
 
   const renderer = new InlineRenderer(terminal);
   let exiting = false;
+  let activeRun: Promise<void> | undefined;
+
+  // Leaving must not strand an in-flight run or a permission promise: abort the
+  // run and deny anything still waiting, or the process lingers after the UI
+  // is gone.
+  const shutdown = () => {
+    agent.abort();
+    for (const [id, resolve] of pendingPermissions) {
+      resolve("deny");
+      pendingPermissions.delete(id);
+    }
+  };
 
   const app = new App({
     width: terminal.columns,
@@ -80,13 +92,24 @@ export async function runInteractive(
     model: modelRef,
     registry,
     callbacks: {
-      onSubmit: (text) => void startRun(text),
+      onSubmit: (text) => {
+        // A second concurrent run would share the Agent's abort controller,
+        // session and usage totals. Mid-run input is steering, which is what
+        // the loop's steering queue exists for.
+        if (activeRun) agent.send(text);
+        else
+          activeRun = startRun(text).finally(() => {
+            activeRun = undefined;
+          });
+      },
       onAbort: () => agent.abort(),
       onExit: () => {
         exiting = true;
+        shutdown();
       },
       onCommand: (text) => void runCommand(text),
       onMentionQuery: (query) => mentionCandidates(query),
+      onThinkingChange: (level) => agent.setThinking(level as "off" | "low" | "medium" | "high"),
       onPermissionReply: (id, outcome) => {
         pendingPermissions.get(id)?.(outcome);
         pendingPermissions.delete(id);
@@ -108,7 +131,12 @@ export async function runInteractive(
           label: `${m.provider}/${m.id}`,
           description: m.name ?? "",
         })),
-        onChoose: (label) => renderer.commit([`  model set to ${label}`]),
+        onChoose: (label) => {
+          agent.setModel(label);
+          app.setModel(label);
+          renderer.commit([`  model set to ${label}`]);
+          paint();
+        },
       });
       return { handled: true };
     },
@@ -122,7 +150,25 @@ export async function runInteractive(
       app.openPicker({
         title: "resume a session",
         items: sessions.map((id) => ({ label: id })),
-        onChoose: (label) => renderer.commit([`  resuming ${label}`]),
+        onChoose: (label) => {
+          void (async () => {
+            const tree = await agent.sessionStore.load(label);
+            if (!tree) {
+              renderer.commit([`  no such session: ${label}`]);
+              paint();
+              return;
+            }
+            // Replay the transcript into scrollback so the user sees what they
+            // are resuming, then continue that session.
+            for (const message of tree.messagesAt()) {
+              const lines = app.handleEvent({ type: "message_end", message });
+              if (lines.length > 0) renderer.commit(lines);
+            }
+            agent.resume(tree);
+            renderer.commit([`  resumed ${label}`]);
+            paint();
+          })();
+        },
       });
       return { handled: true };
     },
@@ -191,7 +237,11 @@ export async function runInteractive(
     paint();
   }
 
+  terminal.onExit = () => shutdown();
   terminal.start();
+  app.setModel(agent.modelRef);
+  app.setThinking(agent.thinking);
+  renderer.commit(app.banner());
   const stopResize = terminal.onResize(() => {
     app.setWidth(terminal.columns);
     renderer.renderNow(app.renderBottom());
@@ -206,15 +256,37 @@ export async function runInteractive(
 
   const decoder = new InputDecoder();
   process.stdin.setEncoding("utf8");
+
+  // A lone ESC is held to disambiguate it from an escape sequence; without an
+  // idle flush it would never become an Escape key press, so Esc could not
+  // abort a running turn.
+  let escapeTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleEscapeFlush = () => {
+    if (escapeTimer) clearTimeout(escapeTimer);
+    escapeTimer = setTimeout(() => {
+      const event = decoder.flushPendingEscape();
+      if (event) {
+        app.handleInput(event);
+        paint();
+      }
+    }, 30);
+  };
+
   paint();
 
   try {
     for await (const chunk of process.stdin) {
       for (const event of decoder.push(String(chunk))) app.handleInput(event);
+      if (decoder.pending.length > 0) scheduleEscapeFlush();
       paint();
       if (exiting) break;
     }
   } finally {
+    if (escapeTimer) clearTimeout(escapeTimer);
+    shutdown();
+    // Let the aborted run unwind before the terminal is handed back, so it
+    // cannot repaint over a restored screen.
+    await activeRun?.catch(() => {});
     clearInterval(spinnerTimer);
     stopResize();
     renderer.stop();

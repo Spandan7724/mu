@@ -145,8 +145,23 @@ export function modelRef(model: ModelInfo): string {
   return `${model.provider}/${model.id}`;
 }
 
-export function defaultModelRef(): string {
-  const model = models[0] ?? bundledModels[0];
+const PROVIDER_ENV: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GEMINI_API_KEY",
+};
+
+export function providerHasCredentials(provider: string, env = process.env): boolean {
+  const variable = PROVIDER_ENV[provider];
+  return variable === undefined || Boolean(env[variable]);
+}
+
+// Prefer a model whose provider actually has a key configured: defaulting to a
+// provider the user cannot authenticate with turns every run into an auth
+// error, which is a miserable first experience.
+export function defaultModelRef(env = process.env): string {
+  const usable = models.find((model) => providerHasCredentials(model.provider, env));
+  const model = usable ?? models[0] ?? bundledModels[0];
   if (!model) throw new Error("No models are available");
   return modelRef(model);
 }

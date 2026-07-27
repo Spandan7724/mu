@@ -22,7 +22,7 @@ import {
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
-import { type ColorDepth, MARGIN, styleText } from "./style.ts";
+import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 
 export type AppMode = "composing" | "approval" | "select" | "mention" | "picker";
 
@@ -40,6 +40,7 @@ export interface AppCallbacks {
   onExit: () => void;
   onPermissionReply?: (requestId: string, outcome: "allow" | "deny", remember: boolean) => void;
   onCommand?: (text: string) => void;
+  onThinkingChange?: (level: string) => void;
 }
 
 export interface AppOptions {
@@ -57,11 +58,18 @@ export class App {
   private commandList = new SelectList([]);
   private mode: AppMode = "composing";
   private running = false;
-  private approval: PermissionRequest | undefined;
+  // A parallel-safe tool batch can raise several asks at once, so they queue
+  // rather than overwriting each other. One is shown; resolving removes only
+  // the matching id and advances to the next.
+  private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
-  private pendingTools = new Map<string, ToolRenderInfo>();
+  private pendingTools = new Map<string, ToolRenderInfo & { tail: string[] }>();
+  // The assistant message currently streaming, shown live above the composer.
+  private streaming: string | undefined;
+  private lastError: string | undefined;
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
+  private thinkingLevel = "off";
   private picker: PickerRequest | undefined;
   private mentionStart = -1;
 
@@ -80,6 +88,18 @@ export class App {
 
   setCommands(commands: { label: string; description?: string }[]): void {
     this.commands = commands;
+  }
+
+  setModel(model: string): void {
+    this.footerData = { ...this.footerData, model };
+  }
+
+  setThinking(level: string): void {
+    this.thinkingLevel = level;
+  }
+
+  get thinking(): string {
+    return this.thinkingLevel;
   }
 
   // Opens a selection list (used by /model and /resume).
@@ -105,9 +125,37 @@ export class App {
         this.running = true;
         return [];
 
-      case "agent_end":
+      case "agent_end": {
         this.running = false;
-        return event.reason === "error" ? errorCell("run ended with an error", this.ctx) : [];
+        if (event.reason !== "error") return [];
+        // Show *why* it failed. "run ended with an error" tells the user
+        // nothing and hides actionable messages like a missing API key.
+        const detail = this.lastError ?? "the provider returned an error";
+        this.lastError = undefined;
+        return [...errorCell(detail, this.ctx), ""];
+      }
+
+      case "message_start":
+        if (event.message.role === "assistant") this.streaming = "";
+        return [];
+
+      case "message_update":
+        if (event.delta.kind === "text_delta") {
+          this.streaming = (this.streaming ?? "") + event.delta.text;
+        }
+        return [];
+
+      case "tool_execution_update": {
+        const pending = this.pendingTools.get(event.toolCallId);
+        if (pending) {
+          for (const block of event.partial) {
+            if (block.type === "text") pending.tail.push(...block.text.split("\n"));
+          }
+          // Bounded tail — a chatty tool must not grow the region without limit.
+          if (pending.tail.length > 5) pending.tail = pending.tail.slice(-5);
+        }
+        return [];
+      }
 
       case "message_end": {
         const message = event.message;
@@ -119,6 +167,10 @@ export class App {
           return text ? [...userCell(text, this.ctx), ""] : [];
         }
         if (message.role === "assistant") {
+          this.streaming = undefined;
+          if (message.stopReason === "error" && message.errorMessage) {
+            this.lastError = message.errorMessage;
+          }
           const lines: string[] = [];
           for (const block of message.content) {
             if (block.type === "thinking" && block.thinking.trim()) {
@@ -137,6 +189,7 @@ export class App {
           toolName: event.toolName,
           args: event.args,
           running: true,
+          tail: [],
         });
         return [];
 
@@ -152,15 +205,20 @@ export class App {
       }
 
       case "permission_asked":
-        this.approval = event.request;
+        this.approvals.push(event.request);
         this.approvalIndex = 0;
         this.mode = "approval";
         return [];
 
-      case "permission_resolved":
-        this.approval = undefined;
-        this.mode = "composing";
+      case "permission_resolved": {
+        const before = this.approvals.length;
+        this.approvals = this.approvals.filter((r) => r.id !== event.requestId);
+        // A resolution for an id we never showed must not close another ask.
+        if (this.approvals.length === before) return [];
+        this.approvalIndex = 0;
+        if (this.approvals.length === 0) this.mode = "composing";
         return [];
+      }
 
       case "compaction_end":
         return [...compactionCell(event.tokensFreed, this.ctx), ""];
@@ -192,6 +250,26 @@ export class App {
     }
   }
 
+  // Shown once at startup: an empty screen with a bare prompt gives the user
+  // nothing to orient against.
+  banner(): string[] {
+    const { depth } = this.ctx;
+    return [
+      "",
+      `${MARGIN}${styleText(AGENT_LABEL, { accent: true, bold: true }, depth)}  ${styleText(
+        "a general-purpose, extensible agent",
+        { dim: true },
+        depth,
+      )}`,
+      `${MARGIN}${styleText(
+        `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
+        { dim: true },
+        depth,
+      )}`,
+      "",
+    ];
+  }
+
   tickSpinner(): void {
     this.spinner.tick();
   }
@@ -199,14 +277,33 @@ export class App {
   // The managed bottom region, rebuilt from state on every paint.
   renderBottom(): string[] {
     const { width, depth } = this.ctx;
-    const lines: string[] = [composerRule(width, depth)];
+    const lines: string[] = [];
 
-    if (this.mode === "approval" && this.approval) {
+    // Live region: streaming assistant text and running tool cells, so a long
+    // turn is never a frozen screen with only a spinner.
+    if (this.streaming && this.streaming.trim().length > 0) {
+      lines.push(...agentCell(this.streaming, this.ctx).slice(-6));
+    }
+    for (const pending of this.pendingTools.values()) {
+      lines.push(
+        ...this.registry.render(
+          { toolName: pending.toolName, args: pending.args, running: true },
+          this.ctx,
+        ),
+      );
+      for (const line of pending.tail.slice(-3)) {
+        if (line.trim().length > 0) lines.push(`${MARGIN}${GLYPHS.rule} ${line}`);
+      }
+    }
+
+    lines.push(composerRule(width, depth));
+
+    if (this.mode === "approval" && this.approvals[0]) {
       lines.push(
         ...approvalOverlay(
           {
-            title: this.approval.description,
-            preview: [this.approval.pattern],
+            title: this.approvals[0].description,
+            preview: [this.approvals[0].pattern],
             selectedIndex: this.approvalIndex,
           },
           width,
@@ -225,8 +322,10 @@ export class App {
       }
     }
 
-    const hint = this.running ? `${this.spinner.render(depth)} esc to interrupt` : undefined;
-    lines.push(footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
+    const hint = this.running
+      ? `${this.spinner.render(depth)} esc to interrupt`
+      : `think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+    lines.push(footer({ ...this.footerData, hint }, width, depth));
     return lines;
   }
 
@@ -241,6 +340,15 @@ export class App {
 
     if (key.ctrl && key.name === "c") {
       this.options.callbacks.onExit();
+      return;
+    }
+
+    // Ctrl+T cycles thinking depth without leaving the composer.
+    if (key.ctrl && key.name === "t") {
+      const levels = ["off", "low", "medium", "high"];
+      const next = levels[(levels.indexOf(this.thinkingLevel) + 1) % levels.length] as string;
+      this.thinkingLevel = next;
+      this.options.callbacks.onThinkingChange?.(next);
       return;
     }
 
@@ -310,7 +418,7 @@ export class App {
   }
 
   private handleApprovalKey(key: Key): void {
-    const request = this.approval;
+    const request = this.approvals[0];
     if (!request) return;
     if (key.name === "left") {
       this.approvalIndex =
@@ -396,6 +504,15 @@ export class App {
     }
   }
 
+  private filterCommands(): void {
+    const query = this.editor.text.slice(1).toLowerCase();
+    this.commandList.setItems(
+      query.length === 0
+        ? this.commands
+        : this.commands.filter((c) => c.label.toLowerCase().startsWith(query)),
+    );
+  }
+
   private refreshMentions(): void {
     const query = this.editor.text.slice(this.mentionStart + 1);
     this.commandList.setItems(this.options.callbacks.onMentionQuery?.(query) ?? []);
@@ -424,15 +541,18 @@ export class App {
     }
     if (key.name === "backspace") {
       this.editor.backspace();
-      if (!this.editor.text.startsWith("/")) this.mode = "composing";
+      if (!this.editor.text.startsWith("/")) {
+        this.mode = "composing";
+        return;
+      }
+      // Re-filter on the shortened query: deleting a character must widen the
+      // list again rather than leaving it stuck on the previous filter.
+      this.filterCommands();
       return;
     }
     if (key.text) {
       this.editor.insert(key.text);
-      const query = this.editor.text.slice(1).toLowerCase();
-      this.commandList.setItems(
-        this.commands.filter((c) => c.label.toLowerCase().startsWith(query)),
-      );
+      this.filterCommands();
     }
   }
 }

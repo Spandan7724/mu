@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { discoverModels, findModel, listModels, modelRef, refreshModels } from "./catalog.ts";
+import {
+  defaultModelRef,
+  discoverModels,
+  findModel,
+  listModels,
+  modelRef,
+  providerHasCredentials,
+  refreshModels,
+} from "./catalog.ts";
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
 
 describe("catalog", () => {
@@ -117,5 +125,24 @@ describe("cost", () => {
     const b = { ...zeroUsage(), inputTokens: 2, costUsd: 0.25 };
     expect(addUsage(a, b).inputTokens).toBe(3);
     expect(addUsage(a, b).costUsd).toBeCloseTo(0.75, 10);
+  });
+});
+
+describe("credential-aware default model", () => {
+  test("prefers a provider the user actually has a key for", () => {
+    expect(defaultModelRef({ OPENAI_API_KEY: "x" }).startsWith("openai/")).toBe(true);
+    expect(defaultModelRef({ ANTHROPIC_API_KEY: "x" }).startsWith("anthropic/")).toBe(true);
+    expect(defaultModelRef({ GEMINI_API_KEY: "x" }).startsWith("google/")).toBe(true);
+  });
+
+  test("falls back to the first model when nothing is configured", () => {
+    expect(defaultModelRef({})).toContain("/");
+  });
+
+  test("reports per-provider credential availability", () => {
+    expect(providerHasCredentials("openai", { OPENAI_API_KEY: "x" })).toBe(true);
+    expect(providerHasCredentials("openai", {})).toBe(false);
+    // An unknown/custom provider is not gated on a key we do not know about.
+    expect(providerHasCredentials("custom", {})).toBe(true);
   });
 });

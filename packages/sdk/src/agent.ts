@@ -126,11 +126,11 @@ function lastText(messages: AgentMessage[]): string {
 
 export class Agent {
   private readonly options: AgentOptions;
-  private readonly model: ModelInfo;
-  private readonly provider: Provider;
+  private model: ModelInfo;
+  private provider: Provider;
   private readonly store: SessionStore;
-  private readonly tree: SessionTree;
-  private readonly _sessionId: string;
+  private tree: SessionTree;
+  private _sessionId: string;
   private controller = new AbortController();
   private steering: AgentMessage[] = [];
   private followUps: AgentMessage[] = [];
@@ -141,9 +141,11 @@ export class Agent {
   private externalEvents: AgentEvent[] = [];
   private recoveryAttempted = false;
   private snapshottedThisTurn = false;
+  private currentThinking: ThinkingLevel;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
+    this.currentThinking = options.thinkingLevel ?? "off";
     this.model = resolveModel(options.model);
     this.provider = options.provider ?? getProvider(this.model.provider);
     this.store = options.session ?? new MemorySessionStore();
@@ -172,6 +174,32 @@ export class Agent {
 
   get sessionStore(): SessionStore {
     return this.store;
+  }
+
+  get modelRef(): string {
+    return `${this.model.provider}/${this.model.id}`;
+  }
+
+  get thinking(): ThinkingLevel {
+    return this.currentThinking;
+  }
+
+  // Switching model also switches provider — they travel together.
+  setModel(ref: string | ModelInfo): void {
+    this.model = resolveModel(ref);
+    this.provider = this.options.provider ?? getProvider(this.model.provider);
+  }
+
+  setThinking(level: ThinkingLevel): void {
+    this.currentThinking = level;
+  }
+
+  // Adopts a previously stored session so the next run continues it rather
+  // than starting a fresh transcript.
+  resume(tree: SessionTree): void {
+    this.tree = tree;
+    const header = tree.header;
+    if (header) this._sessionId = header.id;
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
@@ -365,9 +393,7 @@ export class Agent {
       provider: this.provider,
       model: this.model,
       ...(this.options.apiKey ? { streamOpts: { apiKey: this.options.apiKey } } : {}),
-      ...(this.options.thinkingLevel !== undefined
-        ? { thinkingLevel: this.options.thinkingLevel }
-        : {}),
+      thinkingLevel: this.currentThinking,
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
         : {}),

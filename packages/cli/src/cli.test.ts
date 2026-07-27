@@ -84,14 +84,16 @@ describe("runHeadless", () => {
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
   });
 
-  test("a provider error exits 1", async () => {
+  test("a provider error exits 1 and reports the actual message", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "" }], errorMessage: "upstream exploded" },
     ]);
     const { err, io: sink } = io();
     const code = await runHeadless(parseArgs(["-p", "ask"]), base(provider), sink);
     expect(code).toBe(EXIT.error);
-    expect(err.join("")).toContain("error");
+    // The provider's own message must survive to the user — a generic
+    // "an error occurred" hides actionable causes like a missing API key.
+    expect(err.join("")).toContain("upstream exploded");
   });
 
   test("hitting a budget exits 3", async () => {

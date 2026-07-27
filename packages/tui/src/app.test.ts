@@ -583,3 +583,195 @@ describe("selection pickers (/model, /resume)", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 });
+
+describe("error reporting", () => {
+  test("the real provider error is shown, not a generic line", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [],
+        model: "anthropic/claude-opus-5",
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "error",
+        errorMessage: 'No API key for provider "anthropic" (set ANTHROPIC_API_KEY)',
+        timestamp: 1,
+      },
+    });
+    const lines = app.handleEvent({ type: "agent_end", messages: [], reason: "error" });
+    const text = lines.map(stripAnsi).join("\n");
+
+    expect(text).toContain("ANTHROPIC_API_KEY");
+    expect(text).not.toContain("run ended with an error");
+  });
+
+  test("an error with no message still says something useful", () => {
+    const { app } = harness();
+    const lines = app.handleEvent({ type: "agent_end", messages: [], reason: "error" });
+    expect(stripAnsi(lines[0] ?? "")).toContain("provider returned an error");
+  });
+});
+
+describe("live streaming region", () => {
+  test("streaming text appears before the turn completes", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "message_start",
+      message: {
+        role: "assistant",
+        content: [],
+        model: "fake/fake-1",
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "end",
+        timestamp: 1,
+      },
+    });
+    app.handleEvent({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        model: "fake/fake-1",
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "end",
+        timestamp: 1,
+      },
+      delta: { kind: "text_delta", contentIndex: 0, text: "thinking out loud" },
+    });
+
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("thinking out loud");
+  });
+
+  test("a running tool shows a live cell with its output tail", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "bun test" },
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "c1",
+      partial: [{ type: "text", text: "ok 1 - first" }],
+    });
+
+    const rendered = app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("bash");
+    expect(rendered).toContain("ok 1 - first");
+  });
+});
+
+describe("concurrent permission asks", () => {
+  const ask = (id: string, tool: string): AgentEvent => ({
+    type: "permission_asked",
+    request: {
+      id,
+      toolCallId: `c-${id}`,
+      toolName: tool,
+      pattern: "{}",
+      description: `run ${tool}`,
+    },
+  });
+
+  test("a second ask queues instead of overwriting the first", () => {
+    const h = harness();
+    h.app.handleEvent(ask("p1", "alpha"));
+    h.app.handleEvent(ask("p2", "beta"));
+    // The first is still the one displayed.
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("run alpha");
+  });
+
+  test("resolving the visible ask advances to the queued one", () => {
+    const h = harness();
+    h.app.handleEvent(ask("p1", "alpha"));
+    h.app.handleEvent(ask("p2", "beta"));
+    h.app.handleEvent({ type: "permission_resolved", requestId: "p1", outcome: "allow" });
+
+    expect(h.app.currentMode).toBe("approval");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("run beta");
+  });
+
+  test("resolving an unknown id does not close the visible ask", () => {
+    const h = harness();
+    h.app.handleEvent(ask("p1", "alpha"));
+    h.app.handleEvent({ type: "permission_resolved", requestId: "stale", outcome: "allow" });
+    expect(h.app.currentMode).toBe("approval");
+  });
+
+  test("the composer returns only when every ask is resolved", () => {
+    const h = harness();
+    h.app.handleEvent(ask("p1", "alpha"));
+    h.app.handleEvent(ask("p2", "beta"));
+    h.app.handleEvent({ type: "permission_resolved", requestId: "p1", outcome: "allow" });
+    h.app.handleEvent({ type: "permission_resolved", requestId: "p2", outcome: "deny" });
+    expect(h.app.currentMode).toBe("composing");
+  });
+});
+
+describe("command popup filtering", () => {
+  test("backspace widens the filtered list again", () => {
+    const h = harness();
+    h.app.setCommands([{ label: "model" }, { label: "compact" }, { label: "undo" }]);
+    feed(h.app, "/m");
+    let rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("model");
+    expect(rendered).not.toContain("undo");
+
+    h.app.handleInput({
+      type: "key",
+      key: { name: "backspace", ctrl: false, alt: false, shift: false },
+    });
+    rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("model");
+    expect(rendered).toContain("undo");
+  });
+});
+
+describe("thinking toggle", () => {
+  test("ctrl+t cycles the level and reports it", () => {
+    const levels: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+        onThinkingChange: (level) => levels.push(level),
+      },
+    });
+
+    const ctrlT = {
+      type: "key" as const,
+      key: { name: "t", ctrl: true, alt: false, shift: false },
+    };
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
+    expect(levels).toEqual(["low", "medium"]);
+    expect(app.thinking).toBe("medium");
+  });
+
+  test("the footer shows the current thinking level when idle", () => {
+    const h = harness();
+    expect(stripAnsi(h.app.renderBottom().at(-1) ?? "")).toContain("think off");
+  });
+});
+
+describe("startup banner", () => {
+  test("identifies mu and lists the key affordances", () => {
+    const h = harness();
+    h.app.setModel("openai/gpt-5.1");
+    const banner = h.app.banner().map(stripAnsi).join("\n");
+
+    expect(banner).toContain("mu");
+    expect(banner).toContain("openai/gpt-5.1");
+    expect(banner).toContain("/ for commands");
+    expect(banner).toContain("ctrl+t");
+    expect(banner).toContain("ctrl+c to exit");
+  });
+});

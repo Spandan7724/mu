@@ -6,6 +6,7 @@ export {
   findModel,
   listModels,
   modelRef,
+  providerHasCredentials,
   refreshModels,
   registerModels,
 } from "./catalog.ts";

@@ -45,6 +45,10 @@ export class Terminal {
   private cleanupHandlers: (() => void)[] = [];
   private restoreOnce = () => this.restore();
 
+  // Invoked after the terminal is restored but before the process goes away,
+  // so a surface can abort in-flight work and settle pending promises.
+  onExit: ((signal: NodeJS.Signals) => void) | undefined;
+
   constructor(private io: TerminalIo = nodeTerminalIo()) {}
 
   get columns(): number {
@@ -64,15 +68,28 @@ export class Terminal {
   start(): void {
     if (this.active) return;
 
+    // A signal handler suppresses the runtime's default termination, so each
+    // one must restore the terminal and then *preserve normal semantics* —
+    // otherwise Ctrl+C leaves a live process with a restored terminal.
+    const onSignal = (signal: NodeJS.Signals) => {
+      this.restore();
+      this.onExit?.(signal);
+      // Re-raise with the handler removed so the default disposition applies;
+      // fall back to the conventional 128+n status if the process survives.
+      process.off(signal, onSignal);
+      process.kill(process.pid, signal);
+      setTimeout(() => process.exit(128 + (signal === "SIGINT" ? 2 : 15)), 50).unref?.();
+    };
+
     process.on("exit", this.restoreOnce);
-    process.on("SIGINT", this.restoreOnce);
-    process.on("SIGTERM", this.restoreOnce);
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
     process.on("uncaughtException", this.onFatal);
     process.on("unhandledRejection", this.onFatal);
     this.cleanupHandlers.push(() => {
       process.off("exit", this.restoreOnce);
-      process.off("SIGINT", this.restoreOnce);
-      process.off("SIGTERM", this.restoreOnce);
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
       process.off("uncaughtException", this.onFatal);
       process.off("unhandledRejection", this.onFatal);
     });

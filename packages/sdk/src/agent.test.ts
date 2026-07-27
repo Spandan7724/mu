@@ -416,3 +416,51 @@ describe("session persistence", () => {
     expect(agent.session.messagesAt().length).toBe(4);
   });
 });
+
+describe("runtime model and thinking changes", () => {
+  test("setModel switches the model used for the next turn", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first" }] },
+      { content: [{ type: "text", text: "second" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    expect(agent.modelRef).toBe("fake/fake-1");
+
+    await agent.run("one");
+    agent.setModel({ ...fakeModel, id: "fake-2" });
+    expect(agent.modelRef).toBe("fake/fake-2");
+
+    const result = await agent.run("two");
+    const assistants = result.messages.filter((m) => m.role === "assistant");
+    expect(assistants.at(-1)?.role === "assistant" && assistants.at(-1)?.model).toBe("fake/fake-2");
+  });
+
+  test("setThinking is applied to the next request", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    agent.setThinking("high");
+    expect(agent.thinking).toBe("high");
+    await agent.run("go");
+  });
+
+  test("resume adopts a stored session instead of starting fresh", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first" }] },
+      { content: [{ type: "text", text: "second" }] },
+    ]);
+    const first = new Agent({ provider, model: fakeModel, sessionId: "kept" });
+    await first.run("original question");
+
+    const second = new Agent({ provider, model: fakeModel });
+    second.resume(first.session);
+    expect(second.sessionId).toBe("kept");
+
+    await second.run("follow up");
+    // The resumed transcript carries the original exchange forward.
+    const sent = provider.requests[1]?.messages ?? [];
+    const texts = sent.flatMap((m) =>
+      m.role === "user" ? m.content.filter((c) => c.type === "text").map((c) => c.text) : [],
+    );
+    expect(texts).toContain("original question");
+  });
+});

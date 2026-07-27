@@ -69,8 +69,19 @@ export async function runHeadless(
   process.on("SIGINT", onSigint);
 
   try {
+    // Capture the provider's own message so a failure is actionable rather
+    // than a bare "an error occurred".
+    let failure: string | undefined;
     const stream = agent.stream(args.prompt);
     for await (const event of stream) {
+      if (
+        event.type === "message_end" &&
+        event.message.role === "assistant" &&
+        event.message.stopReason === "error" &&
+        event.message.errorMessage
+      ) {
+        failure = event.message.errorMessage;
+      }
       if (args.json) {
         io.stdout(`${JSON.stringify(event)}\n`);
         continue;
@@ -85,7 +96,7 @@ export async function runHeadless(
     if (!args.json) io.stdout("\n");
 
     if (result.reason === "error") {
-      io.stderr("mu: run ended with an error\n");
+      io.stderr(`mu: ${failure ?? "the provider returned an error"}\n`);
     } else if (result.reason !== "done" && result.reason !== "aborted") {
       io.stderr(`mu: halted early (${result.reason})\n`);
     }
