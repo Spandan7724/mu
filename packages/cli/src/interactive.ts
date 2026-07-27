@@ -1,5 +1,5 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { bashTool } from "@mu/profile-coding";
 import {
   App,
@@ -57,6 +57,10 @@ import { resumePickerItems } from "./session-picker.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const SPINNER_INTERVAL_MS = 120;
+
+export function formatTerminalTitle(cwd: string): string {
+  return `mu - ${basename(cwd) || cwd}`;
+}
 
 export function renderDiffCommand(
   data: DiffCommandData,
@@ -820,6 +824,7 @@ export async function runInteractive(
     }
   };
   terminal.start();
+  terminal.setTitle(formatTerminalTitle(process.cwd()));
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking);
   if (args.resumeSessionId) {

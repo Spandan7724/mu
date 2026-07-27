@@ -1031,6 +1031,13 @@ describe("terminal safety", () => {
     terminal.frame("hello");
     expect(written[0]).toBe("\u001b[?2026hhello\u001b[?2026l");
   });
+
+  test("terminal titles use OSC 0 and strip injected controls", () => {
+    const { io, written } = fakeIo();
+    const terminal = new Terminal(io);
+    terminal.setTitle("mu - project\u0007\u001b]0;injected");
+    expect(written).toEqual(["\u001b]0;mu - project]0;injected\u0007"]);
+  });
 });
 
 describe("full-screen renderer", () => {

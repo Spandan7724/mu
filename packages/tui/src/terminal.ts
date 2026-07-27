@@ -122,6 +122,19 @@ export class Terminal {
     this.io.write(data);
   }
 
+  // OSC 0 updates both the terminal window and tab title. Strip control
+  // characters so an unusual directory name cannot terminate the sequence or
+  // inject another terminal command.
+  setTitle(title: string): void {
+    const safe = [...title]
+      .filter((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f);
+      })
+      .join("");
+    this.io.write(`\u001b]0;${safe}\u0007`);
+  }
+
   onResize(handler: () => void): () => void {
     return this.io.onResize?.(handler) ?? (() => {});
   }

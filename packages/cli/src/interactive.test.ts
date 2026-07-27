@@ -4,10 +4,16 @@ import { ExtensionHost, type ModelInfo } from "mu";
 import {
   availableModels,
   formatResumeHint,
+  formatTerminalTitle,
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
 } from "./interactive.ts";
+
+test("terminal title identifies mu and the working directory", () => {
+  expect(formatTerminalTitle("/home/test/code/mu_testing")).toBe("mu - mu_testing");
+  expect(formatTerminalTitle("/")).toBe("mu - /");
+});
 
 test("session close hint is a directly runnable resume command", () => {
   expect(formatResumeHint("019fa562-3975-71e6-b7a1-ed63c54f1fac", "none")).toBe(
