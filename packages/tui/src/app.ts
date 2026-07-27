@@ -82,6 +82,54 @@ const LIVE_TOOL_OUTPUT_LINES = 50;
 const EXPANDED_TOOL_ROWS = 24;
 const RETAINED_TOOLS = 20;
 
+class LiveToolOutput {
+  private lines: string[] = [];
+  private partial = "";
+  private omitted = 0;
+  private afterCarriageReturn = false;
+
+  append(chunk: string): void {
+    for (const char of chunk) {
+      if (char === "\n" && this.afterCarriageReturn) {
+        this.afterCarriageReturn = false;
+        continue;
+      }
+      if (char === "\n" || char === "\r") {
+        this.finishLine();
+        this.afterCarriageReturn = char === "\r";
+        continue;
+      }
+      this.afterCarriageReturn = false;
+      this.partial += char;
+      if (this.partial.length > TASK_PARTIAL_CHARS) {
+        this.partial = `…${this.partial.slice(-(TASK_PARTIAL_CHARS - 1))}`;
+      }
+    }
+  }
+
+  display(maxLines: number): string[] {
+    const retained = [...this.lines, ...(this.partial.length > 0 ? [this.partial] : [])];
+    const total = this.omitted + retained.length;
+    if (total <= maxLines) return retained;
+    const visibleCount = Math.max(1, maxLines - 1);
+    const visible = retained.slice(-visibleCount);
+    const hidden = total - visible.length;
+    return [`… ${hidden} earlier lines · ctrl+o to expand`, ...visible];
+  }
+
+  private finishLine(): void {
+    this.lines.push(this.partial);
+    this.partial = "";
+    if (this.lines.length > LIVE_TOOL_OUTPUT_LINES) {
+      const removed = this.lines.length - LIVE_TOOL_OUTPUT_LINES;
+      this.lines.splice(0, removed);
+      this.omitted += removed;
+    }
+  }
+}
+
+type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
+
 export class App {
   readonly editor = new Editor();
   readonly registry: RendererRegistry;
@@ -94,7 +142,7 @@ export class App {
   // the matching id and advances to the next.
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
-  private pendingTools = new Map<string, ToolRenderInfo & { tail: string[] }>();
+  private pendingTools = new Map<string, PendingTool>();
   private completedTools: ToolRenderInfo[] = [];
   private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
@@ -215,6 +263,21 @@ export class App {
       case "message_update":
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
+        } else if (
+          event.delta.kind === "toolcall_start" ||
+          event.delta.kind === "toolcall_delta" ||
+          event.delta.kind === "toolcall_end"
+        ) {
+          const block = event.message.content[event.delta.contentIndex];
+          if (block?.type === "toolCall" && block.id) {
+            const existing = this.pendingTools.get(block.id);
+            this.pendingTools.set(block.id, {
+              toolName: block.name,
+              args: block.arguments,
+              running: existing?.running ?? false,
+              output: existing?.output ?? new LiveToolOutput(),
+            });
+          }
         }
         return [];
 
@@ -222,11 +285,7 @@ export class App {
         const pending = this.pendingTools.get(event.toolCallId);
         if (pending) {
           for (const block of event.partial) {
-            if (block.type === "text") pending.tail.push(...block.text.split("\n"));
-          }
-          // Bounded tail — a chatty tool must not grow the region without limit.
-          if (pending.tail.length > LIVE_TOOL_OUTPUT_LINES) {
-            pending.tail = pending.tail.slice(-LIVE_TOOL_OUTPUT_LINES);
+            if (block.type === "text") pending.output.append(block.text);
           }
         }
         return [];
@@ -260,12 +319,15 @@ export class App {
       }
 
       case "tool_execution_start":
-        this.pendingTools.set(event.toolCallId, {
-          toolName: event.toolName,
-          args: event.args,
-          running: true,
-          tail: [],
-        });
+        {
+          const existing = this.pendingTools.get(event.toolCallId);
+          this.pendingTools.set(event.toolCallId, {
+            toolName: event.toolName,
+            args: event.args,
+            running: true,
+            output: existing?.output ?? new LiveToolOutput(),
+          });
+        }
         return [];
 
       case "tool_execution_end": {
@@ -441,14 +503,17 @@ export class App {
     for (const pending of this.pendingTools.values()) {
       lines.push(
         ...this.registry.render(
-          { toolName: pending.toolName, args: pending.args, running: true },
+          {
+            toolName: pending.toolName,
+            args: pending.args,
+            running: pending.running === true,
+            expanded: this.toolOutputExpanded,
+          },
           this.ctx,
         ),
       );
-      const tail = this.toolOutputExpanded
-        ? pending.tail.slice(-EXPANDED_TOOL_ROWS)
-        : pending.tail.slice(-3);
-      for (const line of tail) {
+      const output = pending.output.display(this.toolOutputExpanded ? EXPANDED_TOOL_ROWS : 4);
+      for (const line of output) {
         if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
       }
     }

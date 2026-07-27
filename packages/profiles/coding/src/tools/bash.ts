@@ -6,6 +6,17 @@ import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
+const STREAM_UPDATE_INTERVAL_MS = 80;
+
+type OutputStream = "stdout" | "stderr";
+type OutputChunk = (text: string, stream: OutputStream) => void;
+
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}
 
 export interface BashDeps {
   root: string;
@@ -17,7 +28,34 @@ export interface BashDeps {
     cwd: string,
     signal: AbortSignal,
     timeoutMs: number,
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }>;
+    onOutput?: OutputChunk,
+  ) => Promise<SpawnResult>;
+}
+
+async function readProcessStream(
+  stream: ReadableStream<Uint8Array>,
+  kind: OutputStream,
+  onOutput?: OutputChunk,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const text = decoder.decode(value, { stream: true });
+    if (!text) continue;
+    output += text;
+    onOutput?.(text, kind);
+  }
+
+  const final = decoder.decode();
+  if (final) {
+    output += final;
+    onOutput?.(final, kind);
+  }
+  return output;
 }
 
 async function defaultSpawn(
@@ -25,7 +63,8 @@ async function defaultSpawn(
   cwd: string,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+  onOutput?: OutputChunk,
+): Promise<SpawnResult> {
   const proc = Bun.spawn(shellCommand(command), {
     cwd,
     detached: true,
@@ -44,8 +83,8 @@ async function defaultSpawn(
 
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      readProcessStream(proc.stdout, "stdout", onOutput),
+      readProcessStream(proc.stderr, "stderr", onOutput),
       proc.exited,
     ]);
     return { stdout, stderr, exitCode, timedOut };
@@ -53,6 +92,32 @@ async function defaultSpawn(
     clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);
   }
+}
+
+function streamingUpdates(update: (text: string) => void) {
+  let buffered = "";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stderrStarted = false;
+
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    if (!buffered) return;
+    update(buffered);
+    buffered = "";
+  };
+
+  return {
+    push(text: string, stream: OutputStream) {
+      if (stream === "stderr" && !stderrStarted) {
+        buffered += `${buffered.endsWith("\n") || buffered.length === 0 ? "" : "\n"}[stderr]\n`;
+        stderrStarted = true;
+      }
+      buffered += text;
+      timer ??= setTimeout(flush, STREAM_UPDATE_INTERVAL_MS);
+    },
+    flush,
+  };
 }
 
 export function bashTool(deps: BashDeps) {
@@ -76,7 +141,7 @@ export function bashTool(deps: BashDeps) {
     }),
     execute: async (
       { command, timeoutMs, run_in_background },
-      { signal },
+      { signal, update },
     ): Promise<ToolResult | string> => {
       if (signal.aborted) return errorResult("Aborted before the command started.");
 
@@ -96,7 +161,21 @@ export function bashTool(deps: BashDeps) {
         };
       }
 
-      const result = await spawn(command, deps.root, signal, timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const startedAt = Date.now();
+      const live = streamingUpdates(update);
+      let result: SpawnResult;
+      try {
+        result = await spawn(
+          command,
+          deps.root,
+          signal,
+          timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          live.push,
+        );
+      } finally {
+        live.flush();
+      }
+      const durationMs = Date.now() - startedAt;
 
       const parts: string[] = [];
       if (result.stdout.trim()) parts.push(result.stdout.trimEnd());
@@ -109,7 +188,7 @@ export function bashTool(deps: BashDeps) {
       if (result.timedOut) {
         return {
           content: [{ type: "text", text: `${body}\n\n[command timed out and was killed]` }],
-          details: { command, exitCode: result.exitCode, timedOut: true },
+          details: { command, exitCode: result.exitCode, timedOut: true, durationMs },
           isError: true,
         };
       }
@@ -122,7 +201,7 @@ export function bashTool(deps: BashDeps) {
             text: failed ? `${body}\n\n[exit code ${result.exitCode}]` : body,
           },
         ],
-        details: { command, exitCode: result.exitCode },
+        details: { command, exitCode: result.exitCode, durationMs },
         isError: failed,
       };
     },

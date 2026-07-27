@@ -464,6 +464,29 @@ describe("renderer registry", () => {
     );
     expect(lines.map(stripAnsi)).toEqual(["  │ custom rendering", "  │ line one", "  │ line two"]);
   });
+
+  test("a single enormous command-output line stays compact in the transcript", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      {
+        toolName: "bash",
+        args: { command: "print-a-lot" },
+        result: {
+          role: "toolResult",
+          toolCallId: "c",
+          toolName: "bash",
+          content: [{ type: "text", text: "x".repeat(10_000) }],
+          details: { exitCode: 0, durationMs: 12 },
+          isError: false,
+          timestamp: 1,
+        },
+      },
+      { width: 60, depth: "none" },
+    );
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(60);
+  });
 });
 
 describe("tool output toggle", () => {
@@ -489,7 +512,7 @@ describe("tool output toggle", () => {
         timestamp: 1,
       },
     });
-    expect(collapsed.map(stripAnsi)).toEqual(["  │ ran bun test · ✓"]);
+    expect(collapsed.map(stripAnsi)).toEqual(["  │ ran bun test · ✓", "  │ one", "  │ two"]);
     expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("one");
 
     feed(app, "\u000f");
@@ -1093,6 +1116,79 @@ describe("live streaming region", () => {
     const rendered = app.renderBottom().map(stripAnsi).join("\n");
     expect(rendered).toContain("running bun test");
     expect(rendered).toContain("ok 1 - first");
+  });
+
+  test("live tool chunks join partial lines and stay bounded", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "long command" },
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "c1",
+      partial: [{ type: "text", text: "hel" }],
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "c1",
+      partial: [{ type: "text", text: "lo\nworld" }],
+    });
+    for (let index = 0; index < 60; index++) {
+      app.handleEvent({
+        type: "tool_execution_update",
+        toolCallId: "c1",
+        partial: [{ type: "text", text: `\nline ${index}` }],
+      });
+    }
+
+    const rendered = app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("earlier lines · ctrl+o to expand");
+    expect(rendered).toContain("line 59");
+    expect(rendered).not.toContain("line 0\n");
+  });
+
+  test("streaming tool-call arguments preview a write before execution starts", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "message_update",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "write-1",
+            name: "write",
+            arguments: { path: "demo.py", content: "print('hello')\nprint('world')" },
+          },
+        ],
+        model: "fake/fake-1",
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        stopReason: "toolUse",
+        timestamp: 1,
+      },
+      delta: { kind: "toolcall_delta", contentIndex: 0, argsFragment: "world" },
+    });
+
+    const preview = app.renderBottom().map(stripAnsi).join("\n");
+    expect(preview).toContain("write demo.py");
+    expect(preview).toContain("+ print('hello')");
+
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "write-1",
+      toolName: "write",
+      args: { path: "demo.py", content: "print('hello')\nprint('world')" },
+    });
+    const running = app.renderBottom().map(stripAnsi).join("\n");
+    expect(running.match(/write demo\.py/g)?.length).toBe(1);
   });
 });
 

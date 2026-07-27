@@ -347,6 +347,38 @@ describe("bash", () => {
     expect(textOf(result)).toContain("hello");
   });
 
+  test("streams stdout and stderr before returning the final result", async () => {
+    const updates: string[] = [];
+    const tool = bashTool({
+      root: "/tmp",
+      spawn: async (_command, _cwd, _signal, _timeoutMs, onOutput) => {
+        onOutput?.("first\n", "stdout");
+        await Bun.sleep(1);
+        onOutput?.("warning\n", "stderr");
+        return {
+          stdout: "first\n",
+          stderr: "warning\n",
+          exitCode: 0,
+          timedOut: false,
+        };
+      },
+    }) as AnyTool;
+
+    const result = await tool.execute("t1", { command: "stream" }, signal, (partial) => {
+      updates.push(
+        partial
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join(""),
+      );
+    });
+
+    expect(updates.join("")).toContain("first");
+    expect(updates.join("")).toContain("[stderr]\nwarning");
+    expect(textOf(result)).toContain("warning");
+    expect((result.details as { durationMs?: number }).durationMs).toBeNumber();
+  });
+
   test("a non-zero exit is an error result carrying the code", async () => {
     const tool = bashTool({
       root: "/tmp",
