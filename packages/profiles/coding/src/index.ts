@@ -148,6 +148,7 @@ export {
   globToRegExp,
   grepTool,
   type RipgrepRunner,
+  resolveNpmRipgrepExecutable,
   resolveRipgrepExecutable,
   type SearchToolOptions,
 } from "./tools/search.ts";

@@ -16,14 +16,24 @@ Three surfaces, one kernel, one event stream:
 # From npm (requires Bun)
 bun install -g @mu/cli
 
-# Or download the native artifact for your platform from the GitHub release
-# mu-linux-x64, mu-darwin-arm64, or mu-windows-x64.exe — no runtime needed
-chmod +x mu-linux-x64
-./mu-linux-x64 --help
+# Or download the packaged native release — no runtime needed.
+# Linux:
+tar -xzf mu-linux-x64.tar.gz
+./mu-linux-x64/bin/mu --help
+
+# macOS (Apple Silicon):
+tar -xzf mu-darwin-arm64.tar.gz
+./mu-darwin-arm64/bin/mu --help
 
 # Windows PowerShell
-.\mu-windows-x64.exe --help
+Expand-Archive .\mu-windows-x64.zip
+.\mu-windows-x64\bin\mu.exe --help
 ```
+
+Native packages and npm installs include a pinned, checksum-verified ripgrep sidecar for
+fast search. npm uses an OS/CPU-specific optional package, with no postinstall download.
+The bare single-file binaries remain available and use `rg` from `PATH` or mu's built-in
+fallback.
 
 Start mu and run `/login` to choose account sign-in or a stored API key. OpenAI
 account sign-in uses your ChatGPT plan. Environment variables remain available for
@@ -73,4 +83,9 @@ Building for other platforms:
 bun run build:linux    # dist/mu-linux-x64
 bun run build:macos    # dist/mu-darwin-arm64
 bun run build:windows  # dist/mu-windows-x64.exe
+
+# After building the matching native binary:
+bun run package:linux    # dist/mu-linux-x64.tar.gz
+bun run package:macos    # dist/mu-darwin-arm64.tar.gz
+bun run package:windows  # dist/mu-windows-x64.zip
 ```

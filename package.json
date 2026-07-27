@@ -18,7 +18,10 @@
     "pack:npm": "cd packages/cli && bun pm pack --destination ../../dist",
     "build:linux": "bun build packages/cli/src/main.ts --compile --minify --target=bun-linux-x64-baseline --outfile dist/mu-linux-x64",
     "build:macos": "bun build packages/cli/src/main.ts --compile --minify --target=bun-darwin-arm64 --outfile dist/mu-darwin-arm64",
-    "build:windows": "bun build packages/cli/src/main.ts --compile --minify --target=bun-windows-x64-baseline --outfile dist/mu-windows-x64.exe"
+    "build:windows": "bun build packages/cli/src/main.ts --compile --minify --target=bun-windows-x64-baseline --outfile dist/mu-windows-x64.exe",
+    "package:linux": "bun scripts/package-release.ts linux-x64",
+    "package:macos": "bun scripts/package-release.ts darwin-arm64",
+    "package:windows": "bun scripts/package-release.ts windows-x64"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.11",

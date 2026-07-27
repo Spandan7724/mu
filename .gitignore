@@ -5,5 +5,8 @@ CODE_REVIEW.md
 
 node_modules/
 dist/
+packages/ripgrep-*/vendor/
+packages/ripgrep-*/LICENSE-MIT
+packages/ripgrep-*/UNLICENSE
 *.tsbuildinfo
 CLAUDE.md

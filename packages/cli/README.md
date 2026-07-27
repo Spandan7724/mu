@@ -7,6 +7,9 @@ bun install -g @mu/cli
 mu
 ```
 
+The matching OS/CPU package supplies a pinned ripgrep binary for fast search; installs
+without it fall back to `rg` on `PATH` or mu's built-in search.
+
 Run `/login` to sign in with an account or API key. See the project repository for
 configuration, SDK, and development documentation.
 

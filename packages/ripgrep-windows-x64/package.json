@@ -1,0 +1,20 @@
+{
+  "name": "@mu/ripgrep-windows-x64",
+  "version": "0.0.1",
+  "description": "Pinned ripgrep sidecar for mu on Windows x64",
+  "license": "MIT OR Unlicense",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "vendor/rg.exe",
+    "LICENSE-MIT",
+    "UNLICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
