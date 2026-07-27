@@ -2,9 +2,11 @@
 // we point a separate --git-dir at a directory under ~/.mu and use the session
 // root as the work tree, so no commits, refs, index entries or hooks of theirs
 // are involved.
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
 
 export interface ShadowCheckpointOptions {
@@ -39,31 +41,59 @@ const defaultRun: GitRunner = async (args, env, cwd) => {
 
 function parseNumstat(output: string): CheckpointDiffFile[] {
   const files: CheckpointDiffFile[] = [];
-  for (const line of output.split("\n")) {
-    if (line.trim().length === 0) continue;
-    const [added, removed, path] = line.split("\t");
-    if (!path) continue;
+  for (const record of output.split("\0")) {
+    if (record.length === 0) continue;
+    const firstTab = record.indexOf("\t");
+    const secondTab = record.indexOf("\t", firstTab + 1);
+    if (firstTab === -1 || secondTab === -1) continue;
+    const added = record.slice(0, firstTab);
+    const removed = record.slice(firstTab + 1, secondTab);
+    const path = record.slice(secondTab + 1);
     files.push({
       path,
-      added: added === "-" ? 0 : Number(added ?? 0),
-      removed: removed === "-" ? 0 : Number(removed ?? 0),
+      added: added === "-" ? 0 : Number(added),
+      removed: removed === "-" ? 0 : Number(removed),
       hunks: [],
     });
   }
   return files;
 }
 
+function canonicalRoot(root: string): string {
+  const resolved = resolve(root);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function workspaceKey(root: string, scope?: string): string {
+  const readable = (scope ?? basename(root)).replace(/[^A-Za-z0-9._-]+/g, "-") || "workspace";
+  const hash = createHash("sha256").update(root).digest("hex").slice(0, 16);
+  return `${readable}-${hash}`;
+}
+
 export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly root: string;
   private readonly shadowDir: string;
   private readonly run: GitRunner;
+  private readonly excludedPathspecs: string[];
   private initialized = false;
 
   constructor(options: ShadowCheckpointOptions) {
-    this.root = resolve(options.root);
-    const scope = options.scope ?? this.root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    this.root = canonicalRoot(options.root);
+    const scope = workspaceKey(this.root, options.scope);
     this.shadowDir = options.shadowDir ?? join(homedir(), ".mu", "checkpoints", scope);
     this.run = options.run ?? defaultRun;
+    const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
+    this.excludedPathspecs = [
+      ":(exclude,literal).git",
+      ":(exclude,glob).git/**",
+      ...(inside.length > 0 && !inside.startsWith("..")
+        ? [`:(exclude,literal)${inside}`, `:(exclude,glob)${inside}/**`]
+        : []),
+    ];
   }
 
   get directory(): string {
@@ -93,6 +123,17 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   private async ensure(): Promise<void> {
     if (this.initialized) return;
     await mkdir(this.shadowDir, { recursive: true });
+    const ownerFile = join(this.shadowDir, "mu-worktree");
+    try {
+      const owner = (await readFile(ownerFile, "utf8")).trim();
+      if (owner !== this.root) {
+        throw new Error(`Checkpoint store belongs to ${owner}, not ${this.root}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await writeFile(ownerFile, `${this.root}\n`, "utf8");
+    }
+
     const check = await this.git("rev-parse", "--git-dir");
     if (check.exitCode !== 0) {
       await this.git("init", "--quiet");
@@ -112,8 +153,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
 
   async snapshot(label?: string): Promise<string | undefined> {
     await this.ensure();
-    // -A stages deletions too, so a snapshot is a faithful picture.
-    const add = await this.git("add", "-A");
+    const add = await this.git("add", "-A", "--force", "--", ".", ...this.excludedPathspecs);
     if (add.exitCode !== 0) return undefined;
 
     const commit = await this.git(
@@ -134,25 +174,40 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async restore(ref: string): Promise<void> {
     await this.ensure();
 
-    // Two steps, both required. `checkout` restores the content of everything
-    // the snapshot contained; it does NOT remove files created afterwards, so
-    // `clean` takes those out. Together they make the tree match the snapshot
-    // exactly — which is what "undo" has to mean to be trustworthy.
     const checkout = await this.git("checkout", "--force", ref, "--", ".");
     if (checkout.exitCode !== 0) {
       throw new Error(`Could not restore checkpoint ${ref}: ${checkout.stderr.trim()}`);
     }
-    // Point the index at the snapshot so anything absent from it counts as
-    // untracked, then remove exactly those.
-    await this.git("reset", "--quiet", ref, "--", ".");
-    // -d for directories; ignored files are deliberately left alone so build
-    // outputs and dependencies are not destroyed by an undo.
-    await this.git("clean", "--force", "-d", "--quiet");
+    const reset = await this.git("reset", "--quiet", ref, "--", ".");
+    if (reset.exitCode !== 0) {
+      throw new Error(`Could not reset checkpoint ${ref}: ${reset.stderr.trim()}`);
+    }
+    const clean = await this.git(
+      "clean",
+      "--force",
+      "-d",
+      "-x",
+      "--quiet",
+      "-e",
+      ".git",
+      ...(relative(this.root, this.shadowDir).startsWith("..")
+        ? []
+        : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),
+    );
+    if (clean.exitCode !== 0) {
+      throw new Error(`Could not clean checkpoint ${ref}: ${clean.stderr.trim()}`);
+    }
   }
 
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     await this.ensure();
-    const args = toRef ? ["diff", "--numstat", fromRef, toRef] : ["diff", "--numstat", fromRef];
+    if (!toRef) {
+      const add = await this.git("add", "-A", "--force", "--", ".", ...this.excludedPathspecs);
+      if (add.exitCode !== 0) return [];
+    }
+    const args = toRef
+      ? ["diff", "--numstat", "-z", fromRef, toRef]
+      : ["diff", "--cached", "--numstat", "-z", fromRef];
     const result = await this.git(...args);
     if (result.exitCode !== 0) return [];
     const files = parseNumstat(result.stdout);
@@ -160,7 +215,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     for (const file of files) {
       const patchArgs = toRef
         ? ["diff", "--unified=3", fromRef, toRef, "--", file.path]
-        : ["diff", "--unified=3", fromRef, "--", file.path];
+        : ["diff", "--cached", "--unified=3", fromRef, "--", file.path];
       const patch = await this.git(...patchArgs);
       if (patch.exitCode === 0) file.hunks = patch.stdout.split("\n");
     }

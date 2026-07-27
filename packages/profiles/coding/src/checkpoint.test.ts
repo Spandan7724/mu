@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
@@ -67,6 +67,21 @@ describe("shadow checkpoints", () => {
     expect(await readFile(join(root, "deleted.txt"), "utf8")).toBe("here\n");
   });
 
+  test("restore recovers existing ignored files and removes new ignored files", async () => {
+    const root = await scratch();
+    await writeFile(join(root, ".gitignore"), "*.secret\n");
+    await writeFile(join(root, "user.secret"), "user state\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, "user.secret"), "overwritten\n");
+    await writeFile(join(root, "created.secret"), "new\n");
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("user state\n");
+    await expect(access(join(root, "created.secret"))).rejects.toThrow();
+  });
+
   test("diff reports per-file added and removed counts", async () => {
     const root = await scratch();
     await writeFile(join(root, "a.txt"), "one\ntwo\n");
@@ -92,6 +107,50 @@ describe("shadow checkpoints", () => {
     await writeFile(join(root, "a.txt"), "2\n");
     const second = await p.snapshot();
     expect(first).not.toBe(second);
+  });
+
+  test("diff includes newly created, ignored and odd-named files before another snapshot", async () => {
+    const root = await scratch();
+    await writeFile(join(root, ".gitignore"), "*.secret\n");
+    await writeFile(join(root, "base.txt"), "base\n");
+    const p = provider(root);
+    const first = await p.snapshot();
+
+    await writeFile(join(root, "new.ts"), "export const value = 1;\n");
+    await writeFile(join(root, "cache.secret"), "ignored but changed\n");
+    await writeFile(join(root, "odd\tname\n.txt"), "odd\n");
+
+    const files = await p.diff(first as string);
+    expect(new Set(files.map((file) => file.path))).toEqual(
+      new Set(["new.ts", "cache.secret", "odd\tname\n.txt"]),
+    );
+    expect(files.find((file) => file.path === "new.ts")?.hunks.join("\n")).toContain(
+      "+export const value = 1;",
+    );
+  });
+
+  test("default stores use a canonical collision-resistant workspace key", async () => {
+    const base = await scratch();
+    const firstRoot = join(base, "a-b", "c");
+    const secondRoot = join(base, "a", "b-c");
+    await mkdir(firstRoot, { recursive: true });
+    await mkdir(secondRoot, { recursive: true });
+
+    const first = new ShadowCheckpointProvider({ root: firstRoot });
+    const second = new ShadowCheckpointProvider({ root: secondRoot });
+
+    expect(first.directory).not.toBe(second.directory);
+  });
+
+  test("an explicitly reused store refuses a different workspace", async () => {
+    const firstRoot = await scratch();
+    const secondRoot = await scratch();
+    const shadowDir = join(tmpdir(), `mu-shadow-owner-${process.pid}-${shadowCounter++}`);
+    const first = new ShadowCheckpointProvider({ root: firstRoot, shadowDir });
+    await first.snapshot();
+
+    const second = new ShadowCheckpointProvider({ root: secondRoot, shadowDir });
+    await expect(second.snapshot()).rejects.toThrow("belongs to");
   });
 });
 

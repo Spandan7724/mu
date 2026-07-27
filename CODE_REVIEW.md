@@ -16,9 +16,9 @@
   picker, mention, catalog, skills, terminal-sanitization, paste, process-output, process
   tree, and reactive-recovery changes in `8389f4a` through `4e0f9b4`; rerun focused and
   full repository gates; preserve all earlier records.
-- **Open findings:** P0: 0 · P1: 24 · P2: 19 · P3: 1
+- **Open findings:** P0: 0 · P1: 21 · P2: 19 · P3: 1
 - **Possibly fixed:** 2 (P1: 2)
-- **Verified fixed:** 11 (P1: 9 · P2: 2)
+- **Verified fixed:** 14 (P1: 12 · P2: 2)
 - **Accepted:** 0
 
 ### Validation
@@ -81,6 +81,10 @@
   includes consecutive undo/undo/redo/redo, persisted refs and cursor resume, snapshot,
   restore and session-save failures, profile provider propagation, arbitrary
   argument-dependent mutating tools, and denied mutations.
+- The shadow-provider fidelity repair also passes full `bun run ci`: 539 tests and 1,291
+  assertions. Focused tests restore overwritten and newly created ignored files, include
+  new/ignored/odd-named files in a live diff, distinguish a previously colliding pair of
+  roots, and reject an explicitly reused store owned by another canonical root.
 - Focused read-only revalidation verified fixes for MU-CR-001, MU-CR-005, MU-CR-011, and
   MU-CR-041; MU-CR-014 and MU-CR-043 are only possibly fixed for the verification gaps
   recorded below. MU-CR-002 through MU-CR-004, MU-CR-006 through MU-CR-010,
@@ -105,20 +109,17 @@
 3. MU-CR-020 — compaction is only a one-request transform and repeats every tool turn.
 4. MU-CR-021 — persisted compaction drops the intended tail and carryover on resume.
 5. MU-CR-022 — empty or length-truncated summaries can silently discard history.
-6. MU-CR-026 — shadow restore does not capture or restore ignored workspace files.
-7. MU-CR-030 — colliding workspace keys can share shadow history.
-8. MU-CR-033 — aggregate `/diff` omits newly created files.
-9. MU-CR-035 — the claimed `/fork` command does not exist.
-10. MU-CR-038 — background processes are pipe-backed, not the required PTY sessions.
-11. MU-CR-039 — task exit is not connected to the live Agent and cannot wake a genuinely
+6. MU-CR-035 — the claimed `/fork` command does not exist.
+7. MU-CR-038 — background processes are pipe-backed, not the required PTY sessions.
+8. MU-CR-039 — task exit is not connected to the live Agent and cannot wake a genuinely
     idle/completed run.
-12. MU-CR-040 — session shutdown never calls process cleanup.
-13. MU-CR-046 — a second overflow episode in one run still cannot recover.
-14. MU-CR-047 / MU-CR-048 — RPC custom commands discard their run and all frontmatter
+9. MU-CR-040 — session shutdown never calls process cleanup.
+10. MU-CR-046 — a second overflow episode in one run still cannot recover.
+11. MU-CR-047 / MU-CR-048 — RPC custom commands discard their run and all frontmatter
     execution controls are ignored.
-15. MU-CR-049 — the documented npm/binary installation paths do not exist.
-16. MU-CR-052 — resume can attach incompatible or in-flight runtime state to a transcript.
-17. MU-CR-055 / MU-CR-056 — catalog refresh can drop registered models and tier pricing.
+12. MU-CR-049 — the documented npm/binary installation paths do not exist.
+13. MU-CR-052 — resume can attach incompatible or in-flight runtime state to a transcript.
+14. MU-CR-055 / MU-CR-056 — catalog refresh can drop registered models and tier pricing.
 
 `TODO.md` marks M6, M7, and M8 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
@@ -831,7 +832,7 @@ progressive-disclosure claim remains narrower than MU-CR-057.
 - **Tests to add:** Coding todos with multiple statuses, nested objects, strings containing
   commas/newlines, empty values, and exact live/resume equivalence.
 
-### MU-CR-026 — P1 — Open — Shadow restore does not capture or restore ignored files
+### MU-CR-026 — P1 — Verified Fixed — Shadow restore does not capture or restore ignored files
 
 - **Affected:** `packages/profiles/coding/src/checkpoint.ts:115-147`,
   `packages/profiles/coding/src/checkpoint.test.ts:24-207`
@@ -863,6 +864,11 @@ progressive-disclosure claim remains narrower than MU-CR-057.
   after the snapshot remained overwritten after restore, and a newly created
   `created.secret` remained present. `diff(ref)` then returned `[]`. The finding remains
   Open because both edits are realistic results of `write`, `edit`, or `bash`.
+- **Resolution evidence (2026-07-27):** Snapshots force-stage the complete worktree while
+  explicitly excluding repository metadata and an in-tree shadow store. Restore checks
+  out the snapshot and removes paths absent from it, including ignored paths. A regression
+  test restores an overwritten ignored file and removes a new ignored file; the existing
+  user-repository and dirty-state tests remain green.
 
 ### MU-CR-027 — P1 — Verified Fixed — CheckpointHistory skips states and cannot redo an action
 
@@ -951,7 +957,7 @@ progressive-disclosure claim remains narrower than MU-CR-057.
 - **Tests to add:** Throwing/undefined provider, retry in the same turn, surface behavior,
   and a mutation proving no false history entry or success claim.
 
-### MU-CR-030 — P1 — Open — Sanitized workspace keys can collide and share shadow history
+### MU-CR-030 — P1 — Verified Fixed — Sanitized workspace keys can collide and share shadow history
 
 - **Affected:** `packages/profiles/coding/src/checkpoint.ts:62-67`
 - **Requirement:** Shadow state must be isolated per workspace and never restore unrelated
@@ -967,6 +973,10 @@ progressive-disclosure claim remains narrower than MU-CR-057.
   root in shadow metadata before every operation.
 - **Tests to add:** Known sanitization collisions and symlink/case-normalization variants;
   assert separate repositories and refusal when metadata/root disagree.
+- **Resolution evidence (2026-07-27):** The default key is now a readable basename plus
+  the first 16 hex characters of SHA-256 over the canonical root. Each store records that
+  root and refuses a mismatch. Tests cover the reported sanitization collision and
+  explicit cross-root store reuse.
 
 ### MU-CR-031 — P2 — Verified Fixed — SDK hard-codes coding tool names as the mutation contract
 
@@ -1026,7 +1036,7 @@ progressive-disclosure claim remains narrower than MU-CR-057.
   provider and honors an explicit per-run override. Both paths have direct tests and the
   complete checkpoint suite plus full CI pass.
 
-### MU-CR-033 — P1 — Open — Aggregate session diff omits newly created files
+### MU-CR-033 — P1 — Verified Fixed — Aggregate session diff omits newly created files
 
 - **Affected:** `packages/profiles/coding/src/checkpoint.ts:149-167`,
   `packages/sdk/src/agent.ts:216-222`
@@ -1047,6 +1057,10 @@ progressive-disclosure claim remains narrower than MU-CR-057.
   path handling and produce patches/counts for additions.
 - **Tests to add:** Invoke diff immediately after creating ordinary, nested, binary,
   ignored, and oddly named files; mix additions with tracked modifications and deletions.
+- **Resolution evidence (2026-07-27):** A live diff first force-stages the current
+  worktree and compares the staged tree to the starting ref. Numstat parsing is
+  NUL-delimited, so tabs/newlines in paths remain literal. Focused coverage asserts
+  ordinary, ignored, and odd-named additions plus rendered hunks before another snapshot.
 
 ### MU-CR-034 — P2 — Open — `/diff` bypasses the required TUI diff cell
 
