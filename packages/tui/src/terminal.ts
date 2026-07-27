@@ -69,16 +69,14 @@ export class Terminal {
     if (this.active) return;
 
     // A signal handler suppresses the runtime's default termination, so each
-    // one must restore the terminal and then *preserve normal semantics* —
-    // otherwise Ctrl+C leaves a live process with a restored terminal.
+    // one must restore the terminal and then preserve the conventional
+    // signal-derived exit status — otherwise Ctrl+C leaves a live process or
+    // Bun reports a successful exit after a self-signal.
     const onSignal = (signal: NodeJS.Signals) => {
       this.restore();
       this.onExit?.(signal);
-      // Re-raise with the handler removed so the default disposition applies;
-      // fall back to the conventional 128+n status if the process survives.
       process.off(signal, onSignal);
-      process.kill(process.pid, signal);
-      setTimeout(() => process.exit(128 + (signal === "SIGINT" ? 2 : 15)), 50).unref?.();
+      process.exit(128 + (signal === "SIGINT" ? 2 : 15));
     };
 
     process.on("exit", this.restoreOnce);

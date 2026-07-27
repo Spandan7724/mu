@@ -522,6 +522,42 @@ describe("resize", () => {
 });
 
 describe("terminal safety", () => {
+  async function runSafetyChild(mode: "signal" | "throw") {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        new URL("./fixtures/terminal-safety-child.ts", import.meta.url).pathname,
+        mode,
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    let stdout = "";
+    let ready!: () => void;
+    const isReady = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const stdoutDone = (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of child.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.includes("ready\n")) ready();
+      }
+      stdout += decoder.decode();
+    })();
+
+    await isReady;
+    if (mode === "signal") child.kill("SIGTERM");
+    const [, stderr, exitCode] = await Promise.all([
+      stdoutDone,
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
   function fakeIo(): { io: TerminalIo; written: string[] } {
     const written: string[] = [];
     return {
@@ -558,6 +594,24 @@ describe("terminal safety", () => {
     terminal.start();
     terminal.restore();
     expect(() => terminal.restore()).not.toThrow();
+  });
+
+  test("an actual SIGTERM restores terminal state before exit", async () => {
+    const result = await runSafetyChild("signal");
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toContain('write:"\\u001b[?2004l\\u001b[?25h"');
+    expect(result.stdout).toContain("raw:false");
+    expect(result.stdout).toContain("signal:SIGTERM");
+  });
+
+  test("an uncaught throw restores terminal state before exit", async () => {
+    const result = await runSafetyChild("throw");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('write:"\\u001b[?2004l\\u001b[?25h"');
+    expect(result.stdout).toContain("raw:false");
+    expect(result.stderr).toContain("mu crashed: Error: terminal safety fixture crash");
   });
 
   test("frames are wrapped in synchronized-output markers", () => {
