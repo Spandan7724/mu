@@ -1,5 +1,5 @@
 import type { ToolResultMessage } from "@mu/core";
-import { type RenderContext, type ToolCellOptions, toolCell } from "./cells.ts";
+import { type RenderContext, type ToolCellOptions, toolCell, toolOutputCell } from "./cells.ts";
 import { truncateToWidth } from "./width.ts";
 
 export interface ToolRenderInfo {
@@ -7,6 +7,7 @@ export interface ToolRenderInfo {
   args: unknown;
   result?: ToolResultMessage;
   running?: boolean;
+  expanded?: boolean;
 }
 
 export type ToolRendererFn = (info: ToolRenderInfo, ctx: RenderContext) => string[];
@@ -24,8 +25,7 @@ function firstString(args: unknown, keys: string[]): string | undefined {
 function resultText(result: ToolResultMessage | undefined): string {
   if (!result) return "";
   return result.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
+    .map((block) => (block.type === "text" ? block.text : `[image: ${block.mimeType}]`))
     .join("\n");
 }
 
@@ -66,12 +66,16 @@ export class RendererRegistry {
 
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
+    let lines: string[];
     try {
-      return renderer(info, ctx);
+      lines = renderer(info, ctx);
     } catch {
       // A broken renderer must never take the UI down with it.
-      return genericRenderer(info, ctx);
+      lines = genericRenderer(info, ctx);
     }
+    return info.expanded && info.result
+      ? [...lines, ...toolOutputCell(resultText(info.result), ctx)]
+      : lines;
   }
 }
 
@@ -96,7 +100,7 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     const details = info.result?.details as { occurrences?: number } | undefined;
     return toolCell(
       {
-        name: "edit",
+        name: "edited",
         ...(firstString(info.args, ["path"])
           ? { primaryArg: firstString(info.args, ["path"]) as string }
           : {}),
@@ -115,20 +119,21 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     const ok = details?.exitCode === 0;
     return toolCell(
       {
-        name: "bash",
+        name: info.running ? "running" : "ran",
         ...(firstString(info.args, ["command"])
-          ? { primaryArg: firstString(info.args, ["command"]) as string }
+          ? {
+              primaryArg: firstString(info.args, ["command"]) as string,
+              primaryAccent: true,
+            }
           : {}),
         ...(info.result?.isError ? { isError: true } : {}),
         ...(info.result
-          ? {
-              summary: details?.background
-                ? `${details.taskId ?? "task"} bg`
-                : ok
-                  ? "✓"
-                  : `exit ${details?.exitCode ?? "?"}`,
-            }
-          : { summary: "running" }),
+          ? details?.background
+            ? { summary: `${details.taskId ?? "task"} bg` }
+            : ok
+              ? { isSuccess: true }
+              : { summary: `exit ${details?.exitCode ?? "?"}` }
+          : {}),
       },
       ctx,
     );

@@ -22,6 +22,7 @@ export {
   taskCell,
   thinkingCell,
   toolCell,
+  toolOutputCell,
   userCell,
 } from "./cells.ts";
 export type { ApprovalData, FooterData, SelectItem } from "./components.ts";

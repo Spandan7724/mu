@@ -126,7 +126,7 @@ describe("fake-agent session", () => {
     const visible = transcript.map(stripAnsi);
 
     expect(visible).toContain("  ▸ add retries");
-    expect(visible).toContain("  │ read · src/api/client.ts · 142 lines");
+    expect(visible).toContain("  │ read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
     const bottom = app.renderBottom().map(stripAnsi);
@@ -411,6 +411,100 @@ describe("renderer registry", () => {
       { width: 60, depth: "none" },
     );
     expect(stripAnsi(lines[0] ?? "")).toContain("first line");
+  });
+
+  test("expanded mode appends sanitized tool output even for custom renderers", () => {
+    const registry = new RendererRegistry();
+    registry.register("custom", () => ["  │ custom rendering"]);
+    const lines = registry.render(
+      {
+        toolName: "custom",
+        args: {},
+        expanded: true,
+        result: {
+          role: "toolResult",
+          toolCallId: "c",
+          toolName: "custom",
+          content: [{ type: "text", text: "line one\nline two" }],
+          isError: false,
+          timestamp: 1,
+        },
+      },
+      { width: 60, depth: "none" },
+    );
+    expect(lines.map(stripAnsi)).toEqual(["  │ custom rendering", "  │ line one", "  │ line two"]);
+  });
+});
+
+describe("tool output toggle", () => {
+  test("ctrl+o expands completed commands and collapses them again", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "bun test" },
+    });
+    const collapsed = app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "one\ntwo" }],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    expect(collapsed.map(stripAnsi)).toEqual(["  │ ran bun test · ✓"]);
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("one");
+
+    feed(app, "\u000f");
+    expect(app.areToolOutputsExpanded).toBe(true);
+    const expanded = app.renderBottom().map(stripAnsi).join("\n");
+    expect(expanded).toContain("tool output · ctrl+o to collapse");
+    expect(expanded).toContain("ran bun test");
+    expect(expanded).toContain("│ one");
+    expect(expanded).toContain("│ two");
+
+    feed(app, "\u000f");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("│ one");
+  });
+
+  test("the expanded output view is bounded and reports omitted rows", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "long command" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n"),
+          },
+        ],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    feed(app, "\u000f");
+    const bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.some((line) => line.includes("… +"))).toBe(true);
+    expect(bottom.length).toBeLessThanOrEqual(31);
   });
 });
 
@@ -816,7 +910,7 @@ describe("live streaming region", () => {
     });
 
     const rendered = app.renderBottom().map(stripAnsi).join("\n");
-    expect(rendered).toContain("bash");
+    expect(rendered).toContain("running bun test");
     expect(rendered).toContain("ok 1 - first");
   });
 });

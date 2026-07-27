@@ -1,4 +1,5 @@
 
+import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import {
   AGENT_INDENT,
@@ -37,9 +38,10 @@ export function userCell(text: string, ctx: RenderContext): string[] {
 // mu  agent text, hanging indent under the label
 export function agentCell(text: string, ctx: RenderContext): string[] {
   const label = `${accent(AGENT_LABEL, ctx.depth)}  `;
-  // Model output is untrusted: it must not be able to drive the terminal.
-  const wrapped = wrapText(sanitizeUntrusted(text), body(ctx) - AGENT_INDENT.length, "");
-  return wrapped.map((line, i) => (i === 0 ? MARGIN + label + line : MARGIN + AGENT_INDENT + line));
+  const rendered = renderMarkdown(text, body(ctx) - AGENT_INDENT.length, ctx.depth);
+  return rendered.map((line, i) =>
+    i === 0 ? MARGIN + label + line : line.length === 0 ? "" : MARGIN + AGENT_INDENT + line,
+  );
 }
 
 // Thinking is dim and behind the rule; collapsed to one line unless expanded.
@@ -57,7 +59,9 @@ export function thinkingCell(text: string, ctx: RenderContext, expanded = false)
 export interface ToolCellOptions {
   name: string;
   primaryArg?: string;
+  primaryAccent?: boolean;
   summary?: string; // right-hand metadata, e.g. "142 lines"
+  isSuccess?: boolean;
   isError?: boolean;
   nested?: boolean;
   // Live output tail shown while running; omitted once collapsed.
@@ -67,16 +71,44 @@ export interface ToolCellOptions {
 // │ read src/api/client.ts · 142 lines
 export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[] {
   const rule = dim(`${options.nested ? GLYPHS.nestedRule : GLYPHS.rule} `, ctx.depth);
-  const parts: string[] = [dim(sanitizeUntrusted(options.name), ctx.depth)];
-  if (options.primaryArg) {
-    parts.push(truncateToWidth(sanitizeUntrusted(options.primaryArg), Math.floor(body(ctx) / 2)));
-  }
-  if (options.isError) {
-    parts.push(styleText(GLYPHS.error, { red: true }, ctx.depth));
-  }
-  if (options.summary) parts.push(dim(sanitizeUntrusted(options.summary), ctx.depth));
-
-  const head = MARGIN + rule + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth));
+  const available =
+    ctx.width - MARGIN.length - stringWidth(`${options.nested ? GLYPHS.nestedRule : GLYPHS.rule} `);
+  const separator = ` ${GLYPHS.separator} `;
+  const status = options.isError
+    ? styleText(GLYPHS.error, { red: true }, ctx.depth)
+    : options.isSuccess
+      ? styleText(GLYPHS.ok, { green: true }, ctx.depth)
+      : "";
+  const rawPrimary = options.primaryArg ? sanitizeUntrusted(options.primaryArg) : "";
+  const rawSummary = options.summary ? sanitizeUntrusted(options.summary) : "";
+  const actionReserve = (rawPrimary ? 4 : 0) + (status ? 4 : 0);
+  const name = truncateToWidth(
+    sanitizeUntrusted(options.name),
+    Math.max(1, available - actionReserve),
+  );
+  const summaryBudget =
+    available -
+    stringWidth(name) -
+    (rawPrimary ? 4 : 0) -
+    stringWidth(separator) -
+    stringWidth(status) -
+    (status ? 1 : 0);
+  const summary = summaryBudget >= 2 ? truncateToWidth(rawSummary, summaryBudget) : "";
+  const metadata = [status, summary ? dim(summary, ctx.depth) : ""].filter(Boolean).join(" ");
+  const primaryBudget =
+    available -
+    stringWidth(name) -
+    (rawPrimary ? 1 : 0) -
+    (metadata ? stringWidth(separator) + stringWidth(metadata) : 0);
+  const primary = options.primaryArg ? truncateToWidth(rawPrimary, Math.max(1, primaryBudget)) : "";
+  const styledPrimary = options.primaryAccent ? accent(primary, ctx.depth) : primary;
+  const action = styleText(name, { bold: true }, ctx.depth);
+  const head =
+    MARGIN +
+    rule +
+    action +
+    (styledPrimary ? ` ${styledPrimary}` : "") +
+    (metadata ? dim(separator, ctx.depth) + metadata : "");
   const lines = [head];
 
   for (const line of options.tail ?? []) {
@@ -85,6 +117,13 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     );
   }
   return lines;
+}
+
+export function toolOutputCell(text: string, ctx: RenderContext): string[] {
+  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const safe = sanitizeUntrusted(text).replace(/\t/g, "    ");
+  const content = safe.length > 0 ? safe : "(no output)";
+  return wrapText(content, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
 }
 
 export interface TaskCellOptions {

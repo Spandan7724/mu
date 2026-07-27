@@ -65,7 +65,7 @@ describe("transcript cells (golden lines)", () => {
       visible(
         toolCell({ name: "read", primaryArg: "src/api/client.ts", summary: "142 lines" }, plain),
       ),
-    ).toEqual(["  │ read · src/api/client.ts · 142 lines"]);
+    ).toEqual(["  │ read src/api/client.ts · 142 lines"]);
   });
 
   test("failed tool cell carries the error glyph", () => {
@@ -74,6 +74,21 @@ describe("transcript cells (golden lines)", () => {
     )[0];
     expect(line).toContain("✗");
     expect(line).toContain("bash");
+  });
+
+  test("tool summaries preserve status and fit narrow terminals", () => {
+    const line = toolCell(
+      {
+        name: "running",
+        primaryArg: "a very long command with more arguments",
+        primaryAccent: true,
+        isError: true,
+        summary: "exit 123456",
+      },
+      { width: 20, depth: "truecolor" },
+    )[0];
+    expect(stringWidth(line ?? "")).toBeLessThanOrEqual(20);
+    expect(stripAnsi(line ?? "")).toContain("✗");
   });
 
   test("nested (subagent) activity uses the double rule", () => {
@@ -333,7 +348,57 @@ describe("components", () => {
     const lines = visible(renderMarkdown("# Title\n- one\n- two\n```\ncode\n```", 40, "none"));
     expect(lines[0]).toBe("Title");
     expect(lines[1]).toBe("• one");
-    expect(lines[3]).toBe("code");
+    expect(lines[3]).toBe("│ code");
+  });
+
+  test("markdown renders inline emphasis, links, quotes, tasks, and tables", () => {
+    const lines = visible(
+      renderMarkdown(
+        [
+          "Use **bold**, *italic*, ~~old~~, and `code` with [docs](https://example.com).",
+          "",
+          "> quoted text",
+          "- [x] shipped",
+          "",
+          "| name | value |",
+          "| --- | --- |",
+          "| alpha | beta |",
+        ].join("\n"),
+        80,
+        "truecolor",
+      ),
+    );
+    expect(lines).toContain("│ quoted text");
+    expect(lines).toContain("✓ shipped");
+    expect(lines).toContain("name  │ value");
+    expect(lines).toContain("alpha │ beta");
+    expect(lines.join("\n")).toContain("docs (https://example.com)");
+  });
+
+  test("markdown styling uses semantic ANSI roles and agent cells render it", () => {
+    const rendered = renderMarkdown(
+      "# Heading\n\n**bold** *italic* ~~old~~ `code` [link](https://example.com)",
+      80,
+      "truecolor",
+    ).join("\n");
+    expect(rendered).toContain("\u001b[1;4m");
+    expect(rendered).toContain("\u001b[1m");
+    expect(rendered).toContain("\u001b[3m");
+    expect(rendered).toContain("\u001b[9m");
+    expect(rendered).toContain("\u001b[38;2;45;212;191m");
+
+    const agent = agentCell("## Result\n\n- **done**", colored);
+    expect(visible(agent)).toEqual(["  mu  Result", "", "      • done"]);
+    expect(agent.join("\n")).toContain("\u001b[1m");
+  });
+
+  test("markdown respects terminal width for rich content", () => {
+    const lines = renderMarkdown(
+      "| a very long heading | another long heading |\n| --- | --- |\n| alpha beta gamma | delta epsilon zeta |",
+      32,
+      "truecolor",
+    );
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(32);
   });
 });
 

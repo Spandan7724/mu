@@ -25,6 +25,9 @@ export interface Style {
   accent?: boolean;
   dim?: boolean;
   bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
   green?: boolean;
   red?: boolean;
 }
@@ -34,6 +37,9 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
   const codes: string[] = [];
   if (style.bold) codes.push("1");
   if (style.dim) codes.push("2");
+  if (style.italic) codes.push("3");
+  if (style.underline) codes.push("4");
+  if (style.strikethrough) codes.push("9");
   if (style.accent) {
     if (depth === "truecolor")
       codes.push(`38;2;${ACCENT_RGB[0]};${ACCENT_RGB[1]};${ACCENT_RGB[2]}`);

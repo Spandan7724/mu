@@ -1,6 +1,7 @@
 // Components return styled lines at a width — not React, no virtual DOM.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
@@ -391,37 +392,4 @@ export function approvalOverlay(data: ApprovalData, width: number, depth: ColorD
   return out;
 }
 
-// Minimal streaming markdown: headings bold, bullets normalized, code dim.
-// Deliberately small — a full markdown engine is not the point here.
-export function renderMarkdown(text: string, width: number, depth: ColorDepth): string[] {
-  const out: string[] = [];
-  let inFence = false;
-
-  for (const raw of text.split("\n")) {
-    if (raw.trimStart().startsWith("```")) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) {
-      out.push(...wrapText(raw, width).map((line) => dim(line, depth)));
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.*)$/.exec(raw);
-    if (heading) {
-      out.push(
-        ...wrapText(heading[2] ?? "", width).map((l) => styleText(l, { bold: true }, depth)),
-      );
-      continue;
-    }
-    const bullet = /^(\s*)[-*]\s+(.*)$/.exec(raw);
-    if (bullet) {
-      const indent = `${bullet[1] ?? ""}• `;
-      out.push(...wrapText(indent + (bullet[2] ?? ""), width, "  "));
-      continue;
-    }
-    out.push(...wrapText(raw, width));
-  }
-  return out;
-}
-
-export { stringWidth };
+export { renderMarkdown, stringWidth };

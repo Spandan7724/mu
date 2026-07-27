@@ -9,6 +9,7 @@ import {
   type RenderContext,
   taskCell,
   thinkingCell,
+  toolOutputCell,
   userCell,
 } from "./cells.ts";
 import {
@@ -24,6 +25,7 @@ import {
 import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { wrapText } from "./wrap.ts";
 
 export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
 
@@ -73,6 +75,9 @@ interface LiveTask {
 
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
+const LIVE_TOOL_OUTPUT_LINES = 50;
+const EXPANDED_TOOL_ROWS = 24;
+const RETAINED_TOOLS = 20;
 
 export class App {
   readonly editor = new Editor();
@@ -87,6 +92,8 @@ export class App {
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
   private pendingTools = new Map<string, ToolRenderInfo & { tail: string[] }>();
+  private completedTools: ToolRenderInfo[] = [];
+  private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
@@ -142,6 +149,10 @@ export class App {
     return this.thinkingLevel;
   }
 
+  get areToolOutputsExpanded(): boolean {
+    return this.toolOutputExpanded;
+  }
+
   // Opens a selection list (used by /model and /resume).
   openPicker(request: PickerRequest): void {
     this.picker = request;
@@ -170,6 +181,7 @@ export class App {
     switch (event.type) {
       case "agent_start":
         this.running = true;
+        this.completedTools = [];
         return [];
 
       case "agent_end": {
@@ -199,7 +211,9 @@ export class App {
             if (block.type === "text") pending.tail.push(...block.text.split("\n"));
           }
           // Bounded tail — a chatty tool must not grow the region without limit.
-          if (pending.tail.length > 5) pending.tail = pending.tail.slice(-5);
+          if (pending.tail.length > LIVE_TOOL_OUTPUT_LINES) {
+            pending.tail = pending.tail.slice(-LIVE_TOOL_OUTPUT_LINES);
+          }
         }
         return [];
       }
@@ -248,6 +262,10 @@ export class App {
           args: pending?.args ?? {},
           result: event.result,
         };
+        this.completedTools.push(info);
+        if (this.completedTools.length > RETAINED_TOOLS) {
+          this.completedTools = this.completedTools.slice(-RETAINED_TOOLS);
+        }
         return this.registry.render(info, this.ctx);
       }
 
@@ -341,7 +359,12 @@ export class App {
   // Shown once at startup: an empty screen with a bare prompt gives the user
   // nothing to orient against.
   banner(): string[] {
-    const { depth } = this.ctx;
+    const { depth, width } = this.ctx;
+    const affordances = styleText(
+      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
+      { dim: true },
+      depth,
+    );
     return [
       "",
       `${MARGIN}${styleText(AGENT_LABEL, { accent: true, bold: true }, depth)}  ${styleText(
@@ -349,11 +372,7 @@ export class App {
         { dim: true },
         depth,
       )}`,
-      `${MARGIN}${styleText(
-        `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
-        { dim: true },
-        depth,
-      )}`,
+      ...wrapText(affordances, width - MARGIN.length).map((line) => MARGIN + line),
       "",
     ];
   }
@@ -367,6 +386,37 @@ export class App {
     const { width, depth } = this.ctx;
     const lines: string[] = [];
 
+    if (this.toolOutputExpanded && this.completedTools.length > 0) {
+      const expanded = this.completedTools.flatMap((info) =>
+        this.registry.render({ ...info, expanded: true }, this.ctx),
+      );
+      lines.push(
+        MARGIN +
+          styleText(
+            `${GLYPHS.rule} tool output ${GLYPHS.separator} ctrl+o to collapse`,
+            { dim: true },
+            depth,
+          ),
+      );
+      if (expanded.length <= EXPANDED_TOOL_ROWS) {
+        lines.push(...expanded);
+      } else {
+        const headRows = Math.floor((EXPANDED_TOOL_ROWS - 1) / 2);
+        const tailRows = EXPANDED_TOOL_ROWS - headRows - 1;
+        const omitted = expanded.length - headRows - tailRows;
+        lines.push(
+          ...expanded.slice(0, headRows),
+          MARGIN +
+            styleText(
+              `${GLYPHS.rule} … +${omitted} lines ${GLYPHS.separator} ctrl+o keeps this view bounded`,
+              { dim: true },
+              depth,
+            ),
+          ...expanded.slice(-tailRows),
+        );
+      }
+    }
+
     // Live region: streaming assistant text and running tool cells, so a long
     // turn is never a frozen screen with only a spinner.
     if (this.streaming && this.streaming.trim().length > 0) {
@@ -379,8 +429,11 @@ export class App {
           this.ctx,
         ),
       );
-      for (const line of pending.tail.slice(-3)) {
-        if (line.trim().length > 0) lines.push(`${MARGIN}${GLYPHS.rule} ${line}`);
+      const tail = this.toolOutputExpanded
+        ? pending.tail.slice(-EXPANDED_TOOL_ROWS)
+        : pending.tail.slice(-3);
+      for (const line of tail) {
+        if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
       }
     }
     for (const task of this.backgroundTasks.values()) {
@@ -435,9 +488,10 @@ export class App {
       }
     }
 
+    const toolHint = "ctrl+o";
     const hint = this.running
-      ? `${this.spinner.render(depth)} esc to interrupt`
-      : `think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+      ? `${this.spinner.render(depth)} esc to interrupt ${GLYPHS.separator} ${toolHint}`
+      : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, hint }, width, depth));
     return lines;
   }
@@ -462,6 +516,11 @@ export class App {
 
     if (key.ctrl && key.name === "c") {
       this.options.callbacks.onExit();
+      return;
+    }
+
+    if (key.ctrl && key.name === "o") {
+      this.toolOutputExpanded = !this.toolOutputExpanded;
       return;
     }
 
