@@ -103,6 +103,22 @@ describe("transcript cells (golden lines)", () => {
     expect(lines[1]).toBe("  │ ok 1");
   });
 
+  test("multiline tool arguments occupy separately tracked rows", () => {
+    const lines = visible(
+      toolCell(
+        {
+          name: "running",
+          primaryArg: "set -e\nPORT=18080 cargo run &\npid=$!",
+          primaryAccent: true,
+        },
+        plain,
+      ),
+    );
+
+    expect(lines).toEqual(["  │ running set -e", "  │ PORT=18080 cargo run &", "  │ pid=$!"]);
+    expect(lines.every((line) => !line.includes("\n"))).toBe(true);
+  });
+
   test("a background task has a live tail and a compact exit outcome", () => {
     expect(
       visible(

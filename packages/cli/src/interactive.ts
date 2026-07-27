@@ -471,8 +471,8 @@ export async function runInteractive(
   const paint = () => renderer.render(app.renderBottom());
   const unsubscribe = agent.subscribe((event) => {
     const lines = app.handleEvent(event);
-    if (lines.length > 0) renderer.commit(lines);
-    paint();
+    if (lines.length > 0) renderer.commit(lines, app.renderBottom());
+    else paint();
   });
 
   // Shallow file listing for the `@` popup — bounded so a huge tree cannot

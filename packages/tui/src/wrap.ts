@@ -102,3 +102,8 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
 export function wrapText(text: string, width: number, indent = ""): string[] {
   return text.split("\n").flatMap((line) => wrapLine(line, width, indent));
 }
+
+export function terminalRows(lines: string[], width: number): string[] {
+  const safeWidth = Math.max(1, width);
+  return lines.flatMap((line) => wrapText(line, safeWidth));
+}

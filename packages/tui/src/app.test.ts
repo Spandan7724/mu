@@ -827,6 +827,35 @@ describe("inline renderer", () => {
     expect(written.join("")).toContain("history line");
   });
 
+  test("embedded newlines are counted as physical rows when repainting", () => {
+    const { written, renderer } = setup();
+    renderer.renderNow(["first\nsecond", "third"]);
+    expect(renderer.regionHeight).toBe(3);
+
+    renderer.renderNow(["replacement"]);
+    expect(written.at(-1)).toContain(`${ESC}[2A`);
+  });
+
+  test("committing with the next frame replaces stale pending output atomically", async () => {
+    const written: string[] = [];
+    const terminal = new Terminal({
+      write: (data) => written.push(data),
+      columns: 80,
+      rows: 24,
+      isTty: true,
+    });
+    const renderer = new InlineRenderer(terminal, 10);
+    renderer.render(["stale pending frame"]);
+    renderer.commit(["history line"], ["fresh frame"]);
+    const writesAfterCommit = written.length;
+
+    await Bun.sleep(25);
+    expect(written.length).toBe(writesAfterCommit);
+    expect(renderer.regionHeight).toBe(1);
+    expect(written.join("")).toContain("fresh frame");
+    expect(written.join("")).not.toContain("stale pending frame");
+  });
+
   test("throttled renders coalesce into one paint", async () => {
     const written: string[] = [];
     const terminal = new Terminal({
@@ -1157,6 +1186,27 @@ describe("live streaming region", () => {
     expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("thinking out loud");
   });
 
+  test("long assistant output moves into scrollback while it is streaming", () => {
+    const { app } = harness();
+    const text = Array.from({ length: 80 }, (_, index) => `word-${index}`).join(" ");
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({ type: "message_start", message: assistant("") });
+
+    const committed = app.handleEvent({
+      type: "message_update",
+      message: assistant(text),
+      delta: { kind: "text_delta", contentIndex: 0, text },
+    });
+    const live = app.renderBottom().map(stripAnsi);
+    const final = app.handleEvent({ type: "message_end", message: assistant(text) });
+    const transcript = [...committed, ...final].map(stripAnsi);
+
+    expect(committed.length).toBeGreaterThan(0);
+    expect(live.some((line) => line.includes("word-79"))).toBe(true);
+    expect(final.length).toBeLessThanOrEqual(7);
+    expect(transcript.filter((line) => line.startsWith("  mu  "))).toHaveLength(1);
+  });
+
   test("a running tool shows a live cell with its output tail", () => {
     const { app } = harness();
     app.handleEvent({
@@ -1174,6 +1224,46 @@ describe("live streaming region", () => {
     const rendered = app.renderBottom().map(stripAnsi).join("\n");
     expect(rendered).toContain("running bun test");
     expect(rendered).toContain("ok 1 - first");
+  });
+
+  test("a multiline command preview stays inside the managed viewport", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const app = new App({
+      width: 60,
+      height: 10,
+      depth: "none",
+      model: "fake/fake-1",
+      registry,
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+      },
+    });
+    const command = Array.from({ length: 30 }, (_, index) => `command line ${index + 1}`).join(
+      "\n",
+    );
+    app.handleEvent({
+      type: "message_update",
+      message: {
+        ...assistant(""),
+        content: [
+          {
+            type: "toolCall",
+            id: "bash-1",
+            name: "bash",
+            arguments: { command },
+          },
+        ],
+      },
+      delta: { kind: "toolcall_delta", contentIndex: 0, argsFragment: "line 30" },
+    });
+
+    const bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.length).toBeLessThanOrEqual(9);
+    expect(bottom[0]).toContain("rows above hidden");
+    expect(bottom.every((line) => !line.includes("\n"))).toBe(true);
   });
 
   test("live tool chunks join partial lines and stay bounded", () => {

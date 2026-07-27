@@ -1,4 +1,5 @@
 import { CURSOR, type Terminal } from "./terminal.ts";
+import { terminalRows } from "./wrap.ts";
 
 // Inline model: the transcript is committed to the terminal's own
 // scrollback and never repainted; only a small bottom region is diffed and
@@ -18,10 +19,15 @@ export class InlineRenderer {
 
   // Writes lines above the managed region: they scroll away like any other
   // terminal output and become part of history.
-  commit(lines: string[]): void {
+  commit(lines: string[], next?: string[]): void {
     if (lines.length === 0) return;
+    const committed = this.rows(lines);
+    const managed = next ? this.rows(next) : this.current;
+    if (next) this.cancelPending();
     const body =
-      this.clearRegion() + lines.map((line) => `${line}\n`).join("") + this.draw(this.current);
+      this.clearRegion() + committed.map((line) => `${line}\n`).join("") + this.draw(managed);
+    this.current = [...managed];
+    this.lastWidth = this.terminal.columns;
     this.terminal.frame(body);
   }
 
@@ -40,24 +46,33 @@ export class InlineRenderer {
 
   // Bypasses the throttle — used on resize and at shutdown.
   renderNow(lines: string[]): void {
-    if (this.frameTimer) {
-      clearTimeout(this.frameTimer);
-      this.frameTimer = undefined;
-    }
-    this.pending = undefined;
+    this.cancelPending();
     this.paint(lines);
   }
 
   private paint(lines: string[]): void {
     const widthChanged = this.terminal.columns !== this.lastWidth;
     if (widthChanged) this.lastWidth = this.terminal.columns;
+    const rows = this.rows(lines);
 
     // Nothing to do when the region is identical and the terminal did not resize.
-    if (!widthChanged && sameLines(this.current, lines)) return;
+    if (!widthChanged && sameLines(this.current, rows)) return;
 
-    const body = this.clearRegion() + this.draw(lines);
-    this.current = [...lines];
+    const body = this.clearRegion() + this.draw(rows);
+    this.current = [...rows];
     this.terminal.frame(body);
+  }
+
+  private rows(lines: string[]): string[] {
+    return terminalRows(lines, this.terminal.columns);
+  }
+
+  private cancelPending(): void {
+    if (this.frameTimer) {
+      clearTimeout(this.frameTimer);
+      this.frameTimer = undefined;
+    }
+    this.pending = undefined;
   }
 
   private clearRegion(): string {
@@ -81,10 +96,7 @@ export class InlineRenderer {
   }
 
   stop(): void {
-    if (this.frameTimer) {
-      clearTimeout(this.frameTimer);
-      this.frameTimer = undefined;
-    }
+    this.cancelPending();
   }
 }
 

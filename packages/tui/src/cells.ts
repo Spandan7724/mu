@@ -80,9 +80,13 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     : options.isSuccess
       ? styleText(GLYPHS.ok, { green: true }, ctx.depth)
       : "";
-  const rawPrimary = options.primaryArg ? sanitizeUntrusted(options.primaryArg) : "";
+  const rawPrimary = options.primaryArg
+    ? sanitizeUntrusted(options.primaryArg).replace(/\t/g, "    ")
+    : "";
+  const primaryLines = rawPrimary.split("\n");
+  const firstPrimary = primaryLines[0] ?? "";
   const rawSummary = options.summary ? sanitizeUntrusted(options.summary) : "";
-  const actionReserve = (rawPrimary ? 4 : 0) + (status ? 4 : 0);
+  const actionReserve = (firstPrimary ? 4 : 0) + (status ? 4 : 0);
   const name = truncateToWidth(
     sanitizeUntrusted(options.name),
     Math.max(1, available - actionReserve),
@@ -90,7 +94,7 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   const summaryBudget =
     available -
     stringWidth(name) -
-    (rawPrimary ? 4 : 0) -
+    (firstPrimary ? 4 : 0) -
     stringWidth(separator) -
     stringWidth(status) -
     (status ? 1 : 0);
@@ -99,9 +103,9 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   const primaryBudget =
     available -
     stringWidth(name) -
-    (rawPrimary ? 1 : 0) -
+    (firstPrimary ? 1 : 0) -
     (metadata ? stringWidth(separator) + stringWidth(metadata) : 0);
-  const primary = options.primaryArg ? truncateToWidth(rawPrimary, Math.max(1, primaryBudget)) : "";
+  const primary = firstPrimary ? truncateToWidth(firstPrimary, Math.max(1, primaryBudget)) : "";
   const styledPrimary = options.primaryAccent ? accent(primary, ctx.depth) : primary;
   const action = styleText(name, { bold: true }, ctx.depth);
   const head =
@@ -112,6 +116,12 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     (metadata ? dim(separator, ctx.depth) + metadata : "");
   const lines = [head];
 
+  for (const line of primaryLines.slice(1)) {
+    const continuation = truncateToWidth(line, Math.max(1, available));
+    lines.push(
+      MARGIN + rule + (options.primaryAccent ? accent(continuation, ctx.depth) : continuation),
+    );
+  }
   for (const line of options.tail ?? []) {
     lines.push(
       MARGIN + rule + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),

@@ -26,7 +26,7 @@ import {
 import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
-import { wrapText } from "./wrap.ts";
+import { terminalRows, wrapText } from "./wrap.ts";
 
 export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
 
@@ -82,6 +82,7 @@ interface LiveTask {
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
+const LIVE_ASSISTANT_ROWS = 6;
 const EXPANDED_TOOL_ROWS = 24;
 const RETAINED_TOOLS = 20;
 
@@ -151,6 +152,7 @@ export class App {
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
+  private streamingCommittedRows = 0;
   private lastError: string | undefined;
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
@@ -264,12 +266,22 @@ export class App {
       }
 
       case "message_start":
-        if (event.message.role === "assistant") this.streaming = "";
+        if (event.message.role === "assistant") {
+          this.streaming = "";
+          this.streamingCommittedRows = 0;
+        }
         return [];
 
       case "message_update":
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
+          const rows = this.streamingRows();
+          const commitThrough = Math.max(0, rows.length - LIVE_ASSISTANT_ROWS);
+          if (commitThrough > this.streamingCommittedRows) {
+            const committed = rows.slice(this.streamingCommittedRows, commitThrough);
+            this.streamingCommittedRows = commitThrough;
+            return committed;
+          }
         } else if (
           event.delta.kind === "toolcall_start" ||
           event.delta.kind === "toolcall_delta" ||
@@ -308,7 +320,9 @@ export class App {
           return text ? [...userCell(text, this.ctx), ""] : [];
         }
         if (message.role === "assistant") {
+          let committedRows = this.streamingCommittedRows;
           this.streaming = undefined;
+          this.streamingCommittedRows = 0;
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
@@ -317,7 +331,9 @@ export class App {
             if (block.type === "thinking" && block.thinking.trim()) {
               lines.push(...thinkingCell(block.thinking, this.ctx));
             } else if (block.type === "text" && block.text.trim()) {
-              lines.push(...agentCell(block.text, this.ctx));
+              const textRows = this.toTerminalRows(agentCell(block.text, this.ctx));
+              lines.push(...textRows.slice(committedRows));
+              committedRows = Math.max(0, committedRows - textRows.length);
             }
           }
           return lines.length > 0 ? [...lines, ""] : [];
@@ -506,7 +522,7 @@ export class App {
     // Live region: streaming assistant text and running tool cells, so a long
     // turn is never a frozen screen with only a spinner.
     if (this.streaming && this.streaming.trim().length > 0) {
-      lines.push(...agentCell(this.streaming, this.ctx).slice(-6));
+      lines.push(...this.streamingRows().slice(this.streamingCommittedRows));
     }
     for (const pending of this.pendingTools.values()) {
       lines.push(
@@ -608,7 +624,16 @@ export class App {
         ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
         : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, hint }, width, depth));
-    return this.fitToViewport(lines);
+    return this.fitToViewport(this.toTerminalRows(lines));
+  }
+
+  private streamingRows(): string[] {
+    if (!this.streaming) return [];
+    return this.toTerminalRows(agentCell(this.streaming, this.ctx));
+  }
+
+  private toTerminalRows(lines: string[]): string[] {
+    return terminalRows(lines, this.options.width);
   }
 
   private fitToViewport(lines: string[]): string[] {
