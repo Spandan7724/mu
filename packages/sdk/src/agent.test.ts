@@ -736,6 +736,44 @@ describe("runtime model and thinking changes", () => {
     expect(agent.sessionId).toBe(sessionId);
   });
 
+  test("newSession starts an independent empty conversation", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "old answer" }] },
+      { content: [{ type: "text", text: "new answer" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    await agent.run("old prompt");
+    const oldSessionId = agent.sessionId;
+    expect(agent.usage.inputTokens).toBeGreaterThan(0);
+
+    agent.setThinking("high");
+    agent.newSession("fresh-session");
+
+    expect(agent.sessionId).toBe("fresh-session");
+    expect(agent.session.messagesAt()).toEqual([]);
+    expect(agent.usage.inputTokens).toBe(0);
+    expect(agent.contextPercent).toBe(0);
+    expect(agent.thinking).toBe("high");
+    expect(agent.checkpointHistory.canUndo).toBe(false);
+
+    await agent.run("new prompt");
+    const request = JSON.stringify(provider.requests[1]?.messages);
+    expect(request).toContain("new prompt");
+    expect(request).not.toContain("old prompt");
+    expect(await agent.sessionStore.load(oldSessionId)).toBeDefined();
+  });
+
+  test("newSession is rejected while a run is active", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "answer" }], delayMs: 40 },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const stream = agent.stream("active prompt");
+
+    expect(() => agent.newSession()).toThrow("while a run is active");
+    await stream.result();
+  });
+
   test("per-run model and tool restrictions fail closed and restore defaults", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "restricted" }] },

@@ -15,5 +15,7 @@ configuration, SDK, and development documentation.
 
 Interactive runs are saved by working-directory scope under `~/.mu/sessions`; use
 `/resume` to choose one or `mu --resume <session-id>` to continue it directly. Mu prints
-the direct resume command when an interactive session closes. Use `/permissions` to
-choose `default`, `accept-edits`, `plan-readonly`, or full-access behavior.
+the direct resume command when an interactive session closes. Use `/new` to clear the
+terminal and start a fresh chat without deleting the previous saved session. Use
+`/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
+behavior.

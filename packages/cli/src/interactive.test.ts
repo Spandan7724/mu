@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RendererRegistry, stripAnsi } from "@mu/tui";
+import { App, RendererRegistry, stripAnsi } from "@mu/tui";
 import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo } from "mu";
 import {
   availableModels,
@@ -9,6 +9,7 @@ import {
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
+  startNewInteractiveSession,
 } from "./interactive.ts";
 
 test("terminal title identifies mu and the working directory", () => {
@@ -31,6 +32,36 @@ test("a new interactive session is not persisted before any message is sent", as
 
   expect(await initializeInteractiveSession(agent, undefined)).toBe(false);
   expect(await store.list()).toEqual([]);
+});
+
+test("/new starts a fresh chat and clears the terminal", () => {
+  const agent = new Agent();
+  const oldSessionId = agent.sessionId;
+  const app = new App({
+    width: 80,
+    height: 24,
+    depth: "none",
+    model: agent.modelRef,
+    contextWindow: agent.contextWindow,
+    callbacks: {
+      onSubmit: () => {},
+      onAbort: () => {},
+      onExit: () => {},
+    },
+  });
+  app.appendTranscript(["old chat"]);
+  const calls: string[] = [];
+
+  const sessionId = startNewInteractiveSession(agent, app, {
+    clear: () => calls.push("clear"),
+    renderNow: (lines) => calls.push(lines.map(stripAnsi).join("\n")),
+  });
+
+  expect(sessionId).not.toBe(oldSessionId);
+  expect(agent.session.messagesAt()).toEqual([]);
+  expect(calls[0]).toBe("clear");
+  expect(calls[1]).toContain("a general-purpose, extensible agent");
+  expect(calls[1]).not.toContain("old chat");
 });
 
 describe("interactive command rendering", () => {

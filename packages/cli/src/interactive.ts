@@ -113,6 +113,35 @@ export async function initializeInteractiveSession(
   return true;
 }
 
+export function startNewInteractiveSession(
+  agent: Pick<Agent, "newSession" | "sessionId" | "modelRef" | "contextWindow" | "thinking">,
+  app: Pick<
+    App,
+    "setModel" | "setThinking" | "handleEvent" | "replaceTranscript" | "banner" | "renderScreen"
+  >,
+  renderer: Pick<FullScreenRenderer, "clear" | "renderNow">,
+): string {
+  agent.newSession();
+  app.setModel(agent.modelRef, agent.contextWindow);
+  app.setThinking(agent.thinking);
+  app.handleEvent({
+    type: "usage_updated",
+    sessionTotals: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0,
+    },
+    contextTokens: 0,
+    contextPercent: 0,
+  });
+  app.replaceTranscript([], app.banner());
+  renderer.clear();
+  renderer.renderNow(app.renderScreen());
+  return agent.sessionId;
+}
+
 export function availableModels(extensions: ExtensionHost): ModelInfo[] {
   const models = new Map<string, ModelInfo>(
     listModels().map((model) => [`${model.provider}/${model.id}`, model] as const),
@@ -514,6 +543,18 @@ export async function runInteractive(
         },
         onBack: () => app.openCommandMenu(),
       });
+      return { handled: true };
+    },
+  });
+  commands.register({
+    name: "new",
+    description: "Clear the terminal and start a new chat",
+    run: () => {
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot start a new chat during a run." };
+      }
+      startNewInteractiveSession(agent, app, renderer);
+      sessionResumable = false;
       return { handled: true };
     },
   });

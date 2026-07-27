@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   addUsage,
   type Credential,
@@ -152,6 +153,10 @@ function lastText(messages: AgentMessage[]): string {
   return "";
 }
 
+function createSessionId(): string {
+  return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
 export class Agent {
   private readonly options: AgentOptions;
   private model: ModelInfo;
@@ -189,7 +194,7 @@ export class Agent {
     this.model = resolveModel(options.model, options.extensions);
     this.provider = this.providerFor(this.model);
     this.store = options.session ?? new MemorySessionStore();
-    this._sessionId = options.sessionId ?? `s${Date.now().toString(36)}`;
+    this._sessionId = options.sessionId ?? createSessionId();
     this.tree = new SessionTree({
       type: "session",
       version: SESSION_VERSION,
@@ -310,6 +315,38 @@ export class Agent {
       }
     }
     this.rebuildCheckpointHistory();
+  }
+
+  // Starts an independent conversation while keeping this Agent's configured
+  // tools, permissions, model, thinking level, runtime, and subscribers.
+  newSession(sessionId = createSessionId()): void {
+    if (this.running) throw new Error("Cannot start a new session while a run is active.");
+    this._sessionId = sessionId;
+    this.tree = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: sessionId,
+      createdAt: new Date().toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    this.tree.append({
+      type: "settings-change",
+      model: this.modelRef,
+      thinkingLevel: this.currentThinking,
+    });
+    this.totals = zeroUsage();
+    this.lastContextUsage = undefined;
+    this.lastContextPercent = 0;
+    this.compactRequested = false;
+    this.recoveryAttempted = false;
+    this.reactiveRecoveryPending = false;
+    this.steering = [];
+    this.followUps = [];
+    this.pendingCheckpoint = undefined;
+    this.checkpoints.restore([]);
+    this.sessionStarted = false;
+    this.controller = new AbortController();
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
