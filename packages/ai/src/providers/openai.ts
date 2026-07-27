@@ -1,4 +1,5 @@
 import { resolveCredential } from "../auth.ts";
+import { classifyHttpError } from "../errors.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -9,6 +10,7 @@ import type {
   LlmContext,
   ModelInfo,
   Provider,
+  ProviderModelDiscoveryOptions,
   StreamOpts,
 } from "../types.ts";
 import { driveStream, postSse, updateCost } from "./shared.ts";
@@ -16,12 +18,102 @@ import { driveStream, postSse, updateCost } from "./shared.ts";
 const API_BASE_URL = "https://api.openai.com";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const MAX_OPENAI_CACHE_KEY_LENGTH = 64;
+const DEFAULT_CODEX_MAX_OUTPUT = 128_000;
+const ZERO_PRICING = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 type Json = Record<string, unknown>;
 
 function codexSessionId(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized.slice(0, MAX_OPENAI_CACHE_KEY_LENGTH) : undefined;
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function codexModelInfo(
+  value: unknown,
+  currentModels: readonly ModelInfo[],
+): (ModelInfo & { priority: number }) | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const model = value as Json;
+  if (
+    typeof model.slug !== "string" ||
+    model.slug.length === 0 ||
+    model.supported_in_api === false ||
+    (typeof model.visibility === "string" && model.visibility !== "list")
+  ) {
+    return undefined;
+  }
+  const fallback = currentModels.find(
+    (candidate) => candidate.provider === "openai-codex" && candidate.id === model.slug,
+  );
+  const contextWindow =
+    positiveNumber(model.context_window) ??
+    positiveNumber(model.max_context_window) ??
+    fallback?.contextWindow;
+  if (!contextWindow) return undefined;
+  const inputModalities = Array.isArray(model.input_modalities)
+    ? model.input_modalities.filter((item): item is string => typeof item === "string")
+    : [];
+  const modalities: ModelInfo["modalities"] = ["text"];
+  if (inputModalities.includes("image") || fallback?.modalities.includes("image")) {
+    modalities.push("image");
+  }
+  const reasoningLevels = Array.isArray(model.supported_reasoning_levels)
+    ? model.supported_reasoning_levels
+    : [];
+  return {
+    provider: "openai-codex",
+    id: model.slug,
+    ...(typeof model.display_name === "string" ? { name: model.display_name } : {}),
+    contextWindow,
+    maxOutput: fallback?.maxOutput ?? DEFAULT_CODEX_MAX_OUTPUT,
+    modalities,
+    ...(reasoningLevels.length > 0 || fallback?.thinking ? { thinking: true } : {}),
+    pricing: fallback?.pricing ?? ZERO_PRICING,
+    priority: finiteNumber(model.priority) ?? Number.MAX_SAFE_INTEGER,
+  };
+}
+
+export async function discoverOpenAICodexModels(
+  options: ProviderModelDiscoveryOptions,
+): Promise<ModelInfo[] | undefined> {
+  const credential = await options.getCredentials?.();
+  if (!credential || credential.type !== "oauth") return undefined;
+
+  const url = new URL(`${CODEX_BASE_URL}/models`);
+  url.searchParams.set("client_version", options.clientVersion ?? "0.0.0");
+  const response = await (options.fetch ?? fetch)(url, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${credential.accessToken}`,
+      "chatgpt-account-id": credential.accountId,
+      originator: "mu",
+    },
+    ...(options.signal ? { signal: options.signal } : {}),
+  });
+  if (!response.ok) {
+    throw classifyHttpError(response.status, await response.text(), response.headers);
+  }
+  const payload: unknown = await response.json();
+  if (typeof payload !== "object" || payload === null || !Array.isArray((payload as Json).models)) {
+    throw new Error("Could not discover ChatGPT models: invalid catalog response");
+  }
+  const discovered = (payload as { models: unknown[] }).models
+    .map((model) => codexModelInfo(model, options.currentModels))
+    .filter((model): model is ModelInfo & { priority: number } => model !== undefined)
+    .sort((left, right) => left.priority - right.priority)
+    .map(({ priority: _priority, ...model }) => model);
+  if (discovered.length === 0 && (payload as { models: unknown[] }).models.length > 0) {
+    throw new Error("Could not discover ChatGPT models: catalog contained no compatible models");
+  }
+  return discovered;
 }
 
 function resolveAuthMode(
@@ -321,4 +413,8 @@ export function streamOpenAI(
 }
 
 export const openai: Provider = { id: "openai", stream: streamOpenAI };
-export const openaiCodex: Provider = { id: "openai-codex", stream: streamOpenAI };
+export const openaiCodex: Provider = {
+  id: "openai-codex",
+  stream: streamOpenAI,
+  discoverModels: discoverOpenAICodexModels,
+};

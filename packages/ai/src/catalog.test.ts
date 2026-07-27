@@ -10,6 +10,7 @@ import {
   registerModels,
 } from "./catalog.ts";
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
+import type { ModelInfo, Provider } from "./types.ts";
 
 describe("catalog", () => {
   test("finds model by provider/id ref", () => {
@@ -203,5 +204,66 @@ describe("catalog refresh merges rather than replaces", () => {
     const model = findModel("anthropic/claude-opus-5");
     expect(model?.contextWindow).toBe(2_000_000);
     expect(model?.pricing.input).toBe(7);
+  });
+
+  test("an authenticated provider catalog is authoritative for that provider", async () => {
+    const planModel: ModelInfo = {
+      provider: "openai-codex",
+      id: "gpt-5.6-terra",
+      contextWindow: 300_000,
+      maxOutput: 100_000,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const provider = {
+      id: "openai-codex",
+      discoverModels: async () => [planModel],
+    } as unknown as Provider;
+    await refreshModels({
+      providers: [provider],
+      fetch: async () =>
+        Response.json({
+          google: {
+            models: {
+              usable: {
+                id: "gemini-plan-test",
+                tool_call: true,
+                limit: { context: 1_000_000, output: 64_000 },
+              },
+            },
+          },
+        }),
+    });
+
+    expect(findModel("openai-codex/gpt-5.6-terra")).toEqual(planModel);
+    expect(findModel("openai-codex/gpt-5.6-sol")).toBeUndefined();
+    expect(findModel("anthropic/claude-opus-5")).toBeDefined();
+  });
+
+  test("one failed source does not discard a successful provider catalog", async () => {
+    const warnings: string[] = [];
+    const providerModel: ModelInfo = {
+      provider: "future",
+      id: "future-model",
+      contextWindow: 100_000,
+      maxOutput: 10_000,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const provider = {
+      id: "future",
+      discoverModels: async () => [providerModel],
+    } as unknown as Provider;
+
+    const discovered = await discoverModels({
+      providers: [provider],
+      fetch: async () => {
+        throw new Error("models.dev is offline");
+      },
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(discovered).toEqual([providerModel]);
+    expect(warnings).toEqual(["models.dev is offline"]);
   });
 });

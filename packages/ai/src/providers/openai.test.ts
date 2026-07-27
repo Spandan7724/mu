@@ -3,8 +3,13 @@ import { findModel } from "../catalog.ts";
 import textCassette from "../fixtures/openai-text.json" with { type: "json" };
 import toolCassette from "../fixtures/openai-tool.json" with { type: "json" };
 import { replayFetch } from "../testing/replay.ts";
-import type { LlmContext, ModelInfo, ProviderStreamEvent } from "../types.ts";
-import { streamOpenAI } from "./openai.ts";
+import type {
+  LlmContext,
+  ModelInfo,
+  ProviderModelDiscoveryOptions,
+  ProviderStreamEvent,
+} from "../types.ts";
+import { discoverOpenAICodexModels, streamOpenAI } from "./openai.ts";
 
 const model = findModel("openai/gpt-5.1") as ModelInfo;
 
@@ -19,6 +24,103 @@ const ctx: LlmContext = {
     },
   ],
 };
+
+describe("discoverOpenAICodexModels", () => {
+  test("discovers the models available to the signed-in ChatGPT plan", async () => {
+    let requestUrl = "";
+    let requestHeaders = new Headers();
+    const discovered = await discoverOpenAICodexModels({
+      clientVersion: "1.2.3",
+      currentModels: [
+        {
+          provider: "openai-codex",
+          id: "gpt-existing",
+          contextWindow: 200_000,
+          maxOutput: 64_000,
+          modalities: ["text"],
+          thinking: true,
+          pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        },
+      ],
+      getCredentials: async () => ({
+        type: "oauth",
+        accessToken: "access",
+        accountId: "account",
+      }),
+      fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        requestUrl = String(input);
+        requestHeaders = new Headers(init?.headers);
+        return Response.json({
+          models: [
+            {
+              slug: "gpt-new",
+              display_name: "GPT New",
+              context_window: 400_000,
+              input_modalities: ["text", "image"],
+              supported_reasoning_levels: [{ effort: "medium" }],
+              visibility: "list",
+              supported_in_api: true,
+              priority: 1,
+            },
+            {
+              slug: "gpt-existing",
+              display_name: "GPT Existing",
+              max_context_window: 272_000,
+              visibility: "list",
+              supported_in_api: true,
+              priority: 2,
+            },
+            {
+              slug: "gpt-hidden",
+              context_window: 100_000,
+              visibility: "hide",
+            },
+            {
+              slug: "gpt-unsupported",
+              context_window: 100_000,
+              visibility: "list",
+              supported_in_api: false,
+            },
+          ],
+        });
+      }) as unknown as typeof fetch,
+    });
+
+    expect(requestUrl).toBe("https://chatgpt.com/backend-api/codex/models?client_version=1.2.3");
+    expect(requestHeaders.get("authorization")).toBe("Bearer access");
+    expect(requestHeaders.get("chatgpt-account-id")).toBe("account");
+    expect(requestHeaders.get("originator")).toBe("mu");
+    expect(discovered?.map((entry) => entry.id)).toEqual(["gpt-new", "gpt-existing"]);
+    expect(discovered?.[0]).toMatchObject({
+      name: "GPT New",
+      contextWindow: 400_000,
+      maxOutput: 128_000,
+      modalities: ["text", "image"],
+      thinking: true,
+    });
+    expect(discovered?.[1]).toMatchObject({
+      contextWindow: 272_000,
+      maxOutput: 64_000,
+      modalities: ["text"],
+      thinking: true,
+    });
+  });
+
+  test("skips plan discovery when no OAuth login is available", async () => {
+    let fetched = false;
+    const options: ProviderModelDiscoveryOptions = {
+      currentModels: [],
+      getCredentials: async () => undefined,
+      fetch: (async () => {
+        fetched = true;
+        return Response.json({});
+      }) as unknown as typeof fetch,
+    };
+
+    expect(await discoverOpenAICodexModels(options)).toBeUndefined();
+    expect(fetched).toBe(false);
+  });
+});
 
 describe("streamOpenAI", () => {
   test("streams reasoning + text with usage split into cached/uncached", async () => {

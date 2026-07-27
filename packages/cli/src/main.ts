@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import {
   Agent,
+  createCredentialResolver,
   findModel,
   loadMarkdownCommands,
   optionsFromProfile,
@@ -36,7 +37,10 @@ async function main(): Promise<number> {
 
   let modelCatalog: ModelCatalog | undefined;
   if (args.mode === "tui" || args.mode === "headless" || args.mode === "rpc") {
-    modelCatalog = await initializeModelCatalog();
+    modelCatalog = await initializeModelCatalog({
+      getCredentials: createCredentialResolver(),
+      clientVersion: VERSION,
+    });
     const configured = args.model ?? (await loadUserConfig()).model;
     const needsConfiguredModel =
       typeof configured === "string" && configured.length > 0 && !findModel(configured);
@@ -48,6 +52,11 @@ async function main(): Promise<number> {
         );
       } else if (result.cacheWarning) {
         io.stderr(`mu: ${result.cacheWarning}\n`);
+      }
+      if (result.ok) {
+        for (const warning of result.warnings ?? []) {
+          io.stderr(`mu: model discovery warning: ${warning}\n`);
+        }
       }
     }
   }

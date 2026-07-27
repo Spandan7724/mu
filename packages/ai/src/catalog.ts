@@ -1,5 +1,6 @@
 import data from "./models.json" with { type: "json" };
-import type { ModelInfo } from "./types.ts";
+import { providers as registeredProviders } from "./registry.ts";
+import type { Credential, ModelInfo, Provider } from "./types.ts";
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const DISCOVERY_TIMEOUT_MS = 15_000;
@@ -14,6 +15,10 @@ export interface ModelDiscoveryOptions {
   fetch?: CatalogFetch;
   url?: string;
   signal?: AbortSignal;
+  getCredentials?: (provider: string) => Promise<Credential | undefined>;
+  clientVersion?: string;
+  providers?: Iterable<Provider>;
+  onWarning?: (warning: string) => void;
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -81,7 +86,12 @@ function toModelInfo(provider: string, model: JsonObject): ModelInfo | undefined
   };
 }
 
-export async function discoverModels(options: ModelDiscoveryOptions = {}): Promise<ModelInfo[]> {
+interface DiscoveryResult {
+  models: ModelInfo[];
+  authoritativeProviders: Set<string>;
+}
+
+async function discoverPublicModels(options: ModelDiscoveryOptions): Promise<DiscoveryResult> {
   const response = await (options.fetch ?? fetch)(options.url ?? MODELS_DEV_URL, {
     headers: { accept: "application/json" },
     signal: options.signal ?? AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
@@ -94,30 +104,100 @@ export async function discoverModels(options: ModelDiscoveryOptions = {}): Promi
   if (!isObject(payload)) throw new Error("Could not discover models: invalid catalog response");
 
   const discovered: ModelInfo[] = [];
+  const authoritativeProviders = new Set<string>();
   for (const providerId of DISCOVERED_PROVIDERS) {
     const provider = payload[providerId];
     if (!isObject(provider) || !isObject(provider.models)) continue;
+    let compatible = 0;
     for (const entry of Object.values(provider.models)) {
       if (!isObject(entry)) continue;
       const model = toModelInfo(providerId, entry);
-      if (model) discovered.push(model);
+      if (model) {
+        discovered.push(model);
+        compatible++;
+      }
     }
+    if (compatible > 0) authoritativeProviders.add(providerId);
   }
   if (discovered.length === 0) {
     throw new Error("Could not discover models: catalog contained no compatible models");
   }
-  return discovered;
+  return { models: discovered, authoritativeProviders };
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function discoverModelSources(options: ModelDiscoveryOptions): Promise<DiscoveryResult> {
+  const sources: Promise<DiscoveryResult | undefined>[] = [discoverPublicModels(options)];
+  const getCredentials = options.getCredentials;
+  for (const provider of options.providers ?? registeredProviders.values()) {
+    if (!provider.discoverModels) continue;
+    sources.push(
+      provider
+        .discoverModels({
+          ...(options.fetch ? { fetch: options.fetch as typeof fetch } : {}),
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(getCredentials ? { getCredentials: () => getCredentials(provider.id) } : {}),
+          ...(options.clientVersion ? { clientVersion: options.clientVersion } : {}),
+          currentModels: models,
+        })
+        .then((discovered) =>
+          discovered === undefined
+            ? undefined
+            : {
+                models: discovered,
+                authoritativeProviders: new Set([provider.id]),
+              },
+        ),
+    );
+  }
+
+  const settled = await Promise.allSettled(sources);
+  const discovered: ModelInfo[] = [];
+  const authoritativeProviders = new Set<string>();
+  const failures: string[] = [];
+  for (const result of settled) {
+    if (result.status === "rejected") {
+      failures.push(message(result.reason));
+      continue;
+    }
+    if (!result.value) continue;
+    discovered.push(...result.value.models);
+    for (const provider of result.value.authoritativeProviders) {
+      authoritativeProviders.add(provider);
+    }
+  }
+  if (authoritativeProviders.size === 0) {
+    throw new Error(failures[0] ?? "Could not discover models: no discovery source was available");
+  }
+  for (const failure of failures) options.onWarning?.(failure);
+  return { models: discovered, authoritativeProviders };
+}
+
+export async function discoverModels(options: ModelDiscoveryOptions = {}): Promise<ModelInfo[]> {
+  return (await discoverModelSources(options)).models;
 }
 
 export async function refreshModels(options: ModelDiscoveryOptions = {}): Promise<ModelInfo[]> {
-  const discovered = await discoverModels(options);
+  const discovered = await discoverModelSources(options);
 
-  // Merge rather than replace. A valid but partial upstream response (one
-  // provider staged, another briefly absent) must never delete models the
-  // bundled catalog knows work — that turns `--model anthropic/...` into
-  // "unknown model" and silently moves the default.
-  const merged = [...bundledModels, ...models.filter((m) => !DISCOVERED_PROVIDERS.has(m.provider))];
-  for (const model of discovered) {
+  // A source replaces only the providers it successfully described. Providers
+  // skipped due to missing credentials, or whose source failed, retain their
+  // cached/bundled metadata.
+  const merged = models.filter((model) => !discovered.authoritativeProviders.has(model.provider));
+  for (const fallback of bundledModels) {
+    if (discovered.authoritativeProviders.has(fallback.provider)) continue;
+    if (
+      !merged.some(
+        (candidate) => candidate.provider === fallback.provider && candidate.id === fallback.id,
+      )
+    ) {
+      merged.push(fallback);
+    }
+  }
+  for (const model of discovered.models) {
     const index = merged.findIndex((m) => m.provider === model.provider && m.id === model.id);
     if (index === -1) merged.push(model);
     else merged[index] = model;

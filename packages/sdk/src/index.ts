@@ -3,6 +3,7 @@ export type {
   ModelDiscoveryOptions,
   ModelInfo,
   Provider,
+  ProviderModelDiscoveryOptions,
   ThinkingLevel,
   Usage,
 } from "@mu/ai";

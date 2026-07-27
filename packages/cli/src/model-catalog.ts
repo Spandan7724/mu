@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { type ModelDiscoveryOptions, type ModelInfo, refreshModels, registerModels } from "mu";
+import {
+  type Credential,
+  type ModelDiscoveryOptions,
+  type ModelInfo,
+  refreshModels,
+  registerModels,
+} from "mu";
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 2;
 
@@ -22,6 +28,7 @@ export type ModelCatalogRefreshResult =
       models: ModelInfo[];
       attempts: number;
       cacheWarning?: string;
+      warnings?: string[];
     }
   | {
       ok: false;
@@ -36,6 +43,8 @@ export interface ModelCatalogOptions {
   attempts?: number;
   refresh?: RefreshModels;
   register?: (models: ModelInfo[]) => void;
+  getCredentials?: (provider: string) => Promise<Credential | undefined>;
+  clientVersion?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -128,6 +137,10 @@ export class ModelCatalog {
   private readonly attempts: number;
   private readonly refreshModels: RefreshModels;
   private readonly registerModels: (models: ModelInfo[]) => void;
+  private readonly getCredentials:
+    | ((provider: string) => Promise<Credential | undefined>)
+    | undefined;
+  private readonly clientVersion: string | undefined;
   private inFlight: Promise<ModelCatalogRefreshResult> | undefined;
   private refreshController: AbortController | undefined;
   private lastResult: ModelCatalogRefreshResult | undefined;
@@ -140,6 +153,8 @@ export class ModelCatalog {
     this.attempts = Math.max(1, options.attempts ?? DEFAULT_ATTEMPTS);
     this.refreshModels = options.refresh ?? refreshModels;
     this.registerModels = options.register ?? registerModels;
+    this.getCredentials = options.getCredentials;
+    this.clientVersion = options.clientVersion;
   }
 
   get isRefreshing(): boolean {
@@ -203,8 +218,12 @@ export class ModelCatalog {
     for (let attempt = 1; attempt <= this.attempts; attempt++) {
       attemptsMade = attempt;
       try {
+        const warnings: string[] = [];
         const models = await this.refreshModels({
           signal: AbortSignal.any([stopSignal, AbortSignal.timeout(this.timeoutMs)]),
+          ...(this.getCredentials ? { getCredentials: this.getCredentials } : {}),
+          ...(this.clientVersion ? { clientVersion: this.clientVersion } : {}),
+          onWarning: (warning) => warnings.push(warning),
         });
         this.registerModels(models);
         let cacheWarning: string | undefined;
@@ -221,6 +240,7 @@ export class ModelCatalog {
           models,
           attempts: attempt,
           ...(cacheWarning ? { cacheWarning } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
         };
         this.lastResult = result;
         return result;

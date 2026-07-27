@@ -25,7 +25,7 @@ function model(id: string): ModelInfo {
 
 function cacheBody(models: ModelInfo[]): string {
   return JSON.stringify({
-    version: 2,
+    version: 3,
     updatedAt: "2026-07-27T00:00:00.000Z",
     models,
   });
@@ -56,7 +56,7 @@ describe("model catalog cache", () => {
       version: number;
       models: ModelInfo[];
     };
-    expect(stored.version).toBe(2);
+    expect(stored.version).toBe(3);
     expect(stored.models).toEqual(discovered);
 
     const secondRegistered: ModelInfo[][] = [];
@@ -73,7 +73,7 @@ describe("model catalog cache", () => {
   test("a malformed cache is ignored without poisoning the registry", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-bad-"));
     const file = join(root, "models.json");
-    await writeFile(file, JSON.stringify({ version: 2, models: [{ id: "broken" }] }));
+    await writeFile(file, JSON.stringify({ version: 3, models: [{ id: "broken" }] }));
     const registered: ModelInfo[][] = [];
     const catalog = new ModelCatalog({
       cacheFile: file,
@@ -93,7 +93,7 @@ describe("model catalog cache", () => {
     await writeFile(
       file,
       JSON.stringify({
-        version: 1,
+        version: 2,
         updatedAt: "2026-07-27T00:00:00.000Z",
         models: [model("gpt-stale")],
       }),
@@ -182,6 +182,33 @@ describe("model catalog cache", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.attempts).toBe(2);
     expect(calls).toBe(2);
+  });
+
+  test("passes credentials and client version to discovery and reports partial warnings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-options-"));
+    const credential = { type: "apiKey" as const, apiKey: "secret" };
+    let resolvedProvider = "";
+    const catalog = new ModelCatalog({
+      cacheFile: join(root, "models.json"),
+      clientVersion: "1.2.3",
+      getCredentials: async (provider) => {
+        resolvedProvider = provider;
+        return credential;
+      },
+      refresh: async (options) => {
+        expect(options?.clientVersion).toBe("1.2.3");
+        expect(await options?.getCredentials?.("future-provider")).toEqual(credential);
+        options?.onWarning?.("secondary catalog unavailable");
+        return [model("gpt-discovered")];
+      },
+      register: () => {},
+    });
+
+    const result = await catalog.refresh();
+
+    expect(resolvedProvider).toBe("future-provider");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toEqual(["secondary catalog unavailable"]);
   });
 
   test("stop aborts an in-flight background refresh without retrying", async () => {

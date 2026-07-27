@@ -820,6 +820,7 @@ export async function runInteractive(
   async function storeApiKey(provider: string, label: string, apiKey: string): Promise<void> {
     try {
       await saveApiKey(provider, apiKey);
+      await refreshCatalogAfterLogin();
       await selectProviderModel(provider);
       commitLines([`  Saved API key for ${label}.`, `  model set to ${agent.modelRef}`]);
     } catch (error) {
@@ -875,6 +876,29 @@ export async function runInteractive(
   }
 
   let loginInProgress = false;
+
+  async function refreshCatalogAfterLogin(): Promise<void> {
+    if (!modelCatalog) return;
+    commitLines(["  refreshing model catalog…"]);
+    paint();
+    // If startup discovery is still running, let it finish before issuing the
+    // credential-aware refresh. Otherwise refresh() would only join the stale
+    // unauthenticated request.
+    if (modelCatalog.isRefreshing) await modelCatalog.refresh();
+    const result = await modelCatalog.refresh();
+    if (!result.ok) {
+      commitLines([
+        `  model discovery failed · using ${result.fallback} catalog`,
+        `  ${result.error}`,
+      ]);
+      return;
+    }
+    for (const warning of result.warnings ?? []) {
+      commitLines([`  model discovery warning · ${warning}`]);
+    }
+    if (result.cacheWarning) commitLines([`  ${result.cacheWarning}`]);
+  }
+
   async function signInWithAccount(provider: AccountLoginProvider): Promise<void> {
     if (loginInProgress) {
       commitLines(["  A login is already in progress."]);
@@ -898,6 +922,7 @@ export async function runInteractive(
           paint();
         },
       });
+      await refreshCatalogAfterLogin();
       await selectProviderModel(provider.id);
       commitLines([`  ${provider.successMessage}`, `  model set to ${agent.modelRef}`]);
     } catch (error) {

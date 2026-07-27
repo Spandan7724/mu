@@ -122,6 +122,14 @@ export type Credential =
 // lets one provider-aware resolver serve a multi-provider Agent.
 export type CredentialResolver = () => Promise<Credential | undefined>;
 
+export interface ProviderModelDiscoveryOptions {
+  fetch?: typeof fetch;
+  signal?: AbortSignal;
+  getCredentials?: CredentialResolver;
+  clientVersion?: string;
+  currentModels: readonly ModelInfo[];
+}
+
 export interface StreamOpts {
   apiKey?: string;
   getCredentials?: CredentialResolver;
@@ -168,4 +176,7 @@ import type { AssistantStream } from "./stream.ts";
 export interface Provider {
   id: string;
   stream(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): AssistantStream;
+  // Return undefined when discovery is not applicable (for example, before
+  // login). A returned array is authoritative for this provider.
+  discoverModels?(options: ProviderModelDiscoveryOptions): Promise<ModelInfo[] | undefined>;
 }
