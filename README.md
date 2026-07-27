@@ -42,6 +42,7 @@ unattended use:
 ```sh
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
 mu                             # interactive; /login configures authentication
+mu --resume <session-id>       # continue a saved interactive session
 mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```

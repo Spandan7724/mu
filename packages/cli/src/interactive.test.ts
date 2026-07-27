@@ -3,10 +3,17 @@ import { RendererRegistry, stripAnsi } from "@mu/tui";
 import { ExtensionHost, type ModelInfo } from "mu";
 import {
   availableModels,
+  formatResumeHint,
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
 } from "./interactive.ts";
+
+test("session close hint is a directly runnable resume command", () => {
+  expect(formatResumeHint("019fa562-3975-71e6-b7a1-ed63c54f1fac")).toBe(
+    "  To resume this session: mu --resume 019fa562-3975-71e6-b7a1-ed63c54f1fac",
+  );
+});
 
 describe("interactive command rendering", () => {
   test("/diff uses the diff cell with actual hunks", () => {

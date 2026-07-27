@@ -91,6 +91,10 @@ export function renderCheckpointCommand(
   );
 }
 
+export function formatResumeHint(sessionId: string): string {
+  return `  To resume this session: mu --resume ${sessionId}`;
+}
+
 export function availableModels(extensions: ExtensionHost): ModelInfo[] {
   const models = new Map<string, ModelInfo>(
     listModels().map((model) => [`${model.provider}/${model.id}`, model] as const),
@@ -202,6 +206,29 @@ export async function runInteractive(
         pendingPermissions.set(request.id, { request, resolve }),
       ),
   });
+  let sessionResumable = false;
+  try {
+    if (args.resumeSessionId) {
+      const session = await agent.sessionStore.load(args.resumeSessionId);
+      if (!session) {
+        throw new Error(`no such session: ${args.resumeSessionId}`);
+      }
+      agent.resume(session);
+    } else {
+      await agent.sessionStore.save(agent.sessionId, agent.session);
+    }
+    sessionResumable = true;
+  } catch (error) {
+    await agent.shutdown();
+    process.stderr.write(
+      `mu: ${
+        args.resumeSessionId
+          ? `could not resume ${args.resumeSessionId}`
+          : "could not create session"
+      }: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 2;
+  }
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
@@ -769,11 +796,20 @@ export async function runInteractive(
     paint();
   }
 
-  terminal.onExit = () => shutdown();
+  terminal.onExit = () => {
+    shutdown();
+    if (sessionResumable) {
+      terminal.write(`\r\n${formatResumeHint(agent.sessionId)}\r\n`);
+    }
+  };
   terminal.start();
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking);
-  commitLines(app.banner());
+  if (args.resumeSessionId) {
+    app.replaceTranscript(agent.session.messagesAt(), app.banner());
+  } else {
+    commitLines(app.banner());
+  }
   if (builtIns.warnings.length > 0) {
     commitLines(builtIns.warnings.map((warning) => `  ${warning}`));
   }
@@ -828,7 +864,10 @@ export async function runInteractive(
     unsubscribe();
     clearInterval(spinnerTimer);
     stopResize();
-    renderer.renderNow(app.renderTranscript());
+    renderer.renderNow([
+      ...app.renderTranscript(),
+      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId), ""] : []),
+    ]);
     renderer.stop();
     terminal.restore();
   }

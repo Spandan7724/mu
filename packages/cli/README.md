@@ -14,5 +14,6 @@ Run `/login` to sign in with an account or API key. See the project repository f
 configuration, SDK, and development documentation.
 
 Interactive runs are saved by working-directory scope under `~/.mu/sessions`; use
-`/resume` to continue one. Use `/permissions` to choose `default`, `accept-edits`,
-`plan-readonly`, or full-access behavior.
+`/resume` to choose one or `mu --resume <session-id>` to continue it directly. Mu prints
+the direct resume command when an interactive session closes. Use `/permissions` to
+choose `default`, `accept-edits`, `plan-readonly`, or full-access behavior.

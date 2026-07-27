@@ -4,6 +4,7 @@ export interface ParsedArgs {
   json: boolean;
   model?: string | undefined;
   profile?: string | undefined;
+  resumeSessionId?: string | undefined;
   maxTurns?: number | undefined;
   maxCostUsd?: number | undefined;
   permissionMode?: string | undefined;
@@ -58,6 +59,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
         parsed.profile = argv[++i];
         if (!parsed.profile) parsed.errors.push("--profile requires a value");
         break;
+      case "--resume":
+        parsed.resumeSessionId = argv[++i];
+        if (!parsed.resumeSessionId) parsed.errors.push("--resume requires a session id");
+        break;
       case "--max-turns":
         parsed.maxTurns = numberFlag(argv[++i], "--max-turns", parsed.errors);
         break;
@@ -78,6 +83,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
+  if (parsed.resumeSessionId && parsed.mode !== "tui") {
+    parsed.errors.push("--resume is only available in interactive mode");
+  }
   return parsed;
 }
 
@@ -85,6 +93,7 @@ export const HELP_TEXT = `mu — a general-purpose, extensible AI agent
 
 Usage:
   mu                       start the interactive terminal app
+  mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
 
@@ -93,6 +102,7 @@ Options:
       --json               stream events as JSON (headless mode)
       --model <ref>        model to use, e.g. anthropic/claude-opus-5
       --profile <name>     profile to load (default: coding)
+      --resume <session>   resume an earlier interactive session
       --max-turns <n>      stop after n turns
       --max-cost <usd>     stop once the run costs this much
       --permission-mode <mode>

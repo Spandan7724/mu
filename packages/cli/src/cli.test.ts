@@ -19,6 +19,17 @@ describe("parseArgs", () => {
     expect(parseArgs([]).mode).toBe("tui");
   });
 
+  test("--resume selects a saved interactive session", () => {
+    const args = parseArgs(["--resume", "019fa562-3975-71e6-b7a1-ed63c54f1fac"]);
+    expect(args.mode).toBe("tui");
+    expect(args.resumeSessionId).toBe("019fa562-3975-71e6-b7a1-ed63c54f1fac");
+    expect(args.errors).toEqual([]);
+    expect(parseArgs(["--resume"]).errors[0]).toContain("requires a session id");
+    expect(parseArgs(["-p", "hello", "--resume", "session-id"]).errors[0]).toContain(
+      "interactive mode",
+    );
+  });
+
   test("-p selects headless and captures the prompt", () => {
     const args = parseArgs(["-p", "do the thing"]);
     expect(args.mode).toBe("headless");
