@@ -97,6 +97,8 @@ async function main(): Promise<number> {
           forkPoints: () => agent.forkPoints(),
           diff: () => agent.sessionDiff(),
         });
+        for (const command of profile.commands ?? []) commands.register(command);
+        for (const command of builtIns.host.commands.list()) commands.register(command);
         for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
           commands.register(toCommand(markdown));
         }

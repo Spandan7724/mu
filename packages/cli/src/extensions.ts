@@ -3,6 +3,8 @@ import {
   discoverSkills,
   ExtensionHost,
   type LoadMcpConfigOptions,
+  type LoadOptions,
+  loadExtensions,
   loadMcpConfig,
   mcpExtension,
   skillsExtension,
@@ -20,6 +22,7 @@ export async function loadBuiltInExtensions(
   projectDir: string,
   host: ExtensionHost = new ExtensionHost(),
   configOptions: Omit<LoadMcpConfigOptions, "projectDir"> = {},
+  extensionOptions: Omit<LoadOptions, "projectDir"> = {},
 ): Promise<BuiltInExtensions> {
   const warnings: string[] = [];
 
@@ -33,6 +36,9 @@ export async function loadBuiltInExtensions(
     await host.register(mcpExtension(config.servers));
     warnings.push(...host.logs.slice(logStart));
   }
+
+  const user = await loadExtensions(host, { ...extensionOptions, projectDir });
+  warnings.push(...user.failed.map(({ file, error }) => `extension ${file}: ${error}`));
 
   return { host, warnings };
 }

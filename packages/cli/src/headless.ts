@@ -1,6 +1,7 @@
 import {
   Agent,
   type AgentOptions,
+  type Command,
   type HaltReason,
   optionsFromProfile,
   registryWithCoreCommands,
@@ -41,10 +42,12 @@ export async function runHeadless(
   // The profile supplies the toolset, prompt and — importantly — the
   // restrictive permission defaults the bare SDK does not have.
   const useBuiltIns = !options.tools;
+  let profileCommands: Command[] = [];
   let resolved: AgentOptions = options;
   if (!options.tools) {
     try {
       const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+      profileCommands = profile.commands ?? [];
       resolved = await optionsFromProfile(profile, await resolveCliModel(args.model), options);
     } catch (error) {
       io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
@@ -116,6 +119,8 @@ export async function runHeadless(
       forkPoints: () => agent.forkPoints(),
       diff: () => agent.sessionDiff(),
     });
+    for (const command of profileCommands) commands.register(command);
+    for (const command of extensions?.commands.list() ?? []) commands.register(command);
 
     const printed: string[] = [];
     const command = await commands.execute(args.prompt, {

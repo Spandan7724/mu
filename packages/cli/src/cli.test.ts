@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { ExtensionHost } from "mu";
 import { parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 
@@ -119,6 +120,30 @@ describe("runHeadless", () => {
       type: "command_result",
       message: "Current model: fake/fake-1",
     });
+  });
+
+  test("extension commands join the headless registry", async () => {
+    const provider = new FakeProvider([]);
+    const extensions = new ExtensionHost();
+    await extensions.register({
+      name: "demo",
+      activate: (api) =>
+        api.registerCommand({
+          name: "demo",
+          description: "Demo command",
+          run: (ctx) => ({ handled: true, message: `extension says ${ctx.args}` }),
+        }),
+    });
+    const { out, io: sink } = io();
+    const code = await runHeadless(
+      parseArgs(["-p", "/demo hello"]),
+      { ...base(provider), extensions },
+      sink,
+    );
+
+    expect(code).toBe(EXIT.done);
+    expect(provider.callCount).toBe(0);
+    expect(out.join("")).toContain("extension says hello");
   });
 
   test("a provider error exits 1 and reports the actual message", async () => {
