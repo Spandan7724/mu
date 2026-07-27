@@ -16,6 +16,8 @@ import {
   composerRule,
   Editor,
   footer,
+  formatCwdForFooter,
+  formatTokens,
   renderMarkdown,
   SelectList,
   Spinner,
@@ -27,6 +29,15 @@ import { stringWidth } from "./width.ts";
 // separately so a colour change does not churn every snapshot.
 const plain: RenderContext = { width: 60, depth: "none" };
 const colored: RenderContext = { width: 60, depth: "truecolor" };
+const footerData = {
+  cwd: "~/code/mu",
+  model: "claude-opus-5",
+  contextPercent: 0.004,
+  contextWindow: 272_000,
+  inputTokens: 1_100,
+  outputTokens: 11,
+  costUsd: 0.14,
+};
 
 const visible = (lines: string[]) => lines.map(stripAnsi);
 
@@ -167,18 +178,29 @@ describe("diff rendering", () => {
 });
 
 describe("components", () => {
-  test("footer follows the single-line format", () => {
-    const line = stripAnsi(
-      footer({ model: "claude-opus-5", contextPercent: 0.12, costUsd: 0.14 }, 60, "none"),
-    );
-    expect(line).toBe("  claude-opus-5 · 12% ctx · $0.14");
+  test("footer shows cwd, full context window, and separate token totals", () => {
+    const lines = visible(footer(footerData, 60, "none"));
+    expect(lines).toEqual(["  ~/code/mu", "  claude-opus-5 · 0.4%/272k · ↑1.1k ↓11 · $0.14"]);
   });
 
   test("footer shows background task count when present", () => {
-    const line = stripAnsi(
-      footer({ model: "m", contextPercent: 0, costUsd: 0, backgroundTasks: 2 }, 60, "none"),
-    );
-    expect(line).toContain("2 bg");
+    const lines = visible(footer({ ...footerData, backgroundTasks: 2 }, 60, "none"));
+    expect(lines.at(-1)).toContain("2 bg");
+  });
+
+  test("footer token arrows use the accent without coloring their values", () => {
+    const line = footer(footerData, 60, "truecolor").at(-1) ?? "";
+    expect(line).toContain("\u001b[38;2;45;212;191m↑\u001b[0m");
+    expect(line).toContain("\u001b[38;2;45;212;191m↓\u001b[0m");
+    expect(line).not.toContain("\u001b[38;2;45;212;191m1.1k");
+  });
+
+  test("footer helpers match compact values and home paths", () => {
+    expect(formatTokens(999)).toBe("999");
+    expect(formatTokens(1_100)).toBe("1.1k");
+    expect(formatTokens(272_000)).toBe("272k");
+    expect(formatCwdForFooter("/home/test/code/mu", "/home/test")).toBe("~/code/mu");
+    expect(formatCwdForFooter("/srv/mu", "/home/test")).toBe("/srv/mu");
   });
 
   test("composer rule is the only horizontal rule", () => {
@@ -281,6 +303,26 @@ describe("editor", () => {
     for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(40);
   });
 
+  test("renders an inverse-video block cursor at the insertion point", () => {
+    const editor = new Editor();
+    editor.insert("abc");
+    editor.setOffset(1);
+    const rendered = editor.render(40, "none").join("\n");
+    expect(rendered).toContain("a\u001b[7mb\u001b[0mc");
+
+    editor.setOffset(3);
+    expect(editor.render(40, "none").join("\n")).toContain("abc\u001b[7m \u001b[0m");
+  });
+
+  test("preserves the block cursor when it wraps onto a new row", () => {
+    const editor = new Editor();
+    editor.insert("x".repeat(36));
+    const lines = editor.render(40, "none");
+    expect(lines).toHaveLength(2);
+    expect(lines.at(-1)).toContain("\u001b[7m \u001b[0m");
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(40);
+  });
+
   test("CJK input does not break the layout", () => {
     const editor = new Editor();
     editor.insert("你好世界".repeat(10));
@@ -297,7 +339,7 @@ describe("style conformance", () => {
     ...toolCell({ name: "read", primaryArg: "a.ts", summary: "1 line" }, colored),
     ...thinkingCell("thought", colored),
     ...errorCell("bad", colored),
-    footer({ model: "m", contextPercent: 0.5, costUsd: 1 }, 60, "truecolor"),
+    ...footer({ ...footerData, model: "m", contextPercent: 0.5, costUsd: 1 }, 60, "truecolor"),
   ].join("\n");
 
   test("no forbidden colours appear anywhere", () => {
@@ -322,7 +364,7 @@ describe("style conformance", () => {
     const chrome = stripAnsi(
       [
         ...toolCell({ name: "read", summary: "142 lines" }, colored),
-        footer({ model: "m", contextPercent: 0.1, costUsd: 0 }, 60, "truecolor"),
+        ...footer({ ...footerData, model: "m", contextPercent: 0.1, costUsd: 0 }, 60, "truecolor"),
       ].join("\n"),
     );
     expect(chrome).toBe(chrome.toLowerCase());

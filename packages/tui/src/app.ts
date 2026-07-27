@@ -47,6 +47,8 @@ export interface AppOptions {
   width: number;
   depth: ColorDepth;
   model: string;
+  cwd?: string;
+  contextWindow?: number;
   callbacks: AppCallbacks;
   registry?: RendererRegistry;
 }
@@ -75,7 +77,15 @@ export class App {
 
   constructor(private options: AppOptions) {
     this.registry = options.registry ?? new RendererRegistry();
-    this.footerData = { model: options.model, contextPercent: 0, costUsd: 0 };
+    this.footerData = {
+      cwd: options.cwd ?? ".",
+      model: options.model,
+      contextPercent: 0,
+      contextWindow: options.contextWindow ?? 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+    };
   }
 
   private get ctx(): RenderContext {
@@ -90,8 +100,13 @@ export class App {
     this.commands = commands;
   }
 
-  setModel(model: string): void {
-    this.footerData = { ...this.footerData, model };
+  setModel(model: string, contextWindow?: number): void {
+    this.footerData = {
+      ...this.footerData,
+      model,
+      contextPercent: 0,
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+    };
   }
 
   setThinking(level: string): void {
@@ -227,6 +242,8 @@ export class App {
         this.footerData = {
           ...this.footerData,
           contextPercent: event.contextPercent,
+          inputTokens: event.sessionTotals.inputTokens,
+          outputTokens: event.sessionTotals.outputTokens,
           costUsd: event.sessionTotals.costUsd ?? 0,
         };
         return [];
@@ -325,7 +342,7 @@ export class App {
     const hint = this.running
       ? `${this.spinner.render(depth)} esc to interrupt`
       : `think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
-    lines.push(footer({ ...this.footerData, hint }, width, depth));
+    lines.push(...footer({ ...this.footerData, hint }, width, depth));
     return lines;
   }
 

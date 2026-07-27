@@ -18,6 +18,8 @@ export {
   composerRule,
   Editor,
   footer,
+  formatCwdForFooter,
+  formatTokens,
   renderMarkdown,
   SelectList,
   Spinner,

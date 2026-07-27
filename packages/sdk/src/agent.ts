@@ -190,6 +190,10 @@ export class Agent {
     return `${this.model.provider}/${this.model.id}`;
   }
 
+  get contextWindow(): number {
+    return this.model.contextWindow;
+  }
+
   get thinking(): ThinkingLevel {
     return this.currentThinking;
   }

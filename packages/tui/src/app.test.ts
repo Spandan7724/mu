@@ -26,6 +26,8 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
     width: 60,
     depth: "none",
     model: "fake/fake-1",
+    cwd: "~/code/mu",
+    contextWindow: 272_000,
     registry,
     callbacks: {
       onSubmit: (text) => submitted.push(text),
@@ -107,14 +109,14 @@ describe("fake-agent session", () => {
       {
         type: "usage_updated",
         sessionTotals: {
-          inputTokens: 100,
-          outputTokens: 20,
+          inputTokens: 1_100,
+          outputTokens: 11,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
           costUsd: 0.14,
         },
-        contextTokens: 120,
-        contextPercent: 0.12,
+        contextTokens: 1_088,
+        contextPercent: 0.004,
       },
       { type: "agent_end", messages: [], reason: "done" },
     ];
@@ -127,8 +129,11 @@ describe("fake-agent session", () => {
     expect(visible).toContain("  │ read · src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
-    const footerLine = stripAnsi(app.renderBottom().at(-1) ?? "");
-    expect(footerLine).toContain("12% ctx");
+    const bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.at(-2)).toBe("  ~/code/mu");
+    const footerLine = bottom.at(-1) ?? "";
+    expect(footerLine).toContain("0.4%/272k");
+    expect(footerLine).toContain("↑1.1k ↓11");
     expect(footerLine).toContain("$0.14");
   });
 
@@ -769,6 +774,28 @@ describe("startup banner", () => {
     expect(banner).toContain("/ for commands");
     expect(banner).toContain("ctrl+t");
     expect(banner).toContain("ctrl+c to exit");
+  });
+});
+
+describe("model footer state", () => {
+  test("a model switch updates the full window and resets active context usage", () => {
+    const h = harness();
+    h.app.handleEvent({
+      type: "usage_updated",
+      sessionTotals: {
+        inputTokens: 1_100,
+        outputTokens: 11,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      contextTokens: 136_000,
+      contextPercent: 0.5,
+    });
+
+    h.app.setModel("openai/gpt-5.1", 1_000_000);
+    const footerLine = stripAnsi(h.app.renderBottom().at(-1) ?? "");
+    expect(footerLine).toContain("openai/gpt-5.1 · 0.0%/1.0m");
+    expect(footerLine).toContain("↑1.1k ↓11");
   });
 });
 

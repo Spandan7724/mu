@@ -425,10 +425,12 @@ describe("runtime model and thinking changes", () => {
     ]);
     const agent = new Agent({ provider, model: fakeModel });
     expect(agent.modelRef).toBe("fake/fake-1");
+    expect(agent.contextWindow).toBe(fakeModel.contextWindow);
 
     await agent.run("one");
-    agent.setModel({ ...fakeModel, id: "fake-2" });
+    agent.setModel({ ...fakeModel, id: "fake-2", contextWindow: 200_000 });
     expect(agent.modelRef).toBe("fake/fake-2");
+    expect(agent.contextWindow).toBe(200_000);
 
     const result = await agent.run("two");
     const assistants = result.messages.filter((m) => m.role === "assistant");

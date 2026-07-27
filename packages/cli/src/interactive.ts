@@ -7,6 +7,7 @@ import {
   detectColorDepth,
   diffCell,
   diffLinesFromHunks,
+  formatCwdForFooter,
   InlineRenderer,
   InputDecoder,
   RendererRegistry,
@@ -130,6 +131,8 @@ export async function runInteractive(
     width: terminal.columns,
     depth,
     model: modelRef,
+    cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
+    contextWindow: agent.contextWindow,
     registry,
     callbacks: {
       onSubmit: (text) => {
@@ -171,7 +174,7 @@ export async function runInteractive(
         })),
         onChoose: (label) => {
           agent.setModel(label);
-          app.setModel(label);
+          app.setModel(label, agent.contextWindow);
           renderer.commit([`  model set to ${label}`]);
           paint();
         },
@@ -215,7 +218,7 @@ export async function runInteractive(
                 const lines = app.handleEvent({ type: "message_end", message });
                 if (lines.length > 0) renderer.commit(lines);
               }
-              app.setModel(agent.modelRef);
+              app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking);
               renderer.commit([`  resumed ${label}`]);
             } catch (error) {
@@ -338,7 +341,7 @@ export async function runInteractive(
 
   terminal.onExit = () => shutdown();
   terminal.start();
-  app.setModel(agent.modelRef);
+  app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking);
   renderer.commit(app.banner());
   const stopResize = terminal.onResize(() => {

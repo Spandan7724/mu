@@ -60,7 +60,13 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
 
   const flush = () => {
     // A space that sits exactly at the break is consumed by the break.
-    while (current.length > 0 && current[current.length - 1]?.text === " ") current.pop();
+    while (
+      current.length > 0 &&
+      current[current.length - 1]?.text === " " &&
+      current[current.length - 1]?.ansi === ""
+    ) {
+      current.pop();
+    }
     out.push((out.length === 0 ? "" : indent) + renderTokens(current));
     current = [];
     currentWidth = 0;

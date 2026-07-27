@@ -1,5 +1,6 @@
 // Components return styled lines at a width — not React, no virtual DOM.
 
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
@@ -7,6 +8,8 @@ import { wrapText } from "./wrap.ts";
 
 const accent = (t: string, d: ColorDepth) => styleText(t, { accent: true }, d);
 const dim = (t: string, d: ColorDepth) => styleText(t, { dim: true }, d);
+const BLOCK_CURSOR_ON = "\u001b[7m";
+const BLOCK_CURSOR_OFF = "\u001b[0m";
 
 // Multi-line editor with history. Paste never submits — that is the decoder's
 // job, but the editor must accept embedded newlines without treating them as
@@ -186,7 +189,19 @@ export class Editor {
     const available = width - MARGIN.length - 2;
     const out: string[] = [];
     for (const [index, line] of this.lines.entries()) {
-      const wrapped = wrapText(line.length === 0 ? " " : line, available);
+      let display = line.length === 0 ? " " : line;
+      if (index === this.row) {
+        const before = line.slice(0, this.col);
+        const after = line.slice(this.col);
+        const cluster = graphemes(after)[0] ?? " ";
+        display =
+          before +
+          BLOCK_CURSOR_ON +
+          cluster +
+          BLOCK_CURSOR_OFF +
+          after.slice(cluster === " " && after.length === 0 ? 0 : cluster.length);
+      }
+      const wrapped = wrapText(display, available);
       for (const [i, chunk] of wrapped.entries()) {
         out.push(index === 0 && i === 0 ? MARGIN + marker + chunk : `${MARGIN}  ${chunk}`);
       }
@@ -270,24 +285,64 @@ export class Spinner {
 }
 
 export interface FooterData {
+  cwd: string;
   model: string;
   contextPercent: number;
+  contextWindow: number;
+  inputTokens: number;
+  outputTokens: number;
   costUsd: number;
   backgroundTasks?: number;
   hint?: string;
 }
 
-// Single dim line: model · N% ctx · $cost [· N bg] [· hint]
-export function footer(data: FooterData, width: number, depth: ColorDepth): string {
+export function formatTokens(count: number): string {
+  if (!Number.isFinite(count) || count <= 0) return "0";
+  if (count < 1_000) return Math.round(count).toString();
+  if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}m`;
+  return `${Math.round(count / 1_000_000)}m`;
+}
+
+export function formatCwdForFooter(cwd: string, home?: string): string {
+  if (!home) return cwd;
+  const resolvedCwd = resolve(cwd);
+  const resolvedHome = resolve(home);
+  const relativeToHome = relative(resolvedHome, resolvedCwd);
+  const isInsideHome =
+    relativeToHome === "" ||
+    (relativeToHome !== ".." &&
+      !relativeToHome.startsWith(`..${sep}`) &&
+      !isAbsolute(relativeToHome));
+  if (!isInsideHome) return cwd;
+  return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
+}
+
+function styleFooterText(text: string, depth: ColorDepth): string {
+  return text
+    .split(/([↑↓])/)
+    .map((part) => (part === "↑" || part === "↓" ? accent(part, depth) : dim(part, depth)))
+    .join("");
+}
+
+// A dim cwd row followed by model, context window, cumulative I/O and cost.
+export function footer(data: FooterData, width: number, depth: ColorDepth): string[] {
+  const tokenParts: string[] = [];
+  if (data.inputTokens > 0) tokenParts.push(`↑${formatTokens(data.inputTokens)}`);
+  if (data.outputTokens > 0) tokenParts.push(`↓${formatTokens(data.outputTokens)}`);
   const parts = [
     data.model,
-    `${Math.round(data.contextPercent * 100)}% ctx`,
+    `${(Math.max(0, data.contextPercent) * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,
+    ...(tokenParts.length > 0 ? [tokenParts.join(" ")] : []),
     `$${data.costUsd.toFixed(2)}`,
   ];
   if (data.backgroundTasks && data.backgroundTasks > 0) parts.push(`${data.backgroundTasks} bg`);
   if (data.hint) parts.push(data.hint);
-  const text = parts.join(` ${GLYPHS.separator} `);
-  return MARGIN + dim(truncateToWidth(text, width - MARGIN.length), depth);
+  const maxWidth = width - MARGIN.length;
+  const cwd = truncateToWidth(sanitizeUntrusted(data.cwd), maxWidth);
+  const stats = truncateToWidth(parts.join(` ${GLYPHS.separator} `), maxWidth);
+  return [MARGIN + dim(cwd, depth), MARGIN + styleFooterText(stats, depth)];
 }
 
 // The one rule line on screen, above the composer.
