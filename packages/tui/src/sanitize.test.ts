@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentCell, diffCell, errorCell, toolCell, userCell } from "./cells.ts";
+import { agentCell, checkpointCell, diffCell, errorCell, toolCell, userCell } from "./cells.ts";
 import { approvalOverlay, SelectList } from "./components.ts";
 import { InputDecoder } from "./input.ts";
 import { sanitizeTerminalText, sanitizeUntrusted } from "./sanitize.ts";
@@ -98,6 +98,18 @@ describe("untrusted content at every render boundary", () => {
         added: 1,
         removed: 0,
         lines: [{ kind: "add", lineNumber: 1, text: attack }],
+      },
+      ctx,
+    );
+    assertNoControls(lines.join("\n"));
+  });
+
+  test("checkpoint paths", () => {
+    const lines = checkpointCell(
+      {
+        action: "undo",
+        files: [{ path: attack, added: 1, removed: 0, hunks: [] }],
+        messageCount: 2,
       },
       ctx,
     );

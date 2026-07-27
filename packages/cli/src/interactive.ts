@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import {
   App,
   type ColorDepth,
+  checkpointCell,
   codingRenderers,
   detectColorDepth,
   diffCell,
@@ -17,6 +18,7 @@ import {
   Agent,
   type AgentOptions,
   type AgentRunOptions,
+  type CheckpointActionData,
   type DiffCommandData,
   ExtensionHost,
   listModels,
@@ -59,6 +61,22 @@ export function renderDiffCommand(
       { width, depth },
     ),
   ]);
+}
+
+export function renderCheckpointCommand(
+  data: CheckpointActionData,
+  width: number,
+  depth: ColorDepth,
+): string[] {
+  return checkpointCell(
+    {
+      action: data.action,
+      files: data.files,
+      messageCount: data.messageCount,
+      promptRestored: data.action === "undo" && data.prompt !== undefined,
+    },
+    { width, depth },
+  );
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -497,11 +515,19 @@ export async function runInteractive(
       setModel: () => {},
     });
     const data = result.data as
+      | CheckpointActionData
       | DiffCommandData
       | { kind: "fork-points"; points: { id: string; description: string }[] }
       | MarkdownCommandRun
       | undefined;
-    if (data?.kind === "diff") {
+    if (data?.kind === "checkpoint") {
+      if (data.action === "undo" && data.prompt !== undefined) {
+        app.editor.setText(data.prompt);
+      } else if (data.action === "redo") {
+        app.editor.setText("");
+      }
+      renderer.commit(renderCheckpointCommand(data, terminal.columns, depth));
+    } else if (data?.kind === "diff") {
       renderer.commit(renderDiffCommand(data, terminal.columns, depth));
     } else if (data?.kind === "fork-points") {
       app.openPicker({

@@ -7,6 +7,7 @@ export type {
 } from "./app.ts";
 export { App } from "./app.ts";
 export type {
+  CheckpointCellOptions,
   DiffFile,
   DiffLine,
   RenderContext,
@@ -15,6 +16,7 @@ export type {
 } from "./cells.ts";
 export {
   agentCell,
+  checkpointCell,
   compactionCell,
   diffCell,
   diffLinesFromHunks,

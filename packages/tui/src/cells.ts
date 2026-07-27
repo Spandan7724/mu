@@ -1,4 +1,5 @@
 
+import type { CheckpointDiffFile } from "@mu/core";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import {
@@ -222,6 +223,40 @@ export function compactionCell(tokensFreed: number, ctx: RenderContext): string[
   const width = body(ctx);
   const rule = "─".repeat(Math.max(0, width - stringWidth(label) - 3));
   return [MARGIN + dim(`${rule} ${label}`, ctx.depth)];
+}
+
+export interface CheckpointCellOptions {
+  action: "undo" | "redo";
+  files: CheckpointDiffFile[];
+  messageCount: number;
+  promptRestored?: boolean;
+}
+
+export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContext): string[] {
+  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const fileCount = options.files.length;
+  const messageLabel = `${options.messageCount} message${options.messageCount === 1 ? "" : "s"}`;
+  const fileLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
+  const action = styleText(options.action, { accent: true, bold: true }, ctx.depth);
+  const status =
+    options.action === "undo"
+      ? `${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
+      : `${messageLabel} restored ${GLYPHS.separator} ${fileLabel}`;
+  const lines = [MARGIN + rule + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
+
+  for (const file of options.files) {
+    const path = truncateToWidth(sanitizeUntrusted(file.path), Math.max(1, body(ctx) - 18));
+    const added =
+      file.added > 0 ? styleText(`+${file.added}`, { green: true }, ctx.depth) : undefined;
+    const removed =
+      file.removed > 0 ? styleText(`−${file.removed}`, { red: true }, ctx.depth) : undefined;
+    const counts = [added, removed].filter(Boolean).join(" ");
+    lines.push(MARGIN + rule + path + (counts ? ` ${counts}` : ""));
+  }
+  if (options.promptRestored) {
+    lines.push(MARGIN + rule + dim("prompt restored to editor", ctx.depth));
+  }
+  return lines;
 }
 
 export interface DiffLine {

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { Agent } from "mu";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
+import { codingProfile } from "./index.ts";
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mu-ckpt-"));
@@ -53,6 +56,81 @@ describe("shadow checkpoints", () => {
     expect(entries).toContain("keep.txt");
     // The file created after the snapshot is gone from the tracked tree.
     expect(entries).not.toContain("added-later.txt");
+  });
+
+  test("restore handles an empty snapshot", async () => {
+    const root = await scratch();
+    const p = provider(root);
+    const empty = await p.snapshot("empty");
+    await writeFile(join(root, "created.txt"), "created\n");
+    await p.snapshot("with file");
+
+    await p.restore(empty as string);
+
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  test("scoped restore removes a created file without touching unrelated later work", async () => {
+    const root = await scratch();
+    const p = provider(root);
+    const before = await p.snapshot("before turn");
+    await writeFile(join(root, "agent.txt"), "agent\n");
+    await p.snapshot("after turn");
+    await writeFile(join(root, "user.txt"), "user\n");
+
+    await p.restoreResources(before as string, ["agent.txt"]);
+
+    await expect(access(join(root, "agent.txt"))).rejects.toThrow();
+    expect(await readFile(join(root, "user.txt"), "utf8")).toBe("user\n");
+  });
+
+  test("scoped restore recovers only requested files", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "agent.txt"), "before\n");
+    await writeFile(join(root, "user.txt"), "before\n");
+    const p = provider(root);
+    const before = await p.snapshot("before turn");
+    await writeFile(join(root, "agent.txt"), "agent edit\n");
+    await writeFile(join(root, "user.txt"), "later user edit\n");
+    await p.snapshot("after turn");
+
+    await p.restoreResources(before as string, ["agent.txt"]);
+
+    expect(await readFile(join(root, "agent.txt"), "utf8")).toBe("before\n");
+    expect(await readFile(join(root, "user.txt"), "utf8")).toBe("later user edit\n");
+  });
+
+  test("scoped restore treats odd filenames literally", async () => {
+    const root = await scratch();
+    const odd = "odd\tname\n[1].txt";
+    const p = provider(root);
+    const before = await p.snapshot("before turn");
+    await writeFile(join(root, odd), "created\n");
+    const after = await p.snapshot("after turn");
+
+    await p.restoreResources(before as string, [odd]);
+    await expect(access(join(root, odd))).rejects.toThrow();
+    await p.restoreResources(after as string, [odd]);
+    expect(await readFile(join(root, odd), "utf8")).toBe("created\n");
+  });
+
+  test("diff expands renames so scoped restore sees both paths", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "before.txt"), "same\n");
+    const p = provider(root);
+    const before = await p.snapshot("before rename");
+    await Bun.$`mv ${join(root, "before.txt")} ${join(root, "after.txt")}`.quiet();
+    const after = await p.snapshot("after rename");
+
+    const files = await p.diff(before as string, after as string);
+    expect(files.map((file) => file.path).sort()).toEqual(["after.txt", "before.txt"]);
+
+    await p.restoreResources(
+      before as string,
+      files.map((file) => file.path),
+    );
+    expect(await readFile(join(root, "before.txt"), "utf8")).toBe("same\n");
+    await expect(access(join(root, "after.txt"))).rejects.toThrow();
   });
 
   test("restore brings back a file that was deleted", async () => {
@@ -262,5 +340,56 @@ describe("the user's own repository is never touched", () => {
     expect(await readFile(join(root, "plain.txt"), "utf8")).toBe("no repo here\n");
     // And we did not turn their directory into a repo.
     await expect(readdir(join(root, ".git"))).rejects.toThrow();
+  });
+});
+
+describe("turn-level agent undo", () => {
+  test("one undo removes everything created by a write-then-verify turn", async () => {
+    const root = await scratch();
+    const profile = await codingProfile({ root });
+    const checkpoints = provider(root);
+    const prompt = "create fibonacci.py and verify it";
+    const agent = new Agent({
+      provider: new FakeProvider([
+        {
+          content: [
+            {
+              type: "toolCall",
+              id: "write-1",
+              name: "write",
+              arguments: { path: "fibonacci.py", content: "print('0 1 1 2 3')\n" },
+            },
+          ],
+        },
+        {
+          content: [
+            {
+              type: "toolCall",
+              id: "bash-1",
+              name: "bash",
+              arguments: { command: "python3 fibonacci.py" },
+            },
+          ],
+        },
+        { content: [{ type: "text", text: "Created and verified fibonacci.py." }] },
+      ]),
+      model: fakeModel,
+      tools: profile.toolset,
+      checkpointProvider: checkpoints,
+      permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+    });
+
+    await agent.run(prompt);
+    expect(agent.checkpointHistory.all()).toHaveLength(1);
+    expect(await readFile(join(root, "fibonacci.py"), "utf8")).toContain("0 1 1 2 3");
+
+    const undone = await agent.undo();
+    expect(undone.ok).toBe(true);
+    expect(undone.data?.prompt).toBe(prompt);
+    expect(undone.data?.files.map((file) => file.path)).toEqual(["fibonacci.py"]);
+    await expect(access(join(root, "fibonacci.py"))).rejects.toThrow();
+
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await readFile(join(root, "fibonacci.py"), "utf8")).toContain("0 1 1 2 3");
   });
 });

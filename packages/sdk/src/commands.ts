@@ -1,5 +1,6 @@
 import { findModel, listModels, type Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
+import type { CheckpointActionResult } from "./agent.ts";
 
 export interface ForkPoint {
   id: string;
@@ -15,8 +16,8 @@ export interface DiffCommandData {
 export interface CoreCommandHooks {
   requestCompaction?: () => void;
   usage?: () => Usage & { contextPercent: number };
-  undo?: () => Promise<{ ok: boolean; message: string }>;
-  redo?: () => Promise<{ ok: boolean; message: string }>;
+  undo?: () => Promise<CheckpointActionResult>;
+  redo?: () => Promise<CheckpointActionResult>;
   fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
   forkPoints?: () => ForkPoint[];
   diff?: () => Promise<CheckpointDiffFile[]>;
@@ -85,7 +86,11 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       run: async () => {
         if (!hooks.undo) return { handled: true, message: "Undo is not available here." };
         const result = await hooks.undo();
-        return { handled: true, message: result.message };
+        return {
+          handled: true,
+          message: result.message,
+          ...(result.data ? { data: result.data } : {}),
+        };
       },
     },
     {
@@ -94,7 +99,11 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       run: async () => {
         if (!hooks.redo) return { handled: true, message: "Redo is not available here." };
         const result = await hooks.redo();
-        return { handled: true, message: result.message };
+        return {
+          handled: true,
+          message: result.message,
+          ...(result.data ? { data: result.data } : {}),
+        };
       },
     },
     {

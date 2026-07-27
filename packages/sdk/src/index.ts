@@ -46,7 +46,14 @@ export {
   textResult,
   userMessage,
 } from "@mu/core";
-export type { AgentOptions, AgentRunOptions, HaltReason, RunResult } from "./agent.ts";
+export type {
+  AgentOptions,
+  AgentRunOptions,
+  CheckpointActionData,
+  CheckpointActionResult,
+  HaltReason,
+  RunResult,
+} from "./agent.ts";
 export { Agent } from "./agent.ts";
 export type {
   AuthFile,

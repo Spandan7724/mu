@@ -4,7 +4,7 @@
 // are involved.
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
@@ -174,13 +174,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async restore(ref: string): Promise<void> {
     await this.ensure();
 
-    const checkout = await this.git("checkout", "--force", ref, "--", ".");
-    if (checkout.exitCode !== 0) {
-      throw new Error(`Could not restore checkpoint ${ref}: ${checkout.stderr.trim()}`);
-    }
-    const reset = await this.git("reset", "--quiet", ref, "--", ".");
-    if (reset.exitCode !== 0) {
-      throw new Error(`Could not reset checkpoint ${ref}: ${reset.stderr.trim()}`);
+    const readTree = await this.git("read-tree", "--reset", "-u", ref);
+    if (readTree.exitCode !== 0) {
+      throw new Error(`Could not restore checkpoint ${ref}: ${readTree.stderr.trim()}`);
     }
     const clean = await this.git(
       "clean",
@@ -199,6 +195,55 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     }
   }
 
+  async restoreResources(ref: string, resources: string[]): Promise<void> {
+    await this.ensure();
+    const paths = [
+      ...new Set(
+        resources.map((resource) => {
+          const absolute = resolve(this.root, resource);
+          const path = relative(this.root, absolute).replaceAll("\\", "/");
+          if (path.length === 0 || path === ".." || path.startsWith("../")) {
+            throw new Error(`Checkpoint resource escapes the workspace: ${resource}`);
+          }
+          return path;
+        }),
+      ),
+    ];
+    if (paths.length === 0) return;
+
+    const pathspecs = paths.map((path) => `:(literal)${path}`);
+    const reset = await this.git("reset", "--quiet", ref, "--", ...pathspecs);
+    if (reset.exitCode !== 0) {
+      throw new Error(`Could not reset checkpoint ${ref}: ${reset.stderr.trim()}`);
+    }
+
+    const existing: string[] = [];
+    const missing: string[] = [];
+    for (const path of paths) {
+      const tree = await this.git("ls-tree", "-z", ref, "--", `:(literal)${path}`);
+      if (tree.exitCode !== 0) {
+        throw new Error(`Could not inspect checkpoint ${ref}: ${tree.stderr.trim()}`);
+      }
+      (tree.stdout.length > 0 ? existing : missing).push(path);
+    }
+
+    if (existing.length > 0) {
+      const checkout = await this.git(
+        "checkout",
+        "--force",
+        ref,
+        "--",
+        ...existing.map((path) => `:(literal)${path}`),
+      );
+      if (checkout.exitCode !== 0) {
+        throw new Error(`Could not restore checkpoint ${ref}: ${checkout.stderr.trim()}`);
+      }
+    }
+    await Promise.all(
+      missing.map((path) => rm(resolve(this.root, path), { recursive: true, force: true })),
+    );
+  }
+
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     await this.ensure();
     if (!toRef) {
@@ -206,16 +251,16 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       if (add.exitCode !== 0) return [];
     }
     const args = toRef
-      ? ["diff", "--numstat", "-z", fromRef, toRef]
-      : ["diff", "--cached", "--numstat", "-z", fromRef];
+      ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
+      : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];
     const result = await this.git(...args);
     if (result.exitCode !== 0) return [];
     const files = parseNumstat(result.stdout);
 
     for (const file of files) {
       const patchArgs = toRef
-        ? ["diff", "--unified=3", fromRef, toRef, "--", file.path]
-        : ["diff", "--cached", "--unified=3", fromRef, "--", file.path];
+        ? ["diff", "--no-renames", "--unified=3", fromRef, toRef, "--", file.path]
+        : ["diff", "--no-renames", "--cached", "--unified=3", fromRef, "--", file.path];
       const patch = await this.git(...patchArgs);
       if (patch.exitCode === 0) file.hunks = patch.stdout.split("\n");
     }

@@ -36,8 +36,13 @@ class MemoryCheckpoints implements CheckpointProvider {
     if (value !== undefined) this.state = value;
   }
 
-  async diff(fromRef: string) {
-    return this.snapshots.get(fromRef) === this.state
+  async restoreResources(ref: string): Promise<void> {
+    await this.restore(ref);
+  }
+
+  async diff(fromRef: string, toRef?: string) {
+    const target = toRef ? this.snapshots.get(toRef) : this.state;
+    return this.snapshots.get(fromRef) === target
       ? []
       : [{ path: "state.txt", added: 1, removed: 1, hunks: [] }];
   }
@@ -122,8 +127,8 @@ describe("CheckpointHistory", () => {
   });
 });
 
-describe("snapshot before a mutating batch", () => {
-  test("a mutating tool call is snapshotted first", async () => {
+describe("one checkpoint per user turn", () => {
+  test("a mutating user turn is captured once", async () => {
     const checkpoints = new MemoryCheckpoints();
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v2" } }] },
@@ -142,7 +147,7 @@ describe("snapshot before a mutating batch", () => {
     expect(checkpoints.state).toBe("v2");
   });
 
-  test("read-only tools are not snapshotted", async () => {
+  test("a read-only turn is still undoable as conversation", async () => {
     const checkpoints = new MemoryCheckpoints();
     const reader = tool({
       name: "read",
@@ -162,10 +167,14 @@ describe("snapshot before a mutating batch", () => {
     });
     await agent.run("look at it");
 
-    expect(agent.checkpointHistory.all().length).toBe(0);
+    expect(agent.checkpointHistory.all()).toHaveLength(1);
+    const undone = await agent.undo();
+    expect(undone.ok).toBe(true);
+    expect(undone.data?.files).toEqual([]);
+    expect(undone.data?.prompt).toBe("look at it");
   });
 
-  test("mutation metadata works for non-coding and argument-dependent tools", async () => {
+  test("multiple internal tool steps produce one user-turn checkpoint", async () => {
     const checkpoints = new MemoryCheckpoints();
     const setter = tool({
       name: "set_remote_state",
@@ -238,7 +247,7 @@ describe("snapshot before a mutating batch", () => {
     expect(checkpoints.state).toBe("v2");
   });
 
-  test("a denied mutating call does not create a checkpoint", async () => {
+  test("a denied mutating call leaves an undoable conversation turn", async () => {
     const checkpoints = new MemoryCheckpoints();
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v2" } }] },
@@ -255,7 +264,7 @@ describe("snapshot before a mutating batch", () => {
     await agent.run("change it");
 
     expect(checkpoints.state).toBe("initial");
-    expect(agent.checkpointHistory.all()).toEqual([]);
+    expect(agent.checkpointHistory.all()).toHaveLength(1);
   });
 });
 
@@ -290,6 +299,8 @@ describe("undo and redo pair workspace with conversation", () => {
     expect(result.ok).toBe(true);
     expect(checkpoints.state).toBe("v1");
     expect(agent.session.messagesAt().length).toBeLessThan(messagesBefore);
+    expect(result.data?.prompt).toBe("second change");
+    expect(result.data?.files).toHaveLength(1);
   });
 
   test("consecutive undo and redo traverse every workspace state", async () => {
@@ -326,6 +337,51 @@ describe("undo and redo pair workspace with conversation", () => {
     expect(resumed.checkpointHistory.canRedo).toBe(true);
     expect((await resumed.redo()).ok).toBe(true);
     expect(checkpoints.state).toBe("v2");
+  });
+
+  test("redo restores the exact state captured immediately before undo", async () => {
+    const { agent, checkpoints } = await sessionWithTwoEdits();
+    checkpoints.state = "user edits after the turn";
+
+    expect((await agent.undo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
+    expect((await agent.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("user edits after the turn");
+  });
+
+  test("a new turn after undo clears redo and persists the new cursor", async () => {
+    const session = new MemorySessionStore();
+    const { agent, checkpoints } = await sessionWithTwoEdits(session);
+    await agent.undo();
+
+    const resumed = new Agent({
+      provider: new FakeProvider([
+        { content: [{ type: "toolCall", id: "c3", name: "write", arguments: { value: "v3" } }] },
+        { content: [{ type: "text", text: "third done" }] },
+      ]),
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
+      sessionId: agent.sessionId,
+    });
+    resumed.resume((await session.load(agent.sessionId)) as SessionTree);
+    await resumed.run("third change");
+    expect(resumed.checkpointHistory.canRedo).toBe(false);
+
+    const restarted = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
+      sessionId: agent.sessionId,
+    });
+    restarted.resume((await session.load(agent.sessionId)) as SessionTree);
+    expect(restarted.checkpointHistory.canRedo).toBe(false);
+    expect(restarted.checkpointHistory.canUndo).toBe(true);
+    expect((await restarted.undo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
   });
 
   test("restore failure leaves undo history and conversation untouched", async () => {
@@ -375,7 +431,7 @@ describe("undo and redo pair workspace with conversation", () => {
     expect(agent.checkpointHistory.canRedo).toBe(false);
   });
 
-  test("undo with no checkpoints says so rather than failing", async () => {
+  test("a chat-only turn can be undone", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
     const agent = new Agent({
       provider,
@@ -383,6 +439,18 @@ describe("undo and redo pair workspace with conversation", () => {
       checkpointProvider: new MemoryCheckpoints(),
     });
     await agent.run("nothing to change");
+    const result = await agent.undo();
+    expect(result.ok).toBe(true);
+    expect(result.data?.files).toEqual([]);
+    expect(result.data?.prompt).toBe("nothing to change");
+  });
+
+  test("undo with no user turns says so rather than failing", async () => {
+    const agent = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      checkpointProvider: new MemoryCheckpoints(),
+    });
     const result = await agent.undo();
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Nothing to undo");
@@ -477,10 +545,28 @@ describe("commands", () => {
 
   test("/undo and /redo report what happened", async () => {
     const registry = registryWithCoreCommands({
-      undo: async () => ({ ok: true, message: "Undid the last step." }),
+      undo: async () => ({
+        ok: true,
+        message: "Undid the last turn.",
+        data: {
+          kind: "checkpoint",
+          action: "undo",
+          files: [],
+          messageCount: 2,
+          prompt: "try again",
+        },
+      }),
       redo: async () => ({ ok: true, message: "Redid the step." }),
     });
-    expect((await registry.execute("/undo", ctx().ctx)).message).toBe("Undid the last step.");
+    const undone = await registry.execute("/undo", ctx().ctx);
+    expect(undone.message).toBe("Undid the last turn.");
+    expect(undone.data).toEqual({
+      kind: "checkpoint",
+      action: "undo",
+      files: [],
+      messageCount: 2,
+      prompt: "try again",
+    });
     expect((await registry.execute("/redo", ctx().ctx)).message).toBe("Redid the step.");
   });
 

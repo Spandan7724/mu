@@ -16,6 +16,9 @@ export interface CheckpointProvider {
   snapshot(label?: string): Promise<string | undefined>;
   // Restores state to a previous reference.
   restore(ref: string): Promise<void>;
+  // Restores only the named resources when the provider can do so safely.
+  // Undo uses this to preserve unrelated state changed after a turn.
+  restoreResources?(ref: string, resources: string[]): Promise<void>;
   // Difference between two references (or from a reference to now).
   diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]>;
 }
@@ -27,6 +30,9 @@ export interface CheckpointEntry {
   beforeEntryId: string | null;
   beforeRef: string;
   afterRef: string;
+  // Exact state captured immediately before an undo. Redo prefers this over
+  // the original afterRef so changes made outside the agent are recoverable.
+  redoRef?: string;
   label?: string;
 }
 
@@ -51,11 +57,11 @@ export class CheckpointHistory {
     return this.done[this.done.length - 1];
   }
 
-  commitUndo(expected: CheckpointEntry): void {
+  commitUndo(expected: CheckpointEntry, redoRef?: string): void {
     if (this.peekUndo()?.id !== expected.id)
       throw new Error("Checkpoint history changed during undo");
     this.done.pop();
-    this.undone.push(expected);
+    this.undone.push({ ...expected, ...(redoRef ? { redoRef } : {}) });
   }
 
   peekRedo(): CheckpointEntry | undefined {
@@ -66,7 +72,8 @@ export class CheckpointHistory {
     if (this.peekRedo()?.id !== expected.id)
       throw new Error("Checkpoint history changed during redo");
     this.undone.pop();
-    this.done.push(expected);
+    const { redoRef: _redoRef, ...done } = expected;
+    this.done.push(done);
   }
 
   restore(done: CheckpointEntry[], undone: CheckpointEntry[] = []): void {

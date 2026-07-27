@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { stripAnsi } from "@mu/tui";
-import { renderDiffCommand } from "./interactive.ts";
+import { renderCheckpointCommand, renderDiffCommand } from "./interactive.ts";
 
 describe("interactive command rendering", () => {
   test("/diff uses the diff cell with actual hunks", () => {
@@ -41,5 +41,32 @@ describe("interactive command rendering", () => {
     expect(lines).toContain("  │ a.ts · +1 −0");
     expect(lines).toContain("  │ b.ts · +1 −0");
     expect(lines).toContain("");
+  });
+
+  test("/undo shows one turn with its files and redo affordance", () => {
+    const lines = renderCheckpointCommand(
+      {
+        kind: "checkpoint",
+        action: "undo",
+        messageCount: 4,
+        prompt: "create fibonacci.py",
+        files: [
+          {
+            path: "fibonacci.py",
+            added: 17,
+            removed: 0,
+            hunks: [],
+          },
+        ],
+      },
+      80,
+      "none",
+    ).map(stripAnsi);
+
+    expect(lines).toEqual([
+      "  │ undo · 4 messages reverted · 1 file · /redo to restore",
+      "  │ fibonacci.py +17",
+      "  │ prompt restored to editor",
+    ]);
   });
 });
