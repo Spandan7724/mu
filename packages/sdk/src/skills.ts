@@ -88,7 +88,11 @@ export function skillsExtension(skills: Skill[]): Extension {
         isConcurrencySafe: () => true,
         execute: async (_id, args) => {
           const requested = (args as { name?: string }).name ?? "";
-          const skill = byName.get(requested);
+          const known = byName.get(requested);
+          // Re-read from disk at call time: progressive disclosure means the
+          // body is loaded on demand, so an edited skill takes effect without
+          // restarting the session.
+          const skill = known ? ((await loadSkill(known.directory)) ?? known) : undefined;
           if (!skill) {
             return {
               content: [

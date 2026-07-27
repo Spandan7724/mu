@@ -26,6 +26,40 @@ export class Editor {
     return { row: this.row, col: this.col };
   }
 
+  // Absolute offset of the cursor within `text`, so callers can splice at the
+  // real insertion point rather than assuming it sits at the very end.
+  get offset(): number {
+    let offset = 0;
+    for (let i = 0; i < this.row; i++) offset += (this.lines[i] ?? "").length + 1;
+    return offset + this.col;
+  }
+
+  // Replaces [start, cursor) with `replacement`, keeping everything after the
+  // cursor intact and leaving the cursor just after what was inserted.
+  spliceBeforeCursor(start: number, replacement: string): void {
+    const text = this.text;
+    const cursor = this.offset;
+    if (start < 0 || start > cursor) return;
+    const next = text.slice(0, start) + replacement + text.slice(cursor);
+    this.setText(next);
+    this.setOffset(start + replacement.length);
+  }
+
+  setOffset(offset: number): void {
+    let remaining = Math.max(0, offset);
+    for (let row = 0; row < this.lines.length; row++) {
+      const length = (this.lines[row] ?? "").length;
+      if (remaining <= length) {
+        this.row = row;
+        this.col = remaining;
+        return;
+      }
+      remaining -= length + 1;
+    }
+    this.row = this.lines.length - 1;
+    this.col = (this.lines[this.row] ?? "").length;
+  }
+
   get isEmpty(): boolean {
     return this.lines.every((line) => line.length === 0);
   }

@@ -409,7 +409,9 @@ export class App {
           }
           // "@" anywhere opens the file-mention popup.
           if (key.text === "@" && this.options.callbacks.onMentionQuery) {
-            this.mentionStart = this.editor.text.length - 1;
+            // Anchor at the cursor, so a mention typed mid-buffer completes in
+            // place instead of eating the rest of the line.
+            this.mentionStart = this.editor.offset - 1;
             this.commandList.setItems(this.options.callbacks.onMentionQuery(""));
             this.mode = "mention";
           }
@@ -474,9 +476,8 @@ export class App {
     if (key.name === "return" || key.name === "tab") {
       const selected = this.commandList.selected;
       if (selected && this.mentionStart >= 0) {
-        // Replace the partial "@query" with the chosen path.
-        const text = this.editor.text;
-        this.editor.setText(`${text.slice(0, this.mentionStart)}${selected.label} `);
+        // Replace just the "@query" span; the unsent suffix is preserved.
+        this.editor.spliceBeforeCursor(this.mentionStart, `${selected.label} `);
       }
       this.mode = "composing";
       this.mentionStart = -1;
@@ -484,7 +485,7 @@ export class App {
     }
     if (key.name === "backspace") {
       this.editor.backspace();
-      if (this.editor.text.length <= this.mentionStart) {
+      if (this.editor.offset <= this.mentionStart) {
         this.mode = "composing";
         this.mentionStart = -1;
         return;
@@ -514,7 +515,7 @@ export class App {
   }
 
   private refreshMentions(): void {
-    const query = this.editor.text.slice(this.mentionStart + 1);
+    const query = this.editor.text.slice(this.mentionStart + 1, this.editor.offset);
     this.commandList.setItems(this.options.callbacks.onMentionQuery?.(query) ?? []);
   }
 

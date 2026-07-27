@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AnyTool, exitNotification, ProcessManager } from "@mu/core";
@@ -148,5 +148,46 @@ describe("exit wakes an idle agent", () => {
     expect(notifications.length).toBe(1);
     expect(notifications[0]).toContain("finished successfully");
     expect(notifications[0]).toContain("task_output");
+  });
+});
+
+describe("killing a task terminates its descendants", () => {
+  test("a grandchild process does not survive task_kill", async () => {
+    const root = await scratch();
+    const marker = join(root, "alive.txt");
+    const manager = new ProcessManager(shellSpawner(root));
+
+    // The shell starts a background loop that keeps touching a file. If the
+    // descendant survives the kill, the file keeps changing afterwards.
+    const task = manager.start(
+      `bash -c 'while true; do date +%s%N > ${marker}; sleep 0.05; done' & wait`,
+    );
+    await Bun.sleep(400);
+    expect(manager.get(task.id)?.status).toBe("running");
+
+    manager.kill(task.id);
+    await Bun.sleep(300);
+
+    const first = await readFile(marker, "utf8").catch(() => "");
+    await Bun.sleep(400);
+    const second = await readFile(marker, "utf8").catch(() => "");
+
+    // No further writes means the whole tree is gone.
+    expect(second).toBe(first);
+  });
+
+  test("killAll also takes descendants with it", async () => {
+    const root = await scratch();
+    const marker = join(root, "alive2.txt");
+    const manager = new ProcessManager(shellSpawner(root));
+    manager.start(`bash -c 'while true; do date +%s%N > ${marker}; sleep 0.05; done' & wait`);
+    await Bun.sleep(400);
+
+    manager.killAll();
+    await Bun.sleep(300);
+
+    const first = await readFile(marker, "utf8").catch(() => "");
+    await Bun.sleep(400);
+    expect(await readFile(marker, "utf8").catch(() => "")).toBe(first);
   });
 });

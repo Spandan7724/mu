@@ -226,3 +226,52 @@ describe("exit notification", () => {
     expect(text).toContain("was killed");
   });
 });
+
+describe("incremental reads survive tail rollover", () => {
+  test("fresh output is never reported as nothing new after a rollover", () => {
+    const buffer = new OutputBuffer(50, 50);
+    buffer.append("H".repeat(50)); // fill the head
+    let position = 0;
+
+    // Repeatedly overflow the tail; every poll must return the new bytes.
+    for (let round = 0; round < 5; round++) {
+      buffer.append(`round-${round}-${"x".repeat(60)}`);
+      const read = buffer.readSince(position);
+      expect(read.text.length).toBeGreaterThan(0);
+      expect(read.offset).toBe(buffer.bytes);
+      position = read.offset;
+    }
+
+    // And once caught up, there genuinely is nothing new.
+    expect(buffer.readSince(position).text).toBe("");
+  });
+
+  test("a reader that fell behind is told data was dropped", () => {
+    const buffer = new OutputBuffer(10, 10);
+    buffer.append("H".repeat(10));
+    const early = buffer.readSince(0).offset;
+    buffer.append("y".repeat(500));
+
+    const read = buffer.readSince(early);
+    expect(read.gap).toBe(true);
+    expect(read.text).toContain("output omitted");
+    // The retained tail is still delivered rather than lost silently.
+    expect(read.text).toContain("y");
+  });
+
+  test("the manager's incremental polling keeps working across rollovers", () => {
+    const fake = fakeSpawner();
+    const manager = new ProcessManager(fake.spawner);
+    const task = manager.start("chatty");
+
+    fake.emit("first\n");
+    expect(manager.output(task.id, "new")?.text).toContain("first");
+
+    // Push far past the buffer limits, as a dev server would.
+    for (let i = 0; i < 100; i++) fake.emit(`line ${i} ${"z".repeat(300)}\n`);
+
+    const later = manager.output(task.id, "new");
+    expect(later?.text.length).toBeGreaterThan(0);
+    expect(later?.text).toContain("line 99");
+  });
+});

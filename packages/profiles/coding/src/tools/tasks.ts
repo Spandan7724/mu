@@ -13,7 +13,9 @@ import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
   return ({ command, onOutput }): ManagedProcessHandle => {
-    const proc = Bun.spawn(["bash", "-c", command], {
+    // `setsid` puts the task in its own process group so kill() can signal the
+    // whole tree. Without it a shell's children outlive task_kill.
+    const proc = Bun.spawn(["setsid", "bash", "-c", command], {
       cwd: root,
       stdout: "pipe",
       stderr: "pipe",
@@ -33,7 +35,15 @@ export function shellSpawner(root: string): Spawner {
         proc.stdin?.write(data);
         proc.stdin?.flush?.();
       },
-      kill: () => proc.kill(),
+      kill: () => {
+        // Negative pid signals the group; fall back to the process itself if
+        // the platform or spawn did not give us a group leader.
+        try {
+          process.kill(-proc.pid, "SIGTERM");
+        } catch {
+          proc.kill();
+        }
+      },
       exited: proc.exited.then((code) => code ?? null),
     };
   };

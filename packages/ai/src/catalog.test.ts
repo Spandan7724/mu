@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   defaultModelRef,
   discoverModels,
@@ -7,6 +7,7 @@ import {
   modelRef,
   providerHasCredentials,
   refreshModels,
+  registerModels,
 } from "./catalog.ts";
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
 
@@ -144,5 +145,55 @@ describe("credential-aware default model", () => {
     expect(providerHasCredentials("openai", {})).toBe(false);
     // An unknown/custom provider is not gated on a key we do not know about.
     expect(providerHasCredentials("custom", {})).toBe(true);
+  });
+});
+
+describe("catalog refresh merges rather than replaces", () => {
+  // The catalog is process-global, so a refresh here would otherwise leak into
+  // every other test that resolves a model.
+  const snapshot = listModels();
+  afterEach(() => registerModels(snapshot));
+
+  test("a partial upstream response keeps bundled models usable", async () => {
+    // Only Google responds — Anthropic and OpenAI must survive.
+    const payload = {
+      google: {
+        models: {
+          usable: {
+            id: "gemini-only",
+            tool_call: true,
+            limit: { context: 1_000_000, output: 64_000 },
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      },
+    };
+    await refreshModels({ fetch: async () => Response.json(payload) });
+
+    expect(findModel("anthropic/claude-opus-5")).toBeDefined();
+    expect(findModel("openai/gpt-5.1")).toBeDefined();
+    expect(findModel("google/gemini-only")).toBeDefined();
+  });
+
+  test("discovered entries override bundled ones of the same id", async () => {
+    const payload = {
+      anthropic: {
+        models: {
+          opus: {
+            id: "claude-opus-5",
+            name: "Claude Opus 5 (refreshed)",
+            tool_call: true,
+            limit: { context: 2_000_000, output: 128_000 },
+            modalities: { input: ["text"], output: ["text"] },
+            cost: { input: 7, output: 30 },
+          },
+        },
+      },
+    };
+    await refreshModels({ fetch: async () => Response.json(payload) });
+
+    const model = findModel("anthropic/claude-opus-5");
+    expect(model?.contextWindow).toBe(2_000_000);
+    expect(model?.pricing.input).toBe(7);
   });
 });

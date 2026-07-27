@@ -353,6 +353,9 @@ export class Agent {
     emit: (event: AgentEvent) => void,
   ): Promise<RunResult & { output?: T }> {
     this.controller = new AbortController();
+    // Reactive recovery is "retry once per overflow", not once per Agent: a
+    // long session must still be able to recover hours later.
+    this.recoveryAttempted = false;
 
     const promptMessage: AgentMessage =
       typeof prompt === "string"

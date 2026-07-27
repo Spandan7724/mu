@@ -4,6 +4,8 @@
 
 export interface ManagedProcessHandle {
   write: (data: string) => void;
+  // Must terminate the whole process tree: a shell that started a server
+  // leaves descendants holding ports and files otherwise.
   kill: () => void;
   // Resolves with the exit code (null when killed by a signal).
   exited: Promise<number | null>;
@@ -39,6 +41,10 @@ export class OutputBuffer {
   private tail = "";
   private droppedBytes = 0;
   private total = 0;
+  // Source position of the first byte still held in `tail`. Readers track
+  // positions in the *source* stream, not in the rendered string, so tail
+  // rollover can never make fresh output look like "nothing new".
+  private tailStart = 0;
 
   constructor(
     private headLimit = HEAD_BYTES,
@@ -53,11 +59,13 @@ export class OutputBuffer {
       chunk = chunk.slice(room);
       if (chunk.length === 0) return;
     }
+    if (this.tailStart === 0) this.tailStart = this.head.length;
     this.tail += chunk;
     if (this.tail.length > this.tailLimit) {
       const excess = this.tail.length - this.tailLimit;
       this.tail = this.tail.slice(excess);
       this.droppedBytes += excess;
+      this.tailStart += excess;
     }
   }
 
@@ -74,10 +82,31 @@ export class OutputBuffer {
     return `${this.head}\n\n… [${this.droppedBytes} bytes omitted] …\n\n${this.tail}`;
   }
 
-  // Everything appended since the given offset, for incremental polling.
-  readSince(offset: number): { text: string; offset: number } {
-    const full = this.read();
-    return { text: offset >= full.length ? "" : full.slice(offset), offset: full.length };
+  // Everything appended since a source-stream position. Returns the new
+  // position so the caller can poll incrementally; if the reader fell behind
+  // data we already discarded, it is told so rather than silently skipped.
+  readSince(position: number): { text: string; offset: number; gap: boolean } {
+    if (position >= this.total) return { text: "", offset: this.total, gap: false };
+
+    // Still inside the head we retained verbatim.
+    if (position < this.head.length) {
+      const headPart = this.head.slice(position);
+      const gap = this.tailStart > this.head.length;
+      const text = gap
+        ? `${headPart}\n\n… [output omitted] …\n\n${this.tail}`
+        : headPart + this.tail;
+      return { text, offset: this.total, gap };
+    }
+
+    if (position < this.tailStart) {
+      // The reader fell behind: hand back everything retained plus a marker.
+      return {
+        text: `… [output omitted] …\n\n${this.tail}`,
+        offset: this.total,
+        gap: true,
+      };
+    }
+    return { text: this.tail.slice(position - this.tailStart), offset: this.total, gap: false };
   }
 }
 
@@ -162,7 +191,7 @@ export class ProcessManager {
       task.readOffset = offset;
       return { text, truncated: task.buffer.truncated };
     }
-    task.readOffset = task.buffer.read().length;
+    task.readOffset = task.buffer.bytes;
     return { text: task.buffer.read(), truncated: task.buffer.truncated };
   }
 

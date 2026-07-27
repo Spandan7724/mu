@@ -111,8 +111,18 @@ export async function discoverModels(options: ModelDiscoveryOptions = {}): Promi
 
 export async function refreshModels(options: ModelDiscoveryOptions = {}): Promise<ModelInfo[]> {
   const discovered = await discoverModels(options);
-  const custom = models.filter((model) => !DISCOVERED_PROVIDERS.has(model.provider));
-  models = [...discovered, ...custom];
+
+  // Merge rather than replace. A valid but partial upstream response (one
+  // provider staged, another briefly absent) must never delete models the
+  // bundled catalog knows work — that turns `--model anthropic/...` into
+  // "unknown model" and silently moves the default.
+  const merged = [...bundledModels, ...models.filter((m) => !DISCOVERED_PROVIDERS.has(m.provider))];
+  for (const model of discovered) {
+    const index = merged.findIndex((m) => m.provider === model.provider && m.id === model.id);
+    if (index === -1) merged.push(model);
+    else merged[index] = model;
+  }
+  models = merged;
   return listModels();
 }
 

@@ -775,3 +775,71 @@ describe("startup banner", () => {
     expect(banner).toContain("ctrl+c to exit");
   });
 });
+
+describe("mid-buffer file mentions", () => {
+  function mentionHarness() {
+    const files = ["src/chosen.ts", "src/other.ts"];
+    const submitted: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: (text) => submitted.push(text),
+        onAbort: () => {},
+        onExit: () => {},
+        onMentionQuery: (query) =>
+          files.filter((f) => f.includes(query)).map((label) => ({ label })),
+      },
+    });
+    return { app, submitted };
+  }
+
+  test("completing a mention in the middle keeps the text after the cursor", () => {
+    const { app } = mentionHarness();
+    app.editor.setText("before  after");
+    // Put the cursor between the two spaces, as if editing an earlier part.
+    app.editor.setOffset("before ".length);
+
+    feed(app, "@chosen");
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+
+    expect(app.editor.text).toBe("before src/chosen.ts  after");
+  });
+
+  test("the query is taken from the mention span, not the rest of the line", () => {
+    const queries: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+        onMentionQuery: (query) => {
+          queries.push(query);
+          return [{ label: "src/chosen.ts" }];
+        },
+      },
+    });
+    app.editor.setText("head  tail");
+    app.editor.setOffset("head ".length);
+    feed(app, "@s");
+
+    expect(queries.at(-1)).toBe("s");
+  });
+
+  test("a mention at the end still behaves as before", () => {
+    const { app } = mentionHarness();
+    feed(app, "look at @chosen");
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.editor.text).toBe("look at src/chosen.ts ");
+  });
+});
