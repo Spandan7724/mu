@@ -1,4 +1,4 @@
-import { listModels, loginOpenAI } from "mu";
+import { type AuthFile, listModels, loginOpenAI } from "mu";
 
 export interface AccountLoginOptions {
   onAuthUrl?: (url: string) => void | Promise<void>;
@@ -24,6 +24,13 @@ export interface LoginMethod {
   description: string;
 }
 
+export interface LogoutProvider {
+  id: string;
+  name: string;
+  description: string;
+  credentialType: "apiKey" | "oauth";
+}
+
 export const loginMethods: LoginMethod[] = [
   {
     id: "account",
@@ -39,7 +46,7 @@ export const loginMethods: LoginMethod[] = [
 
 export const accountLoginProviders: AccountLoginProvider[] = [
   {
-    id: "openai",
+    id: "openai-codex",
     name: "OpenAI",
     description: "ChatGPT plan",
     successMessage: "Signed in to OpenAI with your ChatGPT plan.",
@@ -51,6 +58,7 @@ export function providerName(provider: string): string {
   const known: Record<string, string> = {
     anthropic: "Anthropic",
     openai: "OpenAI",
+    "openai-codex": "OpenAI",
     google: "Google",
   };
   return (
@@ -63,8 +71,31 @@ export function providerName(provider: string): string {
 }
 
 export function apiKeyLoginProviders(): ApiKeyLoginProvider[] {
-  return [...new Set(listModels().map((model) => model.provider))].map((id) => ({
+  return [
+    ...new Set(
+      listModels()
+        .map((model) => model.provider)
+        .filter((provider) => provider !== "openai-codex"),
+    ),
+  ].map((id) => ({
     id,
     name: providerName(id),
   }));
+}
+
+export function logoutProviders(auth: AuthFile): LogoutProvider[] {
+  return Object.entries(auth.providers)
+    .map(([id, credential]) => ({
+      id,
+      name: providerName(id),
+      description:
+        credential.type === "oauth"
+          ? (accountLoginProviders.find((provider) => provider.id === id)?.description ?? "account")
+          : "API key",
+      credentialType: credential.type,
+    }))
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) || left.description.localeCompare(right.description),
+    );
 }

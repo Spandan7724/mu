@@ -1,7 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { defaultModelRef, findModel } from "mu";
+import {
+  defaultAuthFile,
+  defaultModelRef,
+  findModel,
+  providerHasCredentials,
+  readAuthFile,
+} from "mu";
 
 export interface UserConfig {
   model?: string;
@@ -33,11 +39,38 @@ export async function loadUserConfig(file = userConfigPath()): Promise<UserConfi
   return readUserConfig(file).catch(() => ({}));
 }
 
-export async function resolveCliModel(explicit?: string, file = userConfigPath()): Promise<string> {
+export async function resolveCliModel(
+  explicit?: string,
+  file = userConfigPath(),
+  authFile = defaultAuthFile(),
+  env = process.env,
+): Promise<string> {
   if (explicit) return explicit;
+  const auth = await readAuthFile({ authFile }).catch(() => undefined);
+  const authenticatedProviders = auth
+    ? [
+        ...(auth.activeProvider && auth.providers[auth.activeProvider]
+          ? [auth.activeProvider]
+          : []),
+        ...Object.keys(auth.providers).filter((provider) => provider !== auth.activeProvider),
+      ]
+    : [];
   const configured = (await loadUserConfig(file)).model;
-  if (typeof configured === "string" && findModel(configured)) return configured;
-  return defaultModelRef();
+  if (typeof configured === "string") {
+    const model = findModel(configured);
+    if (
+      model &&
+      (authenticatedProviders.length > 0
+        ? authenticatedProviders.includes(model.provider)
+        : providerHasCredentials(model.provider, env))
+    ) {
+      return configured;
+    }
+  }
+  return defaultModelRef(
+    env,
+    authenticatedProviders.length > 0 ? authenticatedProviders : undefined,
+  );
 }
 
 export async function saveDefaultModel(model: string, file = userConfigPath()): Promise<void> {

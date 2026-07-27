@@ -35,6 +35,16 @@
     },
     {
       "provider": "openai",
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 5, "output": 30, "cacheRead": 0.5, "cacheWrite": 6.25 }
+    },
+    {
+      "provider": "openai",
       "id": "gpt-5.1",
       "name": "GPT-5.1",
       "contextWindow": 400000,
@@ -52,6 +62,36 @@
       "modalities": ["text", "image"],
       "thinking": true,
       "pricing": { "input": 0.25, "output": 2, "cacheRead": 0.025, "cacheWrite": 0 }
+    },
+    {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+    },
+    {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+    },
+    {
+      "provider": "openai-codex",
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "modalities": ["text", "image"],
+      "thinking": true,
+      "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
     },
     {
       "provider": "google",

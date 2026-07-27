@@ -11,6 +11,7 @@ export {
   discoverModels,
   findModel,
   listModels,
+  providerHasCredentials,
   refreshModels,
   registerModels,
   registerProvider,
@@ -77,9 +78,12 @@ export {
   loginOpenAI,
   preferredAuthProvider,
   readAuthFile,
+  removeStoredCredential,
   saveApiKey,
   storedAuthProviders,
 } from "./auth.ts";
+export type { AuthPageOptions } from "./auth-page.ts";
+export { authErrorPage, authSuccessPage, renderAuthPage } from "./auth-page.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
 export type { DiffCommandData, ForkPoint } from "./commands.ts";

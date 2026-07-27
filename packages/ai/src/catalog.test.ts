@@ -131,18 +131,20 @@ describe("cost", () => {
 
 describe("credential-aware default model", () => {
   test("prefers a provider the user actually has a key for", () => {
-    expect(defaultModelRef({ OPENAI_API_KEY: "x" }).startsWith("openai/")).toBe(true);
+    expect(defaultModelRef({ OPENAI_API_KEY: "x" })).toBe("openai/gpt-5.6-sol");
     expect(defaultModelRef({ ANTHROPIC_API_KEY: "x" }).startsWith("anthropic/")).toBe(true);
     expect(defaultModelRef({ GEMINI_API_KEY: "x" }).startsWith("google/")).toBe(true);
   });
 
-  test("falls back to the first model when nothing is configured", () => {
-    expect(defaultModelRef({})).toContain("/");
+  test("uses GPT-5.6 Sol for a ChatGPT plan and as the unauthenticated fallback", () => {
+    expect(defaultModelRef({}, ["openai-codex"])).toBe("openai-codex/gpt-5.6-sol");
+    expect(defaultModelRef({})).toBe("openai-codex/gpt-5.6-sol");
   });
 
   test("reports per-provider credential availability", () => {
     expect(providerHasCredentials("openai", { OPENAI_API_KEY: "x" })).toBe(true);
     expect(providerHasCredentials("openai", {})).toBe(false);
+    expect(providerHasCredentials("openai-codex", { OPENAI_API_KEY: "x" })).toBe(false);
     // An unknown/custom provider is not gated on a key we do not know about.
     expect(providerHasCredentials("custom", {})).toBe(true);
   });

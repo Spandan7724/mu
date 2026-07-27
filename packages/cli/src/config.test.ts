@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { saveApiKey } from "mu";
 import { loadUserConfig, resolveCliModel, saveDefaultModel, userConfigPath } from "./config.ts";
 
 describe("user model configuration", () => {
@@ -32,26 +33,62 @@ describe("user model configuration", () => {
   test("the saved model becomes the default but an explicit flag wins", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-model-default-"));
     const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
+    await saveApiKey("openai", "sk-test", { authFile });
     await saveDefaultModel("openai/gpt-5.1", file);
 
-    expect(await resolveCliModel(undefined, file)).toBe("openai/gpt-5.1");
-    expect(await resolveCliModel("anthropic/claude-opus-5", file)).toBe("anthropic/claude-opus-5");
+    expect(await resolveCliModel(undefined, file, authFile, {})).toBe("openai/gpt-5.1");
+    expect(await resolveCliModel("anthropic/claude-opus-5", file, authFile, {})).toBe(
+      "anthropic/claude-opus-5",
+    );
+  });
+
+  test("a provider login defaults OpenAI API and ChatGPT-plan routes to GPT-5.6 Sol", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-openai-default-"));
+    const file = join(root, "config.json");
+    const apiAuthFile = join(root, "api-auth.json");
+    await saveApiKey("openai", "sk-test", { authFile: apiAuthFile });
+    expect(await resolveCliModel(undefined, file, apiAuthFile, {})).toBe("openai/gpt-5.6-sol");
+
+    const planAuthFile = join(root, "plan-auth.json");
+    await writeFile(
+      planAuthFile,
+      JSON.stringify({
+        version: 1,
+        activeProvider: "openai-codex",
+        providers: {
+          "openai-codex": {
+            type: "oauth",
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: Date.now() + 60_000,
+            accountId: "account",
+          },
+        },
+      }),
+    );
+    await writeFile(file, JSON.stringify({ model: "openai/gpt-5.1" }));
+    expect(await resolveCliModel(undefined, file, planAuthFile, {})).toBe(
+      "openai-codex/gpt-5.6-sol",
+    );
   });
 
   test("an unavailable saved model falls back to the catalog default", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-stale-model-"));
     const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
     await writeFile(file, JSON.stringify({ model: "gone/no-longer-listed" }));
 
-    expect(await resolveCliModel(undefined, file)).not.toBe("gone/no-longer-listed");
+    expect(await resolveCliModel(undefined, file, authFile, {})).not.toBe("gone/no-longer-listed");
   });
 
   test("a non-string model value is ignored", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-invalid-model-"));
     const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
     await writeFile(file, JSON.stringify({ model: 42 }));
 
-    expect(await resolveCliModel(undefined, file)).not.toBe("42");
+    expect(await resolveCliModel(undefined, file, authFile, {})).not.toBe("42");
   });
 
   test("a malformed config is ignored when reading but not overwritten when saving", async () => {

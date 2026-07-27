@@ -35,7 +35,9 @@ import {
   type PermissionRequest,
   type PermissionRule,
   type Profile,
+  readAuthFile,
   registryWithCoreCommands,
+  removeStoredCredential,
   saveApiKey,
   type ToolRenderer,
   toCommand,
@@ -49,6 +51,7 @@ import {
   accountLoginProviders,
   apiKeyLoginProviders,
   loginMethods,
+  logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
@@ -142,12 +145,26 @@ export function startNewInteractiveSession(
   return agent.sessionId;
 }
 
-export function availableModels(extensions: ExtensionHost): ModelInfo[] {
+export function availableModels(
+  extensions: ExtensionHost,
+  authenticatedProviders?: ReadonlySet<string>,
+): ModelInfo[] {
   const models = new Map<string, ModelInfo>(
-    listModels().map((model) => [`${model.provider}/${model.id}`, model] as const),
+    listModels()
+      .filter((model) => !authenticatedProviders || authenticatedProviders.has(model.provider))
+      .map((model) => [`${model.provider}/${model.id}`, model] as const),
   );
   for (const [ref, model] of extensions.models) models.set(ref, model);
   return [...models.values()];
+}
+
+export function modelPickerDescription(
+  model: ModelInfo,
+  source: "apiKey" | "oauth" | "extension",
+): string {
+  const authentication =
+    source === "oauth" ? "ChatGPT plan" : source === "apiKey" ? "API key" : "extension";
+  return model.name ? `${model.name} · ${authentication}` : authentication;
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -421,15 +438,37 @@ export async function runInteractive(
           commitLines([`  ${refresh.cacheWarning}`]);
         }
       }
-      const models = availableModels(extensions);
+      let auth: Awaited<ReturnType<typeof readAuthFile>>;
+      try {
+        auth = await readAuthFile();
+      } catch (error) {
+        return {
+          handled: true,
+          message: `Could not read saved authentication: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+      const authenticatedProviders = new Set(Object.keys(auth.providers));
+      const models = availableModels(extensions, authenticatedProviders);
+      if (models.length === 0) {
+        return { handled: true, message: "No authenticated models. Run /login first." };
+      }
       const source = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
       app.openPicker({
         title: `select a model · ${models.length} available${source}`,
         filterable: true,
-        items: models.map((m) => ({
-          label: `${m.provider}/${m.id}`,
-          description: m.name ?? "",
-        })),
+        items: models.map((model) => {
+          const ref = `${model.provider}/${model.id}`;
+          const credential = auth.providers[model.provider];
+          return {
+            label: ref,
+            description: modelPickerDescription(
+              model,
+              credential?.type ?? (extensions.models.has(ref) ? "extension" : "apiKey"),
+            ),
+          };
+        }),
         onChoose: async (label) => {
           agent.setModel(label);
           app.setModel(label, agent.contextWindow);
@@ -460,6 +499,49 @@ export async function runInteractive(
         return { handled: true, message: "Cannot change authentication during a run." };
       }
       openLoginMethodPicker();
+      return { handled: true };
+    },
+  });
+  commands.register({
+    name: "logout",
+    description: "Remove provider authentication",
+    run: async (ctx) => {
+      if (ctx.args.trim()) {
+        return { handled: true, message: "Run /logout, then choose a provider." };
+      }
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot change authentication during a run." };
+      }
+      let auth: Awaited<ReturnType<typeof readAuthFile>>;
+      try {
+        auth = await readAuthFile();
+      } catch (error) {
+        return {
+          handled: true,
+          message: `Could not read saved authentication: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        };
+      }
+      const providers = logoutProviders(auth);
+      if (providers.length === 0) {
+        return {
+          handled: true,
+          message:
+            "No stored credentials to remove. /logout only removes credentials saved by /login; environment variables are unchanged.",
+        };
+      }
+      app.openPicker({
+        title: "Select provider to log out:",
+        filterable: true,
+        items: providers.map((provider) => ({
+          label: provider.name,
+          description: provider.description,
+          value: provider.id,
+        })),
+        onChoose: (provider) => void logoutProvider(provider, providers),
+        onBack: () => app.openCommandMenu(),
+      });
       return { handled: true };
     },
   });
@@ -715,7 +797,11 @@ export async function runInteractive(
   }
 
   async function selectProviderModel(provider: string): Promise<void> {
-    const model = availableModels(extensions).find((candidate) => candidate.provider === provider);
+    const providerModels = availableModels(extensions).filter(
+      (candidate) => candidate.provider === provider,
+    );
+    const model =
+      providerModels.find((candidate) => candidate.id === "gpt-5.6-sol") ?? providerModels[0];
     if (!model) return;
     const ref = `${model.provider}/${model.id}`;
     agent.setModel(ref);
@@ -739,6 +825,33 @@ export async function runInteractive(
     } catch (error) {
       commitLines([
         `  Could not save API key for ${label}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ]);
+    }
+    paint();
+  }
+
+  async function logoutProvider(
+    providerId: string,
+    providers: ReturnType<typeof logoutProviders>,
+  ): Promise<void> {
+    const provider = providers.find((candidate) => candidate.id === providerId);
+    if (!provider) return;
+    try {
+      const removed = await removeStoredCredential(provider.id);
+      if (!removed) {
+        commitLines([`  No stored credentials found for ${provider.name}.`]);
+      } else if (provider.credentialType === "oauth") {
+        commitLines([`  Logged out of ${provider.name}.`]);
+      } else {
+        commitLines([
+          `  Removed stored API key for ${provider.name}. Environment variables are unchanged.`,
+        ]);
+      }
+    } catch (error) {
+      commitLines([
+        `  Could not log out of ${provider.name}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       ]);

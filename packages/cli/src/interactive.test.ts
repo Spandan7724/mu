@@ -6,6 +6,7 @@ import {
   formatResumeHint,
   formatTerminalTitle,
   initializeInteractiveSession,
+  modelPickerDescription,
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
@@ -185,5 +186,30 @@ describe("interactive model catalog", () => {
     });
 
     expect(availableModels(host)).toContain(model);
+  });
+
+  test("the picker only includes authenticated built-in providers", () => {
+    const host = new ExtensionHost();
+    const models = availableModels(host, new Set(["openai-codex"]));
+
+    expect(models.length).toBeGreaterThan(0);
+    expect(new Set(models.map((model) => model.provider))).toEqual(new Set(["openai-codex"]));
+    expect(models.map((model) => model.id)).toContain("gpt-5.6-sol");
+  });
+
+  test("model descriptions distinguish plan, API-key, and extension routes", () => {
+    const model: ModelInfo = {
+      provider: "openai-codex",
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      contextWindow: 1_050_000,
+      maxOutput: 128_000,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+
+    expect(modelPickerDescription(model, "oauth")).toBe("GPT-5.6 Sol · ChatGPT plan");
+    expect(modelPickerDescription(model, "apiKey")).toBe("GPT-5.6 Sol · API key");
+    expect(modelPickerDescription(model, "extension")).toBe("GPT-5.6 Sol · extension");
   });
 });

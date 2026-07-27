@@ -135,7 +135,7 @@ describe("streamOpenAI", () => {
       })),
     };
     const replay = replayFetch(cassette);
-    const stream = streamOpenAI(model, ctx, {
+    const stream = streamOpenAI({ ...model, provider: "openai-codex" }, ctx, {
       getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
       fetch: replay.fetch,
     });

@@ -1,11 +1,12 @@
 import { anthropic } from "./providers/anthropic.ts";
 import { gemini } from "./providers/gemini.ts";
-import { openai } from "./providers/openai.ts";
+import { openai, openaiCodex } from "./providers/openai.ts";
 import type { Provider } from "./types.ts";
 
 export const providers = new Map<string, Provider>([
   [anthropic.id, anthropic],
   [openai.id, openai],
+  [openaiCodex.id, openaiCodex],
   [gemini.id, gemini],
 ]);
 

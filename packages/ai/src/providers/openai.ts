@@ -140,7 +140,11 @@ export function streamOpenAI(
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
       async () => {
-        const credential = await resolveCredential("openai", "OPENAI_API_KEY", opts);
+        const credential = await resolveCredential(
+          model.provider,
+          model.provider === "openai" ? "OPENAI_API_KEY" : undefined,
+          opts,
+        );
         const { url, headers } = resolveAuthMode(credential, opts, model);
         return postSse(url, { ...headers, ...opts?.headers }, body, opts);
       },
@@ -293,3 +297,4 @@ export function streamOpenAI(
 }
 
 export const openai: Provider = { id: "openai", stream: streamOpenAI };
+export const openaiCodex: Provider = { id: "openai-codex", stream: streamOpenAI };

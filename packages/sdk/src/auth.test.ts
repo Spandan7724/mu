@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createCredentialResolver, loginOpenAI, readAuthFile, saveApiKey } from "./auth.ts";
+import { dirname, join } from "node:path";
+import {
+  createCredentialResolver,
+  loginOpenAI,
+  readAuthFile,
+  removeStoredCredential,
+  saveApiKey,
+} from "./auth.ts";
 
 const roots: string[] = [];
 
@@ -68,6 +74,79 @@ describe("credential storage", () => {
     );
     expect(await readFile(authFile, "utf8")).toBe("{broken");
   });
+
+  test("removes one stored credential and keeps the active provider when it still exists", async () => {
+    const authFile = await authPath();
+    await saveApiKey("anthropic", "sk-ant", { authFile });
+    await saveApiKey("openai", "sk-openai", { authFile });
+
+    expect(await removeStoredCredential("anthropic", { authFile })).toBe(true);
+    expect(await readAuthFile({ authFile })).toEqual({
+      version: 1,
+      activeProvider: "openai",
+      providers: {
+        openai: { type: "apiKey", apiKey: "sk-openai" },
+      },
+    });
+  });
+
+  test("promotes another stored provider when removing the active credential", async () => {
+    const authFile = await authPath();
+    await saveApiKey("anthropic", "sk-ant", { authFile });
+    await saveApiKey("openai", "sk-openai", { authFile });
+
+    expect(await removeStoredCredential("openai", { authFile })).toBe(true);
+    expect(await readAuthFile({ authFile })).toEqual({
+      version: 1,
+      activeProvider: "anthropic",
+      providers: {
+        anthropic: { type: "apiKey", apiKey: "sk-ant" },
+      },
+    });
+    expect(await removeStoredCredential("anthropic", { authFile })).toBe(true);
+    expect(await readAuthFile({ authFile })).toEqual({ version: 1, providers: {} });
+  });
+
+  test("does not create or rewrite the auth file for an unknown credential", async () => {
+    const authFile = await authPath();
+
+    expect(await removeStoredCredential("anthropic", { authFile })).toBe(false);
+    await expect(readFile(authFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("migrates legacy OpenAI OAuth separately from an OpenAI API key", async () => {
+    const authFile = await authPath();
+    await mkdir(dirname(authFile), { recursive: true });
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        version: 1,
+        activeProvider: "openai",
+        providers: {
+          openai: {
+            type: "oauth",
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: Date.now() + 60_000,
+            accountId: "account",
+          },
+        },
+      }),
+    );
+
+    expect(await readAuthFile({ authFile })).toMatchObject({
+      activeProvider: "openai-codex",
+      providers: {
+        "openai-codex": { type: "oauth", accountId: "account" },
+      },
+    });
+
+    await saveApiKey("openai", "sk-openai", { authFile });
+    expect((await readAuthFile({ authFile })).providers).toMatchObject({
+      openai: { type: "apiKey", apiKey: "sk-openai" },
+      "openai-codex": { type: "oauth", accountId: "account" },
+    });
+  });
 });
 
 describe("OpenAI account login", () => {
@@ -89,7 +168,7 @@ describe("OpenAI account login", () => {
     });
 
     expect(exchange.code).toBe("local-code");
-    expect((await readAuthFile({ authFile })).providers.openai).toMatchObject({
+    expect((await readAuthFile({ authFile })).providers["openai-codex"]).toMatchObject({
       accountId: "account-local",
     });
   });
@@ -125,7 +204,7 @@ describe("OpenAI account login", () => {
       },
     });
 
-    expect(result).toEqual({ provider: "openai", accountId: "account-123" });
+    expect(result).toEqual({ provider: "openai-codex", accountId: "account-123" });
     expect(authorize?.origin).toBe("https://auth.openai.com");
     expect(authorize?.pathname).toBe("/oauth/authorize");
     expect(authorize?.searchParams.get("code_challenge_method")).toBe("S256");
@@ -142,8 +221,8 @@ describe("OpenAI account login", () => {
     ).toBe(authorize?.searchParams.get("code_challenge") ?? "");
 
     const file = await readAuthFile({ authFile });
-    expect(file.activeProvider).toBe("openai");
-    expect(file.providers.openai).toMatchObject({
+    expect(file.activeProvider).toBe("openai-codex");
+    expect(file.providers["openai-codex"]).toMatchObject({
       type: "oauth",
       refreshToken: "refresh-1",
       accountId: "account-123",
@@ -187,7 +266,7 @@ describe("OpenAI account login", () => {
       }),
     });
     const resolver = createCredentialResolver({ authFile, fetch: tokenFetch, now: () => now });
-    const [first, second] = await Promise.all([resolver("openai"), resolver("openai")]);
+    const [first, second] = await Promise.all([resolver("openai-codex"), resolver("openai-codex")]);
 
     expect(first).toEqual(second);
     expect(first).toMatchObject({
@@ -195,8 +274,8 @@ describe("OpenAI account login", () => {
       accountId: "account-123",
     });
     expect(refreshCalls).toBe(1);
-    expect(await resolver("openai")).toEqual(first);
-    expect((await readAuthFile({ authFile })).providers.openai).toMatchObject({
+    expect(await resolver("openai-codex")).toEqual(first);
+    expect((await readAuthFile({ authFile })).providers["openai-codex"]).toMatchObject({
       refreshToken: "refresh-new",
     });
   });

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { accountLoginProviders, apiKeyLoginProviders, loginMethods } from "./login.ts";
+import {
+  accountLoginProviders,
+  apiKeyLoginProviders,
+  loginMethods,
+  logoutProviders,
+  providerName,
+} from "./login.ts";
 
 describe("/login provider registry", () => {
   test("starts with account versus API-key authentication", () => {
@@ -13,7 +19,7 @@ describe("/login provider registry", () => {
     expect(
       accountLoginProviders.map(({ id, name, description }) => ({ id, name, description })),
     ).toContainEqual({
-      id: "openai",
+      id: "openai-codex",
       name: "OpenAI",
       description: "ChatGPT plan",
     });
@@ -24,6 +30,52 @@ describe("/login provider registry", () => {
     expect(providers).toContainEqual({ id: "anthropic", name: "Anthropic" });
     expect(providers).toContainEqual({ id: "openai", name: "OpenAI" });
     expect(providers).toContainEqual({ id: "google", name: "Google" });
+    expect(providers).not.toContainEqual({ id: "openai-codex", name: "Openai Codex" });
     expect(new Set(providers.map((provider) => provider.id)).size).toBe(providers.length);
+  });
+
+  test("labels stored credentials by provider and authentication route", () => {
+    expect(
+      logoutProviders({
+        version: 1,
+        activeProvider: "openai-codex",
+        providers: {
+          openai: { type: "apiKey", apiKey: "sk-openai" },
+          "openai-codex": {
+            type: "oauth",
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: Date.now() + 60_000,
+            accountId: "account",
+          },
+          anthropic: { type: "apiKey", apiKey: "sk-ant" },
+        },
+      }).map(({ id, name, description, credentialType }) => ({
+        id,
+        name,
+        description,
+        credentialType,
+      })),
+    ).toEqual([
+      {
+        id: "anthropic",
+        name: "Anthropic",
+        description: "API key",
+        credentialType: "apiKey",
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        description: "API key",
+        credentialType: "apiKey",
+      },
+      {
+        id: "openai-codex",
+        name: "OpenAI",
+        description: "ChatGPT plan",
+        credentialType: "oauth",
+      },
+    ]);
+    expect(providerName("openai-codex")).toBe("OpenAI");
   });
 });

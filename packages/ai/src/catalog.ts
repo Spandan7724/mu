@@ -162,16 +162,47 @@ const PROVIDER_ENV: Record<string, string> = {
 };
 
 export function providerHasCredentials(provider: string, env = process.env): boolean {
+  if (provider === "openai-codex") return false;
   const variable = PROVIDER_ENV[provider];
   return variable === undefined || Boolean(env[variable]);
 }
 
-// Prefer a model whose provider actually has a key configured: defaulting to a
-// provider the user cannot authenticate with turns every run into an auth
-// error, which is a miserable first experience.
-export function defaultModelRef(env = process.env): string {
-  const usable = models.find((model) => providerHasCredentials(model.provider, env));
-  const model = usable ?? models[0] ?? bundledModels[0];
+const DEFAULT_MODEL_IDS: Readonly<Record<string, string>> = {
+  "openai-codex": "gpt-5.6-sol",
+  openai: "gpt-5.6-sol",
+  anthropic: "claude-opus-5",
+  google: "gemini-2.5-pro",
+};
+
+function preferredModel(providers: Iterable<string>): ModelInfo | undefined {
+  for (const provider of providers) {
+    const providerModels = models.filter((model) => model.provider === provider);
+    if (providerModels.length === 0) continue;
+    const preferredId = DEFAULT_MODEL_IDS[provider];
+    const preferred = preferredId
+      ? providerModels.find((model) => model.id === preferredId)
+      : undefined;
+    return preferred ?? providerModels[0];
+  }
+  return undefined;
+}
+
+// The optional provider order comes from persisted login state. Without it,
+// SDK callers retain environment-aware selection.
+export function defaultModelRef(
+  env = process.env,
+  authenticatedProviders?: Iterable<string>,
+): string {
+  const providers = authenticatedProviders
+    ? [...authenticatedProviders]
+    : [...new Set(models.map((model) => model.provider))].filter((provider) =>
+        providerHasCredentials(provider, env),
+      );
+  const model =
+    preferredModel(providers) ??
+    findModel("openai-codex/gpt-5.6-sol") ??
+    models[0] ??
+    bundledModels[0];
   if (!model) throw new Error("No models are available");
   return modelRef(model);
 }

@@ -4,13 +4,16 @@ import { createServer, type Server } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Credential } from "@mu/ai";
+import { authErrorPage, authSuccessPage } from "./auth-page.ts";
 
 const AUTH_VERSION = 1;
 const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_DISPLAY_NAME = "OpenAI";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_SCOPE =
   "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
+const OPENAI_CODEX_PROVIDER = "openai-codex";
 const REFRESH_SKEW_MS = 60_000;
 const REFRESH_TIMEOUT_MS = 15_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
@@ -56,7 +59,7 @@ export interface OpenAiLoginOptions extends AuthStoreOptions {
 }
 
 export interface OpenAiLoginResult {
-  provider: "openai";
+  provider: "openai-codex";
   accountId: string;
 }
 
@@ -98,7 +101,7 @@ function parseStoredCredential(value: unknown, provider: string): StoredCredenti
     return { type: "apiKey", apiKey: value.apiKey };
   }
   if (
-    provider === "openai" &&
+    (provider === "openai" || provider === OPENAI_CODEX_PROVIDER) &&
     value.type === "oauth" &&
     typeof value.accessToken === "string" &&
     typeof value.refreshToken === "string" &&
@@ -141,8 +144,16 @@ export async function readAuthFile(options: AuthStoreOptions = {}): Promise<Auth
 
   const providers: Record<string, StoredCredential> = {};
   for (const [provider, credential] of Object.entries(parsed.providers)) {
-    providers[provider] = parseStoredCredential(credential, provider);
+    const stored = parseStoredCredential(credential, provider);
+    const normalizedProvider =
+      provider === "openai" && stored.type === "oauth" ? OPENAI_CODEX_PROVIDER : provider;
+    if (normalizedProvider === provider) providers[normalizedProvider] = stored;
+    else providers[normalizedProvider] ??= stored;
   }
+  const activeProvider =
+    parsed.activeProvider === "openai" && providers[OPENAI_CODEX_PROVIDER]?.type === "oauth"
+      ? OPENAI_CODEX_PROVIDER
+      : parsed.activeProvider;
 
   // Repair overly broad permissions on Unix. Windows ignores POSIX mode bits.
   if (process.platform !== "win32") {
@@ -152,7 +163,7 @@ export async function readAuthFile(options: AuthStoreOptions = {}): Promise<Auth
 
   return {
     version: AUTH_VERSION,
-    ...(typeof parsed.activeProvider === "string" ? { activeProvider: parsed.activeProvider } : {}),
+    ...(typeof activeProvider === "string" ? { activeProvider } : {}),
     providers,
   };
 }
@@ -191,6 +202,25 @@ export async function saveApiKey(
   file.providers[normalizedProvider] = { type: "apiKey", apiKey: normalizedKey };
   file.activeProvider = normalizedProvider;
   await writeAuthFile(file, options);
+}
+
+export async function removeStoredCredential(
+  provider: string,
+  options: AuthStoreOptions = {},
+): Promise<boolean> {
+  const normalizedProvider = provider.trim();
+  if (!normalizedProvider) throw new Error("Provider is required");
+  const file = await readAuthFile(options);
+  if (!file.providers[normalizedProvider]) return false;
+
+  delete file.providers[normalizedProvider];
+  if (file.activeProvider === normalizedProvider) {
+    const nextProvider = Object.keys(file.providers)[0];
+    if (nextProvider) file.activeProvider = nextProvider;
+    else delete file.activeProvider;
+  }
+  await writeAuthFile(file, options);
+  return true;
 }
 
 export async function storedAuthProviders(options: AuthStoreOptions = {}): Promise<string[]> {
@@ -313,7 +343,7 @@ export function createCredentialResolver(
     const stored = file.providers[provider];
     if (!stored) return undefined;
     if (stored.type === "apiKey") return { type: "apiKey", apiKey: stored.apiKey };
-    if (provider !== "openai") {
+    if (provider !== OPENAI_CODEX_PROVIDER) {
       throw new Error(`OAuth refresh is not implemented for provider "${provider}"`);
     }
 
@@ -330,7 +360,7 @@ export function createCredentialResolver(
     refresh = (async () => {
       // Another process may have refreshed since this invocation first read.
       const latestFile = await readAuthFile(options);
-      const latest = latestFile.providers.openai;
+      const latest = latestFile.providers[OPENAI_CODEX_PROVIDER];
       if (!latest || latest.type !== "oauth") {
         throw new Error("OpenAI login is no longer available");
       }
@@ -340,8 +370,8 @@ export function createCredentialResolver(
           ? latest
           : await refreshOpenAi(latest, options);
       if (next !== latest) {
-        latestFile.providers.openai = next;
-        latestFile.activeProvider = "openai";
+        latestFile.providers[OPENAI_CODEX_PROVIDER] = next;
+        latestFile.activeProvider = OPENAI_CODEX_PROVIDER;
         await writeAuthFile(latestFile, options);
       }
       return {
@@ -406,19 +436,21 @@ async function startCallbackServer(
       response.setHeader("content-type", "text/html; charset=utf-8");
       if (url.pathname !== "/auth/callback") {
         response.statusCode = 404;
-        response.end("<h1>Not found</h1>");
+        response.end(authErrorPage(OPENAI_DISPLAY_NAME, "That page does not exist."));
         return;
       }
       if (url.searchParams.get("state") !== state) {
         response.statusCode = 400;
-        response.end("<h1>Login failed</h1><p>State mismatch.</p>");
+        response.end(
+          authErrorPage(OPENAI_DISPLAY_NAME, "State mismatch. Return to mu and try again."),
+        );
         return;
       }
       const oauthError = url.searchParams.get("error");
       const code = url.searchParams.get("code");
       if (oauthError || !code) {
         response.statusCode = 400;
-        response.end("<h1>Login failed</h1><p>Return to mu and try again.</p>");
+        response.end(authErrorPage(OPENAI_DISPLAY_NAME, "Return to mu and try again."));
         if (!settled) {
           settled = true;
           rejectCode(
@@ -427,7 +459,7 @@ async function startCallbackServer(
         }
         return;
       }
-      response.end("<h1>Login complete</h1><p>You can close this window and return to mu.</p>");
+      response.end(authSuccessPage(OPENAI_DISPLAY_NAME));
       if (!settled) {
         settled = true;
         resolveCode(code);
@@ -509,10 +541,10 @@ export async function loginOpenAI(options: OpenAiLoginOptions = {}): Promise<Ope
       (options.now ?? Date.now)(),
     );
     const file = await readAuthFile(options);
-    file.providers.openai = credential;
-    file.activeProvider = "openai";
+    file.providers[OPENAI_CODEX_PROVIDER] = credential;
+    file.activeProvider = OPENAI_CODEX_PROVIDER;
     await writeAuthFile(file, options);
-    return { provider: "openai", accountId: credential.accountId };
+    return { provider: OPENAI_CODEX_PROVIDER, accountId: credential.accountId };
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abort);
