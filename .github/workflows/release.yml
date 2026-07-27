@@ -75,15 +75,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - run: cp packages/cli/THIRD_PARTY_LICENSES.txt dist/THIRD_PARTY_LICENSES.txt
       - name: Create checksums
         working-directory: dist
         run: >-
           sha256sum mu-linux-x64 mu-darwin-arm64 mu-windows-x64.exe
           mu-linux-x64.tar.gz mu-darwin-arm64.tar.gz mu-windows-x64.zip
+          THIRD_PARTY_LICENSES.txt
           > SHA256SUMS
       - name: Publish GitHub release
         env:
@@ -92,7 +95,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           dist/mu-linux-x64 dist/mu-darwin-arm64 dist/mu-windows-x64.exe
           dist/mu-linux-x64.tar.gz dist/mu-darwin-arm64.tar.gz
-          dist/mu-windows-x64.zip dist/SHA256SUMS
+          dist/mu-windows-x64.zip dist/THIRD_PARTY_LICENSES.txt dist/SHA256SUMS
           --generate-notes --verify-tag
 
   npm-platforms:

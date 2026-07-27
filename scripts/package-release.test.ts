@@ -79,6 +79,7 @@ describe("release packaging", () => {
     expect(listing).toContain("mu-linux-x64/mu-path/rg");
     expect(listing).toContain("mu-linux-x64/licenses/ripgrep/LICENSE-MIT");
     expect(listing).toContain("mu-linux-x64/licenses/ripgrep/UNLICENSE");
+    expect(listing).toContain("mu-linux-x64/licenses/highlight.js/LICENSE");
     expect(listing).toContain("mu-linux-x64/mu-package.json");
   });
 

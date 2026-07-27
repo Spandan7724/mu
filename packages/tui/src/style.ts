@@ -27,6 +27,28 @@ const LINK_256 = 75;
 const CODE_RGB = [192, 132, 252] as const;
 const CODE_256 = 177;
 
+export type SyntaxRole =
+  | "comment"
+  | "keyword"
+  | "function"
+  | "variable"
+  | "string"
+  | "number"
+  | "type";
+
+const SYNTAX_COLORS: Record<
+  SyntaxRole,
+  { rgb: readonly [number, number, number]; ansi256: number; ansi16: number }
+> = {
+  comment: { rgb: [106, 153, 85], ansi256: 65, ansi16: 32 },
+  keyword: { rgb: [86, 156, 214], ansi256: 75, ansi16: 94 },
+  function: { rgb: [220, 220, 170], ansi256: 187, ansi16: 93 },
+  variable: { rgb: [156, 220, 254], ansi256: 117, ansi16: 96 },
+  string: { rgb: [206, 145, 120], ansi256: 173, ansi16: 91 },
+  number: { rgb: [181, 206, 168], ansi256: 151, ansi16: 92 },
+  type: { rgb: [78, 201, 176], ansi256: 79, ansi16: 96 },
+};
+
 export interface Style {
   accent?: boolean;
   dim?: boolean;
@@ -39,6 +61,7 @@ export interface Style {
   heading?: boolean;
   link?: boolean;
   code?: boolean;
+  syntax?: SyntaxRole;
 }
 
 export function styleText(text: string, style: Style, depth: ColorDepth): string {
@@ -72,6 +95,12 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor") codes.push(`38;2;${CODE_RGB[0]};${CODE_RGB[1]};${CODE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${CODE_256}`);
     else codes.push("95");
+  }
+  if (style.syntax) {
+    const color = SYNTAX_COLORS[style.syntax];
+    if (depth === "truecolor") codes.push(`38;2;${color.rgb[0]};${color.rgb[1]};${color.rgb[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${color.ansi256}`);
+    else codes.push(String(color.ansi16));
   }
   if (codes.length === 0) return text;
   return `${ESC}${codes.join(";")}m${text}${RESET}`;

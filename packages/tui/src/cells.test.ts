@@ -404,7 +404,7 @@ describe("components", () => {
     expect(rendered).toContain("\u001b[3m");
     expect(rendered).toContain("\u001b[9m");
     expect(rendered).toContain("\u001b[2;3;38;2;96;165;250mquote\u001b[0m");
-    expect(rendered).toContain("const value = 1;");
+    expect(stripAnsi(rendered)).toContain("const value = 1;");
     expect(
       renderMarkdown("| name |\n| --- |\n| value |\n\n- [x] shipped", 80, "truecolor").join("\n"),
     ).toContain("38;2;250;204;21");
@@ -413,6 +413,86 @@ describe("components", () => {
     const agent = agentCell("## Result\n\n- **done**", colored);
     expect(visible(agent)).toEqual(["  mu  Result", "", "      • done"]);
     expect(agent.join("\n")).toContain("\u001b[1m");
+  });
+
+  test("recognized fenced languages use language-aware syntax colors", () => {
+    const lines = renderMarkdown(
+      [
+        "```ts",
+        "// greeting",
+        "const answer: number = 42;",
+        `function hello(name: string) { return \`hi \${name}\`; }`,
+        "```",
+      ].join("\n"),
+      100,
+      "truecolor",
+    );
+    const rendered = lines.join("\n");
+
+    expect(visible(lines)).toEqual([
+      "ts",
+      "│ // greeting",
+      "│ const answer: number = 42;",
+      `│ function hello(name: string) { return \`hi \${name}\`; }`,
+    ]);
+    expect(rendered).toContain("38;2;106;153;85m// greeting");
+    expect(rendered).toContain("38;2;86;156;214mconst");
+    expect(rendered).toContain("38;2;156;220;254manswer");
+    expect(rendered).toContain("38;2;78;201;176mnumber");
+    expect(rendered).toContain("38;2;181;206;168m42");
+    expect(rendered).toContain("38;2;220;220;170mhello");
+    expect(rendered).toContain(`38;2;206;145;120m\`hi \${name}\``);
+  });
+
+  test("multiline syntax scopes reopen their color on every terminal row", () => {
+    const rendered = renderMarkdown("```ts\n/* first\nsecond */\n```", 80, "truecolor");
+    expect(visible(rendered)).toEqual(["ts", "│ /* first", "│ second */"]);
+    expect(rendered[1]).toContain("38;2;106;153;85m/* first");
+    expect(rendered[2]).toContain("38;2;106;153;85msecond */");
+  });
+
+  test("unknown and language-less fences stay plain instead of being auto-detected", () => {
+    const unknown = renderMarkdown("```not-a-language\nconst value = 1;\n```", 80, "truecolor");
+    const languageLess = renderMarkdown("```\nconst value = 1;\n```", 80, "truecolor");
+
+    expect(visible(unknown)).toEqual(["not-a-language", "│ const value = 1;"]);
+    expect(visible(languageLess)).toEqual(["│ const value = 1;"]);
+    expect(unknown.join("\n")).toContain("38;2;192;132;252mconst value = 1;");
+    expect(languageLess.join("\n")).toContain("38;2;192;132;252mconst value = 1;");
+    expect(unknown.join("\n")).not.toContain("38;2;86;156;214mconst");
+    expect(languageLess.join("\n")).not.toContain("38;2;86;156;214mconst");
+  });
+
+  test("syntax highlighting degrades by color depth and preserves source text", () => {
+    const source = '```html\n<div title="a&b">text</div>\n```';
+    const ansi256 = renderMarkdown("```ts\nconst value = 1;\n```", 80, "ansi256").join("\n");
+    const ansi16 = renderMarkdown("```ts\nconst value = 1;\n```", 80, "ansi16").join("\n");
+    const noColor = renderMarkdown(source, 80, "none");
+
+    expect(ansi256).toContain("38;5;75mconst");
+    expect(ansi16).toContain("[94mconst");
+    expect(noColor.join("\n")).not.toContain("\u001b");
+    expect(noColor).toEqual(["html", '│ <div title="a&b">text</div>']);
+  });
+
+  test("highlighted fences strip model-authored terminal controls", () => {
+    const rendered = renderMarkdown('```ts\nconst attack = "\u001b[2J";\n```', 80, "truecolor");
+    expect(rendered.join("\n")).not.toContain("\u001b[2J");
+    expect(visible(rendered).join("\n")).toContain('const attack = ""');
+  });
+
+  test("highlighted code remains terminal-width safe", () => {
+    const lines = renderMarkdown(
+      '```python\nresult = build_value_with_a_very_long_name(123, "hello")\n```',
+      24,
+      "truecolor",
+    );
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(24);
+    const code = visible(lines)
+      .slice(1)
+      .map((line) => line.replace(/^│ /, ""))
+      .join("");
+    expect(code).toContain("build_value_with_a_very_long_name");
   });
 
   test("markdown respects terminal width for rich content", () => {

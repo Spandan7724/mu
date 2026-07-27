@@ -1,5 +1,6 @@
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, type Style, styleText } from "./style.ts";
+import { highlightCode } from "./syntax-highlight.ts";
 import { stringWidth } from "./width.ts";
 import { wrapLine } from "./wrap.ts";
 
@@ -32,9 +33,11 @@ function mergeStyle(base: Style, addition: Style): Style {
     addition.red ||
     addition.heading ||
     addition.link ||
-    addition.code;
+    addition.code ||
+    addition.syntax !== undefined;
+  const { syntax: _syntax, ...baseWithoutSyntax } = base;
   return {
-    ...base,
+    ...(changesColor ? baseWithoutSyntax : base),
     ...(changesColor
       ? {
           accent: false,
@@ -251,15 +254,18 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
       const language = fence[2]?.trim();
       if (language) out.push(styleText(language, { code: true, dim: true, italic: true }, depth));
       index++;
+      const codeLines: string[] = [];
       while (
         index < source.length &&
         !new RegExp(`^\\s*${marker[0]}{${marker.length},}\\s*$`).test(source[index] ?? "")
       ) {
-        const code = source[index] ?? "";
-        const rule = styleText(`${GLYPHS.rule} `, { code: true, dim: true }, depth);
-        const wrapped = wrapLine(styleText(code, { code: true }, depth), Math.max(1, width - 2));
-        out.push(...wrapped.map((line) => rule + line));
+        codeLines.push(source[index] ?? "");
         index++;
+      }
+      const rule = styleText(`${GLYPHS.rule} `, { code: true, dim: true }, depth);
+      for (const highlighted of highlightCode(codeLines.join("\n"), language, depth)) {
+        const wrapped = wrapLine(highlighted, Math.max(1, width - 2));
+        out.push(...wrapped.map((line) => rule + line));
       }
       if (index < source.length) index++;
       continue;

@@ -7,7 +7,8 @@
     "mu": "./dist/mu.js"
   },
   "files": [
-    "dist/mu.js"
+    "dist/mu.js",
+    "THIRD_PARTY_LICENSES.txt"
   ],
   "scripts": {
     "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js",

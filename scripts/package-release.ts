@@ -50,6 +50,13 @@ export interface PrepareRipgrepOptions {
 
 const RIPGREP_VERSION = "15.2.0";
 const RIPGREP_RELEASE = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}`;
+const HIGHLIGHT_LICENSE_PATH = resolve(
+  import.meta.dir,
+  "..",
+  "packages",
+  "cli",
+  "THIRD_PARTY_LICENSES.txt",
+);
 
 export const RELEASE_SPECS: Record<ReleaseTarget, ReleaseSpec> = {
   "linux-x64": {
@@ -274,6 +281,7 @@ export async function packageRelease(
   const binDir = join(packageDir, "bin");
   const pathDir = join(packageDir, "mu-path");
   const licenseDir = join(packageDir, "licenses", "ripgrep");
+  const highlightLicenseDir = join(packageDir, "licenses", "highlight.js");
   const extractDir = join(stagingDir, "ripgrep");
 
   try {
@@ -281,6 +289,7 @@ export async function packageRelease(
       mkdir(binDir, { recursive: true }),
       mkdir(pathDir, { recursive: true }),
       mkdir(licenseDir, { recursive: true }),
+      mkdir(highlightLicenseDir, { recursive: true }),
       mkdir(extractDir, { recursive: true }),
     ]);
     await extractRipgrepArchive(spec, rgArchivePath, extractDir);
@@ -294,6 +303,7 @@ export async function packageRelease(
       copyFile(rgSource, packagedRg),
       copyFile(join(sourceRoot, "LICENSE-MIT"), join(licenseDir, "LICENSE-MIT")),
       copyFile(join(sourceRoot, "UNLICENSE"), join(licenseDir, "UNLICENSE")),
+      copyFile(HIGHLIGHT_LICENSE_PATH, join(highlightLicenseDir, "LICENSE")),
     ]);
     if (spec.target !== "windows-x64") {
       await Promise.all([chmod(packagedBinary, 0o755), chmod(packagedRg, 0o755)]);
