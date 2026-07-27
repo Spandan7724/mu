@@ -60,7 +60,7 @@ export async function runHeadless(
     ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
     : undefined;
   const extensions = builtIns?.host ?? resolved.extensions;
-  for (const warning of builtIns?.warnings ?? []) io.stderr(`mu: mcp: ${warning}\n`);
+  for (const warning of builtIns?.warnings ?? []) io.stderr(`mu: ${warning}\n`);
 
   const agent = new Agent({
     ...resolved,

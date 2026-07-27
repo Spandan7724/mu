@@ -70,7 +70,7 @@ async function main(): Promise<number> {
           await optionsFromProfile(profile, await resolveCliModel(args.model)),
         );
         const builtIns = await loadBuiltInExtensions(process.cwd(), resolved.extensions);
-        for (const warning of builtIns.warnings) io.stderr(`mu: mcp: ${warning}\n`);
+        for (const warning of builtIns.warnings) io.stderr(`mu: ${warning}\n`);
         const agent = new Agent({
           ...resolved,
           extensions: builtIns.host,

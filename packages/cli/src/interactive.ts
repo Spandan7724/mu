@@ -605,7 +605,7 @@ export async function runInteractive(
   app.setThinking(agent.thinking);
   renderer.commit(app.banner());
   if (builtIns.warnings.length > 0) {
-    renderer.commit(builtIns.warnings.map((warning) => `  mcp: ${warning}`));
+    renderer.commit(builtIns.warnings.map((warning) => `  ${warning}`));
   }
   const stopResize = terminal.onResize(() => {
     app.setWidth(terminal.columns);
