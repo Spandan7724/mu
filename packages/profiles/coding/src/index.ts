@@ -143,7 +143,14 @@ export { shellCommand, terminateProcessTree, windowsTaskkillCommand } from "./sh
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
-export { globTool, globToRegExp, grepTool } from "./tools/search.ts";
+export {
+  globTool,
+  globToRegExp,
+  grepTool,
+  type RipgrepRunner,
+  resolveRipgrepExecutable,
+  type SearchToolOptions,
+} from "./tools/search.ts";
 export { shellSpawner, taskTools } from "./tools/tasks.ts";
 export type { TodoItem } from "./tools/todo.ts";
 export { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";

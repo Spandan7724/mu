@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnyTool } from "@mu/core";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
-import { globTool, globToRegExp, grepTool } from "./tools/search.ts";
+import {
+  globTool,
+  globToRegExp,
+  grepTool,
+  type RipgrepRunner,
+  resolveRipgrepExecutable,
+} from "./tools/search.ts";
 import { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";
 import { truncateOutput } from "./truncate.ts";
 
@@ -20,6 +26,10 @@ const signal = new AbortController().signal;
 // AnyTool surface the loop uses.
 function run(tool: unknown, args: Record<string, unknown>) {
   return (tool as AnyTool).execute("t1", args, signal);
+}
+
+function runWithSignal(tool: unknown, args: Record<string, unknown>, abortSignal: AbortSignal) {
+  return (tool as AnyTool).execute("t1", args, abortSignal);
 }
 
 function permissionDetails(tool: unknown, args: Record<string, unknown>) {
@@ -309,6 +319,165 @@ describe("ls, glob and grep", () => {
     const result = await run(grepTool({ root, state: new FileState() }), { pattern: "([" });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("Invalid regular expression");
+  });
+
+  test("glob uses ripgrep file listing when it is available", async () => {
+    const root = await tree();
+    const calls: { args: string[]; cwd: string }[] = [];
+    const ripgrep: RipgrepRunner = async (args, cwd, _signal, onLine) => {
+      calls.push({ args, cwd });
+      for (const line of ["readme.md", "src/index.ts", "src/util.ts"]) onLine(line);
+      return { exitCode: 0, stderr: "", stopped: false };
+    };
+
+    const result = await run(globTool({ root, state: new FileState() }, { ripgrep }), {
+      pattern: "**/*.ts",
+    });
+
+    expect(textOf(result)).toBe("src/index.ts\nsrc/util.ts");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cwd).toBe(root);
+    expect(calls[0]?.args).toContain("--files");
+    expect(calls[0]?.args).toContain("--no-ignore");
+    expect(calls[0]?.args).toContain("!**/node_modules/**");
+  });
+
+  test("grep parses ripgrep JSON and preserves include filtering", async () => {
+    const root = await tree();
+    let receivedArgs: string[] = [];
+    const ripgrep: RipgrepRunner = async (args, cwd, _signal, onLine) => {
+      receivedArgs = args;
+      expect(cwd).toBe(root);
+      onLine(
+        JSON.stringify({
+          type: "match",
+          data: {
+            path: { text: "./src/index.ts" },
+            lines: { text: "export const answer = 42;\n" },
+            line_number: 1,
+          },
+        }),
+      );
+      onLine(
+        JSON.stringify({
+          type: "match",
+          data: {
+            path: { text: "./readme.md" },
+            lines: { text: "answer\n" },
+            line_number: 1,
+          },
+        }),
+      );
+      return { exitCode: 0, stderr: "", stopped: false };
+    };
+
+    const result = await run(grepTool({ root, state: new FileState() }, { ripgrep }), {
+      pattern: "answer",
+      include: "**/*.ts",
+      ignoreCase: true,
+    });
+
+    expect(textOf(result)).toBe("src/index.ts:1: export const answer = 42;");
+    expect(receivedArgs).toContain("--json");
+    expect(receivedArgs).toContain("auto");
+    expect(receivedArgs).toContain("--ignore-case");
+    expect(receivedArgs.slice(-3)).toEqual(["--", "answer", "."]);
+  });
+
+  test("search falls back to the native implementation when ripgrep is unavailable", async () => {
+    const root = await tree();
+    const unavailable: RipgrepRunner = async () => undefined;
+
+    const globResult = await run(
+      globTool({ root, state: new FileState() }, { ripgrep: unavailable }),
+      { pattern: "**/*.ts" },
+    );
+    const grepResult = await run(
+      grepTool({ root, state: new FileState() }, { ripgrep: unavailable }),
+      { pattern: "answer" },
+    );
+
+    expect(textOf(globResult)).toContain("src/index.ts");
+    expect(textOf(grepResult)).toContain("src/index.ts:1:");
+  });
+
+  test("search falls back when ripgrep rejects a JavaScript-compatible expression", async () => {
+    const root = await tree();
+    const rejected: RipgrepRunner = async () => ({
+      exitCode: 2,
+      stderr: "unsupported regex",
+      stopped: false,
+    });
+
+    const result = await run(grepTool({ root, state: new FileState() }, { ripgrep: rejected }), {
+      pattern: "answer",
+    });
+
+    expect(textOf(result)).toContain("src/index.ts:1:");
+  });
+
+  test("ripgrep result collection stops at the search limit", async () => {
+    const root = await tree();
+    const ripgrep: RipgrepRunner = async (_args, _cwd, _signal, onLine) => {
+      let stopped = false;
+      for (let i = 1; i <= 250; i++) {
+        if (
+          !onLine(
+            JSON.stringify({
+              type: "match",
+              data: {
+                path: { text: "./src/index.ts" },
+                lines: { text: `answer ${i}\n` },
+                line_number: i,
+              },
+            }),
+          )
+        ) {
+          stopped = true;
+          break;
+        }
+      }
+      return { exitCode: 0, stderr: "", stopped };
+    };
+
+    const result = await run(grepTool({ root, state: new FileState() }, { ripgrep }), {
+      pattern: "answer",
+    });
+
+    expect(textOf(result)).toContain("src/index.ts:200: answer 200");
+    expect(textOf(result)).not.toContain("answer 201");
+    expect(textOf(result)).toContain("search stopped early");
+  });
+
+  test("search honors an already-aborted signal", async () => {
+    const root = await tree();
+    const controller = new AbortController();
+    controller.abort(new Error("stop search"));
+
+    await expect(
+      runWithSignal(
+        globTool({ root, state: new FileState() }),
+        { pattern: "**/*.ts" },
+        controller.signal,
+      ),
+    ).rejects.toThrow("stop search");
+  });
+});
+
+describe("ripgrep detection", () => {
+  test("prefers a bundled sidecar and otherwise searches PATH", async () => {
+    const root = await scratch();
+    const executable = join(root, "bin", "mu");
+    const bundled = join(root, "mu-path", "rg");
+    await mkdir(join(root, "bin"), { recursive: true });
+    await mkdir(join(root, "mu-path"), { recursive: true });
+    await writeFile(bundled, "");
+    await chmod(bundled, 0o755);
+
+    expect(resolveRipgrepExecutable(executable, "linux", () => "/usr/bin/rg")).toBe(bundled);
+    const unbundled = join(root, "other", "bin", "mu");
+    expect(resolveRipgrepExecutable(unbundled, "linux", () => "/usr/bin/rg")).toBe("/usr/bin/rg");
+    expect(resolveRipgrepExecutable(unbundled, "linux", () => null)).toBeUndefined();
   });
 });
 
