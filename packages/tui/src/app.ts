@@ -48,6 +48,9 @@ export interface InputPromptRequest {
 
 export interface AppCallbacks {
   onSubmit: (text: string) => void;
+  // Explicit user shell escape. The leading `!` stays in editor history, but
+  // only the command text is passed to the surface.
+  onShell?: (command: string) => void;
   // Supplies file paths for the `@` mention popup.
   onMentionQuery?: (query: string) => { label: string; description?: string }[];
   onAbort: () => void;
@@ -207,6 +210,10 @@ export class App {
 
   get areToolOutputsExpanded(): boolean {
     return this.toolOutputExpanded;
+  }
+
+  get isShellMode(): boolean {
+    return this.options.callbacks.onShell !== undefined && this.editor.text.startsWith("!");
   }
 
   // Opens a selection list (used by /model and /resume).
@@ -436,8 +443,9 @@ export class App {
   // nothing to orient against.
   banner(): string[] {
     const { depth, width } = this.ctx;
+    const shell = this.options.callbacks.onShell ? ` ${GLYPHS.separator} ! for shell` : "";
     const affordances = styleText(
-      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
+      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
       { dim: true },
       depth,
     );
@@ -579,6 +587,13 @@ export class App {
             : this.promptEditor.render(width, depth)),
         );
       } else {
+        if (this.isShellMode) {
+          lines.push(
+            MARGIN +
+              styleText("shell mode", { accent: true, bold: true }, depth) +
+              styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
+          );
+        }
         lines.push(...this.editor.render(width, depth));
         if (this.mode === "select" || this.mode === "mention") {
           lines.push(...this.commandList.render(width, depth));
@@ -589,7 +604,9 @@ export class App {
     const toolHint = "ctrl+o";
     const hint = this.running
       ? `${this.spinner.render(depth)} esc to interrupt ${GLYPHS.separator} ${toolHint}`
-      : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+      : this.isShellMode
+        ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
+        : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, hint }, width, depth));
     return this.fitToViewport(lines);
   }
@@ -666,11 +683,15 @@ export class App {
     switch (key.name) {
       case "escape":
         if (this.running) this.options.callbacks.onAbort();
+        else if (this.isShellMode) this.editor.setText("");
         return;
       case "return": {
+        if (this.isShellMode && this.editor.text.slice(1).trim().length === 0) return;
         const text = this.editor.submit();
         if (text.trim().length === 0) return;
-        if (text.startsWith("/") && this.options.callbacks.onCommand) {
+        if (text.startsWith("!") && this.options.callbacks.onShell) {
+          this.options.callbacks.onShell(text.slice(1).trim());
+        } else if (text.startsWith("/") && this.options.callbacks.onCommand) {
           this.options.callbacks.onCommand(text);
         } else {
           this.options.callbacks.onSubmit(text);

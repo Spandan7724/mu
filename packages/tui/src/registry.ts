@@ -75,6 +75,12 @@ function stringArg(args: unknown, key: string): string {
   return firstString(args, [key]) ?? "";
 }
 
+function booleanArg(args: unknown, key: string): boolean {
+  return (
+    typeof args === "object" && args !== null && (args as Record<string, unknown>)[key] === true
+  );
+}
+
 function boundedDiffLines(lines: DiffLine[], expanded: boolean | undefined): DiffLine[] {
   if (expanded || lines.length <= COMPACT_DIFF_LINES) return lines;
   const visible = COMPACT_DIFF_LINES - 1;
@@ -266,10 +272,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       | undefined;
     const ok = details?.exitCode === 0;
     const duration = formatDuration(details?.durationMs);
+    const userShell = booleanArg(info.args, "userShell");
     return [
       ...toolCell(
         {
-          name: info.running ? "running" : info.result ? "ran" : "bash",
+          name: userShell ? "$" : info.running ? "running" : info.result ? "ran" : "bash",
           ...(firstString(info.args, ["command"])
             ? {
                 primaryArg: firstString(info.args, ["command"]) as string,

@@ -301,6 +301,40 @@ describe("input handling", () => {
     expect(h.commands).toEqual(["/model gpt"]);
     expect(h.submitted).toEqual([]);
   });
+
+  test("a leading bang enters shell mode and submits without the prefix", () => {
+    const shellCommands: string[] = [];
+    const h = harness({ onShell: (command) => shellCommands.push(command) });
+
+    feed(h.app, "!");
+    expect(h.app.isShellMode).toBe(true);
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("shell mode · runs locally");
+
+    feed(h.app, "printf ok\r");
+    expect(shellCommands).toEqual(["printf ok"]);
+    expect(h.submitted).toEqual([]);
+    expect(h.app.isShellMode).toBe(false);
+
+    feed(h.app, "\u001b[A");
+    expect(h.app.editor.text).toBe("!printf ok");
+    expect(h.app.isShellMode).toBe(true);
+  });
+
+  test("an empty shell command stays in the editor and escape cancels the mode", () => {
+    const shellCommands: string[] = [];
+    const h = harness({ onShell: (command) => shellCommands.push(command) });
+
+    feed(h.app, "!\r");
+    expect(shellCommands).toEqual([]);
+    expect(h.app.editor.text).toBe("!");
+    feed(h.app, ESC);
+    h.app.handleInput({
+      type: "key",
+      key: { name: "escape", ctrl: false, alt: false, shift: false },
+    });
+    expect(h.app.editor.text).toBe("");
+    expect(h.app.isShellMode).toBe(false);
+  });
 });
 
 describe("approval overlay", () => {
@@ -486,6 +520,30 @@ describe("renderer registry", () => {
     );
     expect(lines).toHaveLength(2);
     for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(60);
+  });
+
+  test("an explicit user shell command uses the dollar action", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      {
+        toolName: "bash",
+        args: { command: "pwd", userShell: true },
+        result: {
+          role: "toolResult",
+          toolCallId: "shell-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "/tmp" }],
+          details: { exitCode: 0, durationMs: 10 },
+          isError: false,
+          timestamp: 1,
+        },
+      },
+      { width: 60, depth: "none" },
+    );
+
+    expect(stripAnsi(lines[0] ?? "")).toBe("  │ $ pwd · ✓ 10ms");
+    expect(stripAnsi(lines[1] ?? "")).toBe("  │ /tmp");
   });
 });
 

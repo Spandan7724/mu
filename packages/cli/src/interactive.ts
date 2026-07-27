@@ -1,5 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { bashTool } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
@@ -21,6 +22,7 @@ import {
   type AgentRunOptions,
   type CheckpointActionData,
   type Command,
+  customMessage,
   type DiffCommandData,
   ExtensionHost,
   listModels,
@@ -50,6 +52,7 @@ import {
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
+import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const SPINNER_INTERVAL_MS = 120;
 
@@ -224,13 +227,19 @@ export async function runInteractive(
   const renderer = new InlineRenderer(terminal);
   let exiting = false;
   let activeRun: Promise<void> | undefined;
+  let activeShell: Promise<void> | undefined;
+  let shellController: AbortController | undefined;
   let loginController: AbortController | undefined;
+  const shellTool =
+    resolved.tools?.find((candidate) => candidate.name === "bash") ??
+    bashTool({ root: process.cwd() });
 
   // Leaving must not strand an in-flight run or a permission promise: abort the
   // run and deny anything still waiting, or the process lingers after the UI
   // is gone.
   const shutdown = () => {
     loginController?.abort();
+    shellController?.abort();
     modelCatalog?.stop();
     agent.stop();
     for (const [id, pending] of pendingPermissions) {
@@ -252,15 +261,29 @@ export async function runInteractive(
         // A second concurrent run would share the Agent's abort controller,
         // session and usage totals. Mid-run input is steering, which is what
         // the loop's steering queue exists for.
-        if (activeRun || agent.isRunning) agent.send(text);
+        if (activeShell) {
+          renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+          paint();
+        } else if (activeRun || agent.isRunning) agent.send(text);
         else beginRun(text);
       },
-      onAbort: () => agent.abort(),
+      onShell: (command) => beginUserShell(command),
+      onAbort: () => {
+        if (shellController) shellController.abort();
+        else agent.abort();
+      },
       onExit: () => {
         exiting = true;
         shutdown();
       },
-      onCommand: (text) => void runCommand(text),
+      onCommand: (text) => {
+        if (activeShell) {
+          renderer.commit(["  Wait for the shell command to finish, or press Esc to cancel it."]);
+          paint();
+          return;
+        }
+        void runCommand(text);
+      },
       onMentionQuery: (query) => mentionCandidates(query),
       onThinkingChange: (level) => agent.setThinking(level as "off" | "low" | "medium" | "high"),
       onPermissionReply: (id, outcome, remember) => {
@@ -486,6 +509,11 @@ export async function runInteractive(
   }
 
   function beginRun(text: string, options?: AgentRunOptions): void {
+    if (activeShell) {
+      renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+      paint();
+      return;
+    }
     if (activeRun || agent.isRunning) {
       renderer.commit(["  A run is already active; submit text to steer it."]);
       paint();
@@ -493,6 +521,52 @@ export async function runInteractive(
     }
     activeRun = startRun(text, options).finally(() => {
       activeRun = undefined;
+    });
+  }
+
+  function beginUserShell(command: string): void {
+    if (activeRun || agent.isRunning) {
+      renderer.commit(["  Wait for the agent turn to finish before running a shell command."]);
+      paint();
+      return;
+    }
+    if (activeShell) {
+      renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+      paint();
+      return;
+    }
+
+    const controller = new AbortController();
+    shellController = controller;
+    activeShell = (async () => {
+      const dispatch = (event: Parameters<App["handleEvent"]>[0]) => {
+        const lines = app.handleEvent(event);
+        if (lines.length > 0) renderer.commit(lines);
+        paint();
+      };
+
+      dispatch({ type: "agent_start" });
+      try {
+        const result = await runUserShellCommand(shellTool, command, controller.signal, dispatch);
+        agent.session.appendMessage(
+          customMessage("user_shell_command", formatUserShellRecord(command, result)),
+        );
+        try {
+          await agent.sessionStore.save(agent.sessionId, agent.session);
+        } catch (error) {
+          renderer.commit([
+            `  shell result could not be saved to the session: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ]);
+        }
+      } finally {
+        dispatch({ type: "agent_end", messages: [], reason: "done" });
+      }
+    })().finally(() => {
+      if (shellController === controller) shellController = undefined;
+      activeShell = undefined;
+      paint();
     });
   }
 
@@ -744,7 +818,7 @@ export async function runInteractive(
     shutdown();
     // Let the aborted run unwind before the terminal is handed back, so it
     // cannot repaint over a restored screen.
-    await activeRun?.catch(() => {});
+    await Promise.all([activeRun?.catch(() => {}), activeShell?.catch(() => {})]);
     await agent.shutdown();
     unsubscribe();
     clearInterval(spinnerTimer);
