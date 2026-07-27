@@ -9,6 +9,7 @@ import {
   taskCell,
   thinkingCell,
   toolCell,
+  turnSeparator,
   userCell,
 } from "./cells.ts";
 import {
@@ -58,6 +59,12 @@ describe("transcript cells (golden lines)", () => {
     );
     expect(lines[0]).toBe("  mu  I'll add exponential backoff to");
     expect(lines[1]).toBe("      the fetch wrapper now.");
+  });
+
+  test("a completed exchange gets a short dim separator", () => {
+    const line = turnSeparator(plain)[0] ?? "";
+    expect(visible([line])).toEqual([`  ${"─".repeat(19)}`]);
+    expect(turnSeparator(colored)[0]).toContain("[2m");
   });
 
   test("tool cell collapses to a one-line summary", () => {
@@ -426,6 +433,7 @@ describe("style conformance", () => {
     ...toolCell({ name: "read", primaryArg: "a.ts", summary: "1 line" }, colored),
     ...thinkingCell("thought", colored),
     ...errorCell("bad", colored),
+    ...turnSeparator(colored),
     ...footer({ ...footerData, model: "m", contextPercent: 0.5, costUsd: 1 }, 60, "truecolor"),
   ].join("\n");
 
@@ -435,7 +443,7 @@ describe("style conformance", () => {
     }
   });
 
-  test("no borders or box drawing in the transcript", () => {
+  test("no boxes or heavy borders in the transcript", () => {
     for (const glyph of ["┌", "┐", "└", "┘", "├", "┤", "═"]) {
       expect(everything).not.toContain(glyph);
     }

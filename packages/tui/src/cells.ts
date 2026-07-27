@@ -42,6 +42,13 @@ export function agentCell(text: string, ctx: RenderContext): string[] {
   return wrapped.map((line, i) => (i === 0 ? MARGIN + label + line : MARGIN + AGENT_INDENT + line));
 }
 
+// A short rule marks one complete user/agent exchange without competing with
+// the full-width composer rule.
+export function turnSeparator(ctx: RenderContext): string[] {
+  const width = Math.max(8, Math.floor(body(ctx) / 3));
+  return [MARGIN + dim("─".repeat(width), ctx.depth)];
+}
+
 // Thinking is dim and behind the rule; collapsed to one line unless expanded.
 export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);

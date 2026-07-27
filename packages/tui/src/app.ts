@@ -9,6 +9,7 @@ import {
   type RenderContext,
   taskCell,
   thinkingCell,
+  turnSeparator,
   userCell,
 } from "./cells.ts";
 import {
@@ -158,12 +159,12 @@ export class App {
 
       case "agent_end": {
         this.running = false;
-        if (event.reason !== "error") return [];
+        if (event.reason !== "error") return [...turnSeparator(this.ctx), ""];
         // Show *why* it failed. "run ended with an error" tells the user
         // nothing and hides actionable messages like a missing API key.
         const detail = this.lastError ?? "the provider returned an error";
         this.lastError = undefined;
-        return [...errorCell(detail, this.ctx), ""];
+        return [...errorCell(detail, this.ctx), "", ...turnSeparator(this.ctx), ""];
       }
 
       case "message_start":

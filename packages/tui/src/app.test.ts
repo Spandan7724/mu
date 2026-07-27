@@ -128,6 +128,7 @@ describe("fake-agent session", () => {
     expect(visible).toContain("  ▸ add retries");
     expect(visible).toContain("  │ read · src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
+    expect(visible.at(-2)).toBe(`  ${"─".repeat(19)}`);
 
     const bottom = app.renderBottom().map(stripAnsi);
     expect(bottom.at(-2)).toBe("  ~/code/mu");
