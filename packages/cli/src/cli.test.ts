@@ -84,6 +84,43 @@ describe("runHeadless", () => {
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
   });
 
+  test("built-in commands run headlessly without calling the provider", async () => {
+    const provider = new FakeProvider([]);
+    const { out, io: sink } = io();
+    const code = await runHeadless(
+      parseArgs(["-p", "/model anthropic/claude-opus-5"]),
+      base(provider),
+      sink,
+    );
+
+    expect(code).toBe(EXIT.done);
+    expect(provider.callCount).toBe(0);
+    expect(out.join("")).toContain("Model set to anthropic/claude-opus-5");
+  });
+
+  test("/compact is wired in headless mode", async () => {
+    const provider = new FakeProvider([]);
+    const { out, io: sink } = io();
+    const code = await runHeadless(parseArgs(["-p", "/compact"]), base(provider), sink);
+
+    expect(code).toBe(EXIT.done);
+    expect(provider.callCount).toBe(0);
+    expect(out.join("")).toContain("Compacting before the next turn.");
+  });
+
+  test("headless commands have a JSON result shape", async () => {
+    const provider = new FakeProvider([]);
+    const { out, io: sink } = io();
+    const code = await runHeadless(parseArgs(["-p", "/model", "--json"]), base(provider), sink);
+
+    expect(code).toBe(EXIT.done);
+    expect(provider.callCount).toBe(0);
+    expect(JSON.parse(out.join(""))).toEqual({
+      type: "command_result",
+      message: "Current model: fake/fake-1",
+    });
+  });
+
   test("a provider error exits 1 and reports the actual message", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "" }], errorMessage: "upstream exploded" },

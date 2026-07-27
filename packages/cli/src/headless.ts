@@ -1,4 +1,10 @@
-import { Agent, type AgentOptions, type HaltReason, optionsFromProfile } from "mu";
+import {
+  Agent,
+  type AgentOptions,
+  type HaltReason,
+  optionsFromProfile,
+  registryWithCoreCommands,
+} from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
@@ -50,11 +56,12 @@ export async function runHeadless(
   const builtIns = useBuiltIns
     ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
     : undefined;
+  const extensions = builtIns?.host ?? resolved.extensions;
   for (const warning of builtIns?.warnings ?? []) io.stderr(`mu: mcp: ${warning}\n`);
 
   const agent = new Agent({
     ...resolved,
-    ...(builtIns ? { extensions: builtIns.host } : {}),
+    ...(extensions ? { extensions } : {}),
     ...(args.model ? { model: args.model } : {}),
     ...(args.maxTurns !== undefined || args.maxCostUsd !== undefined
       ? {
@@ -97,6 +104,42 @@ export async function runHeadless(
   });
 
   try {
+    const commands = registryWithCoreCommands({
+      requestCompaction: () => agent.requestCompaction(),
+      usage: () => ({
+        ...agent.usage,
+        contextPercent: agent.contextPercent,
+      }),
+      undo: () => agent.undo(),
+      redo: () => agent.redo(),
+      fork: (entryId) => agent.fork(entryId),
+      forkPoints: () => agent.forkPoints(),
+      diff: () => agent.sessionDiff(),
+    });
+
+    const printed: string[] = [];
+    const command = await commands.execute(args.prompt, {
+      inject: () => {},
+      print: (text) => printed.push(text),
+      getModel: () => agent.modelRef,
+      setModel: (ref) => agent.setModel(ref),
+    });
+    if (command.handled) {
+      const messages = [...printed, ...(command.message ? [command.message] : [])];
+      if (args.json) {
+        io.stdout(
+          `${JSON.stringify({
+            type: "command_result",
+            ...(messages.length > 0 ? { message: messages.join("\n") } : {}),
+            ...(command.data !== undefined ? { data: command.data } : {}),
+          })}\n`,
+        );
+      } else if (messages.length > 0) {
+        io.stdout(`${messages.join("\n")}\n`);
+      }
+      return EXIT.done;
+    }
+
     // Capture the provider's own message so a failure is actionable rather
     // than a bare "an error occurred".
     const result = await agent.run(args.prompt);
