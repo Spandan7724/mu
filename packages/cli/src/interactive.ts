@@ -467,9 +467,6 @@ export async function runInteractive(
     name: "permissions",
     description: "Choose what mu is allowed to do",
     run: () => {
-      if (activeRun || agent.isRunning) {
-        return { handled: true, message: "Cannot change permissions during a run." };
-      }
       const modes = profile?.permissionModes ?? [];
       if (modes.length === 0) {
         return { handled: true, message: "This profile does not define permission modes." };

@@ -246,7 +246,6 @@ export class Agent {
   }
 
   setPermissions(rules: PermissionRule[]): void {
-    if (this.running) throw new Error("Cannot change permissions while a run is active.");
     this.permissionRules = [...rules];
   }
 

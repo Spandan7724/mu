@@ -18,4 +18,4 @@ Interactive runs are saved by working-directory scope under `~/.mu/sessions`; us
 the direct resume command when an interactive session closes. Use `/new` to clear the
 terminal and start a fresh chat without deleting the previous saved session. Use
 `/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
-behavior.
+behavior, including while the agent is running.

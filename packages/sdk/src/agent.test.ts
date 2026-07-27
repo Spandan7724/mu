@@ -406,6 +406,57 @@ describe("permissions", () => {
     expect(agent.permissions).toEqual([{ permission: "*", pattern: "*", action: "allow" }]);
   });
 
+  test("permission rules can change while a run is active", async () => {
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const executed: number[] = [];
+    const danger = tool({
+      name: "danger",
+      description: "does something risky",
+      inputSchema: z.object({ step: z.number() }),
+      execute: async ({ step }) => {
+        executed.push(step);
+        if (step === 1) {
+          markFirstStarted();
+          await holdFirst;
+        }
+        return "ran";
+      },
+    });
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "toolCall", id: "c1", name: "danger", arguments: { step: 1 } }],
+      },
+      {
+        content: [{ type: "toolCall", id: "c2", name: "danger", arguments: { step: 2 } }],
+      },
+      { content: [{ type: "text", text: "finished" }] },
+    ]);
+    const agent = agentWith(provider, {
+      tools: [danger],
+      permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+    });
+
+    const running = agent.run("go");
+    await firstStarted;
+    agent.setPermissions([{ permission: "*", pattern: "*", action: "deny" }]);
+    releaseFirst();
+    const result = await running;
+
+    expect(executed).toEqual([1]);
+    expect(agent.permissions).toEqual([{ permission: "*", pattern: "*", action: "deny" }]);
+    const secondResult = result.messages.find(
+      (message) => message.role === "toolResult" && message.toolCallId === "c2",
+    );
+    expect(secondResult?.role === "toolResult" && secondResult.isError).toBe(true);
+  });
+
   test("an allowed request can add a rule for later calls in the same run", async () => {
     let asked = 0;
     let agent: Agent;

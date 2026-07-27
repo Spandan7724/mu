@@ -420,6 +420,16 @@ describe("input handling", () => {
     expect(h.submitted).toEqual([]);
   });
 
+  test("a slash command remains a command while the agent is running", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+
+    feed(h.app, "/permissions\r");
+
+    expect(h.commands).toEqual(["/permissions"]);
+    expect(h.steers).toEqual([]);
+  });
+
   test("a leading bang enters shell mode and submits without the prefix", () => {
     const shellCommands: string[] = [];
     const h = harness({ onShell: (command) => shellCommands.push(command) });
