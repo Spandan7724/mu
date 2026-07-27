@@ -102,6 +102,17 @@ export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
   return `  ${label} mu --resume ${sessionId}`;
 }
 
+export async function initializeInteractiveSession(
+  agent: Pick<Agent, "sessionStore" | "resume">,
+  sessionId: string | undefined,
+): Promise<boolean> {
+  if (!sessionId) return false;
+  const session = await agent.sessionStore.load(sessionId);
+  if (!session) throw new Error(`no such session: ${sessionId}`);
+  agent.resume(session);
+  return true;
+}
+
 export function availableModels(extensions: ExtensionHost): ModelInfo[] {
   const models = new Map<string, ModelInfo>(
     listModels().map((model) => [`${model.provider}/${model.id}`, model] as const),
@@ -215,24 +226,13 @@ export async function runInteractive(
   });
   let sessionResumable = false;
   try {
-    if (args.resumeSessionId) {
-      const session = await agent.sessionStore.load(args.resumeSessionId);
-      if (!session) {
-        throw new Error(`no such session: ${args.resumeSessionId}`);
-      }
-      agent.resume(session);
-    } else {
-      await agent.sessionStore.save(agent.sessionId, agent.session);
-    }
-    sessionResumable = true;
+    sessionResumable = await initializeInteractiveSession(agent, args.resumeSessionId);
   } catch (error) {
     await agent.shutdown();
     process.stderr.write(
-      `mu: ${
-        args.resumeSessionId
-          ? `could not resume ${args.resumeSessionId}`
-          : "could not create session"
-      }: ${error instanceof Error ? error.message : String(error)}\n`,
+      `mu: could not resume ${args.resumeSessionId}: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
     );
     return 2;
   }
@@ -497,6 +497,7 @@ export async function runInteractive(
                 return;
               }
               agent.resume(tree);
+              sessionResumable = true;
               app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking);
               app.replaceTranscript(tree.messagesAt(), app.banner());
@@ -606,6 +607,7 @@ export async function runInteractive(
         );
         try {
           await agent.sessionStore.save(agent.sessionId, agent.session);
+          sessionResumable = true;
         } catch (error) {
           commitLines([
             `  shell result could not be saved to the session: ${
@@ -758,9 +760,12 @@ export async function runInteractive(
   }
 
   async function startRun(text: string, options?: AgentRunOptions): Promise<void> {
-    await agent.run(text, options).catch((error) => {
+    try {
+      await agent.run(text, options);
+      sessionResumable = true;
+    } catch (error) {
       commitLines([`  ${error instanceof Error ? error.message : String(error)}`]);
-    });
+    }
     paint();
   }
 
