@@ -32,6 +32,26 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
+## MCP servers
+
+Add stdio servers to `~/.mu/config.json` or a project's `.mu/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "docs": {
+      "command": "bunx",
+      "args": ["-y", "your-mcp-server"],
+      "env": { "SERVER_TOKEN": "..." }
+    }
+  }
+}
+```
+
+mu discovers tools and resources at startup. Remote tools are named
+`mcp_<server>_<tool>` and use the normal permission rules, so an `mcp_*` rule can ask,
+allow, or deny them. Project server entries override user entries with the same name.
+
 ## Development
 
 Requires [Bun](https://bun.sh).

@@ -19,18 +19,16 @@ import {
   type AgentRunOptions,
   type DiffCommandData,
   defaultModelRef,
-  defaultSkillRoots,
-  discoverSkills,
   ExtensionHost,
   listModels,
   loadMarkdownCommands,
   type MarkdownCommandRun,
   optionsFromProfile,
   registryWithCoreCommands,
-  skillsExtension,
   toCommand,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { loadBuiltInExtensions } from "./extensions.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 const SPINNER_INTERVAL_MS = 120;
@@ -74,22 +72,22 @@ export async function runInteractive(
   }
 
   const modelRef = args.model ?? defaultModelRef();
+  const useBuiltIns = !options.tools;
   let resolved = options;
   if (!options.tools) {
     const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
     resolved = await optionsFromProfile(profile, modelRef, options);
   }
 
-  // Skills are a built-in extension: discovered from ~/.mu/skills and the
-  // project, then exposed to the model through the public extension API.
-  const extensions = new ExtensionHost();
-  const skills = await discoverSkills(defaultSkillRoots(process.cwd()));
-  if (skills.length > 0) await extensions.register(skillsExtension(skills));
+  const builtIns = useBuiltIns
+    ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
+    : { host: resolved.extensions ?? new ExtensionHost(), warnings: [] };
+  const extensions = builtIns.host;
 
   const pendingPermissions = new Map<string, (outcome: "allow" | "deny") => void>();
   const agent = new Agent({
-    extensions,
     ...resolved,
+    extensions,
     model: modelRef,
     onPermission: (request) =>
       new Promise<"allow" | "deny">((resolve) => pendingPermissions.set(request.id, resolve)),
@@ -347,6 +345,9 @@ export async function runInteractive(
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking);
   renderer.commit(app.banner());
+  if (builtIns.warnings.length > 0) {
+    renderer.commit(builtIns.warnings.map((warning) => `  mcp: ${warning}`));
+  }
   const stopResize = terminal.onResize(() => {
     app.setWidth(terminal.columns);
     agent.resize(terminal.columns, terminal.rows);

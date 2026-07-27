@@ -61,6 +61,12 @@ export {
   substituteArguments,
   toCommand,
 } from "./markdown-commands.ts";
+export type {
+  LoadMcpConfigOptions,
+  McpConfigReport,
+  McpStdioServerConfig,
+} from "./mcp.ts";
+export { loadMcpConfig, mcpExtension } from "./mcp.ts";
 export type { Profile, ProfileImporter } from "./profile.ts";
 export { loadProfile, optionsFromProfile } from "./profile.ts";
 export type { HookEvent, HookRunner, HookSpec } from "./shell-hooks.ts";

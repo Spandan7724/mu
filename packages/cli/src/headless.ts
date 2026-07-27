@@ -1,5 +1,6 @@
 import { Agent, type AgentOptions, defaultModelRef, type HaltReason, optionsFromProfile } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { loadBuiltInExtensions } from "./extensions.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
@@ -31,6 +32,7 @@ export async function runHeadless(
 
   // The profile supplies the toolset, prompt and — importantly — the
   // restrictive permission defaults the bare SDK does not have.
+  const useBuiltIns = !options.tools;
   let resolved: AgentOptions = options;
   if (!options.tools) {
     try {
@@ -42,8 +44,14 @@ export async function runHeadless(
     }
   }
 
+  const builtIns = useBuiltIns
+    ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
+    : undefined;
+  for (const warning of builtIns?.warnings ?? []) io.stderr(`mu: mcp: ${warning}\n`);
+
   const agent = new Agent({
     ...resolved,
+    ...(builtIns ? { extensions: builtIns.host } : {}),
     ...(args.model ? { model: args.model } : {}),
     ...(args.maxTurns !== undefined || args.maxCostUsd !== undefined
       ? {

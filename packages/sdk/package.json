@@ -6,8 +6,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@mu/ai": "workspace:*",
     "@mu/core": "workspace:*",
-    "zod": "4.4.3",
-    "@mu/ai": "workspace:*"
+    "zod": "4.4.3"
   }
 }
