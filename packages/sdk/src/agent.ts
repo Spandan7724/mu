@@ -1090,9 +1090,8 @@ export class Agent {
         return pending;
       },
       getFollowUpMessages: () => {
-        const pending = this.followUps;
-        this.followUps = [];
-        return pending;
+        const next = this.followUps.shift();
+        return next ? [next] : [];
       },
       beforeToolCall: async (info) => {
         // The structured-output tool is internal plumbing, never gated.

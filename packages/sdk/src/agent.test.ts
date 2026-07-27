@@ -472,6 +472,30 @@ describe("steering, follow-ups and abort", () => {
     expect(result.text).toBe("second");
   });
 
+  test("multiple follow-ups are delivered one at a time in queue order", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "initial" }], delayMs: 20 },
+      { content: [{ type: "text", text: "first follow-up answer" }] },
+      { content: [{ type: "text", text: "second follow-up answer" }] },
+    ]);
+    const agent = agentWith(provider);
+    const running = agent.run("go");
+    await Bun.sleep(3);
+    agent.followUp("first queued message");
+    agent.followUp("second queued message");
+
+    const result = await running;
+
+    expect(provider.callCount).toBe(3);
+    const secondRequest = JSON.stringify(provider.requests[1]?.messages);
+    expect(secondRequest).toContain("first queued message");
+    expect(secondRequest).not.toContain("second queued message");
+    const thirdRequest = JSON.stringify(provider.requests[2]?.messages);
+    expect(thirdRequest).toContain("first queued message");
+    expect(thirdRequest).toContain("second queued message");
+    expect(result.text).toBe("second follow-up answer");
+  });
+
   test("a queued message can be removed before the loop delivers it", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "first" }], delayMs: 20 },
