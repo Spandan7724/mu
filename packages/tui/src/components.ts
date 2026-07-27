@@ -336,8 +336,10 @@ export function queuedInputPreview(
   text: string,
   width: number,
   depth: ColorDepth,
+  editable = false,
 ): string[] {
   const safe = sanitizeUntrusted(text);
+  const content = safe + (editable ? dim(` ${GLYPHS.separator} alt+up edit`, depth) : "");
   const label = `${kind} ${GLYPHS.separator} `;
   const prefixWidth = 2 + stringWidth(label);
   const available = width - MARGIN.length - prefixWidth;
@@ -348,13 +350,13 @@ export function queuedInputPreview(
     const header = `${MARGIN}${accent(GLYPHS.userMarker, depth)}${dim(` ${headerLabel}`, depth)}`;
     const bodyWidth = Math.max(1, maxWidth - 2);
     const indent = `${MARGIN}  `;
-    const lines = [header, ...wrapText(safe, bodyWidth).map((line) => `${indent}${line}`)];
+    const lines = [header, ...wrapText(content, bodyWidth).map((line) => `${indent}${line}`)];
     return boundQueuedInput(lines, indent, width, depth);
   }
 
   const prefix = `${accent(GLYPHS.userMarker, depth)} ${dim(label, depth)}`;
   const indent = `${MARGIN}${" ".repeat(prefixWidth)}`;
-  const lines = wrapText(safe, available).map((line, index) =>
+  const lines = wrapText(content, available).map((line, index) =>
     index === 0 ? `${MARGIN}${prefix}${line}` : `${MARGIN}${" ".repeat(prefixWidth)}${line}`,
   );
   return boundQueuedInput(lines, indent, width, depth);

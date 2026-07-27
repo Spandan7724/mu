@@ -324,6 +324,26 @@ export class Agent {
     if (!this.running) this.scheduleAutonomousRun();
   }
 
+  // Removes a specific message while it is still waiting in an agent queue.
+  // Surfaces use this to restore pending input to an editor without retracting
+  // a message that the loop has already begun delivering.
+  removeQueuedMessage(kind: "steer" | "follow-up", text: string): boolean {
+    const queue = kind === "steer" ? this.steering : this.followUps;
+    for (let index = queue.length - 1; index >= 0; index--) {
+      const message = queue[index];
+      if (message?.role !== "user") continue;
+      const queuedText = message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("");
+      if (queuedText !== text) continue;
+      queue.splice(index, 1);
+      this.resolveIdleIfDone();
+      return true;
+    }
+    return false;
+  }
+
   // Profile runtimes forward background-task events here. Active streams see
   // them immediately; persistent subscribers also see them while the Agent is
   // idle, rather than receiving a stale event on some later user turn.

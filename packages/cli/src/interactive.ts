@@ -315,6 +315,7 @@ export async function runInteractive(
         agent.followUp(text);
         return true;
       },
+      onEditQueued: (kind, text) => agent.removeQueuedMessage(kind, text),
       onShell: (command) => beginUserShell(command),
       onAbort: () => {
         if (shellController) shellController.abort();

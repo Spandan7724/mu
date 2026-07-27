@@ -53,6 +53,7 @@ export interface AppCallbacks {
   onSubmit: (text: string) => void;
   onSteer?: (text: string) => boolean;
   onFollowUp?: (text: string) => boolean;
+  onEditQueued?: (kind: QueuedInputKind, text: string) => boolean;
   // Explicit user shell escape. The leading `!` stays in editor history, but
   // only the command text is passed to the surface.
   onShell?: (command: string) => void;
@@ -615,8 +616,16 @@ export class App {
           ),
       );
     }
-    for (const pending of visiblePending) {
-      lines.push(...queuedInputPreview(pending.kind, pending.text, width, depth));
+    for (const [index, pending] of visiblePending.entries()) {
+      lines.push(
+        ...queuedInputPreview(
+          pending.kind,
+          pending.text,
+          width,
+          depth,
+          index === visiblePending.length - 1 && this.options.callbacks.onEditQueued !== undefined,
+        ),
+      );
     }
 
     if (this.mode === "approval" && this.approvals[0]) {
@@ -820,10 +829,29 @@ export class App {
         }
         return;
       }
+      case "up": {
+        if (key.alt) {
+          const pending = this.pendingInputs.at(-1);
+          if (
+            !pending ||
+            !this.options.callbacks.onEditQueued ||
+            this.options.callbacks.onEditQueued(pending.kind, pending.text) === false
+          ) {
+            return;
+          }
+          this.pendingInputs.pop();
+          const draft = this.editor.text;
+          this.editor.setText(
+            [pending.text, draft].filter((part) => part.trim().length > 0).join("\n\n"),
+          );
+          return;
+        }
+        if (!this.editor.recallHistory("up")) this.editor.move("up");
+        return;
+      }
       case "backspace":
         this.editor.backspace();
         return;
-      case "up":
       case "down":
         if (!this.editor.recallHistory(key.name)) this.editor.move(key.name);
         return;

@@ -472,6 +472,31 @@ describe("steering, follow-ups and abort", () => {
     expect(result.text).toBe("second");
   });
 
+  test("a queued message can be removed before the loop delivers it", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first" }], delayMs: 20 },
+      { content: [{ type: "text", text: "second" }] },
+    ]);
+    const agent = agentWith(provider);
+    const running = agent.run("go");
+    await Bun.sleep(3);
+    agent.followUp("keep this");
+    agent.followUp("edit this");
+
+    expect(agent.removeQueuedMessage("follow-up", "edit this")).toBe(true);
+    expect(agent.removeQueuedMessage("follow-up", "not queued")).toBe(false);
+    await running;
+
+    expect(provider.callCount).toBe(2);
+    const delivered = provider.requests[1]?.messages
+      .filter((message) => message.role === "user")
+      .flatMap((message) =>
+        message.content.filter((block) => block.type === "text").map((block) => block.text),
+      );
+    expect(delivered).toContain("keep this");
+    expect(delivered).not.toContain("edit this");
+  });
+
   test("abort ends the run with reason aborted", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "slow" }], delayMs: 60 }]);
     const agent = agentWith(provider);

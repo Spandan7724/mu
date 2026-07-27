@@ -339,6 +339,9 @@ describe("components", () => {
     expect(visible(queuedInputPreview("follow-up", "run tests when done", 60, "none"))).toEqual([
       "  ▸ follow-up · run tests when done",
     ]);
+    expect(visible(queuedInputPreview("steer", "dojopj", 60, "none", true))).toEqual([
+      "  ▸ steer · dojopj · alt+up edit",
+    ]);
 
     const narrow = queuedInputPreview("steer", "change direction now", 14, "truecolor");
     expect(visible(narrow)[0]).toBe("  ▸ steer");

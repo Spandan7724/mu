@@ -309,6 +309,44 @@ describe("input handling", () => {
     expect(pending).toContain("▸ follow-up · same");
   });
 
+  test("alt+up restores only the newest queued message for editing", () => {
+    const edited: { kind: string; text: string }[] = [];
+    const h = harness({
+      onEditQueued: (kind, text) => {
+        edited.push({ kind, text });
+        return true;
+      },
+    });
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "run tests\t");
+    feed(h.app, "dojopj\r");
+
+    const before = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(before).toContain("▸ steer · dojopj · alt+up edit");
+    expect(before).not.toContain("follow-up · run tests · alt+up edit");
+
+    feed(h.app, "draft");
+    feed(h.app, `${ESC}[1;3A`);
+
+    expect(edited).toEqual([{ kind: "steer", text: "dojopj" }]);
+    expect(h.app.editor.text).toBe("dojopj\n\ndraft");
+    const after = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(after).not.toContain("steer · dojopj");
+    expect(after).toContain("▸ follow-up · run tests · alt+up edit");
+  });
+
+  test("alt+up leaves a queued message visible when it is already being delivered", () => {
+    const h = harness({ onEditQueued: () => false });
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "too late\t");
+    feed(h.app, `${ESC}[1;3A`);
+
+    expect(h.app.editor.text).toBe("");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain(
+      "▸ follow-up · too late · alt+up edit",
+    );
+  });
+
   test("rejected follow-ups are not displayed as queued", () => {
     const h = harness({ onFollowUp: () => false });
     h.app.handleEvent({ type: "agent_start" });

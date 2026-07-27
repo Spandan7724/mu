@@ -37,6 +37,10 @@ describe("InputDecoder", () => {
     const events = new InputDecoder().push(`${ESC}[1;5A`); // Ctrl+Up
     expect(events[0]?.type === "key" && events[0].key.name).toBe("up");
     expect(events[0]?.type === "key" && events[0].key.ctrl).toBe(true);
+
+    const altEvents = new InputDecoder().push(`${ESC}[1;3A`); // Alt+Up
+    expect(altEvents[0]?.type === "key" && altEvents[0].key.name).toBe("up");
+    expect(altEvents[0]?.type === "key" && altEvents[0].key.alt).toBe(true);
   });
 
   test("decodes home/end/delete", () => {
