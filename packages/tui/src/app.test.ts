@@ -576,7 +576,7 @@ describe("tool output toggle", () => {
     feed(app, "\u000f");
     expect(app.areToolOutputsExpanded).toBe(true);
     const expanded = app.renderBottom().map(stripAnsi).join("\n");
-    expect(expanded).toContain("tool output · ctrl+o to collapse");
+    expect(expanded).toContain("expanded turn · ctrl+o to collapse");
     expect(expanded).toContain("ran bun test");
     expect(expanded).toContain("│ one");
     expect(expanded).toContain("│ two");
@@ -584,6 +584,50 @@ describe("tool output toggle", () => {
     feed(app, "\u000f");
     expect(app.areToolOutputsExpanded).toBe(false);
     expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("│ one");
+  });
+
+  test("expanded tools keep the final assistant response last", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "message_end",
+      message: { ...assistant("I’ll inspect the project first."), stopReason: "toolUse" },
+    });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "bun test" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "one\ntwo" }],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    app.handleEvent({
+      type: "message_end",
+      message: assistant("Done — the tests pass."),
+    });
+
+    feed(app, "\u000f");
+    const expanded = app.renderBottom().map(stripAnsi);
+    const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
+    const toolIndex = expanded.findIndex((line) => line.includes("ran bun test"));
+    const resultIndex = expanded.findIndex((line) => line.includes("│ two"));
+    const finalIndex = expanded.findIndex((line) => line.includes("the tests pass"));
+
+    expect(preambleIndex).toBeGreaterThanOrEqual(0);
+    expect(toolIndex).toBeGreaterThan(preambleIndex);
+    expect(resultIndex).toBeGreaterThan(toolIndex);
+    expect(finalIndex).toBeGreaterThan(resultIndex);
   });
 
   test("the expanded output view is bounded and reports omitted rows", () => {
@@ -612,9 +656,17 @@ describe("tool output toggle", () => {
         timestamp: 1,
       },
     });
+    app.handleEvent({
+      type: "message_end",
+      message: assistant("Done — this response stays after the expanded output."),
+    });
     feed(app, "\u000f");
     const bottom = app.renderBottom().map(stripAnsi);
+    const resultIndex = bottom.findIndex((line) => line.includes("line 80"));
+    const finalIndex = bottom.findIndex((line) => line.includes("this response stays"));
     expect(bottom.some((line) => line.includes("… +"))).toBe(true);
+    expect(resultIndex).toBeGreaterThanOrEqual(0);
+    expect(finalIndex).toBeGreaterThan(resultIndex);
     expect(bottom.length).toBeLessThanOrEqual(31);
   });
 

@@ -1,7 +1,7 @@
 // The mu integration layer: an AgentEvent consumer that commits transcript
 // cells to scrollback and keeps the bottom region (composer / approval / footer)
 // up to date. It holds no agent logic — everything arrives as events.
-import type { AgentEvent, PermissionRequest } from "@mu/core";
+import type { AgentEvent, AssistantMessage, PermissionRequest } from "@mu/core";
 import {
   agentCell,
   compactionCell,
@@ -133,6 +133,9 @@ class LiveToolOutput {
 }
 
 type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
+type RetainedTurnItem =
+  | { kind: "assistant"; message: AssistantMessage }
+  | { kind: "tool"; info: ToolRenderInfo };
 
 export class App {
   readonly editor = new Editor();
@@ -147,7 +150,7 @@ export class App {
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
   private pendingTools = new Map<string, PendingTool>();
-  private completedTools: ToolRenderInfo[] = [];
+  private retainedTurn: RetainedTurnItem[] = [];
   private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
@@ -252,7 +255,7 @@ export class App {
     switch (event.type) {
       case "agent_start":
         this.running = true;
-        this.completedTools = [];
+        this.retainedTurn = [];
         return [];
 
       case "agent_end": {
@@ -320,6 +323,9 @@ export class App {
           return text ? [...userCell(text, this.ctx), ""] : [];
         }
         if (message.role === "assistant") {
+          if (this.assistantRows(message).length > 0) {
+            this.retainedTurn.push({ kind: "assistant", message });
+          }
           let committedRows = this.streamingCommittedRows;
           this.streaming = undefined;
           this.streamingCommittedRows = 0;
@@ -361,10 +367,8 @@ export class App {
           args: pending?.args ?? {},
           result: event.result,
         };
-        this.completedTools.push(info);
-        if (this.completedTools.length > RETAINED_TOOLS) {
-          this.completedTools = this.completedTools.slice(-RETAINED_TOOLS);
-        }
+        this.retainedTurn.push({ kind: "tool", info });
+        this.trimRetainedTurn();
         return this.registry.render(info, this.ctx);
       }
 
@@ -488,14 +492,16 @@ export class App {
     const height = this.options.height ?? 24;
     const expandedRows = Math.max(3, Math.min(EXPANDED_TOOL_ROWS, height - 12));
 
-    if (this.toolOutputExpanded && this.completedTools.length > 0) {
-      const expanded = this.completedTools.flatMap((info) =>
-        this.registry.render({ ...info, expanded: true }, this.ctx),
+    if (this.toolOutputExpanded && this.retainedTurn.some((item) => item.kind === "tool")) {
+      const expanded = this.retainedTurn.flatMap((item) =>
+        item.kind === "tool"
+          ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
+          : [...this.assistantRows(item.message), ""],
       );
       lines.push(
         MARGIN +
           styleText(
-            `${GLYPHS.rule} tool output ${GLYPHS.separator} ctrl+o to collapse`,
+            `${GLYPHS.rule} expanded turn ${GLYPHS.separator} ctrl+o to collapse`,
             { dim: true },
             depth,
           ),
@@ -630,6 +636,25 @@ export class App {
   private streamingRows(): string[] {
     if (!this.streaming) return [];
     return this.toTerminalRows(agentCell(this.streaming, this.ctx));
+  }
+
+  private assistantRows(message: AssistantMessage): string[] {
+    const lines: string[] = [];
+    for (const block of message.content) {
+      if (block.type === "thinking" && block.thinking.trim()) {
+        lines.push(...thinkingCell(block.thinking, this.ctx));
+      } else if (block.type === "text" && block.text.trim()) {
+        lines.push(...this.toTerminalRows(agentCell(block.text, this.ctx)));
+      }
+    }
+    return lines;
+  }
+
+  private trimRetainedTurn(): void {
+    const toolCount = this.retainedTurn.filter((item) => item.kind === "tool").length;
+    if (toolCount <= RETAINED_TOOLS) return;
+    const oldestTool = this.retainedTurn.findIndex((item) => item.kind === "tool");
+    this.retainedTurn = this.retainedTurn.slice(oldestTool + 1);
   }
 
   private toTerminalRows(lines: string[]): string[] {
