@@ -13,6 +13,7 @@ import {
   formatCwdForFooter,
   InputDecoder,
   RendererRegistry,
+  styleText,
   Terminal,
   type ToolRendererFn,
 } from "@mu/tui";
@@ -91,8 +92,9 @@ export function renderCheckpointCommand(
   );
 }
 
-export function formatResumeHint(sessionId: string): string {
-  return `  To resume this session: mu --resume ${sessionId}`;
+export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
+  const label = styleText("To resume this session:", { resumeHint: true }, depth);
+  return `  ${label} mu --resume ${sessionId}`;
 }
 
 export function availableModels(extensions: ExtensionHost): ModelInfo[] {
@@ -809,7 +811,7 @@ export async function runInteractive(
   terminal.onExit = () => {
     shutdown();
     if (sessionResumable) {
-      terminal.write(`\r\n${formatResumeHint(agent.sessionId)}\r\n`);
+      terminal.write(`\r\n${formatResumeHint(agent.sessionId, depth)}\r\n`);
     }
   };
   terminal.start();
@@ -876,7 +878,7 @@ export async function runInteractive(
     stopResize();
     renderer.renderNow([
       ...app.renderTranscript(),
-      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId), ""] : []),
+      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth), ""] : []),
     ]);
     renderer.stop();
     terminal.restore();

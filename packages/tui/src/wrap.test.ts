@@ -110,4 +110,11 @@ describe("colour depth", () => {
     expect(styleText("rule", { codeAccent: true }, "ansi256")).toContain("38;5;189");
     expect(styleText("rule", { codeAccent: true }, "ansi16")).toBe("rule");
   });
+
+  test("the session resume label uses its muted semantic color", () => {
+    expect(styleText("resume", { resumeHint: true }, "truecolor")).toContain("38;2;102;102;102");
+    expect(styleText("resume", { resumeHint: true }, "ansi256")).toContain("38;5;241");
+    expect(styleText("resume", { resumeHint: true }, "ansi16")).toContain("[2m");
+    expect(styleText("resume", { resumeHint: true }, "none")).toBe("resume");
+  });
 });
