@@ -26,7 +26,27 @@ const INLINE_PATTERNS = [
 ] as const;
 
 function mergeStyle(base: Style, addition: Style): Style {
-  return { ...base, ...addition };
+  const changesColor =
+    addition.accent ||
+    addition.green ||
+    addition.red ||
+    addition.heading ||
+    addition.link ||
+    addition.code;
+  return {
+    ...base,
+    ...(changesColor
+      ? {
+          accent: false,
+          green: false,
+          red: false,
+          heading: false,
+          link: false,
+          code: false,
+        }
+      : {}),
+    ...addition,
+  };
 }
 
 function earliestInlineMatch(
@@ -44,24 +64,32 @@ function earliestInlineMatch(
     const content = match[1] ?? "";
     switch (patternIndex) {
       case 0:
-        rendered = styleText(content, mergeStyle(base, { accent: true }), depth);
+        rendered = styleText(content, mergeStyle(base, { code: true }), depth);
         break;
       case 1: {
         const url = match[2] ?? "";
-        rendered = `${styleText("image", mergeStyle(base, { accent: true }), depth)}${styleText(
+        rendered = `${styleText("image", mergeStyle(base, { code: true }), depth)}${styleText(
           `: ${content} (${url})`,
-          mergeStyle(base, { dim: true }),
+          mergeStyle(base, { dim: true, link: true }),
           depth,
         )}`;
         break;
       }
       case 2: {
         const url = match[2] ?? "";
-        const label = renderInline(content, depth, mergeStyle(base, { underline: true }));
+        const label = renderInline(
+          content,
+          depth,
+          mergeStyle(base, { underline: true, link: true }),
+        );
         rendered =
           content === url
             ? label
-            : `${label}${styleText(` (${url})`, mergeStyle(base, { dim: true }), depth)}`;
+            : `${label}${styleText(
+                ` (${url})`,
+                mergeStyle(base, { dim: true, link: true }),
+                depth,
+              )}`;
         break;
       }
       case 3:
@@ -76,7 +104,7 @@ function earliestInlineMatch(
         rendered = renderInline(content, depth, mergeStyle(base, { italic: true }));
         break;
       case 8:
-        rendered = styleText(content, mergeStyle(base, { underline: true, accent: true }), depth);
+        rendered = styleText(content, mergeStyle(base, { underline: true, link: true }), depth);
         break;
       default:
         rendered = match[0];
@@ -182,7 +210,7 @@ function renderTable(rows: TableRow[], width: number, depth: ColorDepth): string
     row.cells
       .concat(Array(Math.max(0, columns - row.cells.length)).fill(""))
       .map((cell, column) => {
-        const base = rowIndex === 0 ? { bold: true } : {};
+        const base = rowIndex === 0 ? { bold: true, heading: true } : {};
         const styled = fitStyled(
           renderInline(cell, depth, base),
           widths[column] ?? minimumCellWidth,
@@ -221,15 +249,15 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
     if (fence) {
       const marker = fence[1] ?? "```";
       const language = fence[2]?.trim();
-      if (language) out.push(styleText(language, { dim: true, italic: true }, depth));
+      if (language) out.push(styleText(language, { code: true, dim: true, italic: true }, depth));
       index++;
       while (
         index < source.length &&
         !new RegExp(`^\\s*${marker[0]}{${marker.length},}\\s*$`).test(source[index] ?? "")
       ) {
         const code = source[index] ?? "";
-        const rule = styleText(`${GLYPHS.rule} `, { dim: true }, depth);
-        const wrapped = wrapLine(code, Math.max(1, width - 2));
+        const rule = styleText(`${GLYPHS.rule} `, { code: true, dim: true }, depth);
+        const wrapped = wrapLine(styleText(code, { code: true }, depth), Math.max(1, width - 2));
         out.push(...wrapped.map((line) => rule + line));
         index++;
       }
@@ -257,10 +285,10 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
       const level = (heading[1] ?? "").length;
       const style: Style =
         level === 1
-          ? { bold: true, underline: true }
+          ? { bold: true, heading: true, underline: true }
           : level <= 3
-            ? { bold: true }
-            : { dim: true, bold: true };
+            ? { bold: true, heading: true }
+            : { dim: true, bold: true, heading: true };
       out.push(...renderParagraph([heading[2] ?? ""], width, depth, style));
       index++;
       continue;
@@ -281,11 +309,12 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         quoteLines.push(next[1] ?? "");
         index++;
       }
-      const rule = styleText(`${GLYPHS.rule} `, { dim: true }, depth);
+      const rule = styleText(`${GLYPHS.rule} `, { dim: true, link: true }, depth);
       out.push(
         ...renderParagraph(quoteLines, Math.max(1, width - 2), depth, {
           dim: true,
           italic: true,
+          link: true,
         }).map((line) => rule + line),
       );
       continue;
@@ -302,7 +331,12 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         renderedMarker = task[1]?.toLowerCase() === "x" ? GLYPHS.ok : "○";
         content = task[2] ?? "";
       }
-      const prefix = `${indent}${styleText(renderedMarker, { accent: true }, depth)} `;
+      const markerStyle: Style = task
+        ? task[1]?.toLowerCase() === "x"
+          ? { green: true }
+          : { dim: true }
+        : { accent: true };
+      const prefix = `${indent}${styleText(renderedMarker, markerStyle, depth)} `;
       const continuation = " ".repeat(stringWidth(prefix));
       const wrapped = wrapLine(prefix + renderInline(content, depth), width, continuation);
       out.push(...wrapped);

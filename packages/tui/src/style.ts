@@ -20,6 +20,12 @@ export const RESET = "\u001b[0m";
 // mu's accent: teal at truecolor, plain cyan below it.
 const ACCENT_RGB = [45, 212, 191] as const;
 const ACCENT_256 = 43;
+const HEADING_RGB = [250, 204, 21] as const;
+const HEADING_256 = 220;
+const LINK_RGB = [96, 165, 250] as const;
+const LINK_256 = 75;
+const CODE_RGB = [192, 132, 252] as const;
+const CODE_256 = 177;
 
 export interface Style {
   accent?: boolean;
@@ -30,6 +36,9 @@ export interface Style {
   strikethrough?: boolean;
   green?: boolean;
   red?: boolean;
+  heading?: boolean;
+  link?: boolean;
+  code?: boolean;
 }
 
 export function styleText(text: string, style: Style, depth: ColorDepth): string {
@@ -48,6 +57,22 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
   }
   if (style.green) codes.push("32");
   if (style.red) codes.push("31");
+  if (style.heading) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
+    else codes.push("93");
+  }
+  if (style.link) {
+    if (depth === "truecolor") codes.push(`38;2;${LINK_RGB[0]};${LINK_RGB[1]};${LINK_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${LINK_256}`);
+    else codes.push("94");
+  }
+  if (style.code) {
+    if (depth === "truecolor") codes.push(`38;2;${CODE_RGB[0]};${CODE_RGB[1]};${CODE_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${CODE_256}`);
+    else codes.push("95");
+  }
   if (codes.length === 0) return text;
   return `${ESC}${codes.join(";")}m${text}${RESET}`;
 }

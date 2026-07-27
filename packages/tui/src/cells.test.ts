@@ -393,15 +393,22 @@ describe("components", () => {
 
   test("markdown styling uses semantic ANSI roles and agent cells render it", () => {
     const rendered = renderMarkdown(
-      "# Heading\n\n**bold** *italic* ~~old~~ `code` [link](https://example.com)",
+      "# Heading\n\n**bold** *italic* ~~old~~ `code` [link](https://example.com)\n\n> quote\n\n```ts\nconst value = 1;\n```",
       80,
       "truecolor",
     ).join("\n");
-    expect(rendered).toContain("\u001b[1;4m");
+    expect(rendered).toContain("38;2;250;204;21");
+    expect(rendered).toContain("38;2;96;165;250");
+    expect(rendered).toContain("38;2;192;132;252");
     expect(rendered).toContain("\u001b[1m");
     expect(rendered).toContain("\u001b[3m");
     expect(rendered).toContain("\u001b[9m");
-    expect(rendered).toContain("\u001b[38;2;45;212;191m");
+    expect(rendered).toContain("\u001b[2;3;38;2;96;165;250mquote\u001b[0m");
+    expect(rendered).toContain("const value = 1;");
+    expect(
+      renderMarkdown("| name |\n| --- |\n| value |\n\n- [x] shipped", 80, "truecolor").join("\n"),
+    ).toContain("38;2;250;204;21");
+    expect(renderMarkdown("- [x] shipped", 80, "ansi16").join("\n")).toContain("[32m");
 
     const agent = agentCell("## Result\n\n- **done**", colored);
     expect(visible(agent)).toEqual(["  mu  Result", "", "      • done"]);
@@ -510,10 +517,16 @@ describe("style conformance", () => {
     ...footer({ ...footerData, model: "m", contextPercent: 0.5, costUsd: 1 }, 60, "truecolor"),
   ].join("\n");
 
-  test("no forbidden colours appear anywhere", () => {
-    for (const code of ["[35m", "[34m", "[33m"]) {
-      expect(everything).not.toContain(code);
+  test("the extended palette stays scoped to assistant Markdown", () => {
+    for (const color of ["38;2;250;204;21", "38;2;96;165;250", "38;2;192;132;252"]) {
+      expect(everything).not.toContain(color);
     }
+    const markdown = agentCell("# heading\n\n[link](https://example.com) and `code`", colored).join(
+      "\n",
+    );
+    expect(markdown).toContain("38;2;250;204;21");
+    expect(markdown).toContain("38;2;96;165;250");
+    expect(markdown).toContain("38;2;192;132;252");
   });
 
   test("no borders or box drawing in the transcript", () => {

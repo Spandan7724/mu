@@ -100,12 +100,9 @@ describe("colour depth", () => {
     expect(styleText("mu", { accent: true }, "truecolor")).toContain("38;2;45;212;191");
   });
 
-  test("forbidden colours are not reachable through the style API", () => {
-    const all = styleText(
-      "x",
-      { accent: true, dim: true, bold: true, green: true, red: true },
-      "truecolor",
-    );
-    for (const forbidden of ["35m", "34m", "33m"]) expect(all).not.toContain(forbidden);
+  test("the Markdown palette degrades by terminal colour depth", () => {
+    expect(styleText("heading", { heading: true }, "truecolor")).toContain("38;2;250;204;21");
+    expect(styleText("link", { link: true }, "ansi256")).toContain("38;5;75");
+    expect(styleText("code", { code: true }, "ansi16")).toContain("[95m");
   });
 });
