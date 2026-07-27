@@ -22,12 +22,20 @@ import {
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
-import type { ColorDepth } from "./style.ts";
+import { type ColorDepth, MARGIN, styleText } from "./style.ts";
 
-export type AppMode = "composing" | "approval" | "select";
+export type AppMode = "composing" | "approval" | "select" | "mention" | "picker";
+
+export interface PickerRequest {
+  title: string;
+  items: { label: string; description?: string }[];
+  onChoose: (label: string) => void;
+}
 
 export interface AppCallbacks {
   onSubmit: (text: string) => void;
+  // Supplies file paths for the `@` mention popup.
+  onMentionQuery?: (query: string) => { label: string; description?: string }[];
   onAbort: () => void;
   onExit: () => void;
   onPermissionReply?: (requestId: string, outcome: "allow" | "deny", remember: boolean) => void;
@@ -54,6 +62,8 @@ export class App {
   private pendingTools = new Map<string, ToolRenderInfo>();
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
+  private picker: PickerRequest | undefined;
+  private mentionStart = -1;
 
   constructor(private options: AppOptions) {
     this.registry = options.registry ?? new RendererRegistry();
@@ -70,6 +80,13 @@ export class App {
 
   setCommands(commands: { label: string; description?: string }[]): void {
     this.commands = commands;
+  }
+
+  // Opens a selection list (used by /model and /resume).
+  openPicker(request: PickerRequest): void {
+    this.picker = request;
+    this.commandList.setItems(request.items);
+    this.mode = "picker";
   }
 
   get isRunning(): boolean {
@@ -197,8 +214,15 @@ export class App {
         ),
       );
     } else {
-      lines.push(...this.editor.render(width, depth));
-      if (this.mode === "select") lines.push(...this.commandList.render(width, depth));
+      if (this.mode === "picker" && this.picker) {
+        lines.push(MARGIN + styleText(this.picker.title, { bold: true }, depth));
+        lines.push(...this.commandList.render(width, depth));
+      } else {
+        lines.push(...this.editor.render(width, depth));
+        if (this.mode === "select" || this.mode === "mention") {
+          lines.push(...this.commandList.render(width, depth));
+        }
+      }
     }
 
     const hint = this.running ? `${this.spinner.render(depth)} esc to interrupt` : undefined;
@@ -225,8 +249,14 @@ export class App {
       return;
     }
 
-    if (this.mode === "select") {
-      this.handleSelectKey(key);
+    if (this.mode === "picker") {
+      this.handlePickerKey(key);
+      return;
+    }
+
+    if (this.mode === "select" || this.mode === "mention") {
+      if (this.mode === "mention") this.handleMentionKey(key);
+      else this.handleSelectKey(key);
       return;
     }
 
@@ -269,6 +299,12 @@ export class App {
             this.commandList.setItems(this.commands);
             this.mode = "select";
           }
+          // "@" anywhere opens the file-mention popup.
+          if (key.text === "@" && this.options.callbacks.onMentionQuery) {
+            this.mentionStart = this.editor.text.length - 1;
+            this.commandList.setItems(this.options.callbacks.onMentionQuery(""));
+            this.mode = "mention";
+          }
         }
     }
   }
@@ -294,6 +330,75 @@ export class App {
       const outcome = option === "deny" ? "deny" : "allow";
       this.options.callbacks.onPermissionReply?.(request.id, outcome, option === "always allow");
     }
+  }
+
+  private handlePickerKey(key: Key): void {
+    const picker = this.picker;
+    if (!picker) return;
+    if (key.name === "up" || key.name === "down") {
+      this.commandList.move(key.name);
+      return;
+    }
+    if (key.name === "escape") {
+      this.picker = undefined;
+      this.mode = "composing";
+      return;
+    }
+    if (key.name === "return") {
+      const selected = this.commandList.selected;
+      this.picker = undefined;
+      this.mode = "composing";
+      if (selected) picker.onChoose(selected.label);
+    }
+  }
+
+  // The `@` popup completes a path into the composer rather than submitting.
+  private handleMentionKey(key: Key): void {
+    if (key.name === "up" || key.name === "down") {
+      this.commandList.move(key.name);
+      return;
+    }
+    if (key.name === "escape") {
+      this.mode = "composing";
+      this.mentionStart = -1;
+      return;
+    }
+    if (key.name === "return" || key.name === "tab") {
+      const selected = this.commandList.selected;
+      if (selected && this.mentionStart >= 0) {
+        // Replace the partial "@query" with the chosen path.
+        const text = this.editor.text;
+        this.editor.setText(text.slice(0, this.mentionStart) + selected.label + " ");
+      }
+      this.mode = "composing";
+      this.mentionStart = -1;
+      return;
+    }
+    if (key.name === "backspace") {
+      this.editor.backspace();
+      if (this.editor.text.length <= this.mentionStart) {
+        this.mode = "composing";
+        this.mentionStart = -1;
+        return;
+      }
+      this.refreshMentions();
+      return;
+    }
+    if (key.text) {
+      if (key.text === " ") {
+        this.editor.insert(" ");
+        this.mode = "composing";
+        this.mentionStart = -1;
+        return;
+      }
+      this.editor.insert(key.text);
+      this.refreshMentions();
+    }
+  }
+
+  private refreshMentions(): void {
+    const query = this.editor.text.slice(this.mentionStart + 1);
+    this.commandList.setItems(this.options.callbacks.onMentionQuery?.(query) ?? []);
   }
 
   private handleSelectKey(key: Key): void {

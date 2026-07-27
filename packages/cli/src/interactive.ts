@@ -1,3 +1,5 @@
+import { readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import {
   App,
   codingRenderers,
@@ -11,9 +13,14 @@ import {
   Agent,
   type AgentOptions,
   defaultModelRef,
+  defaultSkillRoots,
+  discoverSkills,
+  ExtensionHost,
+  listModels,
   loadMarkdownCommands,
   optionsFromProfile,
   registryWithCoreCommands,
+  skillsExtension,
   toCommand,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
@@ -79,6 +86,7 @@ export async function runInteractive(
         exiting = true;
       },
       onCommand: (text) => void runCommand(text),
+      onMentionQuery: (query) => mentionCandidates(query),
       onPermissionReply: (id, outcome) => {
         pendingPermissions.get(id)?.(outcome);
         pendingPermissions.delete(id);
@@ -89,9 +97,73 @@ export async function runInteractive(
   for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
     commands.register(toCommand(markdown, (prompt) => void startRun(prompt)));
   }
+  // /model and /resume open selection lists rather than needing exact typing.
+  commands.register({
+    name: "model",
+    description: "Switch the active model",
+    run: () => {
+      app.openPicker({
+        title: "select a model",
+        items: listModels().map((m) => ({
+          label: `${m.provider}/${m.id}`,
+          description: m.name ?? "",
+        })),
+        onChoose: (label) => renderer.commit([`  model set to ${label}`]),
+      });
+      return { handled: true };
+    },
+  });
+  commands.register({
+    name: "resume",
+    description: "Resume an earlier session",
+    run: async () => {
+      const sessions = await agent.sessionStore.list();
+      if (sessions.length === 0) return { handled: true, message: "No saved sessions." };
+      app.openPicker({
+        title: "resume a session",
+        items: sessions.map((id) => ({ label: id })),
+        onChoose: (label) => renderer.commit([`  resuming ${label}`]),
+      });
+      return { handled: true };
+    },
+  });
+
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
   const paint = () => renderer.render(app.renderBottom());
+
+  // Shallow file listing for the `@` popup — bounded so a huge tree cannot
+  // stall a keystroke.
+  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
+  function mentionCandidates(query: string): { label: string }[] {
+    const root = process.cwd();
+    const out: { label: string }[] = [];
+    const walk = (dir: string, depth: number) => {
+      if (depth > 3 || out.length >= 50) return;
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const name of names.sort()) {
+        if (name.startsWith(".") || SKIP.has(name)) continue;
+        const full = join(dir, name);
+        try {
+          if (statSync(full).isDirectory()) walk(full, depth + 1);
+          else {
+            const rel = relative(root, full);
+            if (query.length === 0 || rel.includes(query)) out.push({ label: rel });
+          }
+        } catch {
+          // unreadable entry — skip
+        }
+        if (out.length >= 50) return;
+      }
+    };
+    walk(root, 0);
+    return out;
+  }
 
   async function startRun(text: string): Promise<void> {
     const stream = agent.stream(text);

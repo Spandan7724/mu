@@ -470,3 +470,116 @@ describe("inline renderer", () => {
     expect(written[0]).toContain("3");
   });
 });
+
+describe("@-file mention popup", () => {
+  function mentionHarness() {
+    const files = ["src/api/client.ts", "src/api/server.ts", "README.md"];
+    const submitted: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: (text) => submitted.push(text),
+        onAbort: () => {},
+        onExit: () => {},
+        onMentionQuery: (query) =>
+          files.filter((f) => f.includes(query)).map((label) => ({ label })),
+      },
+    });
+    return { app, submitted };
+  }
+
+  test("@ opens the popup and lists files", () => {
+    const { app } = mentionHarness();
+    feed(app, "@");
+    expect(app.currentMode).toBe("mention");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("src/api/client.ts");
+  });
+
+  test("typing filters the list", () => {
+    const { app } = mentionHarness();
+    feed(app, "@server");
+    const rendered = app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("src/api/server.ts");
+    expect(rendered).not.toContain("README.md");
+  });
+
+  test("enter completes the path into the composer without submitting", () => {
+    const { app, submitted } = mentionHarness();
+    feed(app, "look at @server");
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+
+    expect(submitted).toEqual([]);
+    expect(app.editor.text).toBe("look at src/api/server.ts ");
+    expect(app.currentMode).toBe("composing");
+  });
+
+  test("escape closes the popup and leaves the text alone", () => {
+    const { app } = mentionHarness();
+    feed(app, "@ser");
+    app.handleInput({
+      type: "key",
+      key: { name: "escape", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.currentMode).toBe("composing");
+    expect(app.editor.text).toBe("@ser");
+  });
+
+  test("a space closes the popup — @ was not a mention after all", () => {
+    const { app } = mentionHarness();
+    feed(app, "@ ");
+    expect(app.currentMode).toBe("composing");
+  });
+});
+
+describe("selection pickers (/model, /resume)", () => {
+  test("a picker lists options and returns the chosen one", () => {
+    const chosen: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "select a model",
+      items: [
+        { label: "anthropic/claude-opus-5", description: "most capable" },
+        { label: "openai/gpt-5.1" },
+      ],
+      onChoose: (label) => chosen.push(label),
+    });
+
+    expect(h.app.currentMode).toBe("picker");
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("select a model");
+    expect(rendered).toContain("anthropic/claude-opus-5");
+
+    h.app.handleInput({
+      type: "key",
+      key: { name: "down", ctrl: false, alt: false, shift: false },
+    });
+    h.app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+
+    expect(chosen).toEqual(["openai/gpt-5.1"]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
+  test("escape cancels a picker without choosing", () => {
+    const chosen: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "pick",
+      items: [{ label: "a" }],
+      onChoose: (label) => chosen.push(label),
+    });
+    h.app.handleInput({
+      type: "key",
+      key: { name: "escape", ctrl: false, alt: false, shift: false },
+    });
+    expect(chosen).toEqual([]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+});

@@ -170,6 +170,10 @@ export class Agent {
     return this.tree;
   }
 
+  get sessionStore(): SessionStore {
+    return this.store;
+  }
+
   // Steer a run that is already in flight; delivered before the next LLM call.
   send(message: string): void {
     this.steering.push(userMessage(message));

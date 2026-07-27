@@ -2,18 +2,21 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 21:42 UTC
-- **Current milestone:** Tracker claims M9 complete and points to M10. This review verifies
-  neither M6, M7, M8, nor M9 completion because checked acceptance criteria for all four
-  are contradicted by open findings below. M10 is now changing in the worktree.
-- **Reviewed revision:** `82d595d` (`add background process manager with task tools and
-  exit wake`) plus the newly started M10 worktree. M8 and M9 findings were rechecked
-  against their committed revisions with focused tests and temporary-process
-  reproductions.
-- **Scope this cycle:** M8 revalidation plus M9 process manager, pipe/spawner behavior,
-  head/tail and incremental output, idle wake integration, process lifecycle, permissions,
-  and TUI task presentation.
-- **Open findings:** P0: 0 · P1: 28 · P2: 16 · P3: 1
+- **Reviewed at:** 2026-07-26 22:12 UTC
+- **Current milestone:** Tracker calls M10 “largely complete” after landing compaction
+  Layers 1+3, markdown commands, and compiled-binary distribution; skills, picker, and
+  `@`-mention work has now started, together with runtime model-catalog refresh. This
+  review verifies neither M6 through M9 nor the landed M10 portions because checked
+  acceptance criteria are contradicted by open findings below.
+- **Reviewed revision:** `72db569` (`add compaction layers 1 and 3, markdown commands and
+  binary distribution`) plus the in-progress skills/picker/mention/model-catalog
+  worktree. M8–M10 findings were reproduced against their committed revisions where
+  applicable.
+- **Scope this cycle:** M8/M9 revalidation plus M10 microcompaction persistence, reactive
+  recovery lifetime/events, markdown-command TUI/RPC behavior and frontmatter, and
+  npm/compiled-binary distribution paths; then the new model/resume picker and
+  `@`-mention and model-catalog paths.
+- **Open findings:** P0: 0 · P1: 35 · P2: 21 · P3: 1
 - **Possibly fixed:** 0
 - **Verified fixed:** 0
 - **Accepted:** 0
@@ -31,9 +34,24 @@
   Focused reproductions nevertheless showed: no PTY (`stdin isatty=false`), lost
   incremental output after tail rollover, split UTF-8 becoming three replacement
   characters, and a child `sleep` surviving `task_kill`.
-- Full `bun run ci` has not been re-established against the current M10 worktree: an
-  intermediate run reached an in-progress Layer-1 reference before its import was added.
-  This is treated as transient M10 work, not an M9 finding.
+- M10 commit validation: full `bun test` **passed** — 457 tests, 1,080 assertions; focused
+  compaction/loop tests **passed** — 48 tests, 95 assertions; `tsc -b` passed. A local
+  compiled binary built outside the repository and returned `mu 0.0.1` plus help text.
+  Focused reproductions still showed repeated request-local Layer 1 compaction and a
+  second independent context overflow failing without recovery.
+- Full `bun run ci` against the current post-commit worktree **passed** — typecheck, lint,
+  477 tests with 1,118 assertions, and kernel purity. Biome reported six non-failing
+  existing/in-progress unused-code warnings and one style suggestion.
+- New picker/mention/skills focused tests **passed** — 46 tests, 94 assertions. A direct
+  mid-buffer mention reproduction nevertheless changed `before  after` into
+  `before @s aftchosen.ts ` and queried `r` rather than the typed `s`.
+- Current catalog plus picker/mention/skills/CLI focused tests **passed** — 64 tests,
+  157 assertions; `tsc -b` passed. Live catalog refresh changed the implicit default from
+  `anthropic/claude-opus-5` to `anthropic/claude-sonnet-4-6`; a valid Google-only response
+  reduced the seven-model catalog to one and removed every Anthropic/OpenAI model.
+- A skill progressive-disclosure reproduction discovered a skill, rewrote its body, and
+  then invoked the skill tool; it returned the stale pre-discovery `OLD BODY`, confirming
+  bodies are eagerly cached rather than loaded on demand.
 - Focused read-only reproductions confirmed MU-CR-001 through MU-CR-008,
   MU-CR-010, MU-CR-011, MU-CR-014, and MU-CR-019. MU-CR-009, MU-CR-012,
   MU-CR-013, and MU-CR-015 through MU-CR-018 are direct code-path or
@@ -42,6 +60,11 @@
   against committed M8 revision `c109c65`; the narrow ordinary-untracked-file portion of
   MU-CR-026 changed, but ignored paths still reproduce the underlying restore failure.
   MU-CR-038 through MU-CR-045 are confirmed against committed M9 revision `82d595d`.
+  MU-CR-046 through MU-CR-051 are confirmed against committed M10 revision `72db569`.
+  MU-CR-052 through MU-CR-054 are confirmed against the current uncommitted M10 picker/
+  mention worktree. MU-CR-055 and MU-CR-056 are confirmed against the concurrent
+  model-catalog worktree and the live `models.dev` schema. MU-CR-057 is confirmed against
+  the in-progress skills implementation.
 
 ### Highest-priority unresolved issues
 
@@ -69,6 +92,14 @@
 19. MU-CR-040 / MU-CR-043 — session shutdown never calls process cleanup, and killing the
     shell leaves child processes alive.
 20. MU-CR-041 — incremental task output silently loses new data once the tail rolls over.
+21. MU-CR-046 — reactive recovery is consumed forever after the Agent's first overflow.
+22. MU-CR-047 / MU-CR-048 — RPC custom commands discard their run and all frontmatter
+    execution controls are ignored.
+23. MU-CR-049 — the documented npm/binary installation paths do not exist.
+24. MU-CR-052 — the resume picker reports a resume without loading or switching sessions.
+25. MU-CR-053 — selecting a file mention away from the buffer end corrupts unsent input.
+26. MU-CR-055 — a partial catalog refresh deletes supported models and silently changes
+    the default.
 
 `TODO.md` marks M6, M7, and M8 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
@@ -79,8 +110,12 @@ claims about profile-backed snapshots, persisted refs, exact/atomic undo-redo,
 dirty-change preservation, aggregate diff, TUI diff rendering, and `/fork` conflict with
 MU-CR-026 through MU-CR-037. Its M9 claims about REPL support, honest/incremental
 head+tail output, idle wake, session-scoped cleanup, and live task cells conflict with
-MU-CR-038 through MU-CR-045. M10 should not be treated as the only remaining work. Later
-milestones are not reported merely for being unfinished.
+MU-CR-038 through MU-CR-045. The M10 status says Layers 1+3, custom commands, and binary
+distribution landed, but those claims conflict with MU-CR-020 and MU-CR-046 through
+MU-CR-051. The still-unchecked picker/mention work is reported only where its implemented
+paths make false state claims or corrupt input, not merely because it is unfinished. The
+new tracker claim that runtime catalog refresh cannot partially replace the active
+catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR-056.
 
 ---
 
@@ -478,6 +513,10 @@ milestones are not reported merely for being unfinished.
 - **Tests to add:** Submit while a delayed fake run is active and assert one provider run,
   steering before the next call, ordered transcript/session entries, and Esc aborting the
   sole run.
+- **Revalidation (2026-07-26, `72db569`):** Markdown commands add two more unguarded
+  entrypoints: TUI commands call `void startRun(prompt)` and RPC commands call
+  `void agent.run(prompt)`. Neither checks for an active run, so the same overlapping
+  Agent state applies to command prompts as ordinary TUI submissions.
 
 ### MU-CR-016 — P1 — Open — Exiting the TUI leaves the active run and permission promises alive
 
@@ -525,18 +564,24 @@ milestones are not reported merely for being unfinished.
 
 ### MU-CR-018 — P2 — Open — Interactive commands and CLI flags report/apply state incorrectly
 
-- **Affected:** `packages/cli/src/interactive.ts:23-36`,
-  `packages/cli/src/interactive.ts:78-90`
+- **Affected:** `packages/cli/src/interactive.ts:40-53`,
+  `packages/cli/src/interactive.ts:99-114`,
+  `packages/cli/src/interactive.ts:178-188`
 - **Requirement:** Commands are shared across surfaces; `/model` must switch the active
   model. CLI help advertises `--max-turns`, `--max-cost`, and `--allow-all` without limiting
   them to headless mode.
 - **Defect:** The command context's `setModel` is a no-op while the command returns
-  “Model set to …”; `getModel` closes over immutable `modelRef`. Interactive construction
-  also ignores `args.maxTurns`, `args.maxCostUsd`, and `args.allowAll`.
+  “Model set to …”; `getModel` closes over immutable `modelRef`. The new picker overrides
+  that core command, but its selection callback likewise only commits `model set to
+  <label>` text: it does not change the readonly Agent model/provider or footer.
+  Interactive construction also ignores `args.maxTurns`, `args.maxCostUsd`, and
+  `args.allowAll`.
 - **Failure scenario / impact:** Users are told a model changed when subsequent provider
   calls use the old one. Budget and permission flags accepted by the parser have no effect
   in the default interactive product.
-- **Evidence:** Direct code inspection of Agent construction and command callbacks.
+- **Evidence:** Direct code inspection of Agent construction and both command callbacks.
+  The new picker tests assert only that `App.openPicker` returns the chosen label to an
+  arbitrary callback; no test observes the next provider request or footer.
 - **Recommended correction:** Put mutable model selection behind a supported public Agent
   operation (or reconstruct safely between runs), update footer state, and share one
   validated option-resolution path across headless/RPC/TUI for budgets and permission
@@ -595,6 +640,11 @@ milestones are not reported merely for being unfinished.
 - **Tests to add:** A threshold-crossing tool-use conversation with multiple tool turns
   must compact exactly once, and every subsequent provider request must receive the same
   summary plus the growing post-compaction tail, never any summarized message.
+- **Revalidation / expanded scope (2026-07-26, `72db569`):** Layer 1 was also placed
+  inside the same request-local `transformContext`. With nine old bulky tool results and
+  a two-call fake run, `compaction_start(layer:1)` fired twice, while the persisted
+  SessionTree contained zero messages with `evicted=true`. Tombstones therefore repeat
+  on every request and disappear on resume just like Layer 2's compacted state.
 
 ### MU-CR-021 — P1 — Open — Resume keeps the wrong tail and omits carryover
 
@@ -1031,9 +1081,11 @@ milestones are not reported merely for being unfinished.
 - **Failure scenario / impact:** The agent starts a build/server and answers that it will
   wait. The build exits after that response. Mu remains idle forever and the TUI never
   receives `task_exited`; the user must poll manually.
-- **Evidence:** No production call site for `emitTaskEvent` exists. The only call is the
-  test's synchronous event-stream pump; ProcessManager's real-process test merely appends
-  a string to a local array.
+- **Evidence / reproduction (2026-07-26, `82d595d`):** No production call site for
+  `emitTaskEvent` exists. The only call is the test's synchronous event-stream pump;
+  ProcessManager's real-process test merely appends a string to a local array. In a
+  focused run, after `stream.result()` resolved, calling both `emitTaskEvent(task_exited)`
+  and `followUp("task finished")` left provider call count at 1 and emitted no task event.
 - **Recommended correction:** Define a session-owned event/wake channel that survives
   between turns, wire ProcessManager when the profile/session is constructed, and have
   Agent/surface start a continuation when an exit arrives after loop completion. Avoid
@@ -1179,6 +1231,302 @@ milestones are not reported merely for being unfinished.
 - **Tests to add:** Permission evaluation for all four task tools plus background Bash,
   including project overrides and unattended mode.
 
+### MU-CR-046 — P1 — Open — Reactive recovery is one-shot for the entire Agent lifetime
+
+- **Affected:** `packages/sdk/src/agent.ts:138-141`,
+  `packages/sdk/src/agent.ts:518-528`
+- **Requirement:** M10 Layer 3 requires any provider context-too-long failure to compact
+  and retry once, without creating an infinite retry loop.
+- **Defect:** `recoveryAttempted` is an Agent field set after the first recovery and never
+  reset at the beginning/end of `execute`. “Retry once” is therefore implemented once per
+  Agent lifetime rather than once per overflow/run. All later context-too-long errors
+  bypass recovery.
+- **Failure scenario / impact:** A long-lived SDK/TUI session recovers from one oversized
+  request. Hours later, after more context accumulates, another overflow immediately ends
+  the run even though compaction could recover it.
+- **Evidence / reproduction (2026-07-26, `72db569`):** A FakeProvider sequence let the
+  first `agent.run()` overflow, summarize, and complete (`reason=done`). A second
+  `agent.run()` on the same Agent returned `reason=error` after its first too-long result;
+  total call count was 4, proving no second compaction/retry.
+- **Recommended correction:** Scope the guard to the current recovery episode/request.
+  Reset it after a successful provider call and at run boundaries while ensuring the same
+  unchanged failure is retried at most once.
+- **Tests to add:** Two separate recoverable overflows in one Agent lifetime, two
+  overflows separated by successful tool turns, and a persistent failure capped at one
+  retry per episode.
+
+### MU-CR-047 — P1 — Open — RPC markdown commands launch an invisible detached run
+
+- **Affected:** `packages/cli/src/main.ts:32-81`,
+  `packages/sdk/src/markdown-commands.ts:125-139`
+- **Requirement:** M10 AC requires a project markdown command with arguments to work in
+  RPC as well as TUI; RPC's contract is serialized Agent events plus command results.
+- **Defect:** RPC registers markdown commands with
+  `(prompt) => void agent.run(prompt)`. `Agent.run()` consumes its events internally; the
+  returned promise is neither awaited nor observed, and its result/errors are not sent to
+  RPC. The command handler immediately returns an empty `command_result`.
+- **Failure scenario / impact:** An embedder sends a `/review src/a.ts` command and
+  receives no assistant events or answer. Provider/auth errors become unhandled detached
+  rejections, and a concurrent RPC input can overlap the hidden run.
+- **Evidence:** Direct committed path inspection: only `runRpc` input operations pump an
+  Agent stream to `RpcOut`; the command callback has no access to `send` and discards the
+  run promise.
+- **Recommended correction:** Have command expansion return a structured prompt/directive
+  to `runRpc`, then execute it through the same single-flight event-pumping path as an
+  input op. Await completion and report errors deterministically.
+- **Tests to add:** Real registry + RPC markdown command asserting expanded prompt,
+  streamed events, final result/error, shutdown waiting, and no overlap with active input.
+
+### MU-CR-048 — P1 — Open — Markdown command model and allowed-tools frontmatter are ignored
+
+- **Affected:** `packages/sdk/src/markdown-commands.ts:64-82`,
+  `packages/sdk/src/markdown-commands.ts:125-139`,
+  `packages/cli/src/interactive.ts:87-90`,
+  `packages/cli/src/main.ts:56-58`
+- **Requirement:** `docs/PROJECT.md` defines YAML frontmatter fields `model`,
+  `allowed-tools`, and `description`; M10 requires frontmatter to work in TUI and RPC.
+- **Defect:** `toCommand` correctly passes `{model, allowedTools}` to its submit callback,
+  but both production callbacks accept only `prompt` and discard the options. Agent has no
+  per-command tool filter or model override applied here. Tests stop at asserting the
+  standalone callback receives `model`; no surface test checks behavior.
+- **Failure scenario / impact:** A `/review` command intended to run a cheaper model with
+  read-only tools instead uses the session model and full write/exec toolset. This defeats
+  both cost intent and the command's safety boundary.
+- **Evidence:** Direct code inspection of both submit callbacks; neither reads its second
+  argument.
+- **Recommended correction:** Carry a structured command execution request through the
+  surface, validate/switch the model for that run, restrict exposed tools to the declared
+  names, and restore session defaults afterward. Unknown tools/models must fail closed.
+- **Tests to add:** TUI and RPC end-to-end commands verifying the provider model and exact
+  tool definitions, unknown names, empty allowed list, and restoration after completion.
+
+### MU-CR-049 — P1 — Open — Documented npm and release-binary installation paths are invalid
+
+- **Affected:** `README.md:15-24`, `package.json:1-23`,
+  `packages/sdk/package.json:1-13`, `packages/cli/package.json:1-17`
+- **Requirement:** M10 AC requires `mu` to install via npm and run as compiled macOS/Linux
+  binaries with install documentation.
+- **Defect:** README tells users `bun install -g mu`, but package `mu` is the SDK and has
+  no `bin`; the actual CLI package is named `@mu/cli`, points its bin at TypeScript source,
+  and depends on unpublished `workspace:*` packages. The monorepo root is private. The
+  binary download URL literally contains a Unicode ellipsis
+  (`https://github.com/…/releases/...`) and cannot resolve. No release artifacts or
+  publish metadata are present.
+- **Failure scenario / impact:** Every advertised clean installation route fails or
+  installs a package without a `mu` executable. Users may accidentally install an
+  unrelated public npm package named `mu`.
+- **Evidence:** Package-manifest and README inspection at `72db569`. A local compile to a
+  temporary directory did produce a working `--version`/`--help` binary, but that does not
+  make either documented distribution channel exist.
+- **Recommended correction:** Decide the publish topology and ownership, produce
+  publishable manifests without `workspace:*`, attach signed/checksummed binaries to a
+  real release, replace placeholders with exact URLs, and test installation from packed
+  tarballs/releases in clean containers on each target OS.
+- **Tests to add:** `npm pack`/`bun pm pack` content inspection, clean global install
+  invoking `mu --version`, download/checksum/execute each release artifact, and CI matrix
+  for Linux/macOS architectures.
+
+### MU-CR-050 — P2 — Open — Valid CRLF markdown frontmatter is treated as prompt text
+
+- **Affected:** `packages/sdk/src/markdown-commands.ts:19-42`,
+  `packages/sdk/src/skills.ts:16-28`
+- **Requirement:** Markdown commands and skills are user-authored cross-platform files
+  with YAML frontmatter.
+- **Defect:** The delimiter regex and line splitting accept only LF. A normal
+  Windows/checked-out CRLF file does not match, so metadata is empty and the entire
+  `---\r\n...` block is sent to the model as prompt content. UTF-8 BOM files fail
+  similarly.
+- **Failure scenario / impact:** The same checked-in project command works on one checkout
+  and silently loses description/model/tool restrictions on another. Skills using the
+  shared parser similarly lose their declared name/description and expose the raw
+  frontmatter as tool-loaded instructions.
+- **Evidence / reproduction:** `parseFrontmatter("---\\r\\ndescription: x\\r\\n---\\r\\nbody")`
+  returns empty metadata and the unstripped source as its body by direct regex analysis.
+- **Recommended correction:** Normalize BOM/newline forms before parsing or use a
+  constrained YAML/frontmatter parser with explicit schema validation and surfaced
+  diagnostics.
+- **Tests to add:** CRLF, BOM, missing closing delimiter, quoted colons/hashes, multiline
+  values, malformed lists, and visible load errors.
+
+### MU-CR-051 — P2 — Open — Layer 3 reports completion before compaction happens
+
+- **Affected:** `packages/sdk/src/agent.ts:518-528`,
+  `packages/sdk/src/agent.ts:433-499`
+- **Requirement:** AgentEvent is the truthful shared surface contract; compaction events
+  and `tokensFreed` drive TUI/RPC status.
+- **Defect:** On a too-long error, `recoverFromError` immediately emits Layer 3
+  `compaction_start` and `compaction_end(tokensFreed:0)`, then merely sets
+  `compactRequested`. Actual summarization happens on the next transform and emits a
+  separate Layer 2 pair. Layer 3 can therefore claim completion even if the later compact
+  fails, and its freed-token count is always false.
+- **Failure scenario / impact:** TUI/RPC observers see recovery finish successfully before
+  any recovery work runs, then see an unrelated Layer 2 operation. Telemetry and user
+  status cannot determine whether reactive recovery succeeded.
+- **Evidence:** Direct committed control flow; Layer 3 events are emitted synchronously at
+  lines 525-526, while `compact()` is only called later at line 468.
+- **Recommended correction:** Represent reactive recovery as one operation spanning the
+  actual compaction/retry, or link nested Layer 2 work with an operation ID. Emit end only
+  after success/failure with measured tokens and outcome.
+- **Tests to add:** Exact event ordering and counts for successful recovery, compaction
+  failure, persistent too-long retry, and abort during recovery.
+
+### MU-CR-052 — P1 — Open — The resume picker reports success without resuming a session
+
+- **Affected:** `packages/cli/src/interactive.ts:115-127`,
+  `packages/sdk/src/agent.ts:128-176`
+- **Requirement:** M10 includes a `/resume` picker; selecting a saved session must make
+  that session the active conversation.
+- **Defect:** The picker lists IDs from `agent.sessionStore`, but `onChoose` only prints
+  `resuming <id>`. It never calls `SessionStore.load`, replaces the Agent, or installs the
+  loaded `SessionTree`. The Agent's session ID and tree are readonly and its constructor
+  always creates a new tree, so the added store getter alone supplies no resume route.
+- **Failure scenario / impact:** A user selects an earlier session, sees a positive
+  “resuming” message, and then sends input into the original current session. This can
+  mix work with the wrong history while giving no indication that restore did nothing.
+- **Evidence:** Direct worktree control-flow inspection. The only selection side effect is
+  `renderer.commit`; `SessionStore.load` has no caller on this path. The picker unit test
+  verifies label delivery to a synthetic callback, not session identity or transcript.
+- **Recommended correction:** Add a supported resume construction/load path that
+  atomically swaps the active Agent/session between runs, updates footer and command
+  closures, and reports success only after load completes. Handle missing/corrupt/current
+  sessions explicitly.
+- **Tests to add:** Persist two distinct transcripts, choose one through the real
+  interactive command, assert active session ID/history and the next provider context;
+  cover current, missing, corrupt, and load-failure selections.
+
+### MU-CR-053 — P1 — Open — Mid-buffer file mention completion corrupts unsent input
+
+- **Affected:** `packages/tui/src/app.ts:293-306`,
+  `packages/tui/src/app.ts:355-401`,
+  `packages/tui/src/components.ts:12-71`
+- **Requirement:** The M10 `@` popup is composer completion; selecting a file must replace
+  only the active `@query` and preserve text before and after the cursor.
+- **Defect:** On `@`, `mentionStart` is set to `editor.text.length - 1`, not the cursor's
+  absolute offset. Filtering then slices from that false location. Completion discards
+  everything from `mentionStart` through the end and calls `setText`, which moves the
+  cursor to the buffer end. It is correct only when the mention is typed at the very end.
+- **Failure scenario / impact:** Editing an earlier part of a prompt and choosing a path
+  destroys or splices the unsent suffix. Multiline prompts have the same issue whenever
+  the cursor is not at the overall end.
+- **Evidence / reproduction (2026-07-26 worktree):** Set the editor to `before  after`,
+  move the cursor after `before `, type `@s`, then select `chosen.ts`. The mention callback
+  received queries `["", "r"]`, and the resulting buffer was
+  `before @s aftchosen.ts ` rather than `before chosen.ts  after`.
+- **Recommended correction:** Make the editor expose a grapheme-safe absolute selection
+  range or replace-range primitive. Record the `@` offset at insertion, derive the query
+  only from that offset to the live cursor, replace exactly that range, preserve the
+  suffix, and place the cursor after the inserted path.
+- **Tests to add:** Mentions at start/end/middle, multiline buffers, suffix preservation,
+  cursor position, backspace across the opening `@`, paste during an open popup, and
+  Unicode before/in the query.
+
+### MU-CR-054 — P2 — Open — File mention filtering performs an unbounded synchronous tree scan
+
+- **Affected:** `packages/cli/src/interactive.ts:134-165`,
+  `packages/tui/src/app.ts:387-401`
+- **Requirement:** Composer input must stay responsive; the implementation itself claims
+  its listing is bounded so a huge tree cannot stall a keystroke.
+- **Defect:** Every opening/filter keystroke synchronously calls `readdirSync` and
+  `statSync` recursively on the TUI input loop. The 50-item bound limits matches, not
+  visited entries: a sparse or unmatched query traverses every non-hidden entry through
+  depth three. Each entry incurs a synchronous stat, and there is no visit/time bound,
+  cache, cancellation, or ignore-file support.
+- **Failure scenario / impact:** Typing after `@` in a large workspace blocks key
+  decoding, painting, streaming output, and abort handling while the filesystem is
+  scanned again for every character. Slow/network filesystems amplify the freeze.
+- **Evidence:** Direct worktree control-flow inspection. `refreshMentions()` invokes the
+  callback inline; `mentionCandidates()` performs the complete synchronous walk before
+  returning, and `out.length` remains zero for an unmatched query regardless of tree size.
+- **Recommended correction:** Build/cache an asynchronously discovered candidate index
+  with an explicit visit/time/result budget, respect project ignore rules, debounce
+  queries, and discard stale asynchronous results. Never do recursive filesystem I/O in
+  the input handler.
+- **Tests to add:** A large tree with zero matches, slow/throwing entries, rapid query
+  replacement/cancellation, ignore rules, and an event-loop responsiveness bound.
+
+### MU-CR-055 — P1 — Open — A partial catalog refresh deletes supported models and changes the default
+
+- **Affected:** `packages/ai/src/catalog.ts:84-116`,
+  `packages/ai/src/catalog.ts:148-152`,
+  `packages/cli/src/main.ts:30-35`
+- **Requirement:** The tracker says the bundled catalog remains an offline fallback and
+  malformed or failed refreshes never partially replace the active catalog. Model
+  discovery must not make an otherwise valid CLI invocation lose its requested model.
+- **Defect:** `discoverModels` considers the response successful when it finds any one
+  compatible model across all three providers. `refreshModels` then replaces every
+  Anthropic/OpenAI/Google entry with that result. It neither requires each expected
+  provider nor merges discovered entries over bundled ones. `defaultModelRef` also takes
+  the first remote object-iteration result, making the implicit default depend on
+  upstream ordering.
+- **Failure scenario / impact:** A valid but incomplete/staged upstream response can make
+  `--model anthropic/...` fail as unknown even though the bundled model works. Without an
+  explicit model, every CLI mode can silently switch model, capability, price, and
+  provider from one invocation to the next.
+- **Evidence / reproduction (2026-07-26 worktree):** Starting from seven bundled models
+  and default `anthropic/claude-opus-5`, refreshing a valid payload containing only
+  `google/gemini-only` produced a one-model catalog, removed Opus, and made Gemini the
+  default. A live refresh changed the default from Opus 5 to
+  `anthropic/claude-sonnet-4-6`.
+- **Recommended correction:** Validate refresh completeness per supported provider and
+  merge validated remote metadata over the bundled baseline by stable provider/model key.
+  Preserve a deliberate default independent of response ordering. Never remove a bundled
+  or explicitly registered model merely because a refresh omitted it.
+- **Tests to add:** One-provider and one-model payloads, missing provider/model keys,
+  upstream reordering, explicit bundled model after refresh, registered official-provider
+  additions, and stable default before/after success/failure.
+
+### MU-CR-056 — P2 — Open — Dynamic catalog pricing discards context-tier rates
+
+- **Affected:** `packages/ai/src/catalog.ts:52-81`,
+  `packages/ai/src/types.ts:93-111`,
+  `packages/ai/src/cost.ts:3-10`
+- **Requirement:** M1 requires usage cost to be computed from catalog pricing, and the
+  M10 `/cost` acceptance criterion requires correct live cost including cache pricing.
+  The tracker says refresh maps current pricing into `ModelInfo`.
+- **Defect:** `models.dev` supplies context-dependent pricing through fields such as
+  `cost.tiers` and `cost.context_over_200k`. The mapper drops those fields, `ModelPricing`
+  cannot represent them, and `computeCostUsd` always applies one flat base rate. Missing
+  input/output prices are also converted to zero rather than making the model's cost
+  unknown.
+- **Failure scenario / impact:** Long-context runs on affected OpenAI/Google models are
+  reported at the lower base rate, while compatible models without complete pricing can
+  report `$0`. Budget halts and `/cost` therefore understate spend.
+- **Evidence:** The live catalog exposed context-tier pricing on eight compatible OpenAI
+  models and six compatible Google models during review; two compatible Google models
+  lacked base input/output pricing. The focused mapper test covers only flat pricing.
+- **Recommended correction:** Extend the pricing type/calculator to preserve and select
+  provider catalog tiers using the applicable request/context measure. Treat absent or
+  unsupported pricing as unknown and surface that state instead of zero.
+- **Tests to add:** Below/at/above each context threshold, cache read/write rates inside
+  tiers, missing prices, cumulative multi-turn totals crossing a tier, and `/cost` plus
+  budget behavior for unknown pricing.
+
+### MU-CR-057 — P2 — Open — Skill bodies are eagerly cached instead of loaded on demand
+
+- **Affected:** `packages/sdk/src/skills.ts:14-48`,
+  `packages/sdk/src/skills.ts:71-111`
+- **Requirement:** The implementation defines skills as progressive disclosure: names
+  and descriptions stay in context, while the full `SKILL.md` body is loaded only when
+  the model calls the skill tool.
+- **Defect:** `discoverSkills` calls `loadSkill` for every directory, and `loadSkill`
+  reads and stores the complete body. The tool only returns that cached string; it never
+  reads the selected file. There is no per-file size limit. The “progressive disclosure”
+  test checks only that `skillListing` omits body text, so it cannot detect eager I/O,
+  memory use, or stale instructions.
+- **Failure scenario / impact:** Starting a surface must read every installed skill body
+  even if none is used, and a large skill set can impose unbounded startup I/O/memory.
+  Changes to `SKILL.md` after discovery are silently ignored for the process lifetime.
+- **Evidence / reproduction (2026-07-26 worktree):** Discover a skill containing
+  `OLD BODY`, rewrite its file to `NEW BODY`, register the extension, and invoke
+  `skill({name:"demo"})`; the tool returned `OLD BODY`.
+- **Recommended correction:** Discover and retain validated metadata plus a file
+  reference, then read/parse the selected body inside tool execution with an explicit
+  byte limit and visible error handling. Decide whether metadata is snapshotted or
+  refreshed, but make the body behavior match the on-demand contract.
+- **Tests to add:** Mutate/delete the file between discovery and tool call, prove
+  unselected bodies are never read, enforce maximum size, and cover read/parse errors at
+  invocation time.
+
 ---
 
 ## Questions, risks, and incomplete work
@@ -1190,5 +1538,6 @@ milestones are not reported merely for being unfinished.
 - The current ANSI parser only understands a subset of SGR state (for example, exact
   `ESC[0m` reset). Selective resets and OSC hyperlinks need an explicit safe policy before
   streaming markdown is considered complete.
-- The initial component test suite was not yet present during this cycle. M6 requires
-  golden-line snapshots for every component and a fake-agent integration test.
+- Component and fake-agent tests now exist, but M6's requested golden-line coverage for
+  every component is still incomplete; this remains tracked as unchecked work rather than
+  a separate defect.
