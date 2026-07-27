@@ -31,7 +31,13 @@ describe("task tools", () => {
   test("the profile ships the background-task toolset", async () => {
     const profile = await codingProfile({ root: await scratch() });
     const names = profile.toolset.map((t) => t.name);
-    for (const name of ["task_output", "task_write_stdin", "task_kill", "task_list"]) {
+    for (const name of [
+      "task_output",
+      "task_write_stdin",
+      "task_kill",
+      "task_detach",
+      "task_list",
+    ]) {
       expect(names).toContain(name);
     }
   });
@@ -47,7 +53,7 @@ describe("task tools", () => {
     expect(details.taskId).toStartWith("task_");
     expect(textOf(result)).toContain("background");
 
-    profile.processes.killAll();
+    await profile.processes.killAll();
   });
 
   test("task_list reports started tasks", async () => {
@@ -59,7 +65,7 @@ describe("task tools", () => {
     expect(textOf(listed)).toContain("sleep 5");
     expect(textOf(listed)).toContain("running");
 
-    profile.processes.killAll();
+    await profile.processes.killAll();
   });
 
   test("task_output and task_kill operate on a real process", async () => {
@@ -78,6 +84,7 @@ describe("task tools", () => {
 
     const killed = await run(tools.get("task_kill"), { taskId });
     expect(textOf(killed)).toContain("Killed");
+    await profile.processes.wait(taskId);
   });
 
   test("task_write_stdin drives an interactive process", async () => {
@@ -95,6 +102,7 @@ describe("task tools", () => {
     expect(textOf(output)).toContain("ping");
 
     await run(tools.get("task_kill"), { taskId });
+    await profile.processes.wait(taskId);
   });
 
   test("a task that exits reports its status and code", async () => {
@@ -130,8 +138,81 @@ describe("task tools", () => {
     expect(profile.processes.runningCount).toBe(1);
 
     // What a surface calls when the session ends.
-    profile.processes.killAll();
+    await profile.processes.killAll();
     expect(profile.processes.runningCount).toBe(0);
+  });
+
+  test("task_detach is the explicit session-cleanup escape hatch", async () => {
+    const root = await scratch();
+    const marker = join(root, "detached.txt");
+    const profile = await codingProfile({ root });
+    const tools = toolsOf(profile);
+    const started = await run(tools.get("bash"), {
+      command: `sleep 0.2; echo survived > ${marker}`,
+      run_in_background: true,
+    });
+    const taskId = (started.details as { taskId: string }).taskId;
+
+    const detached = await run(tools.get("task_detach"), { taskId });
+    expect(textOf(detached)).toContain("Detached");
+    await profile.processes.killAll();
+    expect(profile.processes.get(taskId)?.status).toBe("running");
+
+    await profile.processes.wait(taskId);
+    expect(await readFile(marker, "utf8")).toContain("survived");
+  });
+});
+
+describe("PTY-backed task sessions", () => {
+  test("stdin, stdout, and stderr are attached to a terminal", async () => {
+    const manager = new ProcessManager(shellSpawner(await scratch()));
+    const task = manager.start(
+      "if [ -t 0 ]; then input=tty; else input=pipe; fi; " +
+        "if [ -t 1 ]; then output=tty; else output=pipe; fi; " +
+        "if [ -t 2 ]; then error=tty; else error=pipe; fi; " +
+        'printf "stdin=%s stdout=%s stderr=%s\\n" "$input" "$output" "$error"',
+    );
+
+    await manager.wait(task.id);
+    expect(manager.output(task.id, "start")?.text).toContain("stdin=tty stdout=tty stderr=tty");
+  });
+
+  test("drives an interactive prompt through terminal input", async () => {
+    const manager = new ProcessManager(shellSpawner(await scratch()));
+    const task = manager.start('printf "name? "; read name; printf "hello:%s\\n" "$name"');
+    manager.writeStdin(task.id, "mu\n");
+
+    await manager.wait(task.id);
+    const output = manager.output(task.id, "start")?.text ?? "";
+    expect(output).toContain("name?");
+    expect(output).toContain("hello:mu");
+  });
+
+  test("resizes the child terminal", async () => {
+    const manager = new ProcessManager(shellSpawner(await scratch()));
+    const task = manager.start("stty size; read line; stty size", { cols: 93, rows: 31 });
+    await Bun.sleep(100);
+    expect(manager.resize(task.id, 120, 40)).toBe(true);
+    manager.writeStdin(task.id, "continue\n");
+
+    await manager.wait(task.id);
+    const output = manager.output(task.id, "start")?.text ?? "";
+    expect(output).toContain("31 93");
+    expect(output).toContain("40 120");
+  });
+
+  test("preserves ANSI output and split UTF-8 sequences", async () => {
+    const manager = new ProcessManager(shellSpawner(await scratch()));
+    const task = manager.start(
+      "printf '\\033[31mred\\033[0m '; printf '\\360\\237'; sleep 0.1; printf '\\230\\200\\n'",
+    );
+
+    await manager.wait(task.id);
+    const output = manager.output(task.id, "start")?.text ?? "";
+    expect(output).toContain("\u001b[31mred\u001b[0m");
+    expect(output).toContain("😀");
+    expect(output).not.toContain("�");
+    expect(manager.get(task.id)?.outputBytes).toBe(new TextEncoder().encode(output).length);
   });
 });
 
@@ -166,7 +247,7 @@ describe("killing a task terminates its descendants", () => {
     expect(manager.get(task.id)?.status).toBe("running");
 
     manager.kill(task.id);
-    await Bun.sleep(300);
+    await manager.wait(task.id);
 
     const first = await readFile(marker, "utf8").catch(() => "");
     await Bun.sleep(400);
@@ -183,8 +264,7 @@ describe("killing a task terminates its descendants", () => {
     manager.start(`bash -c 'while true; do date +%s%N > ${marker}; sleep 0.05; done' & wait`);
     await Bun.sleep(400);
 
-    manager.killAll();
-    await Bun.sleep(300);
+    await manager.killAll();
 
     const first = await readFile(marker, "utf8").catch(() => "");
     await Bun.sleep(400);

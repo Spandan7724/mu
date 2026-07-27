@@ -12,39 +12,74 @@ import { z } from "zod";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
-  return ({ command, onOutput }): ManagedProcessHandle => {
-    // `setsid` puts the task in its own process group so kill() can signal the
-    // whole tree. Without it a shell's children outlive task_kill.
-    const proc = Bun.spawn(["setsid", "bash", "-c", command], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "pipe",
+  return ({ command, onOutput, cols, rows }): ManagedProcessHandle => {
+    const decoder = new TextDecoder();
+    let flushed = false;
+    let resolveTerminalExit: (() => void) | undefined;
+    const terminalExited = new Promise<void>((resolve) => {
+      resolveTerminalExit = resolve;
     });
 
-    const pump = async (stream: ReadableStream<Uint8Array> | null) => {
-      if (!stream) return;
-      const decoder = new TextDecoder();
-      for await (const chunk of stream) onOutput(decoder.decode(chunk));
+    const flushOutput = () => {
+      if (flushed) return;
+      flushed = true;
+      const final = decoder.decode();
+      if (final) onOutput(final);
     };
-    void pump(proc.stdout as ReadableStream<Uint8Array>);
-    void pump(proc.stderr as ReadableStream<Uint8Array>);
+
+    const proc = Bun.spawn(["bash", "-c", command], {
+      cwd: root,
+      detached: true,
+      env: { ...process.env, TERM: "xterm-256color" },
+      terminal: {
+        cols,
+        rows,
+        data: (_terminal, data) => {
+          const text = decoder.decode(data, { stream: true });
+          if (text) onOutput(text);
+        },
+        exit: () => {
+          flushOutput();
+          resolveTerminalExit?.();
+        },
+      },
+    });
+
+    const terminal = proc.terminal;
+    if (!terminal) throw new Error("Could not allocate a pseudo-terminal.");
+    const exited = Promise.all([proc.exited, terminalExited]).then(([code]) => {
+      flushOutput();
+      if (!terminal.closed) terminal.close();
+      return code ?? null;
+    });
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const signalGroup = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform === "win32") proc.kill(signal);
+        else process.kill(-proc.pid, signal);
+      } catch {
+        proc.kill(signal);
+      }
+    };
 
     return {
-      write: (data) => {
-        proc.stdin?.write(data);
-        proc.stdin?.flush?.();
+      write: (data) => void terminal.write(data),
+      resize: (nextCols, nextRows) => terminal.resize(nextCols, nextRows),
+      detach: () => {
+        proc.unref();
+        terminal.unref();
       },
       kill: () => {
-        // Negative pid signals the group; fall back to the process itself if
-        // the platform or spawn did not give us a group leader.
-        try {
-          process.kill(-proc.pid, "SIGTERM");
-        } catch {
-          proc.kill();
-        }
+        signalGroup("SIGTERM");
+        killTimer = setTimeout(() => {
+          if (proc.exitCode === null) signalGroup("SIGKILL");
+        }, 1_000);
+        killTimer.unref?.();
       },
-      exited: proc.exited.then((code) => code ?? null),
+      exited: exited.finally(() => {
+        if (killTimer) clearTimeout(killTimer);
+      }),
     };
   };
 }
@@ -103,6 +138,19 @@ export function taskTools(manager: ProcessManager) {
     },
   });
 
+  const taskDetach = tool({
+    name: "task_detach",
+    description:
+      "Detach a background task so it is not stopped when the mu session exits. Use only for work that must outlive the session.",
+    inputSchema: z.object({ taskId: z.string() }),
+    execute: ({ taskId }): ToolResult | string => {
+      if (!manager.get(taskId)) return errorResult(`No such task: ${taskId}`);
+      return manager.detach(taskId)
+        ? `Detached ${taskId}. It will continue after this session exits.`
+        : errorResult(`Task ${taskId} is not running or was already detached.`);
+    },
+  });
+
   const taskList = tool({
     name: "task_list",
     description: "List background tasks started in this session.",
@@ -114,11 +162,11 @@ export function taskTools(manager: ProcessManager) {
       return tasks
         .map(
           (task) =>
-            `${task.id} · ${task.status}${task.exitCode !== null ? ` (exit ${task.exitCode})` : ""} · ${task.command}`,
+            `${task.id} · ${task.status}${task.detached ? " (detached)" : ""}${task.exitCode !== null ? ` (exit ${task.exitCode})` : ""} · ${task.command}`,
         )
         .join("\n");
     },
   });
 
-  return [taskOutput, taskWriteStdin, taskKill, taskList];
+  return [taskOutput, taskWriteStdin, taskKill, taskDetach, taskList];
 }

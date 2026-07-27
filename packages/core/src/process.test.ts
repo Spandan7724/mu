@@ -15,22 +15,32 @@ function fakeSpawner(): {
   finish: (code: number | null) => void;
   written: string[];
   killed: () => boolean;
+  resized: { cols: number; rows: number }[];
+  detached: () => boolean;
 } {
   let onOutput: ((chunk: string) => void) | undefined;
-  let resolveExit: ((code: number | null) => void) | undefined;
+  const exits: ((code: number | null) => void)[] = [];
   const written: string[] = [];
-  let wasKilled = false;
+  const resized: { cols: number; rows: number }[] = [];
+  let killCount = 0;
+  let detachCount = 0;
 
   const spawner: Spawner = (request) => {
     onOutput = request.onOutput;
+    let resolveExit: ((code: number | null) => void) | undefined;
     const handle: ManagedProcessHandle = {
       write: (data) => written.push(data),
+      resize: (cols, rows) => resized.push({ cols, rows }),
+      detach: () => {
+        detachCount += 1;
+      },
       kill: () => {
-        wasKilled = true;
+        killCount += 1;
         resolveExit?.(null);
       },
       exited: new Promise<number | null>((resolve) => {
         resolveExit = resolve;
+        exits.push(resolve);
       }),
     };
     return handle;
@@ -39,9 +49,11 @@ function fakeSpawner(): {
   return {
     spawner,
     emit: (chunk) => onOutput?.(chunk),
-    finish: (code) => resolveExit?.(code),
+    finish: (code) => exits.at(-1)?.(code),
     written,
-    killed: () => wasKilled,
+    killed: () => killCount > 0,
+    resized,
+    detached: () => detachCount > 0,
   };
 }
 
@@ -80,6 +92,16 @@ describe("OutputBuffer", () => {
     expect(b.text).toBe("second");
     expect(buffer.readSince(b.offset).text).toBe("");
   });
+
+  test("counts UTF-8 bytes and never cuts a multibyte character", () => {
+    const buffer = new OutputBuffer(4, 4);
+    buffer.append("😀中a");
+    buffer.append("界");
+
+    expect(buffer.bytes).toBe(11);
+    expect(buffer.read()).toBe("😀\n\n… [3 bytes omitted] …\n\na界");
+    expect(buffer.read()).not.toContain("�");
+  });
 });
 
 describe("ProcessManager", () => {
@@ -116,6 +138,15 @@ describe("ProcessManager", () => {
 
     expect(manager.writeStdin(task.id, "1 + 1\n")).toBe(true);
     expect(fake.written).toEqual(["1 + 1\n"]);
+  });
+
+  test("resizes a running terminal", () => {
+    const fake = fakeSpawner();
+    const manager = new ProcessManager(fake.spawner);
+    const task = manager.start("repl", { cols: 90, rows: 30 });
+
+    expect(manager.resize(task.id, 120, 40)).toBe(true);
+    expect(fake.resized).toEqual([{ cols: 120, rows: 40 }]);
   });
 
   test("kill stops a running task and marks it killed", async () => {
@@ -168,8 +199,22 @@ describe("ProcessManager", () => {
     manager.start("b");
     expect(manager.runningCount).toBe(2);
 
-    manager.killAll();
+    await manager.killAll();
     expect(manager.list().every((t) => t.status === "killed")).toBe(true);
+  });
+
+  test("killAll leaves explicitly detached tasks running", async () => {
+    const fake = fakeSpawner();
+    const manager = new ProcessManager(fake.spawner);
+    const task = manager.start("server");
+
+    expect(manager.detach(task.id)).toBe(true);
+    expect(fake.detached()).toBe(true);
+    expect(manager.get(task.id)?.detached).toBe(true);
+    await manager.killAll();
+    expect(fake.killed()).toBe(false);
+    expect(manager.get(task.id)?.status).toBe("running");
+    fake.finish(0);
   });
 
   test("operations on an unknown task are reported, not thrown", () => {
@@ -177,6 +222,8 @@ describe("ProcessManager", () => {
     expect(manager.get("nope")).toBeUndefined();
     expect(manager.output("nope")).toBeUndefined();
     expect(manager.writeStdin("nope", "x")).toBe(false);
+    expect(manager.resize("nope", 80, 24)).toBe(false);
+    expect(manager.detach("nope")).toBe(false);
     expect(manager.kill("nope")).toBe(false);
   });
 });
@@ -192,6 +239,7 @@ describe("exit notification", () => {
       endedAt: 1340,
       outputBytes: 10,
       truncated: false,
+      detached: false,
     });
     expect(text).toContain("finished successfully");
     expect(text).toContain("340ms");
@@ -208,6 +256,7 @@ describe("exit notification", () => {
       endedAt: 5,
       outputBytes: 0,
       truncated: false,
+      detached: false,
     });
     expect(text).toContain("failed with exit code 1");
   });
@@ -222,6 +271,7 @@ describe("exit notification", () => {
       endedAt: 1,
       outputBytes: 0,
       truncated: false,
+      detached: false,
     });
     expect(text).toContain("was killed");
   });

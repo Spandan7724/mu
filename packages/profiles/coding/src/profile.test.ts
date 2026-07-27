@@ -28,6 +28,7 @@ describe("codingProfile", () => {
       "grep",
       "ls",
       "read",
+      "task_detach",
       "task_kill",
       "task_list",
       "task_output",
