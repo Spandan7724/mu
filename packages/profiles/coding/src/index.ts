@@ -129,7 +129,7 @@ export {
   rememberAllow,
 } from "./permissions.ts";
 export { codingPrompt } from "./prompts.ts";
-export { shellCommand } from "./shell.ts";
+export { shellCommand, terminateProcessTree, windowsTaskkillCommand } from "./shell.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";

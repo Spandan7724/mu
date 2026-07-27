@@ -9,7 +9,7 @@ import {
 } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
-import { shellCommand } from "../shell.ts";
+import { shellCommand, terminateProcessTree } from "../shell.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
@@ -55,15 +55,6 @@ export function shellSpawner(root: string): Spawner {
     });
     let killTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const signalGroup = (signal: NodeJS.Signals) => {
-      try {
-        if (process.platform === "win32") proc.kill(signal);
-        else process.kill(-proc.pid, signal);
-      } catch {
-        proc.kill(signal);
-      }
-    };
-
     return {
       write: (data) => void terminal.write(data),
       resize: (nextCols, nextRows) => terminal.resize(nextCols, nextRows),
@@ -72,9 +63,9 @@ export function shellSpawner(root: string): Spawner {
         terminal.unref();
       },
       kill: () => {
-        signalGroup("SIGTERM");
+        terminateProcessTree(proc, "SIGTERM");
         killTimer = setTimeout(() => {
-          if (proc.exitCode === null) signalGroup("SIGKILL");
+          if (proc.exitCode === null) terminateProcessTree(proc, "SIGKILL");
         }, 1_000);
         killTimer.unref?.();
       },

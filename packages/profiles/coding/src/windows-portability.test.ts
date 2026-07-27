@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type AnyTool, ProcessManager } from "@mu/core";
 import { gitConfigNullDevice, ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingEnvironment } from "./context.ts";
-import { shellCommand } from "./shell.ts";
+import { shellCommand, windowsTaskkillCommand } from "./shell.ts";
 import { bashTool } from "./tools/bash.ts";
 import { shellSpawner } from "./tools/tasks.ts";
 
@@ -39,6 +39,10 @@ describe("Windows portability", () => {
       "Write-Output ok",
     ]);
     expect(shellCommand("printf ok", { platform: "linux" })).toEqual(["bash", "-c", "printf ok"]);
+  });
+
+  test("uses Windows' native recursive process-tree termination command", () => {
+    expect(windowsTaskkillCommand(4242)).toEqual(["taskkill.exe", "/PID", "4242", "/T", "/F"]);
   });
 
   test("uses the platform null device for isolated Git configuration", () => {
@@ -98,5 +102,40 @@ describe("Windows portability", () => {
 
     expect(manager.output(task.id, "start")?.text).toContain("native-pty-ok");
     expect(manager.get(task.id)?.exitCode).toBe(0);
+  });
+
+  test("task kill terminates Windows descendants", async () => {
+    if (process.platform !== "win32") return;
+    const root = await mkdtemp(join(tmpdir(), "mu-windows-tree-"));
+    const marker = join(root, "child-alive.txt");
+    const escapedMarker = marker.replaceAll("'", "''");
+    const childScript = [
+      "while ($true) {",
+      `  [IO.File]::WriteAllText('${escapedMarker}', [DateTime]::UtcNow.Ticks.ToString())`,
+      "  Start-Sleep -Milliseconds 50",
+      "}",
+    ].join("\n");
+    const encoded = Buffer.from(childScript, "utf16le").toString("base64");
+    const command = [
+      "$child = Start-Process powershell.exe",
+      `-ArgumentList '-NoLogo','-NoProfile','-EncodedCommand','${encoded}'`,
+      "-PassThru",
+      "; Wait-Process -Id $child.Id",
+    ].join(" ");
+    const manager = new ProcessManager(shellSpawner(root));
+    const task = manager.start(command);
+
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (await readFile(marker, "utf8").catch(() => "")) break;
+      await Bun.sleep(50);
+    }
+    expect(await readFile(marker, "utf8")).not.toBe("");
+
+    manager.kill(task.id);
+    await manager.wait(task.id);
+    const afterKill = await readFile(marker, "utf8");
+    await Bun.sleep(250);
+
+    expect(await readFile(marker, "utf8")).toBe(afterKill);
   });
 });

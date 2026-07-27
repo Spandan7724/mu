@@ -1,7 +1,7 @@
 import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
-import { shellCommand } from "../shell.ts";
+import { shellCommand, terminateProcessTree } from "../shell.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -28,6 +28,7 @@ async function defaultSpawn(
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
   const proc = Bun.spawn(shellCommand(command), {
     cwd,
+    detached: true,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -36,9 +37,9 @@ async function defaultSpawn(
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    proc.kill();
+    terminateProcessTree(proc, "SIGTERM");
   }, timeoutMs);
-  const onAbort = () => proc.kill();
+  const onAbort = () => terminateProcessTree(proc, "SIGTERM");
   signal.addEventListener("abort", onAbort, { once: true });
 
   try {
