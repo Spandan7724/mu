@@ -1,4 +1,4 @@
-import { findModel, listModels } from "@mu/ai";
+import { findModel, listModels, type Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
 
 export interface ForkPoint {
@@ -14,12 +14,28 @@ export interface DiffCommandData {
 // Built-in commands available on every surface (TUI, RPC, headless).
 export interface CoreCommandHooks {
   requestCompaction?: () => void;
-  usage?: () => { costUsd: number; contextPercent: number };
+  usage?: () => Usage & { contextPercent: number };
   undo?: () => Promise<{ ok: boolean; message: string }>;
   redo?: () => Promise<{ ok: boolean; message: string }>;
   fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
   forkPoints?: () => ForkPoint[];
   diff?: () => Promise<CheckpointDiffFile[]>;
+}
+
+export function formatUsageBreakdown(usage: Usage & { contextPercent: number }): string {
+  const totalTokens =
+    usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+  const tokens = (value: number) => Math.max(0, Math.trunc(value)).toLocaleString("en-US");
+  return [
+    "Session usage",
+    `  Input tokens:       ${tokens(usage.inputTokens)}`,
+    `  Output tokens:      ${tokens(usage.outputTokens)}`,
+    `  Cache read tokens:  ${tokens(usage.cacheReadTokens)}`,
+    `  Cache write tokens: ${tokens(usage.cacheWriteTokens)}`,
+    `  Total tokens:       ${tokens(totalTokens)}`,
+    `  Cost:               $${(usage.costUsd ?? 0).toFixed(6)}`,
+    `  Active context:     ${(Math.max(0, usage.contextPercent) * 100).toFixed(1)}%`,
+  ].join("\n");
 }
 
 export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
@@ -113,14 +129,14 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "cost",
       description: "Show token usage and cost for this session",
-      run: (ctx) => {
+      run: () => {
         const usage = hooks.usage?.();
-        ctx.print(
-          usage
-            ? `$${usage.costUsd.toFixed(4)} · ${Math.round(usage.contextPercent * 100)}% ctx`
+        return {
+          handled: true,
+          message: usage
+            ? formatUsageBreakdown(usage)
             : "Usage is reported by the surface that owns the session.",
-        );
-        return { handled: true };
+        };
       },
     },
   ];

@@ -386,14 +386,32 @@ describe("core commands", () => {
     expect(result.message).toContain("not available");
   });
 
-  test("/cost reports live usage when the surface provides it", async () => {
+  test("/cost reports the full provider usage breakdown", async () => {
     const registry = registryWithCoreCommands({
-      usage: () => ({ costUsd: 0.1234, contextPercent: 0.42 }),
+      usage: () => ({
+        inputTokens: 12_345,
+        outputTokens: 678,
+        cacheReadTokens: 9_000,
+        cacheWriteTokens: 1_500,
+        costUsd: 0.1234,
+        contextPercent: 0.42,
+      }),
     });
     const harness = ctx();
-    await registry.execute("/cost", harness.ctx);
-    expect(harness.printed[0]).toContain("$0.1234");
-    expect(harness.printed[0]).toContain("42% ctx");
+    const result = await registry.execute("/cost", harness.ctx);
+    expect(result.message).toBe(
+      [
+        "Session usage",
+        "  Input tokens:       12,345",
+        "  Output tokens:      678",
+        "  Cache read tokens:  9,000",
+        "  Cache write tokens: 1,500",
+        "  Total tokens:       23,523",
+        "  Cost:               $0.123400",
+        "  Active context:     42.0%",
+      ].join("\n"),
+    );
+    expect(harness.printed).toEqual([]);
   });
 
   test("/help lists registered commands", async () => {

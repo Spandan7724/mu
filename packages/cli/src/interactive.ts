@@ -111,7 +111,7 @@ export async function runInteractive(
   const commands = registryWithCoreCommands({
     requestCompaction: () => agent.requestCompaction(),
     usage: () => ({
-      costUsd: agent.usage.costUsd ?? 0,
+      ...agent.usage,
       contextPercent: agent.contextPercent,
     }),
     undo: () => agent.undo(),

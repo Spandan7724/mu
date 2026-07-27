@@ -115,10 +115,10 @@ describe("cost", () => {
         inputTokens: 1_000_000,
         outputTokens: 100_000,
         cacheReadTokens: 200_000,
-        cacheWriteTokens: 0,
+        cacheWriteTokens: 100_000,
       },
     );
-    expect(cost).toBeCloseTo(5 + 2.5 + 0.1, 10);
+    expect(cost).toBeCloseTo(5 + 2.5 + 0.1 + 0.625, 10);
   });
 
   test("addUsage sums fields", () => {
