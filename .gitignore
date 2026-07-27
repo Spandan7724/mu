@@ -1,7 +1,9 @@
 # internal planning docs (kept local, not committed)
 docs/
 TODO.md
+CODE_REVIEW.md
 
 node_modules/
 dist/
 *.tsbuildinfo
+CLAUDE.md
