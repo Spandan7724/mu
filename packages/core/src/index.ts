@@ -82,7 +82,12 @@ export type {
   TaskStatus,
 } from "./process.ts";
 export { exitNotification, OutputBuffer, ProcessManager } from "./process.ts";
-export type { Profile, ProfileFactory } from "./profile.ts";
+export type {
+  Profile,
+  ProfileFactory,
+  ProfileRuntime,
+  ProfileRuntimeHost,
+} from "./profile.ts";
 export type { RecoveryAttempt } from "./recovery.ts";
 export {
   isContextTooLongError,

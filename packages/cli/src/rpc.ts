@@ -48,19 +48,18 @@ export function parseOp(line: string): RpcOp | { type: "parse_error"; message: s
 
 export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   const send = (out: RpcOut) => io.write(`${JSON.stringify(out)}\n`);
+  const unsubscribe = deps.agent.subscribe((event) => send({ type: "event", event }));
   send({ type: "ready" });
 
   let active: Promise<void> | undefined;
 
   const launch = (text: string, options?: AgentRunOptions): boolean => {
-    if (active) {
+    if (active || deps.agent.isRunning) {
       send({ type: "error", message: "a run is already active; use steer or wait for it" });
       return false;
     }
-    const stream = deps.agent.stream(text, options);
     const task = (async () => {
-      for await (const event of stream) send({ type: "event", event });
-      await stream.result().catch((error: unknown) => {
+      await deps.agent.run(text, options).catch((error: unknown) => {
         send({
           type: "error",
           message: error instanceof Error ? error.message : String(error),
@@ -74,79 +73,85 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
     return true;
   };
 
-  for await (const line of io.lines) {
-    if (line.trim().length === 0) continue;
-    const op = parseOp(line);
+  try {
+    for await (const line of io.lines) {
+      if (line.trim().length === 0) continue;
+      const op = parseOp(line);
 
-    switch (op.type) {
-      case "parse_error":
-        send({ type: "error", message: `invalid op: ${op.message}` });
-        break;
+      switch (op.type) {
+        case "parse_error":
+          send({ type: "error", message: `invalid op: ${op.message}` });
+          break;
 
-      case "input": {
-        launch(op.text);
-        break;
-      }
+        case "input": {
+          launch(op.text);
+          break;
+        }
 
-      case "steer":
-        deps.agent.send(op.text);
-        break;
+        case "steer":
+          deps.agent.send(op.text);
+          break;
 
-      case "follow_up":
-        deps.agent.followUp(op.text);
-        break;
+        case "follow_up":
+          deps.agent.followUp(op.text);
+          break;
 
-      case "permission_reply": {
-        const ok = deps.resolvePermission?.(op.requestId, op.outcome) ?? false;
-        if (!ok) send({ type: "error", message: `unknown permission request: ${op.requestId}` });
-        break;
-      }
+        case "permission_reply": {
+          const ok = deps.resolvePermission?.(op.requestId, op.outcome) ?? false;
+          if (!ok) send({ type: "error", message: `unknown permission request: ${op.requestId}` });
+          break;
+        }
 
-      case "command": {
-        try {
-          const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
-          if (isMarkdownCommandRun(result.data)) {
-            launch(result.data.prompt, {
-              ...(result.data.model ? { model: result.data.model } : {}),
-              ...(result.data.allowedTools ? { allowedTools: result.data.allowedTools } : {}),
-            });
+        case "command": {
+          try {
+            const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
+            if (isMarkdownCommandRun(result.data)) {
+              launch(result.data.prompt, {
+                ...(result.data.model ? { model: result.data.model } : {}),
+                ...(result.data.allowedTools ? { allowedTools: result.data.allowedTools } : {}),
+              });
+              send({
+                type: "command_result",
+                ...(result.message ? { message: result.message } : {}),
+              });
+            } else {
+              send({
+                type: "command_result",
+                ...(result.message ? { message: result.message } : {}),
+                ...(result.data !== undefined ? { data: result.data } : {}),
+              });
+            }
+          } catch (error) {
             send({
-              type: "command_result",
-              ...(result.message ? { message: result.message } : {}),
-            });
-          } else {
-            send({
-              type: "command_result",
-              ...(result.message ? { message: result.message } : {}),
-              ...(result.data !== undefined ? { data: result.data } : {}),
+              type: "error",
+              message: error instanceof Error ? error.message : String(error),
             });
           }
-        } catch (error) {
-          send({
-            type: "error",
-            message: error instanceof Error ? error.message : String(error),
-          });
+          break;
         }
-        break;
+
+        case "abort":
+          deps.agent.abort();
+          break;
+
+        case "shutdown":
+          // Graceful: let an in-flight run finish. Callers wanting to cut it
+          // short send `abort` first — that is what that op is for.
+          await active;
+          await deps.agent.waitForIdle();
+          send({ type: "shutdown" });
+          return;
+
+        default:
+          send({ type: "error", message: `unknown op type: ${(op as { type: string }).type}` });
       }
-
-      case "abort":
-        deps.agent.abort();
-        break;
-
-      case "shutdown":
-        // Graceful: let an in-flight run finish. Callers wanting to cut it
-        // short send `abort` first — that is what that op is for.
-        await active;
-        send({ type: "shutdown" });
-        return;
-
-      default:
-        send({ type: "error", message: `unknown op type: ${(op as { type: string }).type}` });
     }
-  }
 
-  await active;
+    await active;
+    await deps.agent.waitForIdle();
+  } finally {
+    unsubscribe();
+  }
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {

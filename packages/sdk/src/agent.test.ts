@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { type PermissionRequest, SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
+import {
+  type AgentEvent,
+  type PermissionRequest,
+  type ProfileRuntime,
+  type ProfileRuntimeHost,
+  SESSION_VERSION,
+  SessionTree,
+  userMessage,
+} from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
@@ -385,6 +393,79 @@ describe("steering, follow-ups and abort", () => {
     setTimeout(() => agent.abort(), 10);
     const result = await running;
     expect(result.reason).toBe("aborted");
+  });
+
+  test("a profile follow-up starts a new run while the agent is idle", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "waiting" }] },
+      { content: [{ type: "text", text: "background work handled" }] },
+    ]);
+    let host: ProfileRuntimeHost | undefined;
+    const runtime: ProfileRuntime = {
+      attach: (attached) => {
+        host = attached;
+      },
+    };
+    const agent = agentWith(provider, { runtime });
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    await agent.run("start work");
+    expect(agent.isRunning).toBe(false);
+
+    host?.emit({
+      type: "task_exited",
+      taskId: "task_1",
+      exitCode: 0,
+      status: "exited",
+    });
+    host?.followUp("Background task task_1 finished successfully.");
+    await agent.waitForIdle();
+
+    expect(provider.callCount).toBe(2);
+    expect(events.some((event) => event.type === "task_exited")).toBe(true);
+    expect(
+      provider.requests[1]?.messages.some(
+        (message) =>
+          message.role === "user" &&
+          message.content.some(
+            (content) =>
+              content.type === "text" && content.text.includes("task_1 finished successfully"),
+          ),
+      ),
+    ).toBe(true);
+    await agent.shutdown();
+  });
+
+  test("resize, stop, and awaited shutdown are owned by the agent", async () => {
+    const calls: string[] = [];
+    let release!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const runtime: ProfileRuntime = {
+      attach: () => calls.push("attach"),
+      resize: (cols, rows) => calls.push(`resize:${cols}x${rows}`),
+      stop: () => calls.push("stop"),
+      shutdown: async () => {
+        calls.push("shutdown:start");
+        await exited;
+        calls.push("shutdown:end");
+      },
+    };
+    const agent = agentWith(new FakeProvider([{ content: [{ type: "text", text: "unused" }] }]), {
+      runtime,
+    });
+
+    agent.resize(120, 40);
+    const shuttingDown = agent.shutdown();
+    await Bun.sleep(0);
+    expect(calls).toEqual(["attach", "resize:120x40", "stop", "shutdown:start"]);
+    release();
+    await shuttingDown;
+    expect(calls.at(-1)).toBe("shutdown:end");
   });
 });
 

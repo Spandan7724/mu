@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import {
   Agent,
+  defaultModelRef,
   loadMarkdownCommands,
+  optionsFromProfile,
   refreshModels,
   registryWithCoreCommands,
   toCommand,
@@ -9,6 +11,7 @@ import {
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
+import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 
 const VERSION = "0.0.1";
@@ -45,11 +48,18 @@ async function main(): Promise<number> {
       // Permission asks are forwarded to the embedder, which answers with a
       // permission_reply op; nothing is auto-denied in RPC mode.
       const pending = new Map<string, (outcome: "allow" | "deny") => void>();
+      const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+      const resolved = await optionsFromProfile(profile, args.model ?? defaultModelRef());
       const agent = new Agent({
-        ...(args.model ? { model: args.model } : {}),
-        permissions: args.allowAll
-          ? [{ permission: "*", pattern: "*", action: "allow" as const }]
-          : [{ permission: "*", pattern: "*", action: "ask" as const }],
+        ...resolved,
+        ...(args.allowAll
+          ? {
+              permissions: [
+                ...(resolved.permissions ?? []),
+                { permission: "*", pattern: "*", action: "allow" as const },
+              ],
+            }
+          : {}),
         onPermission: (request) =>
           new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
       });
@@ -66,28 +76,36 @@ async function main(): Promise<number> {
         commands.register(toCommand(markdown));
       }
 
-      await runRpc(
-        { write: io.stdout, lines: linesFrom(process.stdin) },
-        {
-          agent,
-          runCommand: async (text) => {
-            const result = await commands.execute(text, {
-              inject: () => {},
-              print: () => {},
-              getModel: () => agent.modelRef,
-              setModel: (ref) => agent.setModel(ref),
-            });
-            return result;
+      try {
+        await runRpc(
+          { write: io.stdout, lines: linesFrom(process.stdin) },
+          {
+            agent,
+            runCommand: async (text) => {
+              const result = await commands.execute(text, {
+                inject: () => {},
+                print: () => {},
+                getModel: () => agent.modelRef,
+                setModel: (ref) => agent.setModel(ref),
+              });
+              return result;
+            },
+            resolvePermission: (requestId, outcome) => {
+              const resolve = pending.get(requestId);
+              if (!resolve) return false;
+              pending.delete(requestId);
+              resolve(outcome);
+              return true;
+            },
           },
-          resolvePermission: (requestId, outcome) => {
-            const resolve = pending.get(requestId);
-            if (!resolve) return false;
-            pending.delete(requestId);
-            resolve(outcome);
-            return true;
-          },
-        },
-      );
+        );
+      } finally {
+        for (const [id, resolve] of pending) {
+          resolve("deny");
+          pending.delete(id);
+        }
+        await agent.shutdown();
+      }
       return 0;
     }
     default:

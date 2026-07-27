@@ -1,5 +1,12 @@
 import { resolve } from "node:path";
-import { type AgentMessage, type AnyTool, ProcessManager, type Profile } from "@mu/core";
+import {
+  type AgentMessage,
+  type AnyTool,
+  exitNotification,
+  ProcessManager,
+  type Profile,
+  type ProfileRuntime,
+} from "@mu/core";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingEnvironment, contextMessages, environmentMessage } from "./context.ts";
 import { CODING_PERMISSION_DEFAULTS, layerPermissions, loadProjectConfig } from "./permissions.ts";
@@ -49,6 +56,38 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   ] as AnyTool[];
 
   const projectConfig = await loadProjectConfig(root);
+  const runtime: ProfileRuntime = {
+    attach: (host) => {
+      processes.setEvents({
+        onStarted: (task) => {
+          options.processEvents?.onStarted?.(task);
+          host.emit({
+            type: "task_started",
+            taskId: task.id,
+            command: task.command,
+            background: true,
+          });
+        },
+        onOutput: (taskId, chunk) => {
+          options.processEvents?.onOutput?.(taskId, chunk);
+          host.emit({ type: "task_output", taskId, chunk });
+        },
+        onExited: (task) => {
+          options.processEvents?.onExited?.(task);
+          host.emit({
+            type: "task_exited",
+            taskId: task.id,
+            exitCode: task.exitCode,
+            status: task.status === "killed" ? "killed" : "exited",
+          });
+          if (!task.detached) host.followUp(exitNotification(task));
+        },
+      });
+    },
+    resize: (cols, rows) => processes.resizeAll(cols, rows),
+    stop: () => processes.stopAll(),
+    shutdown: () => processes.killAll(),
+  };
 
   return {
     name: "coding",
@@ -68,6 +107,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
     checkpointProvider: new ShadowCheckpointProvider({ root }),
+    runtime,
     fileState,
     todos,
     processes,

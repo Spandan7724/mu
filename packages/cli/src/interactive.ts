@@ -120,7 +120,7 @@ export async function runInteractive(
   // run and deny anything still waiting, or the process lingers after the UI
   // is gone.
   const shutdown = () => {
-    agent.abort();
+    agent.stop();
     for (const [id, resolve] of pendingPermissions) {
       resolve("deny");
       pendingPermissions.delete(id);
@@ -139,7 +139,7 @@ export async function runInteractive(
         // A second concurrent run would share the Agent's abort controller,
         // session and usage totals. Mid-run input is steering, which is what
         // the loop's steering queue exists for.
-        if (activeRun) agent.send(text);
+        if (activeRun || agent.isRunning) agent.send(text);
         else beginRun(text);
       },
       onAbort: () => agent.abort(),
@@ -165,7 +165,9 @@ export async function runInteractive(
     name: "model",
     description: "Switch the active model",
     run: () => {
-      if (activeRun) return { handled: true, message: "Cannot switch models during a run." };
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot switch models during a run." };
+      }
       app.openPicker({
         title: "select a model",
         items: listModels().map((m) => ({
@@ -186,7 +188,9 @@ export async function runInteractive(
     name: "resume",
     description: "Resume an earlier session",
     run: async () => {
-      if (activeRun) return { handled: true, message: "Cannot resume during a run." };
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot resume during a run." };
+      }
       const sessions = await agent.sessionStore.list();
       if (sessions.length === 0) return { handled: true, message: "No saved sessions." };
       app.openPicker({
@@ -237,6 +241,11 @@ export async function runInteractive(
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
   const paint = () => renderer.render(app.renderBottom());
+  const unsubscribe = agent.subscribe((event) => {
+    const lines = app.handleEvent(event);
+    if (lines.length > 0) renderer.commit(lines);
+    paint();
+  });
 
   // Shallow file listing for the `@` popup — bounded so a huge tree cannot
   // stall a keystroke.
@@ -272,7 +281,7 @@ export async function runInteractive(
   }
 
   function beginRun(text: string, options?: AgentRunOptions): void {
-    if (activeRun) {
+    if (activeRun || agent.isRunning) {
       renderer.commit(["  A run is already active; submit text to steer it."]);
       paint();
       return;
@@ -283,13 +292,7 @@ export async function runInteractive(
   }
 
   async function startRun(text: string, options?: AgentRunOptions): Promise<void> {
-    const stream = agent.stream(text, options);
-    for await (const event of stream) {
-      const lines = app.handleEvent(event);
-      if (lines.length > 0) renderer.commit(lines);
-      paint();
-    }
-    await stream.result().catch((error) => {
+    await agent.run(text, options).catch((error) => {
       renderer.commit([`  ${error instanceof Error ? error.message : String(error)}`]);
     });
     paint();
@@ -346,8 +349,10 @@ export async function runInteractive(
   renderer.commit(app.banner());
   const stopResize = terminal.onResize(() => {
     app.setWidth(terminal.columns);
+    agent.resize(terminal.columns, terminal.rows);
     renderer.renderNow(app.renderBottom());
   });
+  agent.resize(terminal.columns, terminal.rows);
 
   const spinnerTimer = setInterval(() => {
     if (app.isRunning) {
@@ -389,6 +394,8 @@ export async function runInteractive(
     // Let the aborted run unwind before the terminal is handed back, so it
     // cannot repaint over a restored screen.
     await activeRun?.catch(() => {});
+    await agent.shutdown();
+    unsubscribe();
     clearInterval(spinnerTimer);
     stopResize();
     renderer.stop();

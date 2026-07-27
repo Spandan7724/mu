@@ -42,7 +42,12 @@ export type AgentEvent =
   | { type: "compaction_end"; layer: 1 | 2 | 3; tokensFreed: number; summaryEntryId?: string }
   | { type: "task_started"; taskId: string; command: string; background: boolean }
   | { type: "task_output"; taskId: string; chunk: string }
-  | { type: "task_exited"; taskId: string; exitCode: number | null }
+  | {
+      type: "task_exited";
+      taskId: string;
+      exitCode: number | null;
+      status?: "exited" | "killed";
+    }
   | {
       type: "usage_updated";
       sessionTotals: Usage;

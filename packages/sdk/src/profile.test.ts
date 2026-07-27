@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { CheckpointProvider, Profile } from "@mu/core";
+import type { CheckpointProvider, Profile, ProfileRuntime } from "@mu/core";
 import { optionsFromProfile } from "./profile.ts";
 
 function provider(name: string): CheckpointProvider & { name: string } {
@@ -37,5 +37,16 @@ describe("optionsFromProfile", () => {
     });
 
     expect(options.checkpointProvider).toBe(override);
+  });
+
+  test("propagates the profile runtime and honors an explicit override", async () => {
+    const profileRuntime: ProfileRuntime = { attach: () => {} };
+    const override: ProfileRuntime = { attach: () => {} };
+    const source = { ...profile(provider("profile")), runtime: profileRuntime };
+
+    expect((await optionsFromProfile(source, "fake/model")).runtime).toBe(profileRuntime);
+    expect((await optionsFromProfile(source, "fake/model", { runtime: override })).runtime).toBe(
+      override,
+    );
   });
 });

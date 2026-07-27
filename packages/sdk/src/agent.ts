@@ -23,6 +23,7 @@ import {
   CompactionError,
   compact,
   contextState,
+  type EventSink,
   type ExtensionHost,
   estimateTokens,
   evaluate,
@@ -33,6 +34,7 @@ import {
   microcompact,
   type PermissionRequest,
   type PermissionRule,
+  type ProfileRuntime,
   runLoop,
   SESSION_VERSION,
   type SessionStore,
@@ -83,6 +85,9 @@ export interface AgentOptions {
   compactThreshold?: number;
   // Snapshot/restore backing for /undo and /redo (profiles supply it).
   checkpointProvider?: CheckpointProvider;
+  // Session-owned resources supplied by a profile (background processes,
+  // browser sessions, etc.). The Agent owns their event and cleanup lifecycle.
+  runtime?: ProfileRuntime;
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
@@ -143,7 +148,6 @@ export class Agent {
   private lastContextPercent = 0;
   private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
-  private externalEvents: AgentEvent[] = [];
   private recoveryAttempted = false;
   private reactiveRecoveryPending = false;
   private snapshottedThisTurn = false;
@@ -152,6 +156,13 @@ export class Agent {
     | undefined;
   private currentThinking: ThinkingLevel;
   private running = false;
+  private stopping = false;
+  private activeEmit: ((event: AgentEvent) => void) | undefined;
+  private activeExecution: Promise<unknown> | undefined;
+  private autonomousScheduled = false;
+  private readonly subscribers = new Set<EventSink>();
+  private readonly idleWaiters = new Set<() => void>();
+  private shutdownPromise: Promise<void> | undefined;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -167,6 +178,10 @@ export class Agent {
       createdAt: new Date().toISOString(),
       profile: "default",
       environment: {},
+    });
+    options.runtime?.attach({
+      emit: (event) => this.emitTaskEvent(event),
+      followUp: (message) => this.followUp(message),
     });
   }
 
@@ -235,7 +250,6 @@ export class Agent {
     this.reactiveRecoveryPending = false;
     this.steering = [];
     this.followUps = [];
-    this.externalEvents = [];
     this.snapshottedThisTurn = false;
     this.pendingCheckpoint = undefined;
     this.controller = new AbortController();
@@ -272,13 +286,63 @@ export class Agent {
 
   // Wake a run that would otherwise stop (also how background work resumes it).
   followUp(message: string): void {
+    if (this.stopping) return;
     this.followUps.push(userMessage(message));
+    if (!this.running) this.scheduleAutonomousRun();
   }
 
-  // Surfaces forward background-task events here: task_started/task_output/
-  // task_exited reach consumers, and an exit wakes an idle run.
+  // Profile runtimes forward background-task events here. Active streams see
+  // them immediately; persistent subscribers also see them while the Agent is
+  // idle, rather than receiving a stale event on some later user turn.
   emitTaskEvent(event: AgentEvent): void {
-    this.externalEvents.push(event);
+    if (this.activeEmit) this.activeEmit(event);
+    else this.publishToSubscribers(event);
+    this.options.extensions?.emit(event);
+  }
+
+  subscribe(listener: EventSink): () => void {
+    this.subscribers.add(listener);
+    return () => this.subscribers.delete(listener);
+  }
+
+  resize(cols: number, rows: number): void {
+    if (cols > 0 && rows > 0) this.options.runtime?.resize?.(cols, rows);
+  }
+
+  waitForIdle(): Promise<void> {
+    if (!this.running && !this.autonomousScheduled && this.followUps.length === 0) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+
+  // Synchronous half of shutdown so signal handlers can stop owned resources
+  // before re-raising the signal. shutdown() awaits their actual exits.
+  stop(): void {
+    if (this.stopping) return;
+    this.stopping = true;
+    this.followUps = [];
+    try {
+      this.options.runtime?.stop?.();
+    } catch {
+      // Still abort the active model request even if resource signaling fails.
+    }
+    this.controller.abort();
+    this.resolveIdleIfDone();
+  }
+
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.stop();
+    this.shutdownPromise = (async () => {
+      await this.activeExecution?.catch(() => {});
+      await Promise.allSettled([
+        Promise.resolve().then(() => this.options.runtime?.shutdown?.()),
+        Promise.resolve().then(() => this.options.extensions?.shutdown()),
+      ]);
+      this.resolveIdleIfDone();
+    })();
+    return this.shutdownPromise;
   }
 
   abort(): void {
@@ -489,9 +553,7 @@ export class Agent {
     prompt: string | UserContent[],
     opts?: AgentRunOptions<T>,
   ): Promise<RunResult | (RunResult & { output: T })> {
-    const events: AgentEvent[] = [];
-    const result = await this.execute(prompt, opts, (event) => void events.push(event));
-    return result;
+    return this.execute(prompt, opts, () => {});
   }
 
   // Streams events as they happen; the returned iterable also exposes result().
@@ -629,20 +691,32 @@ export class Agent {
     );
   }
 
-  private async execute<T>(
+  private execute<T>(
     prompt: string | UserContent[],
     opts: AgentRunOptions<T> | undefined,
     emit: (event: AgentEvent) => void,
   ): Promise<RunResult & { output?: T }> {
+    if (this.stopping) {
+      return Promise.reject(new Error("Agent has been stopped."));
+    }
     if (this.running) {
-      throw new Error("Agent already has an active run; use send() to steer it.");
+      return Promise.reject(new Error("Agent already has an active run; use send() to steer it."));
     }
     this.running = true;
-    try {
-      return await this.executeRun(prompt, opts, emit);
-    } finally {
+    const publish = (event: AgentEvent) => {
+      emit(event);
+      this.publishToSubscribers(event);
+    };
+    this.activeEmit = publish;
+    const execution = this.executeRun(prompt, opts, publish).finally(() => {
       this.running = false;
-    }
+      this.activeEmit = undefined;
+      this.activeExecution = undefined;
+      if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
+      this.resolveIdleIfDone();
+    });
+    this.activeExecution = execution;
+    return execution;
   }
 
   private async executeRun<T>(
@@ -756,9 +830,6 @@ export class Agent {
         return pending;
       },
       getFollowUpMessages: () => {
-        // Drain any background-task events onto the stream first, so the
-        // consumer sees why the agent woke up.
-        for (const event of this.externalEvents.splice(0)) emit(event);
         const pending = this.followUps;
         this.followUps = [];
         return pending;
@@ -1009,5 +1080,41 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
+  }
+
+  private publishToSubscribers(event: AgentEvent): void {
+    for (const listener of this.subscribers) {
+      try {
+        void Promise.resolve(listener(event)).catch(() => {});
+      } catch {
+        // Observers must never be able to break an agent run.
+      }
+    }
+  }
+
+  private scheduleAutonomousRun(): void {
+    if (this.running || this.autonomousScheduled || this.stopping || this.followUps.length === 0) {
+      return;
+    }
+    this.autonomousScheduled = true;
+    queueMicrotask(() => {
+      this.autonomousScheduled = false;
+      if (this.running || this.stopping) {
+        this.resolveIdleIfDone();
+        return;
+      }
+      const message = this.followUps.shift();
+      if (!message || message.role !== "user") {
+        this.resolveIdleIfDone();
+        return;
+      }
+      void this.execute(message.content, undefined, () => {}).catch(() => {});
+    });
+  }
+
+  private resolveIdleIfDone(): void {
+    if (this.running || this.autonomousScheduled || this.followUps.length > 0) return;
+    for (const resolve of this.idleWaiters) resolve();
+    this.idleWaiters.clear();
   }
 }

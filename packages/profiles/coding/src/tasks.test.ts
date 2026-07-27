@@ -3,6 +3,8 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AnyTool, exitNotification, ProcessManager } from "@mu/core";
+import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { Agent, optionsFromProfile } from "mu";
 import { codingProfile } from "./index.ts";
 import { shellSpawner } from "./tools/tasks.ts";
 
@@ -229,6 +231,51 @@ describe("exit wakes an idle agent", () => {
     expect(notifications.length).toBe(1);
     expect(notifications[0]).toContain("finished successfully");
     expect(notifications[0]).toContain("task_output");
+  });
+
+  test("the coding profile publishes task events and resumes an idle Agent", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "bash",
+            arguments: {
+              command: "sleep 0.15; echo background-done",
+              run_in_background: true,
+            },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "waiting for the task" }] },
+      { content: [{ type: "text", text: "the task finished" }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", {
+        model: fakeModel,
+        provider,
+        permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+      }),
+    );
+    const eventTypes: string[] = [];
+    agent.subscribe((event) => {
+      eventTypes.push(event.type);
+    });
+
+    await agent.run("start a background command");
+    const task = profile.processes.list()[0];
+    expect(task).toBeDefined();
+    await profile.processes.wait(task?.id ?? "");
+    await agent.waitForIdle();
+
+    expect(provider.callCount).toBe(3);
+    expect(eventTypes).toContain("task_started");
+    expect(eventTypes).toContain("task_output");
+    expect(eventTypes).toContain("task_exited");
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("Background task task_1");
+    await agent.shutdown();
   });
 });
 

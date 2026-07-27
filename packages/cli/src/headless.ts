@@ -65,34 +65,30 @@ export async function runHeadless(
       : {}),
   });
 
-  const onSigint = () => agent.abort();
+  const onSigint = () => agent.stop();
   process.on("SIGINT", onSigint);
+
+  let failure: string | undefined;
+  const unsubscribe = agent.subscribe((event) => {
+    if (
+      event.type === "message_end" &&
+      event.message.role === "assistant" &&
+      event.message.stopReason === "error" &&
+      event.message.errorMessage
+    ) {
+      failure = event.message.errorMessage;
+    }
+    if (args.json) {
+      io.stdout(`${JSON.stringify(event)}\n`);
+    } else if (event.type === "message_update" && event.delta.kind === "text_delta") {
+      io.stdout(event.delta.text);
+    }
+  });
 
   try {
     // Capture the provider's own message so a failure is actionable rather
     // than a bare "an error occurred".
-    let failure: string | undefined;
-    const stream = agent.stream(args.prompt);
-    for await (const event of stream) {
-      if (
-        event.type === "message_end" &&
-        event.message.role === "assistant" &&
-        event.message.stopReason === "error" &&
-        event.message.errorMessage
-      ) {
-        failure = event.message.errorMessage;
-      }
-      if (args.json) {
-        io.stdout(`${JSON.stringify(event)}\n`);
-        continue;
-      }
-      // Text mode: stream assistant text as it arrives, nothing else.
-      if (event.type === "message_update" && event.delta.kind === "text_delta") {
-        io.stdout(event.delta.text);
-      }
-    }
-
-    const result = await stream.result();
+    const result = await agent.run(args.prompt);
     if (!args.json) io.stdout("\n");
 
     if (result.reason === "error") {
@@ -106,5 +102,7 @@ export async function runHeadless(
     return EXIT.error;
   } finally {
     process.off("SIGINT", onSigint);
+    await agent.shutdown();
+    unsubscribe();
   }
 }

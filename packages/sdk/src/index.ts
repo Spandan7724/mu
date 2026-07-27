@@ -21,6 +21,8 @@ export type {
   ExtensionAPI,
   PermissionRequest,
   PermissionRule,
+  ProfileRuntime,
+  ProfileRuntimeHost,
   SessionStore,
   StreamDelta,
   Tool,

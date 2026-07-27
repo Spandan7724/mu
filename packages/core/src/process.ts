@@ -176,6 +176,10 @@ export class ProcessManager {
     private events: ProcessEvents = {},
   ) {}
 
+  setEvents(events: ProcessEvents): void {
+    this.events = events;
+  }
+
   start(command: string, size: { cols?: number; rows?: number } = {}): TaskInfo {
     const id = `task_${++this.counter}`;
     const buffer = new OutputBuffer();
@@ -282,16 +286,27 @@ export class ProcessManager {
 
   // Session-scoped lifecycle: everything this session started is killed when it
   // ends, unless a task was explicitly detached.
+  stopAll(): void {
+    this.requestStops();
+  }
+
   async killAll(): Promise<void> {
+    const exits = this.requestStops();
+    await Promise.allSettled(exits);
+  }
+
+  private requestStops(): Promise<number | null>[] {
     const exits: Promise<number | null>[] = [];
     for (const task of this.tasks.values()) {
       if (task.info.status === "running" && !task.info.detached) {
-        task.killRequested = true;
-        task.handle.kill();
         exits.push(task.handle.exited);
+        if (!task.killRequested) {
+          task.killRequested = true;
+          task.handle.kill();
+        }
       }
     }
-    await Promise.allSettled(exits);
+    return exits;
   }
 
   async wait(id: string): Promise<TaskInfo | undefined> {
