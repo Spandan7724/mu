@@ -1,4 +1,4 @@
-import type { AnyTool, Tool, ToolResult } from "@mu/core";
+import type { AnyTool, Tool, ToolPermissionDetails, ToolResult } from "@mu/core";
 import { errorResult } from "@mu/core";
 import { z } from "zod";
 
@@ -11,6 +11,9 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   isConcurrencySafe?: (args: z.infer<Schema>) => boolean;
   executionMode?: "sequential";
   changesState?: boolean | ((args: z.infer<Schema>) => boolean);
+  permissionDetails?: (
+    args: z.infer<Schema>,
+  ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
   execute: (
     args: z.infer<Schema>,
     ctx: { toolCallId: string; signal: AbortSignal; update: (text: string) => void },
@@ -38,6 +41,14 @@ export function tool<Schema extends z.ZodType>(
     ...(definition.isConcurrencySafe ? { isConcurrencySafe: definition.isConcurrencySafe } : {}),
     ...(definition.executionMode ? { executionMode: definition.executionMode } : {}),
     ...(definition.changesState !== undefined ? { changesState: definition.changesState } : {}),
+    ...(definition.permissionDetails
+      ? {
+          permissionDetails: async (rawArgs) => {
+            const parsed = definition.inputSchema.safeParse(rawArgs);
+            return parsed.success ? definition.permissionDetails?.(parsed.data) : undefined;
+          },
+        }
+      : {}),
     execute: async (toolCallId, rawArgs, signal, onUpdate) => {
       const parsed = definition.inputSchema.safeParse(rawArgs);
       if (!parsed.success) {

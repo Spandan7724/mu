@@ -325,6 +325,36 @@ describe("approval overlay", () => {
     expect(rendered).toContain("allow once");
   });
 
+  test("a file permission renders a colored diff preview", () => {
+    const h = harness();
+    h.app.handleEvent({
+      type: "permission_asked",
+      request: {
+        id: "p2",
+        toolCallId: "c2",
+        toolName: "edit",
+        pattern: '{"path":"code.ts"}',
+        description: "Edit code.ts",
+        preview: {
+          kind: "diff",
+          file: {
+            path: "code.ts",
+            added: 1,
+            removed: 1,
+            hunks: ["@@ -1,1 +1,1 @@", "-const a = 1;", "+const a = 42;"],
+          },
+        },
+      },
+    });
+
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("Edit code.ts");
+    expect(rendered).toContain("code.ts · +1 −1");
+    expect(rendered).toContain("− const a = 1;");
+    expect(rendered).toContain("+ const a = 42;");
+    expect(rendered).not.toContain('{"path":"code.ts"}');
+  });
+
   test("enter allows once", () => {
     const h = harness();
     h.app.handleEvent(ask);
@@ -505,6 +535,65 @@ describe("tool output toggle", () => {
     const bottom = app.renderBottom().map(stripAnsi);
     expect(bottom.some((line) => line.includes("… +"))).toBe(true);
     expect(bottom.length).toBeLessThanOrEqual(31);
+  });
+
+  test("the managed region never exceeds the terminal viewport", () => {
+    const app = new App({
+      width: 60,
+      height: 10,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+      },
+    });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "long command" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n"),
+          },
+        ],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    feed(app, "\u000f");
+    app.handleEvent({
+      type: "permission_asked",
+      request: {
+        id: "p1",
+        toolCallId: "c2",
+        toolName: "edit",
+        pattern: "{}",
+        description: "Edit large.txt",
+        preview: {
+          kind: "text",
+          lines: Array.from({ length: 20 }, (_, index) => `change ${index + 1}`),
+        },
+      },
+    });
+
+    const bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.length).toBeLessThanOrEqual(9);
+    expect(bottom[0]).toContain("rows above hidden");
+    expect(bottom.join("\n")).toContain("allow once");
+    expect(bottom.at(-1)).toContain("ctrl+o");
   });
 });
 

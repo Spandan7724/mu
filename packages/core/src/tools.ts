@@ -1,4 +1,5 @@
 import type { ToolResultContent } from "@mu/ai";
+import type { ToolPermissionDetails } from "./permission.ts";
 
 export interface ToolResult {
   content: ToolResultContent[];
@@ -16,6 +17,9 @@ export interface Tool<Args = Record<string, unknown>> {
   isConcurrencySafe?: (args: Args) => boolean;
   executionMode?: "sequential"; // hard override: never parallel with anything
   changesState?: boolean | ((args: Args) => boolean);
+  permissionDetails?: (
+    args: Args,
+  ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
   execute: (
     toolCallId: string,
     args: Args,

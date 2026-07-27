@@ -75,7 +75,13 @@ export {
   microcompact,
   TOMBSTONE,
 } from "./microcompaction.ts";
-export type { PermissionAction, PermissionRequest, PermissionRule } from "./permission.ts";
+export type {
+  PermissionAction,
+  PermissionPreview,
+  PermissionRequest,
+  PermissionRule,
+  ToolPermissionDetails,
+} from "./permission.ts";
 export { evaluate } from "./permission.ts";
 export type {
   ManagedProcessHandle,

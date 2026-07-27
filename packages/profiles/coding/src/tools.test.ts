@@ -22,6 +22,10 @@ function run(tool: unknown, args: Record<string, unknown>) {
   return (tool as AnyTool).execute("t1", args, signal);
 }
 
+function permissionDetails(tool: unknown, args: Record<string, unknown>) {
+  return (tool as AnyTool).permissionDetails?.(args);
+}
+
 function textOf(result: { content: { type: string; text?: string }[] }): string {
   return result.content
     .filter((block) => block.type === "text")
@@ -71,6 +75,23 @@ describe("read", () => {
 });
 
 describe("write", () => {
+  test("permission preview shows a new file as additions", async () => {
+    const root = await scratch();
+    const details = await permissionDetails(writeTool({ root, state: new FileState() }), {
+      path: "new.txt",
+      content: "first\nsecond\n",
+    });
+
+    expect(details?.description).toBe("Create new.txt");
+    expect(details?.preview?.kind).toBe("diff");
+    if (details?.preview?.kind === "diff") {
+      expect(details.preview.file.added).toBe(2);
+      expect(details.preview.file.removed).toBe(0);
+      expect(details.preview.file.hunks).toContain("+first");
+      expect(details.preview.file.hunks).toContain("+second");
+    }
+  });
+
   test("creates a new file without needing a prior read", async () => {
     const root = await scratch();
     const state = new FileState();
@@ -137,6 +158,23 @@ describe("edit", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(await readFile(join(root, "code.ts"), "utf8")).toContain("const a = 42;");
+  });
+
+  test("permission preview shows the proposed replacement before execution", async () => {
+    const { root, state } = await prepared("const a = 1;\nconst b = 2;\n");
+    const details = await permissionDetails(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "const a = 1;",
+      newString: "const a = 42;",
+    });
+
+    expect(details?.description).toBe("Edit code.ts");
+    expect(details?.preview?.kind).toBe("diff");
+    if (details?.preview?.kind === "diff") {
+      expect(details.preview.file.hunks).toContain("-const a = 1;");
+      expect(details.preview.file.hunks).toContain("+const a = 42;");
+      expect(await readFile(join(root, "code.ts"), "utf8")).toContain("const a = 1;");
+    }
   });
 
   test("refuses an ambiguous match and says how many there were", async () => {

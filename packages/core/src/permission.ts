@@ -1,3 +1,5 @@
+import type { CheckpointDiffFile } from "./checkpoint.ts";
+
 export type PermissionAction = "allow" | "ask" | "deny";
 
 export interface PermissionRule {
@@ -12,7 +14,16 @@ export interface PermissionRequest {
   toolName: string;
   pattern: string; // what was matched, e.g. the command being run
   description: string; // human-readable summary for UI
-  preview?: unknown;
+  preview?: PermissionPreview;
+}
+
+export type PermissionPreview =
+  | { kind: "text"; lines: string[] }
+  | { kind: "diff"; file: CheckpointDiffFile };
+
+export interface ToolPermissionDetails {
+  description?: string;
+  preview?: PermissionPreview;
 }
 
 // Glob with `*` as the only wildcard; anchored at both ends.

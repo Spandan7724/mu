@@ -5,6 +5,7 @@ import type { AgentEvent, PermissionRequest } from "@mu/core";
 import {
   agentCell,
   compactionCell,
+  diffLinesFromHunks,
   errorCell,
   type RenderContext,
   taskCell,
@@ -58,6 +59,7 @@ export interface AppCallbacks {
 
 export interface AppOptions {
   width: number;
+  height?: number;
   depth: ColorDepth;
   model: string;
   cwd?: string;
@@ -127,6 +129,11 @@ export class App {
 
   setWidth(width: number): void {
     this.options.width = width;
+  }
+
+  setSize(width: number, height: number): void {
+    this.options.width = width;
+    this.options.height = height;
   }
 
   setCommands(commands: { label: string; description?: string }[]): void {
@@ -392,6 +399,8 @@ export class App {
   renderBottom(): string[] {
     const { width, depth } = this.ctx;
     const lines: string[] = [];
+    const height = this.options.height ?? 24;
+    const expandedRows = Math.max(3, Math.min(EXPANDED_TOOL_ROWS, height - 12));
 
     if (this.toolOutputExpanded && this.completedTools.length > 0) {
       const expanded = this.completedTools.flatMap((info) =>
@@ -405,11 +414,11 @@ export class App {
             depth,
           ),
       );
-      if (expanded.length <= EXPANDED_TOOL_ROWS) {
+      if (expanded.length <= expandedRows) {
         lines.push(...expanded);
       } else {
-        const headRows = Math.floor((EXPANDED_TOOL_ROWS - 1) / 2);
-        const tailRows = EXPANDED_TOOL_ROWS - headRows - 1;
+        const headRows = Math.floor((expandedRows - 1) / 2);
+        const tailRows = expandedRows - headRows - 1;
         const omitted = expanded.length - headRows - tailRows;
         lines.push(
           ...expanded.slice(0, headRows),
@@ -461,11 +470,25 @@ export class App {
     lines.push(composerRule(width, depth));
 
     if (this.mode === "approval" && this.approvals[0]) {
+      const request = this.approvals[0];
+      const preview = request.preview;
       lines.push(
         ...approvalOverlay(
           {
-            title: this.approvals[0].description,
-            preview: [this.approvals[0].pattern],
+            title: request.description,
+            ...(preview?.kind === "diff"
+              ? {
+                  diff: {
+                    path: preview.file.path,
+                    added: preview.file.added,
+                    removed: preview.file.removed,
+                    lines: diffLinesFromHunks(preview.file.hunks),
+                  },
+                }
+              : {
+                  preview: preview?.kind === "text" ? preview.lines : [request.pattern],
+                }),
+            maxPreviewRows: Math.max(3, Math.min(12, height - 8)),
             selectedIndex: this.approvalIndex,
           },
           width,
@@ -503,7 +526,18 @@ export class App {
       ? `${this.spinner.render(depth)} esc to interrupt ${GLYPHS.separator} ${toolHint}`
       : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, hint }, width, depth));
-    return lines;
+    return this.fitToViewport(lines);
+  }
+
+  private fitToViewport(lines: string[]): string[] {
+    const limit = Math.max(1, (this.options.height ?? 24) - 1);
+    if (lines.length <= limit) return lines;
+    if (limit === 1) return lines.slice(-1);
+    const hidden = lines.length - limit + 1;
+    return [
+      MARGIN + styleText(`… ${hidden} rows above hidden`, { dim: true }, this.options.depth),
+      ...lines.slice(-(limit - 1)),
+    ];
   }
 
   handleInput(event: InputEvent): void {

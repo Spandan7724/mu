@@ -1052,12 +1052,17 @@ export class Agent {
         if (action === "deny") {
           return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
         }
+        const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
+        const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
+          () => undefined,
+        );
         const request: PermissionRequest = {
           id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
           toolCallId: info.toolCall.id,
           toolName: info.toolCall.name,
           pattern,
-          description: `Run ${info.toolCall.name}`,
+          description: details?.description ?? `Run ${info.toolCall.name}`,
+          ...(details?.preview ? { preview: details.preview } : {}),
         };
         emit({ type: "permission_asked", request });
         // Default DENY: never hang an unattended process on an unanswered ask.

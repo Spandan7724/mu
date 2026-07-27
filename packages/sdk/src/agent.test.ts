@@ -304,6 +304,31 @@ describe("permissions", () => {
     expect(asked).toEqual(["danger"]);
   });
 
+  test("tool-owned permission details reach the approval request", async () => {
+    let request: PermissionRequest | undefined;
+    const danger = tool({
+      name: "danger",
+      description: "does something risky",
+      inputSchema: z.object({ x: z.number() }),
+      permissionDetails: ({ x }) => ({
+        description: `Change value to ${x}`,
+        preview: { kind: "text", lines: [`value: ${x}`] },
+      }),
+      execute: () => "ran",
+    });
+    await agentWith(dangerProvider(), {
+      tools: [danger],
+      permissions: [{ permission: "*", pattern: "*", action: "ask" }],
+      onPermission: async (asked: PermissionRequest) => {
+        request = asked;
+        return "allow";
+      },
+    }).run("go");
+
+    expect(request?.description).toBe("Change value to 1");
+    expect(request?.preview).toEqual({ kind: "text", lines: ["value: 1"] });
+  });
+
   test("onPermission denial blocks the call", async () => {
     let ran = false;
     await agentWith(dangerProvider(), {

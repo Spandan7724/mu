@@ -1,6 +1,7 @@
 // Components return styled lines at a width — not React, no virtual DOM.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { type DiffFile, diffCell } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
@@ -373,6 +374,8 @@ export function composerRule(width: number, depth: ColorDepth): string {
 export interface ApprovalData {
   title: string;
   preview?: string[];
+  diff?: DiffFile;
+  maxPreviewRows?: number;
   selectedIndex: number;
 }
 
@@ -381,15 +384,34 @@ export const APPROVAL_OPTIONS = ["allow once", "always allow", "deny"] as const;
 // Never a modal box — same quiet layout language as everything else.
 export function approvalOverlay(data: ApprovalData, width: number, depth: ColorDepth): string[] {
   const out: string[] = [MARGIN + styleText(sanitizeUntrusted(data.title), { bold: true }, depth)];
-  for (const line of data.preview ?? []) {
+  const preview = data.diff
+    ? diffCell(data.diff, { width, depth })
+    : (data.preview ?? []).map(
+        (line) =>
+          MARGIN + dim(truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length), depth),
+      );
+  const bounded = boundPreview(preview, data.maxPreviewRows);
+  for (const line of bounded) {
     // The preview is a command string or diff — never trusted.
-    out.push(MARGIN + dim(truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length), depth));
+    out.push(line);
   }
   const options = APPROVAL_OPTIONS.map((option, i) =>
     i === data.selectedIndex ? accent(option, depth) : dim(option, depth),
   ).join(dim(` ${GLYPHS.separator} `, depth));
   out.push(MARGIN + options);
   return out;
+}
+
+function boundPreview(lines: string[], maxRows = 12): string[] {
+  if (lines.length <= maxRows) return lines;
+  if (maxRows <= 1) return lines.slice(0, maxRows);
+  const head = Math.max(1, Math.ceil((maxRows - 1) / 2));
+  const tail = Math.max(0, maxRows - head - 1);
+  return [
+    ...lines.slice(0, head),
+    `${MARGIN}… ${lines.length - head - tail} more lines`,
+    ...(tail > 0 ? lines.slice(-tail) : []),
+  ];
 }
 
 export { renderMarkdown, stringWidth };

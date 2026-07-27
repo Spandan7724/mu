@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { errorResult, type ToolResult } from "@mu/core";
+import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import type { FileState } from "../state.ts";
@@ -24,6 +24,59 @@ export function resolveInRoot(root: string, path: string): string {
 function display(root: string, path: string): string {
   const rel = relative(resolve(root), path);
   return rel === "" ? "." : rel;
+}
+
+function previewLines(text: string): string[] {
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+export function filePermissionDiff(
+  path: string,
+  before: string | undefined,
+  after: string,
+): CheckpointDiffFile {
+  const oldLines = before === undefined ? [] : previewLines(before);
+  const newLines = previewLines(after);
+  let prefix = 0;
+  while (
+    prefix < oldLines.length &&
+    prefix < newLines.length &&
+    oldLines[prefix] === newLines[prefix]
+  ) {
+    prefix++;
+  }
+
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const removed = oldLines.length - prefix - suffix;
+  const added = newLines.length - prefix - suffix;
+  if (added === 0 && removed === 0) return { path, added, removed, hunks: [] };
+
+  const contextBefore = Math.min(3, prefix);
+  const contextAfter = Math.min(3, suffix);
+  const oldStart = prefix - contextBefore;
+  const newStart = prefix - contextBefore;
+  const oldCount = contextBefore + removed + contextAfter;
+  const newCount = contextBefore + added + contextAfter;
+  const hunks = [
+    `@@ -${oldLines.length === 0 ? 0 : oldStart + 1},${oldCount} +${newLines.length === 0 ? 0 : newStart + 1},${newCount} @@`,
+    ...oldLines.slice(oldStart, prefix).map((line) => ` ${line}`),
+    ...oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`),
+    ...newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`),
+    ...newLines
+      .slice(newLines.length - suffix, newLines.length - suffix + contextAfter)
+      .map((line) => ` ${line}`),
+  ];
+  return { path, added, removed, hunks };
 }
 
 export function readTool(deps: ToolDeps) {
@@ -77,6 +130,23 @@ export function writeTool(deps: ToolDeps) {
       path: z.string().describe("Path to the file"),
       content: z.string().describe("The complete file contents"),
     }),
+    permissionDetails: async ({ path, content }) => {
+      const absolute = resolveInRoot(deps.root, path);
+      let before: string | undefined;
+      try {
+        before = await readFile(absolute, "utf8");
+      } catch {
+        before = undefined;
+      }
+      const relativePath = display(deps.root, absolute);
+      return {
+        description: `${before === undefined ? "Create" : "Overwrite"} ${relativePath}`,
+        preview: {
+          kind: "diff",
+          file: filePermissionDiff(relativePath, before, content),
+        },
+      };
+    },
     execute: async ({ path, content }): Promise<ToolResult | string> => {
       const absolute = resolveInRoot(deps.root, path);
       let exists = true;
@@ -129,6 +199,26 @@ export function editTool(deps: ToolDeps) {
       newString: z.string().describe("Replacement text"),
       replaceAll: z.boolean().optional().describe("Replace every occurrence"),
     }),
+    permissionDetails: async ({ path, oldString, newString, replaceAll }) => {
+      const absolute = resolveInRoot(deps.root, path);
+      const relativePath = display(deps.root, absolute);
+      let content: string;
+      try {
+        content = await readFile(absolute, "utf8");
+      } catch {
+        return { description: `Edit ${relativePath}` };
+      }
+      const updated = replaceAll
+        ? content.split(oldString).join(newString)
+        : content.replace(oldString, newString);
+      return {
+        description: `Edit ${relativePath}`,
+        preview: {
+          kind: "diff",
+          file: filePermissionDiff(relativePath, content, updated),
+        },
+      };
+    },
     execute: async ({ path, oldString, newString, replaceAll }): Promise<ToolResult | string> => {
       const absolute = resolveInRoot(deps.root, path);
 

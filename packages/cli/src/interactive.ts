@@ -202,6 +202,7 @@ export async function runInteractive(
 
   app = new App({
     width: terminal.columns,
+    height: terminal.rows,
     depth,
     model: modelRef,
     cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
@@ -608,7 +609,7 @@ export async function runInteractive(
     renderer.commit(builtIns.warnings.map((warning) => `  ${warning}`));
   }
   const stopResize = terminal.onResize(() => {
-    app.setWidth(terminal.columns);
+    app.setSize(terminal.columns, terminal.rows);
     agent.resize(terminal.columns, terminal.rows);
     renderer.renderNow(app.renderBottom());
   });
