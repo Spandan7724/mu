@@ -14,6 +14,7 @@ const ESC = "\u001b";
 
 function harness(overrides: Partial<AppCallbacks> = {}) {
   const submitted: string[] = [];
+  const followUps: string[] = [];
   const commands: string[] = [];
   const replies: { id: string; outcome: string; remember: boolean }[] = [];
   let aborted = false;
@@ -31,6 +32,7 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
     registry,
     callbacks: {
       onSubmit: (text) => submitted.push(text),
+      onFollowUp: (text) => followUps.push(text),
       onAbort: () => {
         aborted = true;
       },
@@ -46,6 +48,7 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
   return {
     app,
     submitted,
+    followUps,
     commands,
     replies,
     get aborted() {
@@ -166,9 +169,12 @@ describe("fake-agent session", () => {
     const { app } = harness();
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("esc to interrupt");
     app.handleEvent({ type: "agent_start" });
-    expect(stripAnsi(app.renderBottom().at(-1) ?? "")).toContain("esc to interrupt");
+    const runningHint = app.renderBottom().map(stripAnsi).join("\n");
+    expect(runningHint).toContain("enter steer");
+    expect(runningHint).toContain("tab follow-up");
+    expect(runningHint).toContain("esc interrupt");
     app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
-    expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("esc to interrupt");
+    expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("enter steer");
   });
 
   test("compaction is shown as a visible boundary", () => {
@@ -247,6 +253,19 @@ describe("input handling", () => {
     const h = harness();
     feed(h.app, "hello\r");
     expect(h.submitted).toEqual(["hello"]);
+  });
+
+  test("tab queues a follow-up only while the agent is running", () => {
+    const h = harness();
+    feed(h.app, "not yet\t");
+    expect(h.followUps).toEqual([]);
+    expect(h.app.editor.text).toBe("not yet");
+
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "\t");
+    expect(h.followUps).toEqual(["not yet"]);
+    expect(h.submitted).toEqual([]);
+    expect(h.app.editor.text).toBe("");
   });
 
   test("a multi-line paste does not submit", () => {

@@ -267,6 +267,14 @@ export async function runInteractive(
         } else if (activeRun || agent.isRunning) agent.send(text);
         else beginRun(text);
       },
+      onFollowUp: (text) => {
+        if (activeShell) {
+          commitLines(["  A shell command is already running; press Esc to cancel it."]);
+          paint();
+        } else {
+          agent.followUp(text);
+        }
+      },
       onShell: (command) => beginUserShell(command),
       onAbort: () => {
         if (shellController) shellController.abort();

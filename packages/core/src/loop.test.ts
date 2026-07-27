@@ -85,6 +85,58 @@ describe("agent loop", () => {
     expect(texts).toContain("actually, stop");
   });
 
+  test("steering interrupts tool calls that have not started", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "c1", name: "echo", arguments: { text: "first" } },
+          { type: "toolCall", id: "c2", name: "echo", arguments: { text: "second" } },
+        ],
+      },
+      { content: [{ type: "text", text: "replanned" }] },
+    ]);
+    const executed: string[] = [];
+    let delivered = false;
+    const tool = echoTool({
+      executionMode: "sequential",
+      execute: async (_id, args) => {
+        executed.push(String((args as { text?: string }).text));
+        return textResult("ok");
+      },
+    });
+    const result = await runLoop(
+      [userMessage("start")],
+      ctx([tool]),
+      baseConfig(provider, {
+        getSteeringMessages: () => {
+          if (executed.length === 0 || delivered) return [];
+          delivered = true;
+          return [userMessage("change course")];
+        },
+      }),
+      collector().emit,
+    );
+
+    expect(executed).toEqual(["first"]);
+    const skipped = result.messages.find(
+      (message) => message.role === "toolResult" && message.toolCallId === "c2",
+    );
+    expect(
+      skipped?.role === "toolResult" &&
+        skipped.content[0]?.type === "text" &&
+        skipped.content[0].text,
+    ).toContain("steering message interrupted");
+    const secondRequest = provider.requests[1];
+    const texts = secondRequest?.messages.flatMap((message) =>
+      message.role === "user"
+        ? message.content
+            .filter((content) => content.type === "text")
+            .map((content) => content.text)
+        : [],
+    );
+    expect(texts).toContain("change course");
+  });
+
   test("follow-up queue continues the loop after it would stop", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "first" }] },
@@ -379,6 +431,43 @@ describe("tool batching", () => {
         m.role === "toolResult" && m.content[0]?.type === "text" ? m.content[0].text : "",
       );
     expect(texts).toEqual(["a", "b"]);
+  });
+
+  test("steering waits for an active parallel batch and skips later calls", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "c1", name: "echo", arguments: { text: "one" } },
+          { type: "toolCall", id: "c2", name: "echo", arguments: { text: "two" } },
+          { type: "toolCall", id: "c3", name: "echo", arguments: { text: "three" } },
+        ],
+      },
+      { content: [{ type: "text", text: "replanned" }] },
+    ]);
+    const executed: string[] = [];
+    let delivered = false;
+    const tool = echoTool({
+      isConcurrencySafe: (args) => (args as { text?: string }).text !== "three",
+      execute: async (_id, args) => {
+        executed.push(String((args as { text?: string }).text));
+        await Bun.sleep(5);
+        return textResult("ok");
+      },
+    });
+    await runLoop(
+      [userMessage("start")],
+      ctx([tool]),
+      baseConfig(provider, {
+        getSteeringMessages: () => {
+          if (executed.length < 2 || delivered) return [];
+          delivered = true;
+          return [userMessage("change course")];
+        },
+      }),
+      collector().emit,
+    );
+
+    expect(executed.sort()).toEqual(["one", "two"]);
   });
 
   test("unsafe calls serialize", async () => {

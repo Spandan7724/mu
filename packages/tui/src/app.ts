@@ -48,6 +48,8 @@ export interface InputPromptRequest {
 
 export interface AppCallbacks {
   onSubmit: (text: string) => void;
+  // While a run is active, Tab queues work for after the current run settles.
+  onFollowUp?: (text: string) => void;
   // Explicit user shell escape. The leading `!` stays in editor history, but
   // only the command text is passed to the surface.
   onShell?: (command: string) => void;
@@ -640,12 +642,21 @@ export class App {
     }
 
     const toolHint = "ctrl+o";
+    if (this.running) {
+      lines.push(
+        `${MARGIN}${this.spinner.render(depth)}${styleText(
+          ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc interrupt ${GLYPHS.separator} ${toolHint}`,
+          { dim: true },
+          depth,
+        )}`,
+      );
+    }
     const hint = this.running
-      ? `${this.spinner.render(depth)} esc to interrupt ${GLYPHS.separator} ${toolHint}`
+      ? undefined
       : this.isShellMode
         ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
         : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
-    lines.push(...footer({ ...this.footerData, hint }, width, depth));
+    lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }
 
@@ -755,6 +766,12 @@ export class App {
         } else {
           this.options.callbacks.onSubmit(text);
         }
+        return;
+      }
+      case "tab": {
+        if (!this.running || !this.options.callbacks.onFollowUp) return;
+        const text = this.editor.submit();
+        if (text.trim().length > 0) this.options.callbacks.onFollowUp(text);
         return;
       }
       case "backspace":

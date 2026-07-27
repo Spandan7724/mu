@@ -222,6 +222,7 @@ export async function runLoop(
             ? await failTruncatedCalls(calls, emit)
             : await executeCalls(calls, message, currentContext, currentConfig, emit, abort);
         toolResults.push(...batch.results);
+        pending.push(...batch.steering);
         hasMoreToolCalls = !batch.terminate;
         for (const result of batch.results) {
           currentContext.messages.push(result);
@@ -261,7 +262,7 @@ export async function runLoop(
 
       if (await currentConfig.shouldStopAfterTurn?.(turn)) return finish("done");
 
-      pending = (await currentConfig.getSteeringMessages?.()) ?? [];
+      pending.push(...((await currentConfig.getSteeringMessages?.()) ?? []));
     }
 
     const followUps = (await currentConfig.getFollowUpMessages?.()) ?? [];
@@ -387,6 +388,7 @@ async function streamAssistant(
 interface ToolBatch {
   results: ToolResultMessage[];
   terminate: boolean;
+  steering: AgentMessage[];
 }
 
 function resultMessage(
@@ -430,7 +432,32 @@ async function failTruncatedCalls(calls: ToolCallContent[], emit: EventSink): Pr
     await emitResult(message, emit);
     results.push(message);
   }
-  return { results, terminate: false };
+  return { results, terminate: false, steering: [] };
+}
+
+async function skipCallsForSteering(
+  calls: ToolCallContent[],
+  emit: EventSink,
+): Promise<ToolResultMessage[]> {
+  const results: ToolResultMessage[] = [];
+  for (const call of calls) {
+    await emit({
+      type: "tool_execution_start",
+      toolCallId: call.id,
+      toolName: call.name,
+      args: call.arguments,
+    });
+    const message = resultMessage(
+      call,
+      errorResult(
+        `Tool call "${call.name}" was not executed because a steering message interrupted the remaining tool calls. Re-evaluate the plan before re-issuing it.`,
+      ),
+      true,
+    );
+    await emitResult(message, emit);
+    results.push(message);
+  }
+  return results;
 }
 
 interface Prepared {
@@ -537,6 +564,7 @@ async function executeCalls(
 ): Promise<ToolBatch> {
   const results: ToolResultMessage[] = [];
   const terminateFlags: boolean[] = [];
+  let steering: AgentMessage[] = [];
 
   const runOne = async (call: ToolCallContent): Promise<ToolResultMessage> => {
     await emit({
@@ -566,6 +594,8 @@ async function executeCalls(
       results.push(message);
       i++;
       if (signal.aborted) break;
+      steering = (await config.getSteeringMessages?.()) ?? [];
+      if (steering.length > 0) break;
       continue;
     }
 
@@ -584,11 +614,18 @@ async function executeCalls(
       results.push(message);
     }
     if (signal.aborted) break;
+    steering = (await config.getSteeringMessages?.()) ?? [];
+    if (steering.length > 0) break;
+  }
+
+  if (steering.length > 0 && i < calls.length) {
+    results.push(...(await skipCallsForSteering(calls.slice(i), emit)));
   }
 
   return {
     results,
     terminate: terminateFlags.length > 0 && terminateFlags.every(Boolean),
+    steering,
   };
 }
 
