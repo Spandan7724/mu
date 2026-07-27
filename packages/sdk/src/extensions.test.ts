@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Provider } from "@mu/ai";
 import { ExtensionHost } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
@@ -164,6 +165,27 @@ describe("extensions driving a real run", () => {
         toolResult.content[0]?.type === "text" &&
         toolResult.content[0].text,
     ).toBe("42");
+  });
+
+  test("an extension-registered provider drives the run", async () => {
+    const backing = new FakeProvider([{ content: [{ type: "text", text: "custom provider" }] }]);
+    const provider: Provider = {
+      id: "custom",
+      stream: (model, context, options) => backing.stream(model, context, options),
+    };
+    const host = new ExtensionHost();
+    await host.register({
+      name: "custom-provider",
+      activate: (api) => api.registerProvider(provider),
+    });
+
+    const result = await new Agent({
+      model: { ...fakeModel, provider: "custom", id: "custom-1" },
+      extensions: host,
+    }).run("go");
+
+    expect(result.text).toBe("custom provider");
+    expect(backing.callCount).toBe(1);
   });
 
   test("extensions observe the event stream", async () => {

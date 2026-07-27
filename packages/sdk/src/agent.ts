@@ -184,7 +184,7 @@ export class Agent {
     this.options = options;
     this.currentThinking = options.thinkingLevel ?? "off";
     this.model = resolveModel(options.model);
-    this.provider = options.provider ?? getProvider(this.model.provider);
+    this.provider = this.providerFor(this.model);
     this.store = options.session ?? new MemorySessionStore();
     this._sessionId = options.sessionId ?? `s${Date.now().toString(36)}`;
     this.tree = new SessionTree({
@@ -236,7 +236,7 @@ export class Agent {
   // Switching model also switches provider — they travel together.
   setModel(ref: string | ModelInfo): void {
     this.model = resolveModel(ref);
-    this.provider = this.options.provider ?? getProvider(this.model.provider);
+    this.provider = this.providerFor(this.model);
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
     this.tree.append({ type: "settings-change", model: this.modelRef });
@@ -269,14 +269,14 @@ export class Agent {
     this.pendingCheckpoint = undefined;
     this.controller = new AbortController();
     this.model = resolveModel(this.options.model);
-    this.provider = this.options.provider ?? getProvider(this.model.provider);
+    this.provider = this.providerFor(this.model);
     this.currentThinking = this.options.thinkingLevel ?? "off";
     for (const entry of candidate.activePath()) {
       if (entry.type !== "settings-change") continue;
       if (entry.model) {
         try {
           this.model = resolveModel(entry.model);
-          this.provider = this.options.provider ?? getProvider(this.model.provider);
+          this.provider = this.providerFor(this.model);
         } catch {
           // A removed catalog model must not make an otherwise valid session
           // impossible to resume; retain the last valid setting.
@@ -888,9 +888,7 @@ export class Agent {
       tools = tools.filter((tool) => allowed.has(tool.name));
     }
     const runModel = opts?.model ? resolveModel(opts.model) : this.model;
-    const runProvider = opts?.model
-      ? (this.options.provider ?? getProvider(runModel.provider))
-      : this.provider;
+    const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
@@ -1228,6 +1226,14 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
+  }
+
+  private providerFor(model: ModelInfo): Provider {
+    return (
+      this.options.provider ??
+      this.options.extensions?.providers.get(model.provider) ??
+      getProvider(model.provider)
+    );
   }
 
   private publishToSubscribers(event: AgentEvent): void {
