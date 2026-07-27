@@ -17,6 +17,7 @@ import {
   type AnyTool,
   AUTO_COMPACT_THRESHOLD,
   applyCompaction,
+  type CheckpointEntry,
   CheckpointHistory,
   type CheckpointProvider,
   compact,
@@ -46,9 +47,6 @@ import {
   structuredOutputPrompt,
   structuredOutputTool,
 } from "./structured-output.ts";
-
-// Tool names that change state and therefore deserve a checkpoint first.
-const DEFAULT_MUTATING_TOOLS = ["write", "edit", "bash"];
 
 // Per : tools reach the SDK only because the user registered them in their
 // own code, so the bare SDK allows them. Restrictive rules come from profiles.
@@ -83,8 +81,6 @@ export interface AgentOptions {
   compactThreshold?: number;
   // Snapshot/restore backing for /undo and /redo (profiles supply it).
   checkpointProvider?: CheckpointProvider;
-  // Tools whose calls mutate state and must be snapshotted first.
-  mutatingTools?: string[];
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
@@ -141,6 +137,9 @@ export class Agent {
   private externalEvents: AgentEvent[] = [];
   private recoveryAttempted = false;
   private snapshottedThisTurn = false;
+  private pendingCheckpoint:
+    | { beforeEntryId: string | null; beforeRef: string; label: string }
+    | undefined;
   private currentThinking: ThinkingLevel;
 
   constructor(options: AgentOptions = {}) {
@@ -200,6 +199,7 @@ export class Agent {
     this.tree = tree;
     const header = tree.header;
     if (header) this._sessionId = header.id;
+    this.rebuildCheckpointHistory();
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
@@ -236,23 +236,119 @@ export class Agent {
   async undo(): Promise<{ ok: boolean; message: string }> {
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support undo." };
-    const step = this.checkpoints.popForUndo();
+    const step = this.checkpoints.peekUndo();
     if (!step) return { ok: false, message: "Nothing to undo." };
+    if (!this.tree.has(step.beforeEntryId)) {
+      return { ok: false, message: "Could not undo: the conversation checkpoint is missing." };
+    }
 
-    await provider.restore(step.restoreTo.ref);
-    this.tree.fork(step.undone.entryId);
-    return { ok: true, message: `Undid ${step.undone.label ?? "the last step"}.` };
+    let rollbackRef: string | undefined;
+    try {
+      rollbackRef = await provider.snapshot(`before undo of ${step.label ?? "step"}`);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not undo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (!rollbackRef)
+      return { ok: false, message: "Could not undo: failed to capture current state." };
+
+    try {
+      await provider.restore(step.beforeRef);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not undo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    const current = this.tree;
+    const candidate = SessionTree.fromJsonl(current.toJsonl());
+    candidate.fork(step.beforeEntryId);
+    const state = this.checkpoints.state();
+    candidate.append({
+      type: "custom",
+      customType: "checkpoint-cursor",
+      data: {
+        done: state.done.slice(0, -1).map((entry) => entry.id),
+        undone: [...state.undone, step].map((entry) => entry.id),
+      },
+    });
+
+    try {
+      await this.store.save(this._sessionId, candidate);
+    } catch (error) {
+      await provider.restore(rollbackRef).catch(() => {});
+      await this.store.save(this._sessionId, current).catch(() => {});
+      return {
+        ok: false,
+        message: `Could not undo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    this.checkpoints.restore(state.done.slice(0, -1), [...state.undone, step]);
+    this.tree = candidate;
+    return { ok: true, message: `Undid ${step.label ?? "the last step"}.` };
   }
 
   async redo(): Promise<{ ok: boolean; message: string }> {
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support redo." };
-    const entry = this.checkpoints.popForRedo();
-    if (!entry) return { ok: false, message: "Nothing to redo." };
+    const step = this.checkpoints.peekRedo();
+    if (!step) return { ok: false, message: "Nothing to redo." };
+    if (!this.tree.has(step.id)) {
+      return { ok: false, message: "Could not redo: the conversation checkpoint is missing." };
+    }
 
-    await provider.restore(entry.ref);
-    this.tree.fork(entry.entryId);
-    return { ok: true, message: `Redid ${entry.label ?? "the step"}.` };
+    let rollbackRef: string | undefined;
+    try {
+      rollbackRef = await provider.snapshot(`before redo of ${step.label ?? "step"}`);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not redo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (!rollbackRef)
+      return { ok: false, message: "Could not redo: failed to capture current state." };
+
+    try {
+      await provider.restore(step.afterRef);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not redo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    const current = this.tree;
+    const candidate = SessionTree.fromJsonl(current.toJsonl());
+    candidate.fork(step.id);
+    const state = this.checkpoints.state();
+    candidate.append({
+      type: "custom",
+      customType: "checkpoint-cursor",
+      data: {
+        done: [...state.done, step].map((entry) => entry.id),
+        undone: state.undone.slice(0, -1).map((entry) => entry.id),
+      },
+    });
+
+    try {
+      await this.store.save(this._sessionId, candidate);
+    } catch (error) {
+      await provider.restore(rollbackRef).catch(() => {});
+      await this.store.save(this._sessionId, current).catch(() => {});
+      return {
+        ok: false,
+        message: `Could not redo: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
+    this.checkpoints.restore([...state.done, step], state.undone.slice(0, -1));
+    this.tree = candidate;
+    return { ok: true, message: `Redid ${step.label ?? "the step"}.` };
   }
 
   // Aggregate diff for the session: first checkpoint → now.
@@ -260,7 +356,7 @@ export class Agent {
     const provider = this.options.checkpointProvider;
     const first = this.checkpoints.first();
     if (!provider || !first) return [];
-    return provider.diff(first.ref);
+    return provider.diff(first.beforeRef);
   }
 
   fork(entryId: string): void {
@@ -326,25 +422,97 @@ export class Agent {
   }
 
   // One snapshot per turn, taken before the first mutating call in it.
-  private async snapshotIfMutating(toolName: string): Promise<void> {
+  private async snapshotIfMutating(tool: AnyTool | undefined, args: unknown): Promise<void> {
     const provider = this.options.checkpointProvider;
-    if (!provider || this.snapshottedThisTurn) return;
-    const mutating = this.options.mutatingTools ?? DEFAULT_MUTATING_TOOLS;
-    if (!mutating.includes(toolName)) return;
+    if (!provider || !tool || this.snapshottedThisTurn) return;
+    let mutates = tool.changesState === true;
+    if (typeof tool.changesState === "function") {
+      try {
+        mutates = tool.changesState(args);
+      } catch {
+        mutates = false;
+      }
+    }
+    if (!mutates) return;
 
     this.snapshottedThisTurn = true;
     try {
-      const ref = await provider.snapshot(`before ${toolName}`);
+      const ref = await provider.snapshot(`before ${tool.name}`);
       if (ref) {
-        this.checkpoints.record({
-          entryId: this.tree.head ?? "",
-          ref,
-          label: toolName,
-        });
+        const assistantEntry = this.tree.head ? this.tree.get(this.tree.head) : undefined;
+        this.pendingCheckpoint = {
+          beforeEntryId: assistantEntry?.parentId ?? null,
+          beforeRef: ref,
+          label: tool.name,
+        };
+      } else {
+        this.snapshottedThisTurn = false;
       }
     } catch {
-      // A checkpoint failure must not block the user's work.
+      this.snapshottedThisTurn = false;
     }
+  }
+
+  private async finishCheckpoint(): Promise<void> {
+    const pending = this.pendingCheckpoint;
+    const provider = this.options.checkpointProvider;
+    this.pendingCheckpoint = undefined;
+    if (!pending || !provider) return;
+
+    const afterRef = await provider.snapshot(`after ${pending.label}`).catch(() => undefined);
+    if (!afterRef) return;
+    const entry = this.tree.append({
+      type: "checkpoint",
+      beforeEntryId: pending.beforeEntryId,
+      checkpointRef: pending.beforeRef,
+      checkpointAfterRef: afterRef,
+      label: pending.label,
+    });
+    this.checkpoints.record({
+      id: entry.id,
+      beforeEntryId: pending.beforeEntryId,
+      beforeRef: pending.beforeRef,
+      afterRef,
+      label: pending.label,
+    });
+  }
+
+  private rebuildCheckpointHistory(): void {
+    const all = new Map<string, CheckpointEntry>();
+    for (const entry of this.tree.all()) {
+      if (entry.type !== "checkpoint") continue;
+      all.set(entry.id, {
+        id: entry.id,
+        beforeEntryId: entry.beforeEntryId,
+        beforeRef: entry.checkpointRef,
+        afterRef: entry.checkpointAfterRef,
+        ...(entry.label ? { label: entry.label } : {}),
+      });
+    }
+
+    const active = this.tree.activePath();
+    const cursor = [...active]
+      .reverse()
+      .find((entry) => entry.type === "custom" && entry.customType === "checkpoint-cursor");
+    if (cursor?.type === "custom") {
+      const data = cursor.data as { done?: unknown; undone?: unknown };
+      const resolve = (value: unknown): CheckpointEntry[] =>
+        Array.isArray(value)
+          ? value
+              .filter((id): id is string => typeof id === "string")
+              .map((id) => all.get(id))
+              .filter((entry): entry is CheckpointEntry => entry !== undefined)
+          : [];
+      this.checkpoints.restore(resolve(data.done), resolve(data.undone));
+      return;
+    }
+
+    this.checkpoints.restore(
+      active
+        .filter((entry) => entry.type === "checkpoint")
+        .map((entry) => all.get(entry.id))
+        .filter((entry): entry is CheckpointEntry => entry !== undefined),
+    );
   }
 
   private async execute<T>(
@@ -436,9 +604,12 @@ export class Agent {
           info.toolCall.name,
           pattern,
         );
-        await this.snapshotIfMutating(info.toolCall.name);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
-        if (action === "allow") return rewritten;
+        const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
+        if (action === "allow") {
+          await this.snapshotIfMutating(selectedTool, args);
+          return rewritten;
+        }
         if (action === "deny") {
           return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
         }
@@ -455,12 +626,14 @@ export class Agent {
           ? await this.options.onPermission(request)
           : "deny";
         emit({ type: "permission_resolved", requestId: request.id, outcome });
-        return outcome === "allow"
-          ? rewritten
-          : {
-              block: true,
-              reason: `Permission denied for ${info.toolCall.name}`,
-            };
+        if (outcome === "allow") {
+          await this.snapshotIfMutating(selectedTool, args);
+          return rewritten;
+        }
+        return {
+          block: true,
+          reason: `Permission denied for ${info.toolCall.name}`,
+        };
       },
       transformContext: async (messages) => {
         const transformed = host ? await host.runContextHooks(messages) : messages;
@@ -558,7 +731,8 @@ export class Agent {
         emit({ type: "compaction_end", layer: 3, tokensFreed: 0 });
         return true;
       },
-      shouldStopAfterTurn: (turn: TurnInfo) => {
+      shouldStopAfterTurn: async (turn: TurnInfo) => {
+        await this.finishCheckpoint();
         this.snapshottedThisTurn = false;
         this.totals = addUsage(this.totals, turn.message.usage);
         emit({

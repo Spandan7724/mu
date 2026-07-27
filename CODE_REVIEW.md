@@ -2,23 +2,23 @@
 
 ## Review summary
 
-- **Reviewed at:** 2026-07-26 22:12 UTC
-- **Current milestone:** Tracker calls M10 “largely complete” after landing compaction
-  Layers 1+3, markdown commands, and compiled-binary distribution; skills, picker, and
-  `@`-mention work has now started, together with runtime model-catalog refresh. This
-  review verifies neither M6 through M9 nor the landed M10 portions because checked
-  acceptance criteria are contradicted by open findings below.
-- **Reviewed revision:** `72db569` (`add compaction layers 1 and 3, markdown commands and
-  binary distribution`) plus the in-progress skills/picker/mention/model-catalog
-  worktree. M8–M10 findings were reproduced against their committed revisions where
-  applicable.
-- **Scope this cycle:** M8/M9 revalidation plus M10 microcompaction persistence, reactive
-  recovery lifetime/events, markdown-command TUI/RPC behavior and frontmatter, and
-  npm/compiled-binary distribution paths; then the new model/resume picker and
-  `@`-mention and model-catalog paths.
-- **Open findings:** P0: 0 · P1: 35 · P2: 21 · P3: 1
-- **Possibly fixed:** 0
-- **Verified fixed:** 0
+- **Reviewed at:** 2026-07-27 08:25 UTC
+- **Current milestone:** Tracker still calls M10 “largely complete.” Runtime catalog
+  refresh, skills, picker, `@`-mention, interactive-loop controls, terminal sanitization,
+  and several M9 follow-up fixes have landed, while every M10 checklist item remains
+  unchecked. Checked M6–M9 acceptance criteria and landed M10 claims remain contradicted
+  by the open findings below.
+- **Reviewed revision:** `4e0f9b4` (`fix catalog merge, recovery scope, mention cursor and
+  process tree cleanup`), clean worktree at the validation boundary. A subsequent
+  checkpoint-history worktree started during this review and is discussed only as
+  in-progress revalidation where relevant.
+- **Scope this cycle:** Revalidate the interactive-loop, signal, streaming, approval,
+  picker, mention, catalog, skills, terminal-sanitization, paste, process-output, process
+  tree, and reactive-recovery changes in `8389f4a` through `4e0f9b4`; rerun focused and
+  full repository gates; preserve all earlier records.
+- **Open findings:** P0: 0 · P1: 24 · P2: 19 · P3: 1
+- **Possibly fixed:** 2 (P1: 2)
+- **Verified fixed:** 11 (P1: 9 · P2: 2)
 - **Accepted:** 0
 
 ### Validation
@@ -52,54 +52,73 @@
 - A skill progressive-disclosure reproduction discovered a skill, rewrote its body, and
   then invoked the skill tool; it returned the stale pre-discovery `OLD BODY`, confirming
   bodies are eagerly cached rather than loaded on demand.
-- Focused read-only reproductions confirmed MU-CR-001 through MU-CR-008,
-  MU-CR-010, MU-CR-011, MU-CR-014, and MU-CR-019. MU-CR-009, MU-CR-012,
-  MU-CR-013, and MU-CR-015 through MU-CR-018 are direct code-path or
-  contract/architecture contradictions. MU-CR-020 through MU-CR-025 remain confirmed
+- Current focused terminal/input/App/Agent/skills/catalog/process/task validation
+  **passed** — 164 tests, 380 assertions. This includes sanitizer coverage at transcript,
+  list, approval, and diff boundaries; every paste-terminator split; concurrent
+  approvals; live text/tool cells; mid-buffer mentions; partial catalog merge; repeated
+  tail rollover; and Linux descendant cleanup.
+- Additional boundary reproductions found gaps those green tests miss:
+  `Editor.render()` preserved an OSC 52 sequence from bracketed paste (MU-CR-002), and a
+  partial catalog refresh deleted an explicitly registered official-provider model while
+  retaining the bundled baseline (MU-CR-055).
+- The focused process/task suite initially failed inside the managed sandbox with
+  `EPERM` from Bun stdin flush. The exact task suite **passed** outside that sandbox — 9
+  tests, 23 assertions — so that result is environmental rather than a product failure.
+- Full `bun run ci` at `4e0f9b4` **failed**: typecheck passed; lint completed with three
+  non-failing unused-code warnings; tests were 525 passed / 1 failed with 1,245
+  assertions. `CheckpointHistory > undo returns the state before the last action`
+  expected `r1` but received `r2`, directly exercising MU-CR-027. Purity did not run
+  because the test gate failed.
+- The subsequent checkpoint/profile worktree focused run still **failed** the same
+  assertion — 38 passed / 1 failed, 91 assertions — so the candidate does not yet satisfy
+  its own updated expectation.
+- As the checkpoint rewrite continued, a later worktree snapshot was intentionally
+  mid-migration and `bun run typecheck` failed with 22 removed/renamed checkpoint API
+  errors across Agent and its tests. This is recorded as active implementation state, not
+  a separate finding; stable revision `4e0f9b4` remains the review boundary.
+- The completed checkpoint repair passes full `bun run ci`: typecheck and lint are clean,
+  all 535 tests pass with 1,285 assertions, and kernel purity passes. Focused coverage now
+  includes consecutive undo/undo/redo/redo, persisted refs and cursor resume, snapshot,
+  restore and session-save failures, profile provider propagation, arbitrary
+  argument-dependent mutating tools, and denied mutations.
+- Focused read-only revalidation verified fixes for MU-CR-001, MU-CR-005, MU-CR-011, and
+  MU-CR-041; MU-CR-014 and MU-CR-043 are only possibly fixed for the verification gaps
+  recorded below. MU-CR-002 through MU-CR-004, MU-CR-006 through MU-CR-010,
+  MU-CR-012, MU-CR-013, and MU-CR-015 through MU-CR-019 remain direct reproductions,
+  code-path defects, or contract/architecture contradictions. MU-CR-020 through
+  MU-CR-025 remain confirmed
   against committed M7 revision `433a5b2`. MU-CR-026 through MU-CR-037 are confirmed
   against committed M8 revision `c109c65`; the narrow ordinary-untracked-file portion of
   MU-CR-026 changed, but ignored paths still reproduce the underlying restore failure.
   MU-CR-038 through MU-CR-045 are confirmed against committed M9 revision `82d595d`.
   MU-CR-046 through MU-CR-051 are confirmed against committed M10 revision `72db569`.
-  MU-CR-052 through MU-CR-054 are confirmed against the current uncommitted M10 picker/
-  mention worktree. MU-CR-055 and MU-CR-056 are confirmed against the concurrent
-  model-catalog worktree and the live `models.dev` schema. MU-CR-057 is confirmed against
-  the in-progress skills implementation.
+  MU-CR-052 and MU-CR-054 remain confirmed at `4e0f9b4`; MU-CR-053 is verified fixed.
+  MU-CR-055 remains open because the bundled baseline survives but registered
+  official-provider entries do not; MU-CR-056 remains confirmed against the mapped
+  `models.dev` schema. MU-CR-057 remains open because invocation-time rereading fixes
+  staleness but not eager discovery-time body loading.
 
 ### Highest-priority unresolved issues
 
-1. MU-CR-001 — SIGINT/SIGTERM restore the terminal but prevent the process from exiting.
-2. MU-CR-002 — untrusted model/tool text can emit arbitrary terminal control sequences.
-3. MU-CR-003 / MU-CR-004 — common emoji widths and editor cursor boundaries are wrong.
-4. MU-CR-005 — a bracketed-paste terminator split across reads permanently stalls paste.
-5. MU-CR-011 — concurrent permission requests overwrite each other and can deadlock a run.
-6. MU-CR-014 — a lone Esc is never flushed, so the advertised interrupt key does nothing.
-7. MU-CR-015 — input during a run starts overlapping runs instead of steering.
-8. MU-CR-020 — compaction is only a one-request transform and repeats every tool turn.
-9. MU-CR-021 — persisted compaction drops the intended tail and carryover on resume.
-10. MU-CR-022 — empty or length-truncated summaries can silently discard history.
-11. MU-CR-026 — shadow restore does not capture or restore ignored workspace files.
-12. MU-CR-027 / MU-CR-028 — undo/redo refs and conversation checkpoints are paired
-    incorrectly and are not persisted.
-13. MU-CR-032 — the coding profile's checkpoint provider is dropped before Agent creation,
-    so the real CLI reports checkpoint commands unsupported.
-14. MU-CR-033 — aggregate `/diff` omits newly created files.
-15. MU-CR-035 — the claimed `/fork` command does not exist.
-16. MU-CR-036 — a restore error consumes history and breaks atomic undo.
-17. MU-CR-038 — background processes are pipe-backed, not the required PTY sessions.
-18. MU-CR-039 — task exit is not connected to the live Agent and cannot wake a genuinely
+1. MU-CR-003 / MU-CR-004 — common emoji widths and editor cursor boundaries are wrong.
+2. MU-CR-015 — markdown-command input can still start overlapping, untracked runs.
+3. MU-CR-020 — compaction is only a one-request transform and repeats every tool turn.
+4. MU-CR-021 — persisted compaction drops the intended tail and carryover on resume.
+5. MU-CR-022 — empty or length-truncated summaries can silently discard history.
+6. MU-CR-026 — shadow restore does not capture or restore ignored workspace files.
+7. MU-CR-030 — colliding workspace keys can share shadow history.
+8. MU-CR-033 — aggregate `/diff` omits newly created files.
+9. MU-CR-035 — the claimed `/fork` command does not exist.
+10. MU-CR-038 — background processes are pipe-backed, not the required PTY sessions.
+11. MU-CR-039 — task exit is not connected to the live Agent and cannot wake a genuinely
     idle/completed run.
-19. MU-CR-040 / MU-CR-043 — session shutdown never calls process cleanup, and killing the
-    shell leaves child processes alive.
-20. MU-CR-041 — incremental task output silently loses new data once the tail rolls over.
-21. MU-CR-046 — reactive recovery is consumed forever after the Agent's first overflow.
-22. MU-CR-047 / MU-CR-048 — RPC custom commands discard their run and all frontmatter
+12. MU-CR-040 — session shutdown never calls process cleanup.
+13. MU-CR-046 — a second overflow episode in one run still cannot recover.
+14. MU-CR-047 / MU-CR-048 — RPC custom commands discard their run and all frontmatter
     execution controls are ignored.
-23. MU-CR-049 — the documented npm/binary installation paths do not exist.
-24. MU-CR-052 — the resume picker reports a resume without loading or switching sessions.
-25. MU-CR-053 — selecting a file mention away from the buffer end corrupts unsent input.
-26. MU-CR-055 — a partial catalog refresh deletes supported models and silently changes
-    the default.
+15. MU-CR-049 — the documented npm/binary installation paths do not exist.
+16. MU-CR-052 — resume can attach incompatible or in-flight runtime state to a transcript.
+17. MU-CR-055 / MU-CR-056 — catalog refresh can drop registered models and tier pricing.
 
 `TODO.md` marks M6, M7, and M8 complete. Its M6 claims about streaming, Esc abort, clean
 Ctrl+C/SIGTERM exit, bracketed-paste splitting, kitty input, Unicode correctness,
@@ -114,14 +133,16 @@ MU-CR-038 through MU-CR-045. The M10 status says Layers 1+3, custom commands, an
 distribution landed, but those claims conflict with MU-CR-020 and MU-CR-046 through
 MU-CR-051. The still-unchecked picker/mention work is reported only where its implemented
 paths make false state claims or corrupt input, not merely because it is unfinished. The
-new tracker claim that runtime catalog refresh cannot partially replace the active
-catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR-056.
+bundled-fallback portion of the catalog merge is fixed, but the active-catalog claim still
+conflicts with MU-CR-055 and its current-pricing claim conflicts with MU-CR-056. The
+committed skill path now works in the interactive surface, but its
+progressive-disclosure claim remains narrower than MU-CR-057.
 
 ---
 
 ## Confirmed defects
 
-### MU-CR-001 — P1 — Open — SIGINT and SIGTERM no longer terminate the process
+### MU-CR-001 — P1 — Verified Fixed — SIGINT and SIGTERM no longer terminate the process
 
 - **Affected:** `packages/tui/src/terminal.ts:67-77`, `packages/tui/src/terminal.ts:92-98`
 - **Requirement:** `docs/MILESTONES.md` M6 AC requires “Ctrl+C exits cleanly” and terminal
@@ -150,11 +171,17 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Spawn the TUI lifecycle in a child process/PTY, send SIGINT and SIGTERM,
   assert prompt termination with the expected status, and assert that raw mode, cursor,
   bracketed paste, and any enabled keyboard protocol are restored.
+- **Resolution evidence (2026-07-27, `8389f4a`):** `Terminal` now installs a
+  signal-specific one-shot handler, restores first, removes the handler, and re-sends the
+  original signal. Reviewer child-process reproductions exited 130 for SIGINT and 143 for
+  SIGTERM; a fake terminal also recorded bracketed-paste/cursor restoration and raw mode
+  returning to false before SIGTERM termination.
 
 ### MU-CR-002 — P1 — Open — Untrusted content can inject terminal control sequences
 
 - **Affected:** `packages/tui/src/wrap.ts:11-28`,
-  `packages/tui/src/cells.ts:65-80`, `packages/tui/src/components.ts:276-303`
+  `packages/tui/src/cells.ts:65-80`, `packages/tui/src/components.ts:184-195`,
+  `packages/tui/src/components.ts:276-303`
 - **Requirement:** M6 must provide a reliable terminal surface; the review mandate
   explicitly includes security and terminal-safety problems. ANSI-aware wrapping must not
   turn model or subprocess output into trusted terminal commands.
@@ -177,7 +204,15 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   sanitized. Do not use a broad ANSI regex that conflates arbitrary CSI with SGR.
 - **Tests to add:** Golden tests for OSC 52, OSC 8, cursor movement, clear-screen, DCS,
   embedded BEL, CR, and malformed/split escapes across agent markdown, tool tails, paths,
-  approval previews, and diff content. Assert no forbidden control survives.
+  approval previews, diff content, and bracketed-paste composer rendering. Assert no
+  forbidden control survives.
+- **Revalidation (2026-07-27, `51192bf`):** `sanitizeTerminalText` now removes C0/C1 and
+  CSI/OSC/DCS/APC/PM/SOS sequences at transcript cells, selections, approvals, and diffs;
+  its 21 tests pass. The live composer boundary is missing: bracketed paste inserts its
+  payload into `Editor`, and `Editor.render()` sends each raw line to `wrapText`.
+  Inserting `before ESC ]52;c;dGVzdA== BEL after` and rendering the editor produced output
+  containing both the OSC introducer and BEL. A malicious clipboard paste can therefore
+  still execute terminal controls before submission.
 
 ### MU-CR-003 — P1 — Open — Width and “grapheme” logic mismeasure common emoji
 
@@ -237,7 +272,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   Add property tests asserting edits never create unpaired surrogates and cursor positions
   are always grapheme boundaries.
 
-### MU-CR-005 — P1 — Open — A split bracketed-paste terminator stalls input permanently
+### MU-CR-005 — P1 — Verified Fixed — A split bracketed-paste terminator stalls input permanently
 
 - **Affected:** `packages/tui/src/input.ts:76-89`
 - **Requirement:** M6 AC requires bracketed multi-line paste never to submit; the decoder
@@ -266,6 +301,9 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Split both start and end markers at every possible byte boundary,
   including one-byte chunks; include marker-like text inside payloads and keys immediately
   following a completed paste.
+- **Resolution evidence (2026-07-27, `51192bf`):** Paste mode now retains the longest
+  suffix that can prefix `ESC[201~`. Tests splitting the terminator at every boundary and
+  into one-byte chunks passed, as did marker-like payload and post-paste input cases.
 
 ### MU-CR-006 — P2 — Open — Styled truncation emits malformed ANSI
 
@@ -385,7 +423,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** First-line exact fit, multiple continuations, wide graphemes, explicit
   newlines, and indent widths equal to or greater than the terminal width.
 
-### MU-CR-011 — P1 — Open — Concurrent permission asks overwrite each other and can deadlock
+### MU-CR-011 — P1 — Verified Fixed — Concurrent permission asks overwrite each other and can deadlock
 
 - **Affected:** `packages/tui/src/app.ts:52-54`, `packages/tui/src/app.ts:137-146`,
   `packages/tui/src/app.ts:276-295`
@@ -410,6 +448,10 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Two parallel asks resolved in both orders, denial/escape, a resolution
   for an unknown/stale ID, abort/exit with queued asks, and an end-to-end parallel-safe
   tool batch proving no permission promise remains pending.
+- **Resolution evidence (2026-07-27, `8389f4a`):** App now queues requests by ID, removes
+  only the matching resolution, and advances without allowing a stale ID to close the
+  visible ask. Reviewer event-order reproductions and four dedicated queue tests passed;
+  interactive shutdown also settles every pending permission as deny.
 
 ### MU-CR-012 — P1 — Open — TUI bypasses the public SDK boundary
 
@@ -460,7 +502,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   load a non-coding profile and assert no coding renderer is present; verify a profile or
   extension renderer overrides the generic fallback end to end.
 
-### MU-CR-014 — P1 — Open — Esc never reaches the app in the real interactive loop
+### MU-CR-014 — P1 — Possibly Fixed — Esc never reaches the app in the real interactive loop
 
 - **Affected:** `packages/tui/src/input.ts:129-130`,
   `packages/tui/src/input.ts:182-189`,
@@ -487,6 +529,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Drive the actual stdin-decoder integration with a lone Esc and wait past
   the timeout; assert abort. Also test an arrow/Alt sequence arriving before the timeout,
   rapid repeated Esc, and shutdown with a timer pending.
+- **Revalidation (2026-07-27, `8389f4a`):** The production stdin loop now schedules a
+  30 ms idle flush, dispatches the returned event, resets on new input, and cancels the
+  timer during shutdown. Decoder and App unit tests pass, but there is still no actual
+  stdin/PTY integration test proving a lone byte reaches and aborts a live interactive
+  run; status is therefore Possibly Fixed rather than Verified Fixed.
 
 ### MU-CR-015 — P1 — Open — Input during a run launches a concurrent run instead of steering
 
@@ -517,6 +564,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   entrypoints: TUI commands call `void startRun(prompt)` and RPC commands call
   `void agent.run(prompt)`. Neither checks for an active run, so the same overlapping
   Agent state applies to command prompts as ordinary TUI submissions.
+- **Revalidation (2026-07-27, `8389f4a`):** Ordinary composer submissions now retain one
+  `activeRun` and call `agent.send(text)` while it exists. Markdown commands still
+  register `(prompt) => void startRun(prompt)` directly, bypassing that guard and the
+  tracked promise; RPC remains detached as described by MU-CR-047. The finding therefore
+  remains open for the implemented command entrypoints.
 
 ### MU-CR-016 — P1 — Open — Exiting the TUI leaves the active run and permission promises alive
 
@@ -539,6 +591,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Exit during provider streaming, a long tool, and an approval; assert
   abort propagation, no writes after terminal restore, every permission settled, and
   prompt process exit.
+- **Revalidation (2026-07-27, `8389f4a`):** `shutdown()` now aborts and denies all
+  permission promises, and `finally` awaits the ordinary tracked `activeRun` before
+  restoring the terminal. A markdown command's `void startRun(prompt)` is still untracked,
+  so it can outlive shutdown and repaint after restoration. The ordinary path improved,
+  but the committed production command path keeps this finding open.
 
 ### MU-CR-017 — P2 — Open — “Always allow” is treated exactly like “allow once”
 
@@ -588,24 +645,34 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   presets. Never print success until state changed.
 - **Tests to add:** `/model` followed by a provider call and footer assertion; invalid
   model leaves state unchanged; each advertised flag changes interactive Agent behavior.
+- **Revalidation (2026-07-27, `8389f4a`):** Picker selection now calls
+  `agent.setModel(label)` and `app.setModel(label)`, and Agent switches provider/model for
+  the next turn. However the shared command context still exposes immutable
+  `getModel: () => modelRef` and `setModel: () => {}`, RPC `/model` can therefore report
+  success without changing state, and interactive construction still ignores
+  `maxTurns`, `maxCostUsd`, and `allowAll`. Settings changes are also not persisted for
+  resume. The finding remains open for these shared-surface and flag claims.
 
-### MU-CR-019 — P1 — Open — The wired TUI discards all streaming message and tool updates
+### MU-CR-019 — P1 — Open — The wired TUI still drops streaming thinking and Markdown rendering
 
 - **Affected:** `packages/tui/src/app.ts:85-175`,
   `packages/tui/src/app.ts:182-206`,
   `packages/cli/src/interactive.ts:67-75`
 - **Requirement:** M6 AC requires streaming markdown and live/running tool cells with a
   bounded output tail; architecture says stream deltas are coalesced at 30–60 fps.
-- **Defect:** `App.handleEvent()` has no cases for `message_start`, `message_update`, or
-  `tool_execution_update`. `tool_execution_start` is stored in `pendingTools`, but
-  `renderBottom()` never renders that map. Output appears only when `message_end` or
-  `tool_execution_end` commits a completed cell, and assistant text is sent to
-  `agentCell()` rather than the implemented markdown renderer.
-- **Failure scenario / impact:** During a long model response or command the UI appears
-  frozen except for the spinner. Tool progress is lost, Markdown is not rendered, and
-  users cannot inspect a bounded live tail before completion.
-- **Evidence / reproduction (2026-07-26):** A `message_update` and
-  `tool_execution_start` both return `[]`; `renderBottom()` remains only composer/footer.
+- **Defect:** Text deltas and partial tool tails now reach the managed region, but
+  `message_update` handles only `text_delta`; streamed thinking/reasoning deltas are
+  ignored. Both streaming and finalized assistant text still use the plain `agentCell`
+  rather than the implemented Markdown component, so the streaming-Markdown acceptance
+  criterion remains unmet.
+- **Failure scenario / impact:** Ordinary prose and tool progress are now visible, but a
+  thinking-only interval still appears frozen and Markdown syntax is printed rather than
+  rendered. The surface behavior changes abruptly only when finalized thinking is
+  committed at `message_end`.
+- **Evidence / reproduction (2026-07-27, `8389f4a`):** Direct App events produced
+  `{text:true, thinking:false, tool:true}` for live bottom-region visibility. Source
+  inspection confirms `text_delta` is the only update branch and both live/final text go
+  through `agentCell`.
 - **Recommended correction:** Maintain in-progress assistant/thinking/tool cell state from
   start/update/end events, render it in the managed bottom region, coalesce deltas through
   the existing throttled renderer, and commit the finalized cell exactly once. Use the
@@ -797,7 +864,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   `created.secret` remained present. `diff(ref)` then returned `[]`. The finding remains
   Open because both edits are realistic results of `write`, `edit`, or `bash`.
 
-### MU-CR-027 — P1 — Open — CheckpointHistory skips states and cannot redo an action
+### MU-CR-027 — P1 — Verified Fixed — CheckpointHistory skips states and cannot redo an action
 
 - **Affected:** `packages/core/src/checkpoint.ts:31-63`,
   `packages/sdk/src/agent.ts:283-305` (snapshot occurs before tool execution)
@@ -821,8 +888,18 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Three distinct filesystem states with consecutive undo/undo/redo/redo,
   asserting exact content and conversation head after every operation; fresh mutation
   after undo invalidates only redo.
+- **Revalidation (2026-07-27, `4e0f9b4`):** Full CI now contains the direct two-entry
+  assertion and fails it: undo expected `restoreTo.ref === "r1"` but received `"r2"`.
+  The post-CI worktree changes `popForUndo()` to its own pre-action ref and snapshots a
+  redo target, but the focused worktree run still fails that unchanged assertion (38
+  passed / 1 failed). The test and candidate semantics currently disagree, and the
+  transition model has not passed the gate.
+- **Resolution evidence (2026-07-27):** Reversible steps now persist explicit before and
+  after refs and the history exposes non-mutating peek plus explicit commit transitions.
+  A test drives three distinct states through undo/undo/redo/redo and asserts every
+  intermediate state. Full CI passes.
 
-### MU-CR-028 — P1 — Open — Checkpoint refs are not persisted and undo rewinds to an invalid node
+### MU-CR-028 — P1 — Verified Fixed — Checkpoint refs are not persisted and undo rewinds to an invalid node
 
 - **Affected:** `packages/sdk/src/agent.ts:185-215`,
   `packages/sdk/src/agent.ts:283-305`,
@@ -846,6 +923,16 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   workspace or conversation and avoid orphan tool protocol messages.
 - **Tests to add:** Inspect JSONL for refs, resume a fresh Agent and undo/redo, assert
   provider-valid message pairing after rewind, and branch/fork histories.
+- **Revalidation (2026-07-27, post-`4e0f9b4` worktree):** The candidate undo change still
+  stores no `checkpointRef`, rebuilds no history on resume, and forks to the recorded
+  post-assistant `entryId`. Its redo path currently restores a workspace ref without
+  moving the conversation at all. This record remains open independently of the
+  off-by-one workspace correction.
+- **Resolution evidence (2026-07-27):** Each completed mutating turn appends a checkpoint
+  session entry carrying both refs and the pre-step conversation parent. Undo and redo
+  append a persisted cursor entry, and `Agent.resume()` reconstructs both done and undone
+  history. Focused tests inspect the serialized entry and resume a fresh Agent before
+  redoing the undone step.
 
 ### MU-CR-029 — P2 — Open — Checkpoint failures are silently ignored while mutations proceed
 
@@ -881,7 +968,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Known sanitization collisions and symlink/case-normalization variants;
   assert separate repositories and refusal when metadata/root disagree.
 
-### MU-CR-031 — P2 — Open — SDK hard-codes coding tool names as the mutation contract
+### MU-CR-031 — P2 — Verified Fixed — SDK hard-codes coding tool names as the mutation contract
 
 - **Affected:** `packages/sdk/src/agent.ts:45-48`,
   `packages/sdk/src/agent.ts:283-291`
@@ -898,8 +985,12 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   have no name-based domain default.
 - **Tests to add:** Custom mutating tool with a non-coding name, argument-dependent
   mutation, and a coding profile asserting its own policy.
+- **Resolution evidence (2026-07-27):** `Tool.changesState` now owns the policy as a
+  boolean or argument predicate. Coding marks `write`, `edit`, and `bash`; the SDK has no
+  tool-name list. A non-coding `set_remote_state` test proves dry-run and mutating
+  arguments produce zero and one checkpoint respectively.
 
-### MU-CR-032 — P1 — Open — Profile checkpointing is dropped before the real Agent is created
+### MU-CR-032 — P1 — Verified Fixed — Profile checkpointing is dropped before the real Agent is created
 
 - **Affected:** `packages/sdk/src/profile.ts:8-24`,
   `packages/cli/src/interactive.ts:22-39`,
@@ -927,6 +1018,13 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Construct the Agent through the exact coding profile → options →
   interactive wiring path, execute a real mutating tool in a temporary root, and verify
   `/undo`, `/redo`, and `/diff` use that provider.
+- **Revalidation (2026-07-27, post-`4e0f9b4` worktree):** A candidate change now copies
+  `profile.checkpointProvider` into Agent options. It is not yet committed or covered by
+  the requested exact production-route test, and the concurrent undo state-machine work
+  fails full CI, so this record remains Open pending a stable revalidation.
+- **Resolution evidence (2026-07-27):** `optionsFromProfile()` propagates the profile
+  provider and honors an explicit per-run override. Both paths have direct tests and the
+  complete checkpoint suite plus full CI pass.
 
 ### MU-CR-033 — P1 — Open — Aggregate session diff omits newly created files
 
@@ -994,7 +1092,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   points; reject unknown/foreign IDs; verify old branches remain and the next message
   descends from the selected node.
 
-### MU-CR-036 — P1 — Open — Restore failure consumes undo history and violates atomic pairing
+### MU-CR-036 — P1 — Verified Fixed — Restore failure consumes undo history and violates atomic pairing
 
 - **Affected:** `packages/sdk/src/agent.ts:194-213`,
   `packages/core/src/checkpoint.ts:50-63`
@@ -1017,8 +1115,17 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Throwing restore on undo and redo, invalid conversation target,
   session-store save failure, retry after each failure, and assertions across all three
   states (workspace, tree head, history cursor).
+- **Revalidation (2026-07-27, post-`4e0f9b4` worktree):** The candidate catches
+  `restore()` errors and moves the stack back, but it pops the undo step before taking the
+  new redo snapshot; a throwing snapshot still consumes the step. An undefined snapshot
+  leaves redo targeting the pre-action ref, and conversation fork/save failures remain
+  non-atomic. The finding therefore remains open.
+- **Resolution evidence (2026-07-27):** Undo and redo now validate and peek first, capture
+  a rollback ref, restore state, save a candidate conversation tree, and only then commit
+  the history cursor. Snapshot, restore, and session-save failure tests assert unchanged
+  state, tree head, and history, followed by a successful retry.
 
-### MU-CR-037 — P2 — Open — Denied mutating calls create false checkpoint steps
+### MU-CR-037 — P2 — Verified Fixed — Denied mutating calls create false checkpoint steps
 
 - **Affected:** `packages/sdk/src/agent.ts:370-418`
 - **Requirement:** M8 snapshots mutating tool batches so actual state changes are
@@ -1039,6 +1146,9 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Static deny and denied ask produce no checkpoint/history; mixed
   denied/allowed batches produce exactly one correctly labeled checkpoint before the
   allowed mutation; all-denied batches leave undo unavailable.
+- **Resolution evidence (2026-07-27):** Snapshotting now runs only after an allow decision
+  (including resolved asks). A static-deny regression test proves the state and history
+  remain untouched.
 
 ### MU-CR-038 — P1 — Open — Background sessions are pipes, not PTYs
 
@@ -1120,7 +1230,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   dies on normal exit, SIGINT, error, and abort; verify an explicitly detached task alone
   survives.
 
-### MU-CR-041 — P1 — Open — Incremental polling loses output after tail rollover
+### MU-CR-041 — P1 — Verified Fixed — Incremental polling loses output after tail rollover
 
 - **Affected:** `packages/core/src/process.ts:28-76`,
   `packages/core/src/process.test.ts:54-66`
@@ -1143,6 +1253,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Repeated incremental reads across multiple tail rollovers, omission
   digit-width changes, readers that fall behind, and exact once-only delivery of retained
   chunks.
+- **Resolution evidence (2026-07-27, `4e0f9b4`):** `OutputBuffer` now tracks a monotonic
+  source position and retained-tail start independently from the rendered omission
+  marker. Three rollover/gap tests and the focused process suite passed, including
+  repeated rollover and a manager reader that receives the latest line. Non-ASCII byte
+  correctness remains separately open as MU-CR-042.
 
 ### MU-CR-042 — P2 — Open — Output buffering corrupts split Unicode and misreports bytes
 
@@ -1168,7 +1283,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Split every boundary of 2/3/4-byte UTF-8 sequences, invalid byte input,
   head/tail cuts around astral characters, and byte-accurate counts.
 
-### MU-CR-043 — P1 — Open — Killing a task leaves descendant processes alive
+### MU-CR-043 — P1 — Possibly Fixed — Killing a task leaves descendant processes alive
 
 - **Affected:** `packages/profiles/coding/src/tools/tasks.ts:12-38`,
   `packages/core/src/process.ts:169-190`
@@ -1189,6 +1304,12 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   Mark killed only after observed termination.
 - **Tests to add:** Shell child, grandchild, pipeline, and server subprocess; assert all
   PIDs are gone after `task_kill` and session cleanup.
+- **Revalidation (2026-07-27, `4e0f9b4`):** Linux tasks now launch under
+  `setsid`, and `kill()` signals the negative process-group ID. Reviewer validation
+  passed two real grandchild tests for both single-task and `killAll` paths. Verification
+  is incomplete across the promised macOS/Linux distribution: macOS does not provide the
+  external `setsid` utility by default, and the implementation has no graceful-timeout
+  escalation or cross-platform backend. Status is therefore Possibly Fixed.
 
 ### MU-CR-044 — P2 — Open — TUI has no live task cells
 
@@ -1254,6 +1375,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Two separate recoverable overflows in one Agent lifetime, two
   overflows separated by successful tool turns, and a persistent failure capped at one
   retry per episode.
+- **Revalidation (2026-07-27, `4e0f9b4`):** `execute()` now resets
+  `recoveryAttempted`, so two separate `agent.run()` calls can each recover. The guard is
+  still never reset after a successful provider/tool turn inside one execution; a second
+  independent overflow later in that same multi-turn run bypasses recovery. This fixes
+  the cross-run case but not the required per-episode scope, so the finding remains open.
 
 ### MU-CR-047 — P1 — Open — RPC markdown commands launch an invisible detached run
 
@@ -1370,31 +1496,37 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Exact event ordering and counts for successful recovery, compaction
   failure, persistent too-long retry, and abort during recovery.
 
-### MU-CR-052 — P1 — Open — The resume picker reports success without resuming a session
+### MU-CR-052 — P1 — Open — Resume carries incompatible runtime state and can corrupt the selected transcript
 
-- **Affected:** `packages/cli/src/interactive.ts:115-127`,
-  `packages/sdk/src/agent.ts:128-176`
+- **Affected:** `packages/cli/src/interactive.ts:151-180`,
+  `packages/sdk/src/agent.ts:127-203`
 - **Requirement:** M10 includes a `/resume` picker; selecting a saved session must make
   that session the active conversation.
-- **Defect:** The picker lists IDs from `agent.sessionStore`, but `onChoose` only prints
-  `resuming <id>`. It never calls `SessionStore.load`, replaces the Agent, or installs the
-  loaded `SessionTree`. The Agent's session ID and tree are readonly and its constructor
-  always creates a new tree, so the added store getter alone supplies no resume route.
-- **Failure scenario / impact:** A user selects an earlier session, sees a positive
-  “resuming” message, and then sends input into the original current session. This can
-  mix work with the wrong history while giving no indication that restore did nothing.
-- **Evidence:** Direct worktree control-flow inspection. The only selection side effect is
-  `renderer.commit`; `SessionStore.load` has no caller on this path. The picker unit test
-  verifies label delivery to a synthetic callback, not session identity or transcript.
-- **Recommended correction:** Add a supported resume construction/load path that
-  atomically swaps the active Agent/session between runs, updates footer and command
-  closures, and reports success only after load completes. Handle missing/corrupt/current
-  sessions explicitly.
+- **Defect:** The picker now loads a tree and `Agent.resume()` swaps `tree` and session
+  ID, but it does not reset or reconstruct session-scoped state: usage totals,
+  `lastContextPercent`, checkpoint history, recovery/compaction flags, queued
+  steering/follow-ups/external events, or model/thinking settings. The async picker
+  callback is detached and is allowed while a run is active; the active provider result
+  then appends to whichever tree was swapped in.
+- **Failure scenario / impact:** Resuming a cheaper/older session can retain cost and
+  budget state from the abandoned session. More seriously, choosing resume during a
+  delayed run can attach that run's assistant answer to the selected session without its
+  user prompt, producing an orphan/misattributed transcript.
+- **Evidence / reproduction (2026-07-27, `8389f4a`):** After an old session accumulated
+  `$0.0001`, resuming a target tree kept `$0.0001` and the next turn raised it to
+  `$0.0002`. In a delayed-run reproduction, resuming a target containing only
+  `TARGET HISTORY` before the active result arrived produced
+  `[TARGET HISTORY user, ACTIVE ANSWER assistant]`.
+- **Recommended correction:** Permit resume only between runs and make it an atomic
+  session-state transition. Reconstruct or reset every session-scoped field from
+  persisted entries/settings/checkpoints, update footer and command closures, and report
+  success only after the complete transition. Prefer constructing a fresh Agent from the
+  selected session when state cannot be safely rebuilt in place.
 - **Tests to add:** Persist two distinct transcripts, choose one through the real
   interactive command, assert active session ID/history and the next provider context;
   cover current, missing, corrupt, and load-failure selections.
 
-### MU-CR-053 — P1 — Open — Mid-buffer file mention completion corrupts unsent input
+### MU-CR-053 — P1 — Verified Fixed — Mid-buffer file mention completion corrupts unsent input
 
 - **Affected:** `packages/tui/src/app.ts:293-306`,
   `packages/tui/src/app.ts:355-401`,
@@ -1419,6 +1551,11 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** Mentions at start/end/middle, multiline buffers, suffix preservation,
   cursor position, backspace across the opening `@`, paste during an open popup, and
   Unicode before/in the query.
+- **Resolution evidence (2026-07-27, `4e0f9b4`):** Editor now exposes its absolute cursor
+  offset and a range-splice operation. The mention anchor is recorded at insertion, the
+  query ends at the live cursor, and completion preserves the suffix. The original
+  reproduction now yields `before chosen.ts  after`; three focused start/end/middle
+  tests passed. Grapheme-safe cursor semantics remain separately open as MU-CR-004.
 
 ### MU-CR-054 — P2 — Open — File mention filtering performs an unbounded synchronous tree scan
 
@@ -1444,7 +1581,7 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Tests to add:** A large tree with zero matches, slow/throwing entries, rapid query
   replacement/cancellation, ignore rules, and an event-loop responsiveness bound.
 
-### MU-CR-055 — P1 — Open — A partial catalog refresh deletes supported models and changes the default
+### MU-CR-055 — P1 — Open — A partial catalog refresh deletes active models
 
 - **Affected:** `packages/ai/src/catalog.ts:84-116`,
   `packages/ai/src/catalog.ts:148-152`,
@@ -1452,28 +1589,33 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
 - **Requirement:** The tracker says the bundled catalog remains an offline fallback and
   malformed or failed refreshes never partially replace the active catalog. Model
   discovery must not make an otherwise valid CLI invocation lose its requested model.
-- **Defect:** `discoverModels` considers the response successful when it finds any one
-  compatible model across all three providers. `refreshModels` then replaces every
-  Anthropic/OpenAI/Google entry with that result. It neither requires each expected
-  provider nor merges discovered entries over bundled ones. `defaultModelRef` also takes
-  the first remote object-iteration result, making the implicit default depend on
-  upstream ordering.
-- **Failure scenario / impact:** A valid but incomplete/staged upstream response can make
-  `--model anthropic/...` fail as unknown even though the bundled model works. Without an
-  explicit model, every CLI mode can silently switch model, capability, price, and
-  provider from one invocation to the next.
+- **Defect:** Refresh now preserves the bundled baseline, but it rebuilds official
+  providers from `bundledModels` and retains current entries only for non-discovered
+  providers. Any explicitly registered Anthropic/OpenAI/Google model that is not in the
+  partial remote response is still removed from the active catalog. The original
+  wholesale bundled deletion and default-order change are fixed, but the tracker promise
+  says a partial response must not partially replace the *active* catalog.
+- **Failure scenario / impact:** An embedder registers a newer official-provider model
+  that is absent from a staged response. Refresh silently removes it, and a subsequent
+  `--model`/SDK lookup fails even though it was active and valid immediately beforehand.
 - **Evidence / reproduction (2026-07-26 worktree):** Starting from seven bundled models
   and default `anthropic/claude-opus-5`, refreshing a valid payload containing only
   `google/gemini-only` produced a one-model catalog, removed Opus, and made Gemini the
   default. A live refresh changed the default from Opus 5 to
   `anthropic/claude-sonnet-4-6`.
-- **Recommended correction:** Validate refresh completeness per supported provider and
-  merge validated remote metadata over the bundled baseline by stable provider/model key.
-  Preserve a deliberate default independent of response ordering. Never remove a bundled
-  or explicitly registered model merely because a refresh omitted it.
+- **Recommended correction:** Overlay validated remote metadata onto the complete active
+  catalog by stable provider/model key; reserve replacement/reset for a separate explicit
+  operation. Preserve a deliberate default independent of response ordering. Never
+  remove a bundled or explicitly registered model merely because a refresh omitted it.
 - **Tests to add:** One-provider and one-model payloads, missing provider/model keys,
   upstream reordering, explicit bundled model after refresh, registered official-provider
   additions, and stable default before/after success/failure.
+- **Revalidation (2026-07-27, `4e0f9b4`):** The original Google-only reproduction now
+  retains bundled Anthropic/OpenAI entries and keeps bundled order stable. A second
+  reproduction registered `anthropic/custom-active`, refreshed the same Google-only
+  payload, and observed `{after:false, bundled:true}`. Merge the remote overlay onto the
+  complete current catalog (with explicit reset semantics where needed), not only onto
+  `bundledModels`. Tiered pricing remains separately open as MU-CR-056.
 
 ### MU-CR-056 — P2 — Open — Dynamic catalog pricing discards context-tier rates
 
@@ -1509,16 +1651,17 @@ catalog conflicts with MU-CR-055; its current-pricing claim conflicts with MU-CR
   and descriptions stay in context, while the full `SKILL.md` body is loaded only when
   the model calls the skill tool.
 - **Defect:** `discoverSkills` calls `loadSkill` for every directory, and `loadSkill`
-  reads and stores the complete body. The tool only returns that cached string; it never
-  reads the selected file. There is no per-file size limit. The “progressive disclosure”
-  test checks only that `skillListing` omits body text, so it cannot detect eager I/O,
-  memory use, or stale instructions.
+  reads and stores the complete body. The tool now re-reads the chosen file at invocation,
+  which fixes stale execution, but discovery still performs and retains the eager,
+  unbounded body read for every installed skill. The “progressive disclosure” listing
+  test checks only that prompt text omits bodies, so it cannot detect startup I/O/memory.
 - **Failure scenario / impact:** Starting a surface must read every installed skill body
   even if none is used, and a large skill set can impose unbounded startup I/O/memory.
-  Changes to `SKILL.md` after discovery are silently ignored for the process lifetime.
-- **Evidence / reproduction (2026-07-26 worktree):** Discover a skill containing
-  `OLD BODY`, rewrite its file to `NEW BODY`, register the extension, and invoke
-  `skill({name:"demo"})`; the tool returned `OLD BODY`.
+  Invocation then reads the same file a second time.
+- **Evidence / reproduction:** The 2026-07-26 reproduction returned stale `OLD BODY`.
+  At `4e0f9b4` it now returns the edited body, but direct control-flow inspection still
+  shows every candidate going through full `readFile`/`parseFrontmatter` during
+  `discoverSkills` before any skill is selected.
 - **Recommended correction:** Discover and retain validated metadata plus a file
   reference, then read/parse the selected body inside tool execution with an explicit
   byte limit and visible error handling. Decide whether metadata is snapshotted or

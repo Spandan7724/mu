@@ -27,6 +27,15 @@ export type SessionEntry =
       firstKeptEntryId: string;
     }
   | {
+      type: "checkpoint";
+      id: string;
+      parentId: string | null;
+      beforeEntryId: string | null;
+      checkpointRef: string;
+      checkpointAfterRef: string;
+      label?: string;
+    }
+  | {
       type: "settings-change";
       id: string;
       parentId: string | null;
@@ -119,6 +128,10 @@ export class SessionTree {
     return this.byId.get(id);
   }
 
+  has(id: string | null): boolean {
+    return id === null || this.byId.has(id);
+  }
+
   // Replays an existing entry (used when loading). Advances head to it.
   push(entry: SessionEntry): void {
     this.entries.push(entry);
@@ -198,8 +211,10 @@ export class SessionTree {
   }
 
   // Branches from an arbitrary entry: subsequent appends descend from it.
-  fork(entryId: string): void {
-    if (!this.byId.has(entryId)) throw new Error(`Cannot fork from unknown entry: ${entryId}`);
+  fork(entryId: string | null): void {
+    if (entryId !== null && !this.byId.has(entryId)) {
+      throw new Error(`Cannot fork from unknown entry: ${entryId}`);
+    }
     this.headId = entryId;
   }
 }

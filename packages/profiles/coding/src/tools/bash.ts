@@ -57,6 +57,7 @@ export function bashTool(deps: BashDeps) {
   const spawn = deps.spawn ?? defaultSpawn;
   return tool({
     name: "bash",
+    changesState: true,
     description:
       "Run a shell command in the session root. Use for building, testing and inspecting the project. Prefer the dedicated read/edit/grep/glob tools for file work.",
     inputSchema: z.object({

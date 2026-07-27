@@ -21,6 +21,9 @@ export async function optionsFromProfile(
     permissions: [...profile.permissionDefaults, ...(overrides.permissions ?? [])],
     ...(contextMessages.length > 0 ? { initialMessages: contextMessages } : {}),
     ...(profile.carryoverExtractor ? { carryoverExtractor: profile.carryoverExtractor } : {}),
+    ...((overrides.checkpointProvider ?? profile.checkpointProvider)
+      ? { checkpointProvider: overrides.checkpointProvider ?? profile.checkpointProvider }
+      : {}),
   } as AgentOptions;
 }
 

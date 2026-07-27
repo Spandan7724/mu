@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CheckpointHistory, type CheckpointProvider } from "@mu/core";
+import {
+  type CheckpointEntry,
+  CheckpointHistory,
+  type CheckpointProvider,
+  MemorySessionStore,
+  type SessionTree,
+} from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
@@ -13,14 +19,18 @@ class MemoryCheckpoints implements CheckpointProvider {
   private snapshots = new Map<string, string>();
   private counter = 0;
   restored: string[] = [];
+  failSnapshot = false;
+  failRestore = false;
 
   async snapshot(): Promise<string | undefined> {
+    if (this.failSnapshot) throw new Error("snapshot failed");
     const ref = `ref-${this.counter++}`;
     this.snapshots.set(ref, this.state);
     return ref;
   }
 
   async restore(ref: string): Promise<void> {
+    if (this.failRestore) throw new Error("restore failed");
     this.restored.push(ref);
     const value = this.snapshots.get(ref);
     if (value !== undefined) this.state = value;
@@ -33,11 +43,21 @@ class MemoryCheckpoints implements CheckpointProvider {
   }
 }
 
+class FailingSessionStore extends MemorySessionStore {
+  fail = false;
+
+  override async save(sessionId: string, tree: SessionTree): Promise<void> {
+    if (this.fail) throw new Error("save failed");
+    await super.save(sessionId, tree);
+  }
+}
+
 function writer(checkpoints: MemoryCheckpoints) {
   return tool({
     name: "write",
     description: "writes state",
     inputSchema: z.object({ value: z.string() }),
+    changesState: true,
     execute: ({ value }) => {
       checkpoints.state = value;
       return `wrote ${value}`;
@@ -46,46 +66,58 @@ function writer(checkpoints: MemoryCheckpoints) {
 }
 
 describe("CheckpointHistory", () => {
-  test("undo returns the state before the last action", () => {
-    const history = new CheckpointHistory();
-    history.record({ entryId: "e1", ref: "r1", label: "first" });
-    history.record({ entryId: "e2", ref: "r2", label: "second" });
+  const first: CheckpointEntry = {
+    id: "e1",
+    beforeEntryId: null,
+    beforeRef: "s0",
+    afterRef: "s1",
+    label: "first",
+  };
+  const second: CheckpointEntry = {
+    id: "e2",
+    beforeEntryId: "e1",
+    beforeRef: "s1",
+    afterRef: "s2",
+    label: "second",
+  };
 
-    const step = history.popForUndo();
-    expect(step?.undone.ref).toBe("r2");
-    expect(step?.restoreTo.ref).toBe("r1");
+  test("undo selects the last action without changing history", () => {
+    const history = new CheckpointHistory();
+    history.record(first);
+    history.record(second);
+
+    expect(history.peekUndo()).toEqual(second);
+    expect(history.canUndo).toBe(true);
+    expect(history.canRedo).toBe(false);
   });
 
-  test("undo of the only action restores that action's own checkpoint", () => {
+  test("commit moves one action between undo and redo", () => {
     const history = new CheckpointHistory();
-    history.record({ entryId: "e1", ref: "r1" });
-    expect(history.popForUndo()?.restoreTo.ref).toBe("r1");
-  });
-
-  test("redo replays what was undone", () => {
-    const history = new CheckpointHistory();
-    history.record({ entryId: "e1", ref: "r1" });
-    history.record({ entryId: "e2", ref: "r2" });
-    history.popForUndo();
+    history.record(first);
+    history.record(second);
+    history.commitUndo(second);
 
     expect(history.canRedo).toBe(true);
-    expect(history.popForRedo()?.ref).toBe("r2");
+    expect(history.peekUndo()).toEqual(first);
+    expect(history.peekRedo()).toEqual(second);
+    history.commitRedo(second);
     expect(history.canRedo).toBe(false);
+    expect(history.peekUndo()).toEqual(second);
   });
 
   test("a new action clears the redo stack", () => {
     const history = new CheckpointHistory();
-    history.record({ entryId: "e1", ref: "r1" });
-    history.record({ entryId: "e2", ref: "r2" });
-    history.popForUndo();
-    history.record({ entryId: "e3", ref: "r3" });
+    history.record(first);
+    history.record(second);
+    history.commitUndo(second);
+    history.record({ ...second, id: "e3" });
     expect(history.canRedo).toBe(false);
   });
 
-  test("nothing to undo or redo is reported, not thrown", () => {
+  test("empty history has no transitions", () => {
     const history = new CheckpointHistory();
-    expect(history.popForUndo()).toBeUndefined();
-    expect(history.popForRedo()).toBeUndefined();
+    expect(history.peekUndo()).toBeUndefined();
+    expect(history.peekRedo()).toBeUndefined();
     expect(history.canUndo).toBe(false);
   });
 });
@@ -106,6 +138,7 @@ describe("snapshot before a mutating batch", () => {
     await agent.run("change it");
 
     expect(agent.checkpointHistory.all().length).toBe(1);
+    expect(agent.session.activePath().some((entry) => entry.type === "checkpoint")).toBe(true);
     expect(checkpoints.state).toBe("v2");
   });
 
@@ -132,6 +165,54 @@ describe("snapshot before a mutating batch", () => {
     expect(agent.checkpointHistory.all().length).toBe(0);
   });
 
+  test("mutation metadata works for non-coding and argument-dependent tools", async () => {
+    const checkpoints = new MemoryCheckpoints();
+    const setter = tool({
+      name: "set_remote_state",
+      description: "sets state",
+      inputSchema: z.object({ value: z.string(), dryRun: z.boolean() }),
+      changesState: ({ dryRun }) => !dryRun,
+      execute: ({ value, dryRun }) => {
+        if (!dryRun) checkpoints.state = value;
+        return "done";
+      },
+    });
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "set_remote_state",
+            arguments: { value: "ignored", dryRun: true },
+          },
+        ],
+      },
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c2",
+            name: "set_remote_state",
+            arguments: { value: "changed", dryRun: false },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [setter],
+      checkpointProvider: checkpoints,
+    });
+
+    await agent.run("change it");
+
+    expect(checkpoints.state).toBe("changed");
+    expect(agent.checkpointHistory.all()).toHaveLength(1);
+  });
+
   test("a checkpoint failure does not block the tool call", async () => {
     const failing: CheckpointProvider = {
       snapshot: async () => {
@@ -156,23 +237,47 @@ describe("snapshot before a mutating batch", () => {
     expect(result.reason).toBe("done");
     expect(checkpoints.state).toBe("v2");
   });
-});
 
-describe("undo and redo pair workspace with conversation", () => {
-  async function sessionWithTwoEdits() {
+  test("a denied mutating call does not create a checkpoint", async () => {
     const checkpoints = new MemoryCheckpoints();
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v2" } }] },
-      { content: [{ type: "text", text: "first done" }] },
+      { content: [{ type: "text", text: "denied" }] },
     ]);
     const agent = new Agent({
       provider,
       model: fakeModel,
       tools: [writer(checkpoints)],
       checkpointProvider: checkpoints,
+      permissions: [{ permission: "write", pattern: "*", action: "deny" }],
+    });
+
+    await agent.run("change it");
+
+    expect(checkpoints.state).toBe("initial");
+    expect(agent.checkpointHistory.all()).toEqual([]);
+  });
+});
+
+describe("undo and redo pair workspace with conversation", () => {
+  async function sessionWithTwoEdits(session: MemorySessionStore = new MemorySessionStore()) {
+    const checkpoints = new MemoryCheckpoints();
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v1" } }] },
+      { content: [{ type: "text", text: "first done" }] },
+      { content: [{ type: "toolCall", id: "c2", name: "write", arguments: { value: "v2" } }] },
+      { content: [{ type: "text", text: "second done" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
     });
     await agent.run("first change");
-    return { agent, checkpoints };
+    await agent.run("second change");
+    return { agent, checkpoints, session };
   }
 
   test("undo restores the workspace and rewinds the transcript together", async () => {
@@ -183,18 +288,91 @@ describe("undo and redo pair workspace with conversation", () => {
     const result = await agent.undo();
 
     expect(result.ok).toBe(true);
-    expect(checkpoints.state).toBe("initial"); // workspace went back
-    expect(agent.session.messagesAt().length).toBeLessThan(messagesBefore); // and so did the transcript
+    expect(checkpoints.state).toBe("v1");
+    expect(agent.session.messagesAt().length).toBeLessThan(messagesBefore);
   });
 
-  test("redo re-applies both sides", async () => {
+  test("consecutive undo and redo traverse every workspace state", async () => {
     const { agent, checkpoints } = await sessionWithTwoEdits();
+    await agent.undo();
+    expect(checkpoints.state).toBe("v1");
     await agent.undo();
     expect(checkpoints.state).toBe("initial");
 
-    const result = await agent.redo();
-    expect(result.ok).toBe(true);
-    expect(checkpoints.restored.length).toBe(2);
+    expect((await agent.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
+    expect((await agent.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v2");
+  });
+
+  test("checkpoint history and an undone cursor survive resume", async () => {
+    const { agent, checkpoints, session } = await sessionWithTwoEdits();
+    await agent.undo();
+    expect(checkpoints.state).toBe("v1");
+
+    const resumed = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
+      sessionId: agent.sessionId,
+    });
+    const tree = await session.load(agent.sessionId);
+    expect(tree).toBeDefined();
+    resumed.resume(tree as NonNullable<typeof tree>);
+
+    expect(resumed.checkpointHistory.canUndo).toBe(true);
+    expect(resumed.checkpointHistory.canRedo).toBe(true);
+    expect((await resumed.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v2");
+  });
+
+  test("restore failure leaves undo history and conversation untouched", async () => {
+    const { agent, checkpoints } = await sessionWithTwoEdits();
+    const head = agent.session.head;
+    checkpoints.failRestore = true;
+
+    const failed = await agent.undo();
+
+    expect(failed.ok).toBe(false);
+    expect(agent.session.head).toBe(head);
+    expect(agent.checkpointHistory.canUndo).toBe(true);
+    expect(agent.checkpointHistory.canRedo).toBe(false);
+    expect(checkpoints.state).toBe("v2");
+
+    checkpoints.failRestore = false;
+    expect((await agent.undo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
+  });
+
+  test("snapshot failure before undo does not consume the transition", async () => {
+    const { agent, checkpoints } = await sessionWithTwoEdits();
+    checkpoints.failSnapshot = true;
+
+    expect((await agent.undo()).ok).toBe(false);
+    expect(agent.checkpointHistory.canUndo).toBe(true);
+    expect(agent.checkpointHistory.canRedo).toBe(false);
+    expect(checkpoints.state).toBe("v2");
+
+    checkpoints.failSnapshot = false;
+    expect((await agent.undo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
+  });
+
+  test("session save failure rolls the workspace back and leaves history unchanged", async () => {
+    const session = new FailingSessionStore();
+    const { agent, checkpoints } = await sessionWithTwoEdits(session);
+    const head = agent.session.head;
+    session.fail = true;
+
+    const failed = await agent.undo();
+
+    expect(failed.ok).toBe(false);
+    expect(checkpoints.state).toBe("v2");
+    expect(agent.session.head).toBe(head);
+    expect(agent.checkpointHistory.canUndo).toBe(true);
+    expect(agent.checkpointHistory.canRedo).toBe(false);
   });
 
   test("undo with no checkpoints says so rather than failing", async () => {

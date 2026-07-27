@@ -140,6 +140,32 @@ describe("SessionTree", () => {
     expect(entry?.type === "message" && entry.checkpointRef).toBe("abc123");
   });
 
+  test("checkpoint steps preserve both state refs and the conversation target", () => {
+    const tree = newTree();
+    const message = userMessage("change it");
+    const prompt = tree.appendMessage(message);
+    const entry = tree.append({
+      type: "checkpoint",
+      beforeEntryId: prompt.id,
+      checkpointRef: "before",
+      checkpointAfterRef: "after",
+      label: "change",
+    });
+
+    const loaded = SessionTree.fromJsonl(tree.toJsonl()).get(entry.id);
+    expect(loaded).toEqual(entry);
+    expect(SessionTree.fromJsonl(tree.toJsonl()).messagesAt()).toEqual([message]);
+  });
+
+  test("forking to the session root clears the active transcript", () => {
+    const tree = newTree();
+    tree.appendMessage(userMessage("one"));
+    tree.fork(null);
+
+    expect(tree.head).toBeNull();
+    expect(tree.messagesAt()).toEqual([]);
+  });
+
   test("custom messages survive the round trip", () => {
     const tree = newTree();
     tree.appendMessage(customMessage("system-reminder", "stop repeating", true));

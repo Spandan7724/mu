@@ -70,6 +70,7 @@ export function readTool(deps: ToolDeps) {
 export function writeTool(deps: ToolDeps) {
   return tool({
     name: "write",
+    changesState: true,
     description:
       "Write a complete file, creating it or replacing its contents. To change part of an existing file, prefer edit.",
     inputSchema: z.object({
@@ -119,6 +120,7 @@ export function writeTool(deps: ToolDeps) {
 export function editTool(deps: ToolDeps) {
   return tool({
     name: "edit",
+    changesState: true,
     description:
       "Replace an exact string in a file. The old string must appear exactly once unless replaceAll is set. Read the file first.",
     inputSchema: z.object({

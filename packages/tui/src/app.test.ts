@@ -369,7 +369,6 @@ describe("resize", () => {
 describe("terminal safety", () => {
   function fakeIo(): { io: TerminalIo; written: string[] } {
     const written: string[] = [];
-    let raw = false;
     return {
       written,
       io: {
@@ -377,10 +376,7 @@ describe("terminal safety", () => {
         columns: 80,
         rows: 24,
         isTty: true,
-        setRawMode: (value) => {
-          raw = value;
-          written.push(`raw:${value}`);
-        },
+        setRawMode: (value) => written.push(`raw:${value}`),
         onResize: () => () => {},
       },
     };

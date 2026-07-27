@@ -15,6 +15,7 @@ export interface Tool<Args = Record<string, unknown>> {
   // Concurrency predicate over parsed args. A throw is treated as unsafe.
   isConcurrencySafe?: (args: Args) => boolean;
   executionMode?: "sequential"; // hard override: never parallel with anything
+  changesState?: boolean | ((args: Args) => boolean);
   execute: (
     toolCallId: string,
     args: Args,
