@@ -734,6 +734,44 @@ describe("selection pickers (/model, /resume)", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 
+  test("left arrow returns a picker to its parent menu", () => {
+    const h = harness();
+    let wentBack = false;
+    h.app.openPicker({
+      title: "child menu",
+      items: [{ label: "a" }],
+      onChoose: () => {},
+      onBack: () => {
+        wentBack = true;
+        h.app.openCommandMenu();
+      },
+    });
+
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("← back");
+    h.app.handleInput({
+      type: "key",
+      key: { name: "left", ctrl: false, alt: false, shift: false },
+    });
+
+    expect(wentBack).toBe(true);
+    expect(h.app.currentMode).toBe("select");
+    expect(h.app.editor.text).toBe("/");
+  });
+
+  test("left arrow does nothing when a picker has no parent", () => {
+    const h = harness();
+    h.app.openPicker({
+      title: "top-level picker",
+      items: [{ label: "a" }],
+      onChoose: () => {},
+    });
+    h.app.handleInput({
+      type: "key",
+      key: { name: "left", ctrl: false, alt: false, shift: false },
+    });
+    expect(h.app.currentMode).toBe("picker");
+  });
+
   test("a filterable picker narrows and ranks models as the user types", () => {
     const chosen: string[] = [];
     const h = harness();

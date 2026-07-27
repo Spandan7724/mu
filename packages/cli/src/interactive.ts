@@ -217,6 +217,7 @@ export async function runInteractive(
           }
           paint();
         },
+        onBack: () => app.openCommandMenu(),
       });
       return { handled: true };
     },
@@ -284,6 +285,7 @@ export async function runInteractive(
             paint();
           })();
         },
+        onBack: () => app.openCommandMenu(),
       });
       return { handled: true };
     },
@@ -351,6 +353,7 @@ export async function runInteractive(
         if (method?.id === "account") openAccountProviderPicker();
         else if (method?.id === "apiKey") openApiKeyProviderPicker();
       },
+      onBack: () => app.openCommandMenu(),
     });
   }
 
@@ -365,7 +368,7 @@ export async function runInteractive(
         const provider = accountLoginProviders.find((candidate) => candidate.name === label);
         if (provider) void signInWithAccount(provider);
       },
-      onCancel: openLoginMethodPicker,
+      onBack: openLoginMethodPicker,
     });
   }
 
@@ -385,7 +388,7 @@ export async function runInteractive(
           onCancel: openApiKeyProviderPicker,
         });
       },
-      onCancel: openLoginMethodPicker,
+      onBack: openLoginMethodPicker,
     });
   }
 
@@ -514,6 +517,7 @@ export async function runInteractive(
             paint();
           })();
         },
+        onBack: () => app.openCommandMenu(),
       });
     } else if (isMarkdownCommandRun(data)) {
       beginRun(data.prompt, {

@@ -33,6 +33,7 @@ export interface PickerRequest {
   title: string;
   items: { label: string; description?: string }[];
   onChoose: (label: string) => void;
+  onBack?: () => void;
   onCancel?: () => void;
   filterable?: boolean;
 }
@@ -159,6 +160,12 @@ export class App {
     this.pickerQuery = "";
     this.commandList.setItems(request.items);
     this.mode = "picker";
+  }
+
+  openCommandMenu(): void {
+    this.editor.setText("/");
+    this.commandList.setItems(this.commands);
+    this.mode = "select";
   }
 
   openPrompt(request: InputPromptRequest): void {
@@ -471,7 +478,10 @@ export class App {
           this.picker.filterable && this.pickerQuery
             ? ` ${GLYPHS.separator} ${this.pickerQuery}`
             : "";
-        lines.push(MARGIN + styleText(`${this.picker.title}${query}`, { bold: true }, depth));
+        const back = this.picker.onBack ? ` ${GLYPHS.separator} ← back` : "";
+        lines.push(
+          MARGIN + styleText(`${this.picker.title}${query}${back}`, { bold: true }, depth),
+        );
         lines.push(...this.commandList.render(width, depth));
       } else if (this.mode === "prompt" && this.prompt) {
         lines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
@@ -590,8 +600,7 @@ export class App {
           this.editor.insert(key.text);
           // "/" at the start of an empty line opens the command popup.
           if (key.text === "/" && this.editor.text === "/") {
-            this.commandList.setItems(this.commands);
-            this.mode = "select";
+            this.openCommandMenu();
           }
           // "@" anywhere opens the file-mention popup.
           if (key.text === "@" && this.options.callbacks.onMentionQuery) {
@@ -633,6 +642,14 @@ export class App {
     if (!picker) return;
     if (key.name === "up" || key.name === "down") {
       this.commandList.move(key.name);
+      return;
+    }
+    if (key.name === "left" && picker.onBack) {
+      const onBack = picker.onBack;
+      this.picker = undefined;
+      this.pickerQuery = "";
+      this.mode = "composing";
+      onBack();
       return;
     }
     if (key.name === "escape") {
