@@ -13,12 +13,14 @@ import {
   InputDecoder,
   RendererRegistry,
   Terminal,
+  type ToolRendererFn,
 } from "@mu/tui";
 import {
   Agent,
   type AgentOptions,
   type AgentRunOptions,
   type CheckpointActionData,
+  type Command,
   type DiffCommandData,
   ExtensionHost,
   listModels,
@@ -27,6 +29,7 @@ import {
   optionsFromProfile,
   registryWithCoreCommands,
   saveApiKey,
+  type ToolRenderer,
   toCommand,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
@@ -88,6 +91,29 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
   );
 }
 
+export function registerDeclaredRenderers(
+  registry: RendererRegistry,
+  renderers: Iterable<readonly [string, ToolRenderer]>,
+): void {
+  for (const [name, renderer] of renderers) {
+    const adapter: ToolRendererFn = (info) =>
+      renderer.render({
+        toolName: info.toolName,
+        args: info.args,
+        ...(info.result
+          ? {
+              result: {
+                content: info.result.content,
+                ...(info.result.details !== undefined ? { details: info.result.details } : {}),
+                ...(info.result.isError ? { isError: true } : {}),
+              },
+            }
+          : {}),
+      });
+    registry.register(name, adapter);
+  }
+}
+
 export async function runInteractive(
   args: ParsedArgs,
   options: AgentOptions = {},
@@ -101,9 +127,13 @@ export async function runInteractive(
 
   const modelRef = await resolveCliModel(args.model);
   const useBuiltIns = !options.tools;
+  let profileCommands: Command[] = [];
+  let profileRenderers: Record<string, ToolRenderer> = {};
   let resolved = options;
   if (!options.tools) {
     const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+    profileCommands = profile.commands ?? [];
+    profileRenderers = profile.renderers ?? {};
     resolved = await optionsFromProfile(profile, modelRef, options);
   }
   resolved = withStoredCredentials(resolved);
@@ -124,6 +154,8 @@ export async function runInteractive(
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
+  registerDeclaredRenderers(registry, Object.entries(profileRenderers));
+  registerDeclaredRenderers(registry, extensions.renderers);
   const depth = detectColorDepth();
   let app: App;
   const commands = registryWithCoreCommands({
@@ -138,6 +170,8 @@ export async function runInteractive(
     forkPoints: () => agent.forkPoints(),
     diff: () => agent.sessionDiff(),
   });
+  for (const command of profileCommands) commands.register(command);
+  for (const command of extensions.commands.list()) commands.register(command);
 
   const renderer = new InlineRenderer(terminal);
   let exiting = false;

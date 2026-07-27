@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { stripAnsi } from "@mu/tui";
-import { renderCheckpointCommand, renderDiffCommand } from "./interactive.ts";
+import { RendererRegistry, stripAnsi } from "@mu/tui";
+import {
+  registerDeclaredRenderers,
+  renderCheckpointCommand,
+  renderDiffCommand,
+} from "./interactive.ts";
 
 describe("interactive command rendering", () => {
   test("/diff uses the diff cell with actual hunks", () => {
@@ -68,5 +72,39 @@ describe("interactive command rendering", () => {
       "  │ fibonacci.py +17",
       "  │ prompt restored to editor",
     ]);
+  });
+});
+
+describe("declared tool renderers", () => {
+  test("a profile or extension renderer overrides the generic cell", () => {
+    const registry = new RendererRegistry();
+    registerDeclaredRenderers(registry, [
+      [
+        "demo",
+        {
+          render: ({ args, result }) => [
+            `custom:${String((args as { value?: unknown }).value)}:${result?.isError}`,
+          ],
+        },
+      ],
+    ]);
+
+    expect(
+      registry.render(
+        {
+          toolName: "demo",
+          args: { value: 42 },
+          result: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "demo",
+            content: [{ type: "text", text: "nope" }],
+            isError: true,
+            timestamp: 1,
+          },
+        },
+        { width: 80, depth: "none" },
+      ),
+    ).toEqual(["custom:42:true"]);
   });
 });
