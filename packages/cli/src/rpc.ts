@@ -1,6 +1,6 @@
 // RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
 // AgentEvent union every other surface consumes.
-import type { Agent, AgentEvent } from "mu";
+import type { Agent, AgentEvent, CommandResult } from "mu";
 
 export type RpcOp =
   | { type: "input"; text: string }
@@ -15,7 +15,7 @@ export type RpcOut =
   | { type: "event"; event: AgentEvent }
   | { type: "error"; message: string }
   | { type: "ready" }
-  | { type: "command_result"; message?: string }
+  | { type: "command_result"; message?: string; data?: unknown }
   | { type: "shutdown" };
 
 export interface RpcIo {
@@ -28,7 +28,7 @@ export interface RpcDeps {
   agent: Agent;
   // Resolves a pending permission ask; returns false when the id is unknown.
   resolvePermission?: (requestId: string, outcome: "allow" | "deny") => boolean;
-  runCommand?: (text: string) => Promise<string | undefined>;
+  runCommand?: (text: string) => Promise<CommandResult>;
 }
 
 export function parseOp(line: string): RpcOp | { type: "parse_error"; message: string } {
@@ -90,8 +90,12 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
       }
 
       case "command": {
-        const message = await deps.runCommand?.(op.text);
-        send({ type: "command_result", ...(message ? { message } : {}) });
+        const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
+        send({
+          type: "command_result",
+          ...(result.message ? { message: result.message } : {}),
+          ...(result.data !== undefined ? { data: result.data } : {}),
+        });
         break;
       }
 

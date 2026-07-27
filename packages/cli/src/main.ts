@@ -59,12 +59,9 @@ async function main(): Promise<number> {
         usage: () => ({ costUsd: agent.usage.costUsd ?? 0, contextPercent: agent.contextPercent }),
         undo: () => agent.undo(),
         redo: () => agent.redo(),
-        diff: async () =>
-          (await agent.sessionDiff()).map((f) => ({
-            path: f.path,
-            added: f.added,
-            removed: f.removed,
-          })),
+        fork: (entryId) => agent.fork(entryId),
+        forkPoints: () => agent.forkPoints(),
+        diff: () => agent.sessionDiff(),
       });
       for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
         commands.register(toCommand(markdown, (prompt) => void agent.run(prompt)));
@@ -81,7 +78,7 @@ async function main(): Promise<number> {
               getModel: () => args.model ?? defaultModelRef(),
               setModel: () => {},
             });
-            return result.message;
+            return result;
           },
           resolvePermission: (requestId, outcome) => {
             const resolve = pending.get(requestId);

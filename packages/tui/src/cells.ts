@@ -115,6 +115,37 @@ export interface DiffFile {
   lines: DiffLine[];
 }
 
+export function diffLinesFromHunks(hunks: string[]): DiffLine[] {
+  const lines: DiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+
+  for (const raw of hunks) {
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (header) {
+      oldLine = Number(header[1]);
+      newLine = Number(header[2]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk || raw.startsWith("\\ No newline")) continue;
+    if (raw.startsWith("+")) {
+      lines.push({ kind: "add", lineNumber: newLine++, text: raw.slice(1) });
+      continue;
+    }
+    if (raw.startsWith("-")) {
+      lines.push({ kind: "del", lineNumber: oldLine++, text: raw.slice(1) });
+      continue;
+    }
+    if (raw.startsWith(" ")) {
+      lines.push({ kind: "context", lineNumber: newLine++, text: raw.slice(1) });
+      oldLine++;
+    }
+  }
+  return lines;
+}
+
 export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const header = `${sanitizeUntrusted(file.path)} ${GLYPHS.separator} +${file.added} −${file.removed}`;

@@ -359,8 +359,55 @@ export class Agent {
     return provider.diff(first.beforeRef);
   }
 
-  fork(entryId: string): void {
-    this.tree.fork(entryId);
+  forkPoints(): { id: string; description: string }[] {
+    const points: { id: string; description: string }[] = [];
+    for (const entry of this.tree.activePath()) {
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message.role === "toolResult") continue;
+      if (
+        message.role === "assistant" &&
+        message.content.some((block) => block.type === "toolCall")
+      ) {
+        continue;
+      }
+      const text = message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+      const role = message.role === "assistant" ? "mu" : message.role;
+      points.push({
+        id: entry.id,
+        description: `${role} · ${text.slice(0, 80) || "(no text)"}`,
+      });
+    }
+    return points;
+  }
+
+  async fork(entryId: string): Promise<{ ok: boolean; message: string }> {
+    if (!this.tree.get(entryId)) {
+      return { ok: false, message: `Could not fork: unknown entry ${entryId}.` };
+    }
+    const candidate = SessionTree.fromJsonl(this.tree.toJsonl());
+    candidate.fork(entryId);
+    candidate.append({
+      type: "custom",
+      customType: "fork",
+      data: { fromEntryId: this.tree.head, targetEntryId: entryId },
+    });
+    try {
+      await this.store.save(this._sessionId, candidate);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not fork: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    this.tree = candidate;
+    this.rebuildCheckpointHistory();
+    return { ok: true, message: `Forked from ${entryId}.` };
   }
 
   get contextPercent(): number {

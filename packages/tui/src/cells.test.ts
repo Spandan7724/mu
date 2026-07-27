@@ -3,6 +3,7 @@ import {
   agentCell,
   compactionCell,
   diffCell,
+  diffLinesFromHunks,
   errorCell,
   type RenderContext,
   thinkingCell,
@@ -142,6 +143,26 @@ describe("diff rendering", () => {
     );
     expect(wide.length).toBeGreaterThan(2);
     for (const line of wide) expect(stringWidth(line)).toBeLessThanOrEqual(40);
+  });
+
+  test("unified hunks become numbered diff-cell lines", () => {
+    expect(
+      diffLinesFromHunks([
+        "diff --git a/a.ts b/a.ts",
+        "--- a/a.ts",
+        "+++ b/a.ts",
+        "@@ -4,2 +4,3 @@",
+        " same",
+        "-old",
+        "+new",
+        "+extra",
+      ]),
+    ).toEqual([
+      { kind: "context", lineNumber: 4, text: "same" },
+      { kind: "del", lineNumber: 5, text: "old" },
+      { kind: "add", lineNumber: 5, text: "new" },
+      { kind: "add", lineNumber: 6, text: "extra" },
+    ]);
   });
 });
 

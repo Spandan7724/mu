@@ -1,5 +1,15 @@
 import { findModel, listModels } from "@mu/ai";
-import { type Command, CommandRegistry } from "@mu/core";
+import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
+
+export interface ForkPoint {
+  id: string;
+  description: string;
+}
+
+export interface DiffCommandData {
+  kind: "diff";
+  files: CheckpointDiffFile[];
+}
 
 // Built-in commands available on every surface (TUI, RPC, headless).
 export interface CoreCommandHooks {
@@ -7,7 +17,9 @@ export interface CoreCommandHooks {
   usage?: () => { costUsd: number; contextPercent: number };
   undo?: () => Promise<{ ok: boolean; message: string }>;
   redo?: () => Promise<{ ok: boolean; message: string }>;
-  diff?: () => Promise<{ path: string; added: number; removed: number }[]>;
+  fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
+  forkPoints?: () => ForkPoint[];
+  diff?: () => Promise<CheckpointDiffFile[]>;
 }
 
 export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
@@ -70,14 +82,32 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       },
     },
     {
+      name: "fork",
+      description: "Branch the conversation from an earlier point",
+      run: async (ctx) => {
+        if (!hooks.fork) return { handled: true, message: "Fork is not available here." };
+        const entryId = ctx.args.trim();
+        if (!entryId) {
+          const points = hooks.forkPoints?.() ?? [];
+          if (points.length === 0) return { handled: true, message: "No branch points yet." };
+          return {
+            handled: true,
+            message: points.map((point) => `${point.id} · ${point.description}`).join("\n"),
+            data: { kind: "fork-points", points },
+          };
+        }
+        const result = await hooks.fork(entryId);
+        return { handled: true, message: result.message };
+      },
+    },
+    {
       name: "diff",
       description: "Show everything this session has changed",
-      run: async (ctx) => {
+      run: async () => {
         if (!hooks.diff) return { handled: true, message: "Diff is not available here." };
         const files = await hooks.diff();
         if (files.length === 0) return { handled: true, message: "No changes yet." };
-        ctx.print(files.map((f) => `${f.path} · +${f.added} −${f.removed}`).join("\n"));
-        return { handled: true };
+        return { handled: true, data: { kind: "diff", files } satisfies DiffCommandData };
       },
     },
     {

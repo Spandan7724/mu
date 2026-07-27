@@ -5,6 +5,7 @@ export {
   agentCell,
   compactionCell,
   diffCell,
+  diffLinesFromHunks,
   errorCell,
   thinkingCell,
   toolCell,

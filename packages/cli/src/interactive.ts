@@ -2,8 +2,11 @@ import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   App,
+  type ColorDepth,
   codingRenderers,
   detectColorDepth,
+  diffCell,
+  diffLinesFromHunks,
   InlineRenderer,
   InputDecoder,
   RendererRegistry,
@@ -12,6 +15,7 @@ import {
 import {
   Agent,
   type AgentOptions,
+  type DiffCommandData,
   defaultModelRef,
   defaultSkillRoots,
   discoverSkills,
@@ -27,6 +31,25 @@ import type { ParsedArgs } from "./args.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 const SPINNER_INTERVAL_MS = 120;
+
+export function renderDiffCommand(
+  data: DiffCommandData,
+  width: number,
+  depth: ColorDepth,
+): string[] {
+  return data.files.flatMap((file, index) => [
+    ...(index > 0 ? [""] : []),
+    ...diffCell(
+      {
+        path: file.path,
+        added: file.added,
+        removed: file.removed,
+        lines: diffLinesFromHunks(file.hunks),
+      },
+      { width, depth },
+    ),
+  ]);
+}
 
 export async function runInteractive(
   args: ParsedArgs,
@@ -62,6 +85,8 @@ export async function runInteractive(
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
+  const depth = detectColorDepth();
+  let app: App;
   const commands = registryWithCoreCommands({
     requestCompaction: () => agent.requestCompaction(),
     usage: () => ({
@@ -70,12 +95,9 @@ export async function runInteractive(
     }),
     undo: () => agent.undo(),
     redo: () => agent.redo(),
-    diff: async () =>
-      (await agent.sessionDiff()).map((file) => ({
-        path: file.path,
-        added: file.added,
-        removed: file.removed,
-      })),
+    fork: (entryId) => agent.fork(entryId),
+    forkPoints: () => agent.forkPoints(),
+    diff: () => agent.sessionDiff(),
   });
 
   const renderer = new InlineRenderer(terminal);
@@ -93,9 +115,9 @@ export async function runInteractive(
     }
   };
 
-  const app = new App({
+  app = new App({
     width: terminal.columns,
-    depth: detectColorDepth(),
+    depth,
     model: modelRef,
     registry,
     callbacks: {
@@ -240,7 +262,30 @@ export async function runInteractive(
       getModel: () => modelRef,
       setModel: () => {},
     });
-    if (result.message) renderer.commit([`  ${result.message}`]);
+    const data = result.data as
+      | DiffCommandData
+      | { kind: "fork-points"; points: { id: string; description: string }[] }
+      | undefined;
+    if (data?.kind === "diff") {
+      renderer.commit(renderDiffCommand(data, terminal.columns, depth));
+    } else if (data?.kind === "fork-points") {
+      app.openPicker({
+        title: "fork from",
+        items: data.points.map((point) => ({
+          label: point.id,
+          description: point.description,
+        })),
+        onChoose: (entryId) => {
+          void (async () => {
+            const forked = await agent.fork(entryId);
+            renderer.commit([`  ${forked.message}`]);
+            paint();
+          })();
+        },
+      });
+    } else if (result.message) {
+      renderer.commit([`  ${result.message}`]);
+    }
     paint();
   }
 

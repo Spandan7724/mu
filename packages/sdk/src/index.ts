@@ -41,6 +41,7 @@ export type { AgentOptions, HaltReason, RunResult } from "./agent.ts";
 export { Agent } from "./agent.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
+export type { DiffCommandData, ForkPoint } from "./commands.ts";
 export { coreCommands, registryWithCoreCommands } from "./commands.ts";
 export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";

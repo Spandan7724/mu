@@ -165,11 +165,19 @@ describe("runRpc", () => {
     ]);
     await runRpc(io, {
       agent,
-      runCommand: async (text) => `ran ${text}`,
+      runCommand: async (text) => ({
+        handled: true,
+        message: `ran ${text}`,
+        data: { echoed: text },
+      }),
     });
 
     const results = parsed(written).filter((o) => o.type === "command_result");
     expect(results[0]?.type === "command_result" && results[0].message).toBe("ran /model");
+    expect(
+      results[0]?.type === "command_result" &&
+        (results[0].data as { echoed?: string } | undefined)?.echoed,
+    ).toBe("/model");
   });
 
   test("abort stops an in-flight run", async () => {

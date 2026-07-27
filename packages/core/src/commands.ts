@@ -16,6 +16,7 @@ export interface CommandResult {
   // A command may end the run (e.g. /clear) or hand control back.
   handled: boolean;
   message?: string;
+  data?: unknown;
 }
 
 export interface Command {

@@ -410,7 +410,11 @@ describe("fork", () => {
     const forkPoint = entries[0];
     expect(forkPoint).toBeDefined();
 
-    agent.fork((forkPoint as { id: string }).id);
+    const forked = await agent.fork((forkPoint as { id: string }).id);
+    expect(forked.ok).toBe(true);
+    const persisted = await agent.sessionStore.load(agent.sessionId);
+    expect(persisted?.head).toBe(agent.session.head);
+    expect(persisted?.messagesAt()).toHaveLength(1);
     await agent.run("different direction");
 
     const texts = agent.session
@@ -423,6 +427,37 @@ describe("fork", () => {
     expect(texts).toContain("different direction");
     // The abandoned branch still exists on disk — forking destroys nothing.
     expect(agent.session.all().length).toBeGreaterThan(agent.session.activePath().length);
+  });
+
+  test("rejects an unknown entry without moving the session", async () => {
+    const agent = new Agent({
+      provider: new FakeProvider([{ content: [{ type: "text", text: "first" }] }]),
+      model: fakeModel,
+    });
+    await agent.run("one");
+    const head = agent.session.head;
+
+    const result = await agent.fork("foreign-entry");
+
+    expect(result.ok).toBe(false);
+    expect(agent.session.head).toBe(head);
+  });
+
+  test("lists user-visible branch points without incomplete tool calls", async () => {
+    const agent = new Agent({
+      provider: new FakeProvider([
+        { content: [{ type: "toolCall", id: "c1", name: "missing", arguments: {} }] },
+        { content: [{ type: "text", text: "finished" }] },
+      ]),
+      model: fakeModel,
+    });
+    await agent.run("change direction");
+
+    const points = agent.forkPoints();
+
+    expect(points.some((point) => point.description.includes("change direction"))).toBe(true);
+    expect(points.some((point) => point.description.includes("finished"))).toBe(true);
+    expect(points).toHaveLength(2);
   });
 });
 
@@ -449,13 +484,29 @@ describe("commands", () => {
     expect((await registry.execute("/redo", ctx().ctx)).message).toBe("Redid the step.");
   });
 
-  test("/diff lists changed files with counts", async () => {
+  test("/diff returns structured files with hunks", async () => {
     const registry = registryWithCoreCommands({
-      diff: async () => [{ path: "src/a.ts", added: 3, removed: 1 }],
+      diff: async () => [
+        {
+          path: "src/a.ts",
+          added: 3,
+          removed: 1,
+          hunks: ["@@ -1 +1 @@", "-old", "+new"],
+        },
+      ],
     });
-    const harness = ctx();
-    await registry.execute("/diff", harness.ctx);
-    expect(harness.printed[0]).toBe("src/a.ts · +3 −1");
+    const result = await registry.execute("/diff", ctx().ctx);
+    expect(result.data).toEqual({
+      kind: "diff",
+      files: [
+        {
+          path: "src/a.ts",
+          added: 3,
+          removed: 1,
+          hunks: ["@@ -1 +1 @@", "-old", "+new"],
+        },
+      ],
+    });
   });
 
   test("/diff with no changes says so", async () => {
@@ -466,6 +517,25 @@ describe("commands", () => {
   test("surfaces without checkpointing report unavailability", async () => {
     const registry = registryWithCoreCommands();
     expect((await registry.execute("/undo", ctx().ctx)).message).toContain("not available");
+  });
+
+  test("/fork lists points and invokes a selected entry", async () => {
+    const selected: string[] = [];
+    const registry = registryWithCoreCommands({
+      forkPoints: () => [{ id: "e1", description: "user · start here" }],
+      fork: async (entryId) => {
+        selected.push(entryId);
+        return { ok: true, message: `Forked from ${entryId}.` };
+      },
+    });
+
+    const listing = await registry.execute("/fork", ctx().ctx);
+    expect(listing.data).toEqual({
+      kind: "fork-points",
+      points: [{ id: "e1", description: "user · start here" }],
+    });
+    expect((await registry.execute("/fork e1", ctx().ctx)).message).toBe("Forked from e1.");
+    expect(selected).toEqual(["e1"]);
   });
 });
 
