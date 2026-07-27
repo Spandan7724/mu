@@ -9,8 +9,8 @@ import {
   detectColorDepth,
   diffCell,
   diffLinesFromHunks,
+  FullScreenRenderer,
   formatCwdForFooter,
-  InlineRenderer,
   InputDecoder,
   RendererRegistry,
   Terminal,
@@ -224,7 +224,7 @@ export async function runInteractive(
   for (const command of profileCommands) commands.register(command);
   for (const command of extensions.commands.list()) commands.register(command);
 
-  const renderer = new InlineRenderer(terminal);
+  const renderer = new FullScreenRenderer(terminal);
   let exiting = false;
   let activeRun: Promise<void> | undefined;
   let activeShell: Promise<void> | undefined;
@@ -262,7 +262,7 @@ export async function runInteractive(
         // session and usage totals. Mid-run input is steering, which is what
         // the loop's steering queue exists for.
         if (activeShell) {
-          renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+          commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
         } else if (activeRun || agent.isRunning) agent.send(text);
         else beginRun(text);
@@ -278,7 +278,7 @@ export async function runInteractive(
       },
       onCommand: (text) => {
         if (activeShell) {
-          renderer.commit(["  Wait for the shell command to finish, or press Esc to cancel it."]);
+          commitLines(["  Wait for the shell command to finish, or press Esc to cancel it."]);
           paint();
           return;
         }
@@ -299,7 +299,7 @@ export async function runInteractive(
           agent.addPermissionRule(rule);
           void Promise.resolve(profile?.rememberPermission?.(rule.permission, rule.pattern)).catch(
             (error) => {
-              renderer.commit([
+              commitLines([
                 `  could not remember permission: ${
                   error instanceof Error ? error.message : String(error)
                 }`,
@@ -327,16 +327,16 @@ export async function runInteractive(
       }
       let refresh: ModelCatalogRefreshResult | undefined;
       if (modelCatalog && !modelCatalog.hasFreshModels) {
-        renderer.commit(["  refreshing model catalog…"]);
+        commitLines(["  refreshing model catalog…"]);
         paint();
         refresh = await modelCatalog.ensureFresh();
         if (!refresh.ok) {
-          renderer.commit([
+          commitLines([
             `  model discovery failed · showing ${refresh.fallback} catalog`,
             `  ${refresh.error}`,
           ]);
         } else if (refresh.cacheWarning) {
-          renderer.commit([`  ${refresh.cacheWarning}`]);
+          commitLines([`  ${refresh.cacheWarning}`]);
         }
       }
       const models = availableModels(extensions);
@@ -353,9 +353,9 @@ export async function runInteractive(
           app.setModel(label, agent.contextWindow);
           try {
             await saveDefaultModel(label);
-            renderer.commit([`  model set to ${label} · saved as default`]);
+            commitLines([`  model set to ${label} · saved as default`]);
           } catch (error) {
-            renderer.commit([
+            commitLines([
               `  model set to ${label}`,
               `  could not save default: ${error instanceof Error ? error.message : String(error)}`,
             ]);
@@ -403,7 +403,7 @@ export async function runInteractive(
           if (!mode || !profile) return;
           agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
           activePermissionMode = mode;
-          renderer.commit([`  permissions set to ${mode.label} · this session`]);
+          commitLines([`  permissions set to ${mode.label} · this session`]);
           paint();
         },
         onBack: () => app.openCommandMenu(),
@@ -427,33 +427,28 @@ export async function runInteractive(
           void (async () => {
             try {
               if (activeRun || agent.isRunning) {
-                renderer.commit(["  Cannot resume during a run."]);
+                commitLines(["  Cannot resume during a run."]);
                 paint();
                 return;
               }
               const tree = await agent.sessionStore.load(label);
               if (!tree) {
-                renderer.commit([`  no such session: ${label}`]);
+                commitLines([`  no such session: ${label}`]);
                 paint();
                 return;
               }
               if (activeRun || agent.isRunning) {
-                renderer.commit(["  Cannot resume during a run."]);
+                commitLines(["  Cannot resume during a run."]);
                 paint();
                 return;
               }
               agent.resume(tree);
-              // Replay the transcript into scrollback so the user sees what
-              // became the active session.
-              for (const message of tree.messagesAt()) {
-                const lines = app.handleEvent({ type: "message_end", message });
-                if (lines.length > 0) renderer.commit(lines);
-              }
               app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking);
-              renderer.commit([`  resumed ${label}`]);
+              app.replaceTranscript(tree.messagesAt(), app.banner());
+              commitLines([`  resumed ${label}`]);
             } catch (error) {
-              renderer.commit([
+              commitLines([
                 `  Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`,
               ]);
             }
@@ -468,11 +463,14 @@ export async function runInteractive(
 
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
-  const paint = () => renderer.render(app.renderBottom());
+  const paint = () => renderer.render(app.renderScreen());
+  const commitLines = (lines: string[]) => {
+    app.appendTranscript(lines);
+    paint();
+  };
   const unsubscribe = agent.subscribe((event) => {
-    const lines = app.handleEvent(event);
-    if (lines.length > 0) renderer.commit(lines, app.renderBottom());
-    else paint();
+    app.handleEvent(event);
+    paint();
   });
 
   // Shallow file listing for the `@` popup — bounded so a huge tree cannot
@@ -510,12 +508,12 @@ export async function runInteractive(
 
   function beginRun(text: string, options?: AgentRunOptions): void {
     if (activeShell) {
-      renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+      commitLines(["  A shell command is already running; press Esc to cancel it."]);
       paint();
       return;
     }
     if (activeRun || agent.isRunning) {
-      renderer.commit(["  A run is already active; submit text to steer it."]);
+      commitLines(["  A run is already active; submit text to steer it."]);
       paint();
       return;
     }
@@ -526,12 +524,12 @@ export async function runInteractive(
 
   function beginUserShell(command: string): void {
     if (activeRun || agent.isRunning) {
-      renderer.commit(["  Wait for the agent turn to finish before running a shell command."]);
+      commitLines(["  Wait for the agent turn to finish before running a shell command."]);
       paint();
       return;
     }
     if (activeShell) {
-      renderer.commit(["  A shell command is already running; press Esc to cancel it."]);
+      commitLines(["  A shell command is already running; press Esc to cancel it."]);
       paint();
       return;
     }
@@ -540,8 +538,7 @@ export async function runInteractive(
     shellController = controller;
     activeShell = (async () => {
       const dispatch = (event: Parameters<App["handleEvent"]>[0]) => {
-        const lines = app.handleEvent(event);
-        if (lines.length > 0) renderer.commit(lines);
+        app.handleEvent(event);
         paint();
       };
 
@@ -554,7 +551,7 @@ export async function runInteractive(
         try {
           await agent.sessionStore.save(agent.sessionId, agent.session);
         } catch (error) {
-          renderer.commit([
+          commitLines([
             `  shell result could not be saved to the session: ${
               error instanceof Error ? error.message : String(error)
             }`,
@@ -627,7 +624,7 @@ export async function runInteractive(
     try {
       await saveDefaultModel(ref);
     } catch (error) {
-      renderer.commit([
+      commitLines([
         `  could not save ${ref} as the default model: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -639,9 +636,9 @@ export async function runInteractive(
     try {
       await saveApiKey(provider, apiKey);
       await selectProviderModel(provider);
-      renderer.commit([`  Saved API key for ${label}.`, `  model set to ${agent.modelRef}`]);
+      commitLines([`  Saved API key for ${label}.`, `  model set to ${agent.modelRef}`]);
     } catch (error) {
-      renderer.commit([
+      commitLines([
         `  Could not save API key for ${label}: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -668,7 +665,7 @@ export async function runInteractive(
   let loginInProgress = false;
   async function signInWithAccount(provider: AccountLoginProvider): Promise<void> {
     if (loginInProgress) {
-      renderer.commit(["  A login is already in progress."]);
+      commitLines(["  A login is already in progress."]);
       paint();
       return;
     }
@@ -680,7 +677,7 @@ export async function runInteractive(
         signal: controller.signal,
         onAuthUrl: (url) => {
           const opened = openBrowser(url);
-          renderer.commit([
+          commitLines([
             opened
               ? "  Complete the OpenAI sign-in in your browser."
               : "  Could not open a browser. Open this URL to continue:",
@@ -690,9 +687,9 @@ export async function runInteractive(
         },
       });
       await selectProviderModel(provider.id);
-      renderer.commit([`  ${provider.successMessage}`, `  model set to ${agent.modelRef}`]);
+      commitLines([`  ${provider.successMessage}`, `  model set to ${agent.modelRef}`]);
     } catch (error) {
-      renderer.commit([
+      commitLines([
         `  ${provider.name} login failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
@@ -706,7 +703,7 @@ export async function runInteractive(
 
   async function startRun(text: string, options?: AgentRunOptions): Promise<void> {
     await agent.run(text, options).catch((error) => {
-      renderer.commit([`  ${error instanceof Error ? error.message : String(error)}`]);
+      commitLines([`  ${error instanceof Error ? error.message : String(error)}`]);
     });
     paint();
   }
@@ -718,7 +715,7 @@ export async function runInteractive(
           agent.followUp(message.content[0].text);
         }
       },
-      print: (output) => renderer.commit([`  ${output}`]),
+      print: (output) => commitLines([`  ${output}`]),
       getModel: () => agent.modelRef,
       setModel: () => {},
     });
@@ -734,9 +731,9 @@ export async function runInteractive(
       } else if (data.action === "redo") {
         app.editor.setText("");
       }
-      renderer.commit(renderCheckpointCommand(data, terminal.columns, depth));
+      commitLines(renderCheckpointCommand(data, terminal.columns, depth));
     } else if (data?.kind === "diff") {
-      renderer.commit(renderDiffCommand(data, terminal.columns, depth));
+      commitLines(renderDiffCommand(data, terminal.columns, depth));
     } else if (data?.kind === "fork-points") {
       app.openPicker({
         title: "fork from",
@@ -747,7 +744,7 @@ export async function runInteractive(
         onChoose: (entryId) => {
           void (async () => {
             const forked = await agent.fork(entryId);
-            renderer.commit([`  ${forked.message}`]);
+            commitLines([`  ${forked.message}`]);
             paint();
           })();
         },
@@ -759,7 +756,7 @@ export async function runInteractive(
         ...(data.allowedTools ? { allowedTools: data.allowedTools } : {}),
       });
     } else if (result.message) {
-      renderer.commit([`  ${result.message}`]);
+      commitLines([`  ${result.message}`]);
     }
     paint();
   }
@@ -768,14 +765,14 @@ export async function runInteractive(
   terminal.start();
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking);
-  renderer.commit(app.banner());
+  commitLines(app.banner());
   if (builtIns.warnings.length > 0) {
-    renderer.commit(builtIns.warnings.map((warning) => `  ${warning}`));
+    commitLines(builtIns.warnings.map((warning) => `  ${warning}`));
   }
   const stopResize = terminal.onResize(() => {
     app.setSize(terminal.columns, terminal.rows);
     agent.resize(terminal.columns, terminal.rows);
-    renderer.renderNow(app.renderBottom());
+    renderer.renderNow(app.renderScreen());
   });
   agent.resize(terminal.columns, terminal.rows);
 
@@ -823,8 +820,8 @@ export async function runInteractive(
     unsubscribe();
     clearInterval(spinnerTimer);
     stopResize();
+    renderer.renderNow(app.renderTranscript());
     renderer.stop();
-    renderer.clear();
     terminal.restore();
   }
   return 0;

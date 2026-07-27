@@ -1,7 +1,7 @@
-// The mu integration layer: an AgentEvent consumer that commits transcript
-// cells to scrollback and keeps the bottom region (composer / approval / footer)
-// up to date. It holds no agent logic — everything arrives as events.
-import type { AgentEvent, AssistantMessage, PermissionRequest } from "@mu/core";
+// The mu integration layer: an AgentEvent consumer that retains transcript
+// cells and keeps the live region (composer / approval / footer) up to date. It
+// holds no agent logic — everything arrives as events.
+import type { AgentEvent, AgentMessage, AssistantMessage, PermissionRequest } from "@mu/core";
 import {
   agentCell,
   compactionCell,
@@ -82,9 +82,7 @@ interface LiveTask {
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
-const LIVE_ASSISTANT_ROWS = 6;
 const EXPANDED_TOOL_ROWS = 24;
-const RETAINED_TOOLS = 20;
 
 class LiveToolOutput {
   private lines: string[] = [];
@@ -133,7 +131,9 @@ class LiveToolOutput {
 }
 
 type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
-type RetainedTurnItem =
+type TranscriptItem =
+  | { kind: "lines"; lines: string[] }
+  | { kind: "user"; text: string }
   | { kind: "assistant"; message: AssistantMessage }
   | { kind: "tool"; info: ToolRenderInfo };
 
@@ -150,12 +150,11 @@ export class App {
   private approvals: PermissionRequest[] = [];
   private approvalIndex = 0;
   private pendingTools = new Map<string, PendingTool>();
-  private retainedTurn: RetainedTurnItem[] = [];
+  private transcript: TranscriptItem[] = [];
   private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
-  private streamingCommittedRows = 0;
   private lastError: string | undefined;
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
@@ -249,13 +248,13 @@ export class App {
     return this.mode;
   }
 
-  // Events that produce transcript output return the lines to commit to
-  // scrollback; everything else only affects the bottom region.
+  // Events that produce transcript output return their rendered lines for
+  // callers that inspect events directly; all durable output is also retained
+  // as semantic transcript cells for whole-screen rendering.
   handleEvent(event: AgentEvent): string[] {
     switch (event.type) {
       case "agent_start":
         this.running = true;
-        this.retainedTurn = [];
         return [];
 
       case "agent_end": {
@@ -265,26 +264,20 @@ export class App {
         // nothing and hides actionable messages like a missing API key.
         const detail = this.lastError ?? "the provider returned an error";
         this.lastError = undefined;
-        return [...errorCell(detail, this.ctx), ""];
+        const lines = [...errorCell(detail, this.ctx), ""];
+        this.appendTranscript(lines);
+        return lines;
       }
 
       case "message_start":
         if (event.message.role === "assistant") {
           this.streaming = "";
-          this.streamingCommittedRows = 0;
         }
         return [];
 
       case "message_update":
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
-          const rows = this.streamingRows();
-          const commitThrough = Math.max(0, rows.length - LIVE_ASSISTANT_ROWS);
-          if (commitThrough > this.streamingCommittedRows) {
-            const committed = rows.slice(this.streamingCommittedRows, commitThrough);
-            this.streamingCommittedRows = commitThrough;
-            return committed;
-          }
         } else if (
           event.delta.kind === "toolcall_start" ||
           event.delta.kind === "toolcall_delta" ||
@@ -320,28 +313,17 @@ export class App {
             .filter((block) => block.type === "text")
             .map((block) => block.text)
             .join("");
-          return text ? [...userCell(text, this.ctx), ""] : [];
+          if (!text) return [];
+          this.transcript.push({ kind: "user", text });
+          return [...userCell(text, this.ctx), ""];
         }
         if (message.role === "assistant") {
-          if (this.assistantRows(message).length > 0) {
-            this.retainedTurn.push({ kind: "assistant", message });
-          }
-          let committedRows = this.streamingCommittedRows;
           this.streaming = undefined;
-          this.streamingCommittedRows = 0;
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
-          const lines: string[] = [];
-          for (const block of message.content) {
-            if (block.type === "thinking" && block.thinking.trim()) {
-              lines.push(...thinkingCell(block.thinking, this.ctx));
-            } else if (block.type === "text" && block.text.trim()) {
-              const textRows = this.toTerminalRows(agentCell(block.text, this.ctx));
-              lines.push(...textRows.slice(committedRows));
-              committedRows = Math.max(0, committedRows - textRows.length);
-            }
-          }
+          const lines = this.assistantRows(message);
+          if (lines.length > 0) this.transcript.push({ kind: "assistant", message });
           return lines.length > 0 ? [...lines, ""] : [];
         }
         return [];
@@ -367,8 +349,7 @@ export class App {
           args: pending?.args ?? {},
           result: event.result,
         };
-        this.retainedTurn.push({ kind: "tool", info });
-        this.trimRetainedTurn();
+        this.transcript.push({ kind: "tool", info });
         return this.registry.render(info, this.ctx);
       }
 
@@ -388,8 +369,11 @@ export class App {
         return [];
       }
 
-      case "compaction_end":
-        return [...compactionCell(event.tokensFreed, this.ctx), ""];
+      case "compaction_end": {
+        const lines = [...compactionCell(event.tokensFreed, this.ctx), ""];
+        this.appendTranscript(lines);
+        return lines;
+      }
 
       case "usage_updated":
         this.footerData = {
@@ -439,7 +423,7 @@ export class App {
           backgroundTasks: this.backgroundTasks.size,
         };
         if (!task) return [];
-        return [
+        const lines = [
           ...taskCell(
             {
               taskId: task.taskId,
@@ -452,6 +436,8 @@ export class App {
           ),
           "",
         ];
+        this.appendTranscript(lines);
+        return lines;
       }
 
       default:
@@ -485,51 +471,81 @@ export class App {
     this.spinner.tick();
   }
 
-  // The managed bottom region, rebuilt from state on every paint.
+  appendTranscript(lines: string[]): void {
+    if (lines.length > 0) this.transcript.push({ kind: "lines", lines: [...lines] });
+  }
+
+  replaceTranscript(messages: readonly AgentMessage[], prefix: string[] = []): void {
+    this.transcript = prefix.length > 0 ? [{ kind: "lines", lines: [...prefix] }] : [];
+    this.pendingTools.clear();
+    this.streaming = undefined;
+
+    const calls = new Map<string, { toolName: string; args: unknown }>();
+    for (const message of messages) {
+      if (message.role === "user") {
+        const text = message.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("");
+        if (text) this.transcript.push({ kind: "user", text });
+        continue;
+      }
+      if (message.role === "assistant") {
+        if (this.assistantRows(message).length > 0) {
+          this.transcript.push({ kind: "assistant", message });
+        }
+        for (const block of message.content) {
+          if (block.type === "toolCall") {
+            calls.set(block.id, { toolName: block.name, args: block.arguments });
+          }
+        }
+        continue;
+      }
+      if (message.role === "toolResult") {
+        const call = calls.get(message.toolCallId);
+        this.transcript.push({
+          kind: "tool",
+          info: {
+            toolName: call?.toolName ?? message.toolName,
+            args: call?.args ?? {},
+            result: message,
+          },
+        });
+        calls.delete(message.toolCallId);
+      }
+    }
+  }
+
+  renderScreen(): string[] {
+    return this.toTerminalRows([...this.transcriptRows(), ...this.renderManaged()]);
+  }
+
+  renderTranscript(): string[] {
+    return this.toTerminalRows(this.transcriptRows());
+  }
+
   renderBottom(): string[] {
+    return this.fitToViewport(this.toTerminalRows(this.renderManaged()));
+  }
+
+  private transcriptRows(): string[] {
+    return this.transcript.flatMap((item) => {
+      if (item.kind === "lines") return item.lines;
+      if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
+      if (item.kind === "assistant") return [...this.assistantRows(item.message), ""];
+      return this.registry.render({ ...item.info, expanded: this.toolOutputExpanded }, this.ctx);
+    });
+  }
+
+  // The live activity and composer region, rebuilt from state on every paint.
+  private renderManaged(): string[] {
     const { width, depth } = this.ctx;
     const lines: string[] = [];
     const height = this.options.height ?? 24;
-    const expandedRows = Math.max(3, Math.min(EXPANDED_TOOL_ROWS, height - 12));
-
-    if (this.toolOutputExpanded && this.retainedTurn.some((item) => item.kind === "tool")) {
-      const expanded = this.retainedTurn.flatMap((item) =>
-        item.kind === "tool"
-          ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
-          : [...this.assistantRows(item.message), ""],
-      );
-      lines.push(
-        MARGIN +
-          styleText(
-            `${GLYPHS.rule} expanded turn ${GLYPHS.separator} ctrl+o to collapse`,
-            { dim: true },
-            depth,
-          ),
-      );
-      if (expanded.length <= expandedRows) {
-        lines.push(...expanded);
-      } else {
-        const headRows = Math.floor((expandedRows - 1) / 2);
-        const tailRows = expandedRows - headRows - 1;
-        const omitted = expanded.length - headRows - tailRows;
-        lines.push(
-          ...expanded.slice(0, headRows),
-          MARGIN +
-            styleText(
-              `${GLYPHS.rule} … +${omitted} lines ${GLYPHS.separator} ctrl+o keeps this view bounded`,
-              { dim: true },
-              depth,
-            ),
-          ...expanded.slice(-tailRows),
-        );
-      }
-    }
 
     // Live region: streaming assistant text and running tool cells, so a long
     // turn is never a frozen screen with only a spinner.
-    if (this.streaming && this.streaming.trim().length > 0) {
-      lines.push(...this.streamingRows().slice(this.streamingCommittedRows));
-    }
+    if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
     for (const pending of this.pendingTools.values()) {
       lines.push(
         ...this.registry.render(
@@ -630,7 +646,7 @@ export class App {
         ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
         : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, hint }, width, depth));
-    return this.fitToViewport(this.toTerminalRows(lines));
+    return lines;
   }
 
   private streamingRows(): string[] {
@@ -648,13 +664,6 @@ export class App {
       }
     }
     return lines;
-  }
-
-  private trimRetainedTurn(): void {
-    const toolCount = this.retainedTurn.filter((item) => item.kind === "tool").length;
-    if (toolCount <= RETAINED_TOOLS) return;
-    const oldestTool = this.retainedTurn.findIndex((item) => item.kind === "tool");
-    this.retainedTurn = this.retainedTurn.slice(oldestTool + 1);
   }
 
   private toTerminalRows(lines: string[]): string[] {

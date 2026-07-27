@@ -1,11 +1,11 @@
 // Integration: a scripted fake-agent event stream drives the whole UI with
 // zero network, exactly as the milestone requires.
 import { describe, expect, test } from "bun:test";
-import type { AgentEvent } from "@mu/core";
+import type { AgentEvent, AgentMessage } from "@mu/core";
 import { App, type AppCallbacks } from "./app.ts";
 import { InputDecoder } from "./input.ts";
 import { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
-import { InlineRenderer } from "./renderer.ts";
+import { FullScreenRenderer } from "./renderer.ts";
 import { stripAnsi } from "./style.ts";
 import { Terminal, type TerminalIo } from "./terminal.ts";
 import { stringWidth } from "./width.ts";
@@ -564,26 +564,29 @@ describe("tool output toggle", () => {
         role: "toolResult",
         toolCallId: "c1",
         toolName: "bash",
-        content: [{ type: "text", text: "one\ntwo" }],
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"),
+          },
+        ],
         details: { exitCode: 0 },
         isError: false,
         timestamp: 1,
       },
     });
-    expect(collapsed.map(stripAnsi)).toEqual(["  │ ran bun test · ✓", "  │ one", "  │ two"]);
-    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("one");
+    expect(collapsed.map(stripAnsi).join("\n")).toContain("lines omitted · ctrl+o to expand");
+    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
 
     feed(app, "\u000f");
     expect(app.areToolOutputsExpanded).toBe(true);
-    const expanded = app.renderBottom().map(stripAnsi).join("\n");
-    expect(expanded).toContain("expanded turn · ctrl+o to collapse");
+    const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("ran bun test");
-    expect(expanded).toContain("│ one");
-    expect(expanded).toContain("│ two");
+    expect(expanded).toContain("│ line 6");
 
     feed(app, "\u000f");
     expect(app.areToolOutputsExpanded).toBe(false);
-    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("│ one");
+    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
   });
 
   test("expanded tools keep the final assistant response last", () => {
@@ -618,7 +621,7 @@ describe("tool output toggle", () => {
     });
 
     feed(app, "\u000f");
-    const expanded = app.renderBottom().map(stripAnsi);
+    const expanded = app.renderScreen().map(stripAnsi);
     const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
     const toolIndex = expanded.findIndex((line) => line.includes("ran bun test"));
     const resultIndex = expanded.findIndex((line) => line.includes("│ two"));
@@ -630,7 +633,7 @@ describe("tool output toggle", () => {
     expect(finalIndex).toBeGreaterThan(resultIndex);
   });
 
-  test("the expanded output view is bounded and reports omitted rows", () => {
+  test("the expanded output stays complete and in place before the final response", () => {
     const { app } = harness();
     app.handleEvent({
       type: "tool_execution_start",
@@ -661,13 +664,73 @@ describe("tool output toggle", () => {
       message: assistant("Done — this response stays after the expanded output."),
     });
     feed(app, "\u000f");
-    const bottom = app.renderBottom().map(stripAnsi);
-    const resultIndex = bottom.findIndex((line) => line.includes("line 80"));
-    const finalIndex = bottom.findIndex((line) => line.includes("this response stays"));
-    expect(bottom.some((line) => line.includes("… +"))).toBe(true);
+    const screen = app.renderScreen().map(stripAnsi);
+    const toolIndex = screen.findIndex((line) => line.includes("ran long command"));
+    const resultIndex = screen.findIndex((line) => line.includes("line 80"));
+    const finalIndex = screen.findIndex((line) => line.includes("this response stays"));
+    expect(toolIndex).toBeGreaterThanOrEqual(0);
     expect(resultIndex).toBeGreaterThanOrEqual(0);
+    expect(resultIndex).toBeGreaterThan(toolIndex);
     expect(finalIndex).toBeGreaterThan(resultIndex);
-    expect(bottom.length).toBeLessThanOrEqual(31);
+    expect(screen.some((line) => line.includes("keeps this view bounded"))).toBe(false);
+  });
+
+  test("a resumed session restores expandable tools at their original position", () => {
+    const { app } = harness();
+    app.appendTranscript(["stale session"]);
+    const messages: AgentMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "explain it" }],
+        timestamp: 1,
+      },
+      {
+        ...assistant("I’ll read it first."),
+        content: [
+          { type: "text", text: "I’ll read it first." },
+          {
+            type: "toolCall",
+            id: "read-1",
+            name: "read",
+            arguments: { path: "numpy_stock_trading.py" },
+          },
+        ],
+        stopReason: "toolUse",
+      },
+      {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 12 }, (_, index) => `source line ${index + 1}`).join("\n"),
+          },
+        ],
+        details: { lines: 12 },
+        isError: false,
+        timestamp: 2,
+      },
+      assistant("The explanation remains last."),
+    ];
+
+    app.replaceTranscript(messages, ["restored session"]);
+    let screen = app.renderScreen().map(stripAnsi);
+    expect(screen.join("\n")).not.toContain("stale session");
+    expect(screen.join("\n")).not.toContain("source line 6");
+
+    feed(app, "\u000f");
+    screen = app.renderScreen().map(stripAnsi);
+    const preambleIndex = screen.findIndex((line) => line.includes("read it first"));
+    const toolIndex = screen.findIndex((line) => line.includes("read numpy_stock_trading.py"));
+    const outputIndex = screen.findIndex((line) => line.includes("source line 12"));
+    const finalIndex = screen.findIndex((line) => line.includes("explanation remains last"));
+
+    expect(screen).toContain("restored session");
+    expect(screen.join("\n")).toContain("source line 6");
+    expect(toolIndex).toBeGreaterThan(preambleIndex);
+    expect(outputIndex).toBeGreaterThan(toolIndex);
+    expect(finalIndex).toBeGreaterThan(outputIndex);
   });
 
   test("the managed region never exceeds the terminal viewport", () => {
@@ -724,22 +787,30 @@ describe("tool output toggle", () => {
 
     const bottom = app.renderBottom().map(stripAnsi);
     expect(bottom.length).toBeLessThanOrEqual(9);
-    expect(bottom[0]).toContain("rows above hidden");
     expect(bottom.join("\n")).toContain("allow once");
     expect(bottom.at(-1)).toContain("ctrl+o");
   });
 });
 
 describe("resize", () => {
-  test("the bottom region re-wraps to the new width", () => {
+  test("the complete retained screen re-wraps to the new width", () => {
     const h = harness();
+    h.app.handleEvent({
+      type: "message_end",
+      message: assistant(
+        "A retained assistant response with enough words to wrap differently after a resize.",
+      ),
+    });
     h.app.editor.insert("x".repeat(120));
 
     h.app.setWidth(40);
-    for (const line of h.app.renderBottom()) expect(stringWidth(line)).toBeLessThanOrEqual(40);
+    const narrow = h.app.renderScreen();
+    for (const line of narrow) expect(stringWidth(line)).toBeLessThanOrEqual(40);
 
     h.app.setWidth(100);
-    for (const line of h.app.renderBottom()) expect(stringWidth(line)).toBeLessThanOrEqual(100);
+    const wide = h.app.renderScreen();
+    for (const line of wide) expect(stringWidth(line)).toBeLessThanOrEqual(100);
+    expect(wide.length).toBeLessThan(narrow.length);
   });
 });
 
@@ -844,7 +915,7 @@ describe("terminal safety", () => {
   });
 });
 
-describe("inline renderer", () => {
+describe("full-screen renderer", () => {
   class VirtualScreen {
     readonly scrollback: string[] = [];
     readonly lines: string[];
@@ -889,10 +960,19 @@ describe("inline renderer", () => {
         this.row = Math.max(0, this.row - count);
       } else if (command === "B") {
         this.row = Math.min(this.height - 1, this.row + count);
+      } else if (command === "H") {
+        this.row = 0;
+        this.column = 0;
       } else if (command === "K") {
         this.lines[this.row] = "";
       } else if (command === "J") {
-        for (let row = this.row; row < this.height; row++) this.lines[row] = "";
+        if (params === "3") {
+          this.scrollback.length = 0;
+        } else if (params === "2") {
+          this.lines.fill("");
+        } else {
+          for (let row = this.row; row < this.height; row++) this.lines[row] = "";
+        }
       }
     }
 
@@ -914,7 +994,7 @@ describe("inline renderer", () => {
       rows: 24,
       isTty: true,
     });
-    return { written, renderer: new InlineRenderer(terminal, 0) };
+    return { written, renderer: new FullScreenRenderer(terminal, 0) };
   }
 
   test("identical frames are not repainted", async () => {
@@ -933,23 +1013,16 @@ describe("inline renderer", () => {
     expect(written.length).toBeGreaterThan(after);
   });
 
-  test("committed lines are written above the managed region", () => {
-    const { written, renderer } = setup();
-    renderer.renderNow(["bottom"]);
-    renderer.commit(["history line"]);
-    expect(written.join("")).toContain("history line");
-  });
-
-  test("embedded newlines are counted as physical rows when repainting", () => {
+  test("embedded newlines are counted as physical screen rows", () => {
     const { written, renderer } = setup();
     renderer.renderNow(["first\nsecond", "third"]);
-    expect(renderer.regionHeight).toBe(3);
+    expect(renderer.lineCount).toBe(3);
 
     renderer.renderNow(["replacement"]);
-    expect(written.at(-1)).toContain(`${ESC}[2A`);
+    expect(written.at(-1)).toContain(`${ESC}[2J${ESC}[H${ESC}[3J`);
   });
 
-  test("growing and repainting a viewport-sized frame never leaks it into scrollback", () => {
+  test("tool expansion replaces its original row and keeps the final response after it", () => {
     const screen = new VirtualScreen(8);
     const terminal = new Terminal({
       write: (data) => screen.write(data),
@@ -957,38 +1030,82 @@ describe("inline renderer", () => {
       rows: 8,
       isTty: true,
     });
-    const renderer = new InlineRenderer(terminal, 0);
-    renderer.commit(Array.from({ length: 6 }, (_, index) => `history ${index + 1}`));
-    renderer.renderNow(["old 1", "old 2"]);
+    const renderer = new FullScreenRenderer(terminal, 0);
+    renderer.renderNow(["user", "tool compact", "final response", "rule", "composer"]);
 
-    const expanded = Array.from({ length: 7 }, (_, index) => `expanded ${index + 1}`);
+    const expanded = [
+      "user",
+      "tool",
+      ...Array.from({ length: 6 }, (_, index) => `output ${index + 1}`),
+      "final response",
+      "rule",
+      "composer",
+    ];
     renderer.renderNow(expanded);
-    const repainted = expanded.map((line) => `${line} updated`);
-    renderer.renderNow(repainted);
-
-    expect(screen.lines.slice(-7)).toEqual(repainted);
-    expect(screen.scrollback.join("\n")).not.toContain("old");
-    expect(screen.scrollback.join("\n")).not.toContain("expanded");
+    const rendered = [...screen.scrollback, ...screen.lines];
+    expect(rendered).not.toContain("tool compact");
+    expect(rendered.indexOf("output 6")).toBeLessThan(rendered.indexOf("final response"));
+    expect(rendered.slice(-3)).toEqual(["final response", "rule", "composer"]);
   });
 
-  test("committing with the next frame replaces stale pending output atomically", async () => {
-    const written: string[] = [];
-    const terminal = new Terminal({
-      write: (data) => written.push(data),
-      columns: 80,
-      rows: 24,
-      isTty: true,
+  test("repeated long tool expansion never overlays or duplicates the final response", () => {
+    const { app } = harness();
+    const screen = new VirtualScreen(24);
+    const renderer = new FullScreenRenderer(
+      new Terminal({
+        write: (data) => screen.write(data),
+        columns: 60,
+        rows: 24,
+        isTty: true,
+      }),
+      0,
+    );
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "message_end",
+      message: { ...assistant("I’ll read the implementation."), stopReason: "toolUse" },
     });
-    const renderer = new InlineRenderer(terminal, 10);
-    renderer.render(["stale pending frame"]);
-    renderer.commit(["history line"], ["fresh frame"]);
-    const writesAfterCommit = written.length;
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "read-1",
+      toolName: "read",
+      args: { path: "numpy_stock_trading.py" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "read-1",
+      result: {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 98 }, (_, index) => `${index + 1} code line`).join("\n"),
+          },
+        ],
+        details: { lines: 98 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    app.handleEvent({
+      type: "message_end",
+      message: assistant(
+        `${Array.from({ length: 30 }, (_, index) => `Explanation ${index + 1}`).join("\n")}\nFINAL LIMITATIONS`,
+      ),
+    });
 
-    await Bun.sleep(25);
-    expect(written.length).toBe(writesAfterCommit);
-    expect(renderer.regionHeight).toBe(1);
-    expect(written.join("")).toContain("fresh frame");
-    expect(written.join("")).not.toContain("stale pending frame");
+    renderer.renderNow(app.renderScreen());
+    for (let index = 0; index < 3; index++) {
+      feed(app, "\u000f");
+      renderer.renderNow(app.renderScreen());
+    }
+
+    const rendered = [...screen.scrollback, ...screen.lines].join("\n");
+    expect(rendered).not.toContain("expanded turn");
+    expect(rendered.match(/FINAL LIMITATIONS/g)).toHaveLength(1);
+    expect(rendered.indexOf("98 code line")).toBeLessThan(rendered.indexOf("FINAL LIMITATIONS"));
   });
 
   test("throttled renders coalesce into one paint", async () => {
@@ -999,7 +1116,7 @@ describe("inline renderer", () => {
       rows: 24,
       isTty: true,
     });
-    const renderer = new InlineRenderer(terminal, 10);
+    const renderer = new FullScreenRenderer(terminal, 10);
     renderer.render(["1"]);
     renderer.render(["2"]);
     renderer.render(["3"]);
@@ -1321,7 +1438,7 @@ describe("live streaming region", () => {
     expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("thinking out loud");
   });
 
-  test("long assistant output moves into scrollback while it is streaming", () => {
+  test("long assistant output remains one mutable screen cell while streaming", () => {
     const { app } = harness();
     const text = Array.from({ length: 80 }, (_, index) => `word-${index}`).join(" ");
     app.handleEvent({ type: "agent_start" });
@@ -1332,14 +1449,14 @@ describe("live streaming region", () => {
       message: assistant(text),
       delta: { kind: "text_delta", contentIndex: 0, text },
     });
-    const live = app.renderBottom().map(stripAnsi);
+    const live = app.renderScreen().map(stripAnsi);
     const final = app.handleEvent({ type: "message_end", message: assistant(text) });
-    const transcript = [...committed, ...final].map(stripAnsi);
+    const screen = app.renderScreen().map(stripAnsi);
 
-    expect(committed.length).toBeGreaterThan(0);
+    expect(committed).toEqual([]);
     expect(live.some((line) => line.includes("word-79"))).toBe(true);
-    expect(final.length).toBeLessThanOrEqual(7);
-    expect(transcript.filter((line) => line.startsWith("  mu  "))).toHaveLength(1);
+    expect(final.length).toBeGreaterThan(0);
+    expect(screen.filter((line) => line.startsWith("  mu  "))).toHaveLength(1);
   });
 
   test("a running tool shows a live cell with its output tail", () => {

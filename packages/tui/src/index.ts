@@ -44,7 +44,7 @@ export type { InputEvent, Key } from "./input.ts";
 export { InputDecoder, PasteBurstDetector } from "./input.ts";
 export type { ToolRendererFn, ToolRenderInfo } from "./registry.ts";
 export { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
-export { InlineRenderer } from "./renderer.ts";
+export { FullScreenRenderer } from "./renderer.ts";
 export type { ColorDepth, Style } from "./style.ts";
 export { detectColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 export type { TerminalIo } from "./terminal.ts";

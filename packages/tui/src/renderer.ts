@@ -1,41 +1,27 @@
 import { CURSOR, type Terminal } from "./terminal.ts";
 import { terminalRows } from "./wrap.ts";
 
-// Inline model: the transcript is committed to the terminal's own
-// scrollback and never repainted; only a small bottom region is diffed and
-// redrawn. That is what makes native scroll, copy and search keep working.
-export class InlineRenderer {
-  private current: string[] = [];
+const CLEAR_SCREEN_AND_SCROLLBACK = "\u001b[2J\u001b[H\u001b[3J";
+
+// Retains the complete rendered screen as mutable rows. Ordinary tail changes
+// are differential; a change above the visible viewport rebuilds the screen
+// and terminal scrollback from the retained transcript.
+export class FullScreenRenderer {
+  private previous: string[] = [];
+  private viewportTop = 0;
   private frameTimer: ReturnType<typeof setTimeout> | undefined;
   private pending: string[] | undefined;
   private lastWidth: number;
+  private lastHeight: number;
 
   constructor(
     private terminal: Terminal,
-    private throttleMs = 24, // ~40fps
+    private throttleMs = 24,
   ) {
     this.lastWidth = terminal.columns;
+    this.lastHeight = terminal.rows;
   }
 
-  // Writes lines above the managed region: they scroll away like any other
-  // terminal output and become part of history.
-  commit(lines: string[], next?: string[]): void {
-    if (lines.length === 0) return;
-    const committed = this.rows(lines);
-    const managed = next ? this.rows(next) : this.current;
-    if (next) this.cancelPending();
-    const body =
-      this.clearRegion() +
-      committed.map((line) => `${line}\r\n`).join("") +
-      this.reserveFromAnchor(managed.length) +
-      this.draw(managed);
-    this.current = [...managed];
-    this.lastWidth = this.terminal.columns;
-    this.terminal.frame(body);
-  }
-
-  // Replaces the managed bottom region. Coalesced so a burst of stream deltas
-  // costs one repaint, not one per delta.
   render(lines: string[]): void {
     this.pending = lines;
     if (this.frameTimer) return;
@@ -47,7 +33,6 @@ export class InlineRenderer {
     }, this.throttleMs);
   }
 
-  // Bypasses the throttle — used on resize and at shutdown.
   renderNow(lines: string[]): void {
     this.cancelPending();
     this.paint(lines);
@@ -55,19 +40,44 @@ export class InlineRenderer {
 
   private paint(lines: string[]): void {
     const widthChanged = this.terminal.columns !== this.lastWidth;
-    if (widthChanged) this.lastWidth = this.terminal.columns;
-    const rows = this.rows(lines);
+    const heightChanged = this.terminal.rows !== this.lastHeight;
+    this.lastWidth = this.terminal.columns;
+    this.lastHeight = this.terminal.rows;
+    const rows = terminalRows(lines, this.terminal.columns);
 
-    // Nothing to do when the region is identical and the terminal did not resize.
-    if (!widthChanged && sameLines(this.current, rows)) return;
+    if (this.previous.length === 0 || widthChanged || heightChanged) {
+      this.fullRender(rows);
+      return;
+    }
 
-    const body = this.clearRegion() + this.reserveGrowth(rows.length) + this.draw(rows);
-    this.current = [...rows];
+    const firstChanged = firstChangedRow(this.previous, rows);
+    if (firstChanged < 0) return;
+
+    if (rows.length < this.previous.length || firstChanged < this.viewportTop) {
+      this.fullRender(rows);
+      return;
+    }
+
+    let body: string;
+    if (firstChanged === this.previous.length) {
+      body = `\r\n${this.draw(rows.slice(firstChanged))}`;
+    } else {
+      const moveUp = this.previous.length - 1 - firstChanged;
+      body = `\r${CURSOR.up(moveUp)}${CURSOR.clearBelow}${this.draw(rows.slice(firstChanged))}`;
+    }
+    this.previous = [...rows];
+    this.viewportTop = Math.max(0, rows.length - this.terminal.rows);
     this.terminal.frame(body);
   }
 
-  private rows(lines: string[]): string[] {
-    return terminalRows(lines, this.terminal.columns);
+  private fullRender(rows: string[]): void {
+    this.previous = [...rows];
+    this.viewportTop = Math.max(0, rows.length - this.terminal.rows);
+    this.terminal.frame(CLEAR_SCREEN_AND_SCROLLBACK + this.draw(rows));
+  }
+
+  private draw(lines: string[]): string {
+    return lines.join("\r\n");
   }
 
   private cancelPending(): void {
@@ -78,36 +88,15 @@ export class InlineRenderer {
     this.pending = undefined;
   }
 
-  private clearRegion(): string {
-    if (this.current.length === 0) return `\r${CURSOR.clearLine}`;
-    // Move to the top of the region and clear everything below it.
-    return `\r${CURSOR.up(this.current.length - 1)}${CURSOR.clearBelow}`;
-  }
-
-  private reserveGrowth(nextRows: number): string {
-    const currentRows = Math.max(1, this.current.length);
-    if (nextRows <= currentRows) return "";
-    const growth = nextRows - currentRows;
-    return CURSOR.down(currentRows - 1) + "\r\n".repeat(growth) + CURSOR.up(nextRows - 1);
-  }
-
-  private reserveFromAnchor(rows: number): string {
-    if (rows <= 1) return "";
-    return "\r\n".repeat(rows - 1) + CURSOR.up(rows - 1);
-  }
-
-  private draw(lines: string[]): string {
-    return lines.join("\r\n");
-  }
-
   clear(): void {
-    if (this.current.length === 0) return;
-    this.terminal.frame(this.clearRegion());
-    this.current = [];
+    this.cancelPending();
+    this.previous = [];
+    this.viewportTop = 0;
+    this.terminal.frame(CLEAR_SCREEN_AND_SCROLLBACK);
   }
 
-  get regionHeight(): number {
-    return this.current.length;
+  get lineCount(): number {
+    return this.previous.length;
   }
 
   stop(): void {
@@ -115,8 +104,10 @@ export class InlineRenderer {
   }
 }
 
-function sameLines(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
+function firstChangedRow(previous: string[], next: string[]): number {
+  const length = Math.max(previous.length, next.length);
+  for (let index = 0; index < length; index++) {
+    if (previous[index] !== next[index]) return index;
+  }
+  return -1;
 }
