@@ -5,6 +5,7 @@ import { defaultModelRef, findModel } from "mu";
 
 export interface UserConfig {
   model?: string;
+  permissionModes?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -44,6 +45,23 @@ export async function saveDefaultModel(model: string, file = userConfigPath()): 
   const config = await readUserConfig(file);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify({ ...config, model }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+export async function saveDefaultPermissionMode(
+  profile: string,
+  permissionMode: string,
+  file = userConfigPath(),
+): Promise<void> {
+  const config = await readUserConfig(file);
+  const permissionModes = {
+    ...(config.permissionModes ?? {}),
+    [profile]: permissionMode,
+  };
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify({ ...config, permissionModes }, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });

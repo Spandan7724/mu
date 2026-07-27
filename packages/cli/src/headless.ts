@@ -4,13 +4,15 @@ import {
   type Command,
   type HaltReason,
   optionsFromProfile,
+  type Profile,
   registryWithCoreCommands,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
-import { resolveCliModel } from "./config.ts";
+import { loadUserConfig, resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
-import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
+import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
 // 130 aborted — so callers can branch on how a run ended.
@@ -43,16 +45,40 @@ export async function runHeadless(
   // restrictive permission defaults the bare SDK does not have.
   const useBuiltIns = !options.tools;
   let profileCommands: Command[] = [];
+  let profile: Profile | undefined;
   let resolved: AgentOptions = options;
   if (!options.tools) {
     try {
-      const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+      profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
       profileCommands = profile.commands ?? [];
       resolved = await optionsFromProfile(profile, await resolveCliModel(args.model), options);
+      if (!resolved.session) {
+        resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
+      }
     } catch (error) {
       io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
       return EXIT.usage;
     }
+  }
+  try {
+    if (profile) {
+      const configuredModes = (await loadUserConfig()).permissionModes;
+      const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
+      const mode = args.allowAll
+        ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
+        : permissionModeFor(profile, requestedMode);
+      resolved = {
+        ...resolved,
+        permissions: args.allowAll
+          ? [...(resolved.permissions ?? []), { permission: "*", pattern: "*", action: "allow" }]
+          : rulesForPermissionMode(resolved.permissions, mode),
+      };
+    } else if (args.permissionMode) {
+      throw new Error("--permission-mode requires a profile with permission modes");
+    }
+  } catch (error) {
+    io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+    return EXIT.usage;
   }
   resolved = withStoredCredentials(resolved);
 
@@ -74,16 +100,7 @@ export async function runHeadless(
           },
         }
       : {}),
-    // Headless is unattended: profile "ask" rules resolve to deny (no callback)
-    // unless --allow-all is passed.
-    ...(args.allowAll
-      ? {
-          permissions: [
-            ...(resolved.permissions ?? []),
-            { permission: "*", pattern: "*", action: "allow" as const },
-          ],
-        }
-      : {}),
+    // Headless is unattended: profile "ask" rules resolve to deny (no callback).
   });
 
   const onSigint = () => agent.stop();

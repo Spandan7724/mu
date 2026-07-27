@@ -1,5 +1,5 @@
 import { codingProfile } from "@mu/profile-coding";
-import { loadProfile, type Profile } from "mu";
+import { FileSessionStore, loadProfile, type Profile } from "mu";
 
 // Profiles shipped with mu are imported statically so the bundler can see them.
 // A runtime-string import works under `bun run` but not inside a
@@ -22,3 +22,14 @@ export async function resolveProfile(
 }
 
 export const DEFAULT_PROFILE = "coding";
+
+export async function sessionStoreForProfile(
+  profile: Profile,
+  root?: string,
+): Promise<FileSessionStore> {
+  const scope = await profile.scope?.();
+  return new FileSessionStore({
+    ...(root ? { root } : {}),
+    ...(scope ? { scope } : {}),
+  });
+}

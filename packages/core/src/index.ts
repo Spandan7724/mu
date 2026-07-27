@@ -93,6 +93,7 @@ export type {
 } from "./process.ts";
 export { exitNotification, OutputBuffer, ProcessManager } from "./process.ts";
 export type {
+  PermissionMode,
   Profile,
   ProfileFactory,
   ProfileRuntime,

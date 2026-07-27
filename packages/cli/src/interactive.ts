@@ -28,6 +28,10 @@ import {
   type MarkdownCommandRun,
   type ModelInfo,
   optionsFromProfile,
+  type PermissionMode,
+  type PermissionRequest,
+  type PermissionRule,
+  type Profile,
   registryWithCoreCommands,
   saveApiKey,
   type ToolRenderer,
@@ -35,7 +39,12 @@ import {
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
-import { resolveCliModel, saveDefaultModel } from "./config.ts";
+import {
+  loadUserConfig,
+  resolveCliModel,
+  saveDefaultModel,
+  saveDefaultPermissionMode,
+} from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import {
   type AccountLoginProvider,
@@ -44,7 +53,8 @@ import {
   loginMethods,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
-import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
+import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
 
 const SPINNER_INTERVAL_MS = 120;
 
@@ -138,27 +148,63 @@ export async function runInteractive(
   const useBuiltIns = !options.tools;
   let profileCommands: Command[] = [];
   let profileRenderers: Record<string, ToolRenderer> = {};
+  let profile: Profile | undefined;
   let resolved = options;
   if (!options.tools) {
-    const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+    profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
     profileCommands = profile.commands ?? [];
     profileRenderers = profile.renderers ?? {};
     resolved = await optionsFromProfile(profile, modelRef, options);
+    if (!resolved.session) {
+      resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
+    }
   }
   resolved = withStoredCredentials(resolved);
+
+  const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
+  let activePermissionMode: PermissionMode | undefined;
+  if (profile) {
+    const configuredModes = (await loadUserConfig()).permissionModes;
+    const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
+    try {
+      activePermissionMode = args.allowAll
+        ? profile.permissionModes?.find((mode) => mode.id === "yolo")
+        : permissionModeFor(profile, requestedMode);
+    } catch (error) {
+      process.stderr.write(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+      return 2;
+    }
+  } else if (args.permissionMode) {
+    process.stderr.write("mu: --permission-mode requires a profile with permission modes\n");
+    return 2;
+  }
+  resolved = {
+    ...resolved,
+    permissions: args.allowAll
+      ? [...basePermissions, { permission: "*", pattern: "*", action: "allow" }]
+      : rulesForPermissionMode(basePermissions, activePermissionMode),
+  };
 
   const builtIns = useBuiltIns
     ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
     : { host: resolved.extensions ?? new ExtensionHost(), warnings: [] };
   const extensions = builtIns.host;
 
-  const pendingPermissions = new Map<string, (outcome: "allow" | "deny") => void>();
+  const pendingPermissions = new Map<
+    string,
+    {
+      request: PermissionRequest;
+      resolve: (outcome: "allow" | "deny") => void;
+    }
+  >();
   const agent = new Agent({
     ...resolved,
     extensions,
     model: modelRef,
     onPermission: (request) =>
-      new Promise<"allow" | "deny">((resolve) => pendingPermissions.set(request.id, resolve)),
+      new Promise<"allow" | "deny">((resolve) =>
+        pendingPermissions.set(request.id, { request, resolve }),
+      ),
   });
 
   const registry = new RendererRegistry();
@@ -194,8 +240,8 @@ export async function runInteractive(
     loginController?.abort();
     modelCatalog?.stop();
     agent.stop();
-    for (const [id, resolve] of pendingPermissions) {
-      resolve("deny");
+    for (const [id, pending] of pendingPermissions) {
+      pending.resolve("deny");
       pendingPermissions.delete(id);
     }
   };
@@ -224,8 +270,29 @@ export async function runInteractive(
       onCommand: (text) => void runCommand(text),
       onMentionQuery: (query) => mentionCandidates(query),
       onThinkingChange: (level) => agent.setThinking(level as "off" | "low" | "medium" | "high"),
-      onPermissionReply: (id, outcome) => {
-        pendingPermissions.get(id)?.(outcome);
+      onPermissionReply: (id, outcome, remember) => {
+        const pending = pendingPermissions.get(id);
+        if (!pending) return;
+        if (outcome === "allow" && remember) {
+          const rule: PermissionRule = {
+            permission: pending.request.toolName,
+            pattern: pending.request.pattern,
+            action: "allow",
+          };
+          basePermissions.push(rule);
+          agent.addPermissionRule(rule);
+          void Promise.resolve(profile?.rememberPermission?.(rule.permission, rule.pattern)).catch(
+            (error) => {
+              renderer.commit([
+                `  could not remember permission: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              ]);
+              paint();
+            },
+          );
+        }
+        pending.resolve(outcome);
         pendingPermissions.delete(id);
       },
     },
@@ -295,6 +362,47 @@ export async function runInteractive(
         return { handled: true, message: "Cannot change authentication during a run." };
       }
       openLoginMethodPicker();
+      return { handled: true };
+    },
+  });
+  commands.register({
+    name: "permissions",
+    description: "Choose what mu is allowed to do",
+    run: () => {
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot change permissions during a run." };
+      }
+      const modes = profile?.permissionModes ?? [];
+      if (modes.length === 0) {
+        return { handled: true, message: "This profile does not define permission modes." };
+      }
+      app.openPicker({
+        title: "update permissions",
+        items: modes.map((mode) => ({
+          label: mode.label,
+          description: `${mode.description}${mode.id === activePermissionMode?.id ? " · current" : ""}`,
+        })),
+        onChoose: (label) => {
+          const mode = modes.find((candidate) => candidate.label === label);
+          if (!mode || !profile) return;
+          agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
+          activePermissionMode = mode;
+          void saveDefaultPermissionMode(profile.name, mode.id)
+            .then(() => {
+              renderer.commit([`  permissions set to ${mode.label} · saved as default`]);
+            })
+            .catch((error) => {
+              renderer.commit([
+                `  permissions set to ${mode.label}`,
+                `  could not save default: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              ]);
+            })
+            .finally(paint);
+        },
+        onBack: () => app.openCommandMenu(),
+      });
       return { handled: true };
     },
   });

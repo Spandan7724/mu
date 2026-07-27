@@ -9,7 +9,13 @@ import {
 } from "@mu/core";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingEnvironment, contextMessages, environmentMessage } from "./context.ts";
-import { CODING_PERMISSION_DEFAULTS, layerPermissions, loadProjectConfig } from "./permissions.ts";
+import {
+  CODING_PERMISSION_DEFAULTS,
+  CODING_PERMISSION_MODES,
+  layerPermissions,
+  loadProjectConfig,
+  rememberAllow,
+} from "./permissions.ts";
 import { codingPrompt } from "./prompts.ts";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
@@ -94,6 +100,9 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     toolset,
     promptFor: codingPrompt,
     permissionDefaults: layerPermissions(CODING_PERMISSION_DEFAULTS, projectConfig.permissions),
+    permissionModes: CODING_PERMISSION_MODES,
+    defaultPermissionMode: "default",
+    rememberPermission: (permission, pattern) => rememberAllow(root, permission, pattern),
     environment: () => codingEnvironment(root),
     contextMessages: async (): Promise<AgentMessage[]> => [
       environmentMessage(await codingEnvironment(root)),
@@ -124,6 +133,7 @@ export {
 } from "./context.ts";
 export {
   CODING_PERMISSION_DEFAULTS,
+  CODING_PERMISSION_MODES,
   layerPermissions,
   loadProjectConfig,
   rememberAllow,

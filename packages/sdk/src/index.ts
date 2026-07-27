@@ -31,6 +31,7 @@ export type {
   ExtensionEventType,
   LifecycleEvent,
   LifecycleNotification,
+  PermissionMode,
   PermissionRequest,
   PermissionRule,
   ProfileRuntime,

@@ -15,7 +15,8 @@ import { loadBuiltInExtensions } from "./extensions.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
 import { initializeModelCatalog, type ModelCatalog } from "./model-catalog.ts";
-import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
+import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 
 const VERSION = cliPackage.version;
@@ -66,22 +67,36 @@ async function main(): Promise<number> {
         // permission_reply op; nothing is auto-denied in RPC mode.
         const pending = new Map<string, (outcome: "allow" | "deny") => void>();
         const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
-        const resolved = withStoredCredentials(
+        let resolved = withStoredCredentials(
           await optionsFromProfile(profile, await resolveCliModel(args.model)),
         );
+        if (!resolved.session) {
+          resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
+        }
+        try {
+          const configuredModes = (await loadUserConfig()).permissionModes;
+          const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
+          const mode = args.allowAll
+            ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
+            : permissionModeFor(profile, requestedMode);
+          resolved = {
+            ...resolved,
+            permissions: args.allowAll
+              ? [
+                  ...(resolved.permissions ?? []),
+                  { permission: "*", pattern: "*", action: "allow" },
+                ]
+              : rulesForPermissionMode(resolved.permissions, mode),
+          };
+        } catch (error) {
+          io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+          return EXIT.usage;
+        }
         const builtIns = await loadBuiltInExtensions(process.cwd(), resolved.extensions);
         for (const warning of builtIns.warnings) io.stderr(`mu: ${warning}\n`);
         const agent = new Agent({
           ...resolved,
           extensions: builtIns.host,
-          ...(args.allowAll
-            ? {
-                permissions: [
-                  ...(resolved.permissions ?? []),
-                  { permission: "*", pattern: "*", action: "allow" as const },
-                ],
-              }
-            : {}),
           onPermission: (request) =>
             new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
         });

@@ -388,6 +388,49 @@ describe("permissions", () => {
     expect(types).toContain("permission_asked");
     expect(types).toContain("permission_resolved");
   });
+
+  test("permission rules can change between runs", async () => {
+    let ran = false;
+    const agent = agentWith(dangerProvider(), {
+      tools: [
+        dangerTool(() => {
+          ran = true;
+        }),
+      ],
+      permissions: [{ permission: "*", pattern: "*", action: "deny" }],
+    });
+    agent.setPermissions([{ permission: "*", pattern: "*", action: "allow" }]);
+
+    await agent.run("go");
+    expect(ran).toBe(true);
+    expect(agent.permissions).toEqual([{ permission: "*", pattern: "*", action: "allow" }]);
+  });
+
+  test("an allowed request can add a rule for later calls in the same run", async () => {
+    let asked = 0;
+    let agent: Agent;
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "danger", arguments: { x: 1 } }] },
+      { content: [{ type: "toolCall", id: "c2", name: "danger", arguments: { x: 1 } }] },
+      { content: [{ type: "text", text: "finished" }] },
+    ]);
+    agent = agentWith(provider, {
+      tools: [dangerTool(() => {})],
+      permissions: [{ permission: "*", pattern: "*", action: "ask" }],
+      onPermission: async (request: PermissionRequest) => {
+        asked++;
+        agent.addPermissionRule({
+          permission: request.toolName,
+          pattern: request.pattern,
+          action: "allow",
+        });
+        return "allow";
+      },
+    });
+
+    await agent.run("go");
+    expect(asked).toBe(1);
+  });
 });
 
 describe("steering, follow-ups and abort", () => {

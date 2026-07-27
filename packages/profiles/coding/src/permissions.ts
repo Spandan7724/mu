@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { PermissionRule } from "@mu/core";
+import type { PermissionMode, PermissionRule } from "@mu/core";
 
 // Reads allow; anything that writes or executes asks. This is the restrictive
 // layer the bare SDK deliberately does not have — it lives here because
@@ -14,6 +14,43 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "todo", pattern: "*", action: "allow" },
   { permission: "task_output", pattern: "*", action: "allow" },
   { permission: "task_list", pattern: "*", action: "allow" },
+];
+
+export const CODING_PERMISSION_MODES: PermissionMode[] = [
+  {
+    id: "default",
+    label: "default",
+    description: "Read freely; ask before edits and commands.",
+    rules: [],
+  },
+  {
+    id: "accept-edits",
+    label: "accept edits",
+    description: "Read and edit files freely; ask before commands.",
+    rules: [
+      { permission: "write", pattern: "*", action: "allow" },
+      { permission: "edit", pattern: "*", action: "allow" },
+    ],
+  },
+  {
+    id: "plan-readonly",
+    label: "plan (read-only)",
+    description: "Allow inspection and planning; deny file, command, and task mutations.",
+    rules: [
+      { permission: "write", pattern: "*", action: "deny" },
+      { permission: "edit", pattern: "*", action: "deny" },
+      { permission: "bash", pattern: "*", action: "deny" },
+      { permission: "task_write_stdin", pattern: "*", action: "deny" },
+      { permission: "task_kill", pattern: "*", action: "deny" },
+      { permission: "task_detach", pattern: "*", action: "deny" },
+    ],
+  },
+  {
+    id: "yolo",
+    label: "full access",
+    description: "Allow every tool call without asking.",
+    rules: [{ permission: "*", pattern: "*", action: "allow" }],
+  },
 ];
 
 export interface ProjectConfig {

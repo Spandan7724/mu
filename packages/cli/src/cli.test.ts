@@ -45,6 +45,12 @@ describe("parseArgs", () => {
     expect(args.errors).toEqual([]);
   });
 
+  test("permission modes and the full-access alias parse", () => {
+    expect(parseArgs(["--permission-mode", "plan-readonly"]).permissionMode).toBe("plan-readonly");
+    expect(parseArgs(["--allow-all"]).allowAll).toBe(true);
+    expect(parseArgs(["--permission-mode"]).errors[0]).toContain("requires a value");
+  });
+
   test("unknown flags and bad numbers are reported", () => {
     expect(parseArgs(["--nope"]).errors[0]).toContain("Unknown flag");
     expect(parseArgs(["-p", "x", "--max-turns", "abc"]).errors[0]).toContain("expects a number");

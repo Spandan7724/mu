@@ -6,6 +6,7 @@ export interface ParsedArgs {
   profile?: string | undefined;
   maxTurns?: number | undefined;
   maxCostUsd?: number | undefined;
+  permissionMode?: string | undefined;
   allowAll: boolean;
   errors: string[];
 }
@@ -66,6 +67,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--allow-all":
         parsed.allowAll = true;
         break;
+      case "--permission-mode":
+        parsed.permissionMode = argv[++i];
+        if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
+        break;
       default:
         if (arg.startsWith("-")) parsed.errors.push(`Unknown flag: ${arg}`);
         else if (parsed.prompt === undefined && parsed.mode === "headless") parsed.prompt = arg;
@@ -90,7 +95,9 @@ Options:
       --profile <name>     profile to load (default: coding)
       --max-turns <n>      stop after n turns
       --max-cost <usd>     stop once the run costs this much
-      --allow-all          allow every tool call without asking
+      --permission-mode <mode>
+                           default | accept-edits | plan-readonly | yolo
+      --allow-all          alias for --permission-mode yolo
   -h, --help               show this help
   -v, --version            show the version
 `;

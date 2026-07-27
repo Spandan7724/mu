@@ -7,6 +7,15 @@ import type { AgentMessage } from "./messages.ts";
 import type { PermissionRule } from "./permission.ts";
 import type { AnyTool } from "./tools.ts";
 
+export interface PermissionMode {
+  id: string;
+  label: string;
+  description: string;
+  // Applied after the profile/user/project layers, so a mode is a preset of
+  // final overrides rather than a replacement for configured rules.
+  rules: PermissionRule[];
+}
+
 export interface ProfileRuntimeHost {
   emit: (event: AgentEvent) => void;
   followUp: (message: string) => void;
@@ -30,6 +39,9 @@ export interface Profile {
   // Per-model prompt variants: one prompt does not fit every model family.
   promptFor: (modelRef: string) => PromptSection[];
   permissionDefaults: PermissionRule[];
+  permissionModes?: PermissionMode[];
+  defaultPermissionMode?: string;
+  rememberPermission?: (permission: string, pattern: string) => void | Promise<void>;
   renderers?: Record<string, ToolRenderer>;
   commands?: Command[];
   // Opaque per-domain environment (coding fills in directory/repo facts;

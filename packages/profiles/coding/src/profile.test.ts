@@ -7,6 +7,7 @@ import { codingEnvironment, discoverContextFiles, environmentMessage } from "./c
 import { codingProfile } from "./index.ts";
 import {
   CODING_PERMISSION_DEFAULTS,
+  CODING_PERMISSION_MODES,
   layerPermissions,
   loadProjectConfig,
   rememberAllow,
@@ -91,6 +92,20 @@ describe("permission defaults", () => {
     expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_list", "{}")).toBe("allow");
     expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_write_stdin", '{"taskId":"t1"}')).toBe("ask");
     expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_kill", '{"taskId":"t1"}')).toBe("ask");
+  });
+
+  test("named permission modes layer over configured defaults", () => {
+    const rules = (id: string) => [
+      ...CODING_PERMISSION_DEFAULTS,
+      ...(CODING_PERMISSION_MODES.find((mode) => mode.id === id)?.rules ?? []),
+    ];
+
+    expect(evaluate(rules("accept-edits"), "write", "{}")).toBe("allow");
+    expect(evaluate(rules("accept-edits"), "bash", "{}")).toBe("ask");
+    expect(evaluate(rules("plan-readonly"), "read", "{}")).toBe("allow");
+    expect(evaluate(rules("plan-readonly"), "write", "{}")).toBe("deny");
+    expect(evaluate(rules("plan-readonly"), "bash", "{}")).toBe("deny");
+    expect(evaluate(rules("yolo"), "bash", "{}")).toBe("allow");
   });
 
   test("project config layers over the profile defaults", () => {

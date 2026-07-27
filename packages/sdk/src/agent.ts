@@ -180,9 +180,11 @@ export class Agent {
   private readonly idleWaiters = new Set<() => void>();
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
+  private permissionRules: PermissionRule[];
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
+    this.permissionRules = [...(options.permissions ?? DEFAULT_PERMISSIONS)];
     this.currentThinking = options.thinkingLevel ?? "off";
     this.model = resolveModel(options.model, options.extensions);
     this.provider = this.providerFor(this.model);
@@ -232,6 +234,19 @@ export class Agent {
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  get permissions(): PermissionRule[] {
+    return [...this.permissionRules];
+  }
+
+  setPermissions(rules: PermissionRule[]): void {
+    if (this.running) throw new Error("Cannot change permissions while a run is active.");
+    this.permissionRules = [...rules];
+  }
+
+  addPermissionRule(rule: PermissionRule): void {
+    this.permissionRules.push(rule);
   }
 
   // Switching model also switches provider — they travel together.
@@ -1040,11 +1055,7 @@ export class Agent {
         }
 
         const pattern = JSON.stringify(args);
-        const action = evaluate(
-          this.options.permissions ?? DEFAULT_PERMISSIONS,
-          info.toolCall.name,
-          pattern,
-        );
+        const action = evaluate(this.permissionRules, info.toolCall.name, pattern);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
         if (action === "allow") {
           return rewritten;
