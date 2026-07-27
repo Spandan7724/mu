@@ -1,4 +1,6 @@
 // Components return styled lines at a width — not React, no virtual DOM.
+
+import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
 import { wrapText } from "./wrap.ts";
@@ -205,11 +207,12 @@ export class SelectList {
 
     return visible.map((item, i) => {
       const isSelected = start + i === this.index;
-      const label = isSelected ? accent(item.label, depth) : item.label;
+      const safeLabel = sanitizeUntrusted(item.label);
+      const label = isSelected ? accent(safeLabel, depth) : safeLabel;
       const marker = isSelected ? accent(GLYPHS.userMarker, depth) : " ";
       const description = item.description
         ? dim(
-            ` ${GLYPHS.separator} ${truncateToWidth(item.description, Math.floor(width / 2))}`,
+            ` ${GLYPHS.separator} ${truncateToWidth(sanitizeUntrusted(item.description), Math.floor(width / 2))}`,
             depth,
           )
         : "";
@@ -268,9 +271,10 @@ export const APPROVAL_OPTIONS = ["allow once", "always allow", "deny"] as const;
 
 // Never a modal box — same quiet layout language as everything else.
 export function approvalOverlay(data: ApprovalData, width: number, depth: ColorDepth): string[] {
-  const out: string[] = [MARGIN + styleText(data.title, { bold: true }, depth)];
+  const out: string[] = [MARGIN + styleText(sanitizeUntrusted(data.title), { bold: true }, depth)];
   for (const line of data.preview ?? []) {
-    out.push(MARGIN + dim(truncateToWidth(line, width - MARGIN.length), depth));
+    // The preview is a command string or diff — never trusted.
+    out.push(MARGIN + dim(truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length), depth));
   }
   const options = APPROVAL_OPTIONS.map((option, i) =>
     i === data.selectedIndex ? accent(option, depth) : dim(option, depth),

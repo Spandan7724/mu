@@ -76,8 +76,13 @@ export class InputDecoder {
       if (this.pasting) {
         const end = this.buffer.indexOf(PASTE_END);
         if (end === -1) {
-          this.pasteBuffer += this.buffer;
-          this.buffer = "";
+          // The terminator may be split across reads. Hold back the longest
+          // suffix that could still become one, or paste mode never ends and
+          // every later keystroke is swallowed.
+          let hold = Math.min(PASTE_END.length - 1, this.buffer.length);
+          while (hold > 0 && !PASTE_END.startsWith(this.buffer.slice(-hold))) hold--;
+          this.pasteBuffer += hold === 0 ? this.buffer : this.buffer.slice(0, -hold);
+          this.buffer = hold === 0 ? "" : this.buffer.slice(-hold);
           break;
         }
         this.pasteBuffer += this.buffer.slice(0, end);

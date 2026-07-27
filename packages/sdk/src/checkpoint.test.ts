@@ -14,7 +14,7 @@ class MemoryCheckpoints implements CheckpointProvider {
   private counter = 0;
   restored: string[] = [];
 
-  async snapshot(label?: string): Promise<string | undefined> {
+  async snapshot(): Promise<string | undefined> {
     const ref = `ref-${this.counter++}`;
     this.snapshots.set(ref, this.state);
     return ref;
@@ -26,7 +26,7 @@ class MemoryCheckpoints implements CheckpointProvider {
     if (value !== undefined) this.state = value;
   }
 
-  async diff(fromRef: string, toRef?: string) {
+  async diff(fromRef: string) {
     return this.snapshots.get(fromRef) === this.state
       ? []
       : [{ path: "state.txt", added: 1, removed: 1, hunks: [] }];

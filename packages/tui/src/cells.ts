@@ -1,3 +1,5 @@
+
+import { sanitizeUntrusted } from "./sanitize.ts";
 import {
   AGENT_INDENT,
   AGENT_LABEL,
@@ -27,7 +29,7 @@ function body(ctx: RenderContext): number {
 // ▸ user input
 export function userCell(text: string, ctx: RenderContext): string[] {
   const marker = `${accent(GLYPHS.userMarker, ctx.depth)} `;
-  return wrapText(text, body(ctx) - 2, "  ").map((line, i) =>
+  return wrapText(sanitizeUntrusted(text), body(ctx) - 2, "  ").map((line, i) =>
     i === 0 ? MARGIN + marker + line : MARGIN + line,
   );
 }
@@ -35,19 +37,21 @@ export function userCell(text: string, ctx: RenderContext): string[] {
 // mu  agent text, hanging indent under the label
 export function agentCell(text: string, ctx: RenderContext): string[] {
   const label = `${accent(AGENT_LABEL, ctx.depth)}  `;
-  const wrapped = wrapText(text, body(ctx) - AGENT_INDENT.length, "");
+  // Model output is untrusted: it must not be able to drive the terminal.
+  const wrapped = wrapText(sanitizeUntrusted(text), body(ctx) - AGENT_INDENT.length, "");
   return wrapped.map((line, i) => (i === 0 ? MARGIN + label + line : MARGIN + AGENT_INDENT + line));
 }
 
 // Thinking is dim and behind the rule; collapsed to one line unless expanded.
 export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const safe = sanitizeUntrusted(text);
   if (!expanded) {
-    const first = text.trim().split("\n")[0] ?? "";
+    const first = safe.trim().split("\n")[0] ?? "";
     const summary = truncateToWidth(first, body(ctx) - 12);
     return [MARGIN + rule + dim(`thinking ${GLYPHS.separator} ${summary}`, ctx.depth)];
   }
-  return wrapText(text, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
+  return wrapText(safe, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
 }
 
 export interface ToolCellOptions {
@@ -63,26 +67,29 @@ export interface ToolCellOptions {
 // │ read src/api/client.ts · 142 lines
 export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[] {
   const rule = dim(`${options.nested ? GLYPHS.nestedRule : GLYPHS.rule} `, ctx.depth);
-  const parts: string[] = [dim(options.name, ctx.depth)];
-  if (options.primaryArg)
-    parts.push(truncateToWidth(options.primaryArg, Math.floor(body(ctx) / 2)));
+  const parts: string[] = [dim(sanitizeUntrusted(options.name), ctx.depth)];
+  if (options.primaryArg) {
+    parts.push(truncateToWidth(sanitizeUntrusted(options.primaryArg), Math.floor(body(ctx) / 2)));
+  }
   if (options.isError) {
     parts.push(styleText(GLYPHS.error, { red: true }, ctx.depth));
   }
-  if (options.summary) parts.push(dim(options.summary, ctx.depth));
+  if (options.summary) parts.push(dim(sanitizeUntrusted(options.summary), ctx.depth));
 
   const head = MARGIN + rule + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth));
   const lines = [head];
 
   for (const line of options.tail ?? []) {
-    lines.push(MARGIN + rule + dim(truncateToWidth(line, body(ctx) - 2), ctx.depth));
+    lines.push(
+      MARGIN + rule + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
+    );
   }
   return lines;
 }
 
 export function errorCell(message: string, ctx: RenderContext): string[] {
   const glyph = styleText(GLYPHS.error, { red: true }, ctx.depth);
-  return wrapText(message, body(ctx) - 2, "  ").map((line, i) =>
+  return wrapText(sanitizeUntrusted(message), body(ctx) - 2, "  ").map((line, i) =>
     i === 0 ? `${MARGIN + glyph} ${line}` : MARGIN + line,
   );
 }
@@ -110,7 +117,7 @@ export interface DiffFile {
 
 export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
-  const header = `${file.path} ${GLYPHS.separator} +${file.added} −${file.removed}`;
+  const header = `${sanitizeUntrusted(file.path)} ${GLYPHS.separator} +${file.added} −${file.removed}`;
   const out = [MARGIN + rule + dim(header, ctx.depth)];
 
   const gutterWidth = 5;
@@ -120,7 +127,7 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
     const sign = line.kind === "add" ? "+" : line.kind === "del" ? "−" : " ";
     // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.
     const available = ctx.width - MARGIN.length - 2 - gutterWidth - 3;
-    const text = line.text.replace(/\t/g, "    ");
+    const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
 
     for (const [i, chunk] of wrapText(text, available).entries()) {
       const tint = diffLineStyle(line.kind, ctx.depth);

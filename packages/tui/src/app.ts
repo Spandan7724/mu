@@ -476,7 +476,7 @@ export class App {
       if (selected && this.mentionStart >= 0) {
         // Replace the partial "@query" with the chosen path.
         const text = this.editor.text;
-        this.editor.setText(text.slice(0, this.mentionStart) + selected.label + " ");
+        this.editor.setText(`${text.slice(0, this.mentionStart)}${selected.label} `);
       }
       this.mode = "composing";
       this.mentionStart = -1;

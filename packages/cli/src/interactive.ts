@@ -45,8 +45,15 @@ export async function runInteractive(
     resolved = await optionsFromProfile(profile, modelRef, options);
   }
 
+  // Skills are a built-in extension: discovered from ~/.mu/skills and the
+  // project, then exposed to the model through the public extension API.
+  const extensions = new ExtensionHost();
+  const skills = await discoverSkills(defaultSkillRoots(process.cwd()));
+  if (skills.length > 0) await extensions.register(skillsExtension(skills));
+
   const pendingPermissions = new Map<string, (outcome: "allow" | "deny") => void>();
   const agent = new Agent({
+    extensions,
     ...resolved,
     model: modelRef,
     onPermission: (request) =>
