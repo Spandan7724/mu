@@ -639,6 +639,60 @@ describe("selection pickers (/model, /resume)", () => {
     expect(chosen).toEqual([]);
     expect(h.app.currentMode).toBe("composing");
   });
+
+  test("a filterable picker narrows and ranks models as the user types", () => {
+    const chosen: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "select a model",
+      filterable: true,
+      items: [
+        { label: "anthropic/claude-opus-5", description: "Claude Opus" },
+        { label: "openai/gpt-5.1", description: "GPT 5.1" },
+        { label: "google/gemini-2.5-pro", description: "Gemini Pro" },
+      ],
+      onChoose: (label) => chosen.push(label),
+    });
+
+    feed(h.app, "gpt51");
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("select a model · gpt51");
+    expect(rendered).toContain("openai/gpt-5.1");
+    expect(rendered).not.toContain("anthropic/claude-opus-5");
+    expect(rendered).not.toContain("google/gemini-2.5-pro");
+
+    h.app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(chosen).toEqual(["openai/gpt-5.1"]);
+  });
+
+  test("backspace broadens a filter and enter does nothing when there are no matches", () => {
+    const chosen: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "select a model",
+      filterable: true,
+      items: [{ label: "anthropic/claude-opus-5" }, { label: "openai/gpt-5.1" }],
+      onChoose: (label) => chosen.push(label),
+    });
+
+    feed(h.app, "gptx");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("no matches");
+    h.app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(h.app.currentMode).toBe("picker");
+
+    h.app.handleInput({
+      type: "key",
+      key: { name: "backspace", ctrl: false, alt: false, shift: false },
+    });
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("openai/gpt-5.1");
+    expect(chosen).toEqual([]);
+  });
 });
 
 describe("error reporting", () => {

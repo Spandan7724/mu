@@ -18,7 +18,6 @@ import {
   type AgentOptions,
   type AgentRunOptions,
   type DiffCommandData,
-  defaultModelRef,
   ExtensionHost,
   listModels,
   loadMarkdownCommands,
@@ -28,6 +27,7 @@ import {
   toCommand,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { resolveCliModel, saveDefaultModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
@@ -71,7 +71,7 @@ export async function runInteractive(
     return 2;
   }
 
-  const modelRef = args.model ?? defaultModelRef();
+  const modelRef = await resolveCliModel(args.model);
   const useBuiltIns = !options.tools;
   let resolved = options;
   if (!options.tools) {
@@ -168,14 +168,23 @@ export async function runInteractive(
       }
       app.openPicker({
         title: "select a model",
+        filterable: true,
         items: listModels().map((m) => ({
           label: `${m.provider}/${m.id}`,
           description: m.name ?? "",
         })),
-        onChoose: (label) => {
+        onChoose: async (label) => {
           agent.setModel(label);
           app.setModel(label, agent.contextWindow);
-          renderer.commit([`  model set to ${label}`]);
+          try {
+            await saveDefaultModel(label);
+            renderer.commit([`  model set to ${label} · saved as default`]);
+          } catch (error) {
+            renderer.commit([
+              `  model set to ${label}`,
+              `  could not save default: ${error instanceof Error ? error.message : String(error)}`,
+            ]);
+          }
           paint();
         },
       });
@@ -304,7 +313,7 @@ export async function runInteractive(
         }
       },
       print: (output) => renderer.commit([`  ${output}`]),
-      getModel: () => modelRef,
+      getModel: () => agent.modelRef,
       setModel: () => {},
     });
     const data = result.data as

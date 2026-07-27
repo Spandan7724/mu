@@ -1,5 +1,6 @@
-import { Agent, type AgentOptions, defaultModelRef, type HaltReason, optionsFromProfile } from "mu";
+import { Agent, type AgentOptions, type HaltReason, optionsFromProfile } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
@@ -37,7 +38,7 @@ export async function runHeadless(
   if (!options.tools) {
     try {
       const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
-      resolved = await optionsFromProfile(profile, args.model ?? defaultModelRef(), options);
+      resolved = await optionsFromProfile(profile, await resolveCliModel(args.model), options);
     } catch (error) {
       io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
       return EXIT.usage;

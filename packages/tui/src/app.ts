@@ -31,6 +31,7 @@ export interface PickerRequest {
   title: string;
   items: { label: string; description?: string }[];
   onChoose: (label: string) => void;
+  filterable?: boolean;
 }
 
 export interface AppCallbacks {
@@ -86,6 +87,7 @@ export class App {
   private commands: { label: string; description?: string }[] = [];
   private thinkingLevel = "off";
   private picker: PickerRequest | undefined;
+  private pickerQuery = "";
   private mentionStart = -1;
 
   constructor(private options: AppOptions) {
@@ -133,6 +135,7 @@ export class App {
   // Opens a selection list (used by /model and /resume).
   openPicker(request: PickerRequest): void {
     this.picker = request;
+    this.pickerQuery = "";
     this.commandList.setItems(request.items);
     this.mode = "picker";
   }
@@ -395,7 +398,11 @@ export class App {
       );
     } else {
       if (this.mode === "picker" && this.picker) {
-        lines.push(MARGIN + styleText(this.picker.title, { bold: true }, depth));
+        const query =
+          this.picker.filterable && this.pickerQuery
+            ? ` ${GLYPHS.separator} ${this.pickerQuery}`
+            : "";
+        lines.push(MARGIN + styleText(`${this.picker.title}${query}`, { bold: true }, depth));
         lines.push(...this.commandList.render(width, depth));
       } else {
         lines.push(...this.editor.render(width, depth));
@@ -414,6 +421,11 @@ export class App {
 
   handleInput(event: InputEvent): void {
     if (event.type === "paste") {
+      if (this.mode === "picker" && this.picker?.filterable) {
+        this.pickerQuery += event.text.replace(/\s+/g, " ");
+        this.refreshPicker();
+        return;
+      }
       // A paste never submits, however many newlines it contains.
       this.editor.insert(event.text);
       return;
@@ -534,15 +546,52 @@ export class App {
     }
     if (key.name === "escape") {
       this.picker = undefined;
+      this.pickerQuery = "";
       this.mode = "composing";
+      return;
+    }
+    if (picker.filterable && key.name === "backspace") {
+      this.pickerQuery = [...this.pickerQuery].slice(0, -1).join("");
+      this.refreshPicker();
       return;
     }
     if (key.name === "return") {
       const selected = this.commandList.selected;
+      if (!selected) return;
       this.picker = undefined;
+      this.pickerQuery = "";
       this.mode = "composing";
-      if (selected) picker.onChoose(selected.label);
+      picker.onChoose(selected.label);
+      return;
     }
+    if (picker.filterable && !key.ctrl && !key.alt && key.text) {
+      this.pickerQuery += key.text;
+      this.refreshPicker();
+    }
+  }
+
+  private refreshPicker(): void {
+    const picker = this.picker;
+    if (!picker) return;
+    const query = this.pickerQuery.trim();
+    if (!query) {
+      this.commandList.setItems(picker.items);
+      return;
+    }
+    this.commandList.setItems(
+      picker.items
+        .map((item, index) => ({
+          item,
+          index,
+          score: fuzzyScore(`${item.label} ${item.description ?? ""}`, query),
+        }))
+        .filter(
+          (candidate): candidate is typeof candidate & { score: number } =>
+            candidate.score !== undefined,
+        )
+        .sort((a, b) => a.score - b.score || a.index - b.index)
+        .map((candidate) => candidate.item),
+    );
   }
 
   // The `@` popup completes a path into the composer rather than submitting.
@@ -639,4 +688,27 @@ export class App {
       this.filterCommands();
     }
   }
+}
+
+function fuzzyScore(value: string, query: string): number | undefined {
+  const candidate = value.toLowerCase();
+  const needle = query.toLowerCase();
+  let position = 0;
+  let previous = -2;
+  let score = 0;
+
+  for (const char of needle) {
+    const found = candidate.indexOf(char, position);
+    if (found === -1) return undefined;
+    const boundary = found === 0 || /[\s/_.-]/.test(candidate[found - 1] ?? "");
+    score += found - previous - 1;
+    if (found === previous + 1) score -= 4;
+    if (boundary) score -= 3;
+    previous = found;
+    position = found + 1;
+  }
+
+  const contiguous = candidate.indexOf(needle);
+  if (contiguous !== -1) score -= 20 - Math.min(contiguous, 10);
+  return score;
 }
