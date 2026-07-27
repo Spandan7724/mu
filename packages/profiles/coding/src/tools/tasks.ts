@@ -9,6 +9,7 @@ import {
 } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
+import { shellCommand } from "../shell.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
@@ -27,7 +28,7 @@ export function shellSpawner(root: string): Spawner {
       if (final) onOutput(final);
     };
 
-    const proc = Bun.spawn(["bash", "-c", command], {
+    const proc = Bun.spawn(shellCommand(command, { interactive: true }), {
       cwd: root,
       detached: true,
       env: { ...process.env, TERM: "xterm-256color" },

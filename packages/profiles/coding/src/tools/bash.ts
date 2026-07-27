@@ -1,6 +1,7 @@
 import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
+import { shellCommand } from "../shell.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -25,7 +26,7 @@ async function defaultSpawn(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
-  const proc = Bun.spawn(["bash", "-c", command], {
+  const proc = Bun.spawn(shellCommand(command), {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -59,7 +60,7 @@ export function bashTool(deps: BashDeps) {
     name: "bash",
     changesState: true,
     description:
-      "Run a shell command in the session root. Use for building, testing and inspecting the project. Prefer the dedicated read/edit/grep/glob tools for file work.",
+      "Run a command with the platform-native shell in the session root. Use for building, testing and inspecting the project. Prefer the dedicated read/edit/grep/glob tools for file work.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
       description: z

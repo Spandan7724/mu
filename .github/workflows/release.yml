@@ -34,6 +34,9 @@ jobs:
           - runner: macos-14
             build: build:macos
             artifact: mu-darwin-arm64
+          - runner: windows-latest
+            build: build:windows
+            artifact: mu-windows-x64.exe
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +49,7 @@ jobs:
         if: runner.os == 'macOS'
         run: codesign --force --sign - dist/${{ matrix.artifact }}
       - run: ./dist/${{ matrix.artifact }} --version
+      - run: ./dist/${{ matrix.artifact }} --help
       - name: Verify macOS signature
         if: runner.os == 'macOS'
         run: codesign --verify --verbose dist/${{ matrix.artifact }}
@@ -67,11 +71,11 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: dist
-        run: sha256sum mu-linux-x64 mu-darwin-arm64 > SHA256SUMS
+        run: sha256sum mu-linux-x64 mu-darwin-arm64 mu-windows-x64.exe > SHA256SUMS
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/mu-linux-x64 dist/mu-darwin-arm64 dist/SHA256SUMS --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dist/mu-linux-x64 dist/mu-darwin-arm64 dist/mu-windows-x64.exe dist/SHA256SUMS --generate-notes --verify-tag
 
   npm:
     needs: github-release

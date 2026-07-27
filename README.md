@@ -17,9 +17,12 @@ Three surfaces, one kernel, one event stream:
 bun install -g @mu/cli
 
 # Or download the native artifact for your platform from the GitHub release
-# mu-linux-x64 or mu-darwin-arm64 — no runtime needed
+# mu-linux-x64, mu-darwin-arm64, or mu-windows-x64.exe — no runtime needed
 chmod +x mu-linux-x64
 ./mu-linux-x64 --help
+
+# Windows PowerShell
+.\mu-windows-x64.exe --help
 ```
 
 Start mu and run `/login` to choose account sign-in or a stored API key. OpenAI
@@ -69,4 +72,5 @@ Building for other platforms:
 ```sh
 bun run build:linux    # dist/mu-linux-x64
 bun run build:macos    # dist/mu-darwin-arm64
+bun run build:windows  # dist/mu-windows-x64.exe
 ```

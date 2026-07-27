@@ -115,7 +115,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
 }
 
 export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
-export { ShadowCheckpointProvider } from "./checkpoint.ts";
+export { gitConfigNullDevice, ShadowCheckpointProvider } from "./checkpoint.ts";
 export {
   codingEnvironment,
   contextMessages,
@@ -129,6 +129,7 @@ export {
   rememberAllow,
 } from "./permissions.ts";
 export { codingPrompt } from "./prompts.ts";
+export { shellCommand } from "./shell.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";

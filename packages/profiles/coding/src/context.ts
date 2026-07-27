@@ -47,13 +47,11 @@ export async function contextMessages(root: string): Promise<AgentMessage[]> {
   return messages;
 }
 
-async function firstLine(command: string, cwd: string): Promise<string | undefined> {
+async function gitOutput(args: string[], cwd: string): Promise<string | undefined> {
   try {
-    const proc = Bun.spawn(["bash", "-c", command], { cwd, stdout: "pipe", stderr: "ignore" });
+    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
     const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    const line = text.trim().split("\n")[0];
-    return line && line.length > 0 ? line : undefined;
+    return (await proc.exited) === 0 ? text : undefined;
   } catch {
     return undefined;
   }
@@ -68,11 +66,14 @@ export async function codingEnvironment(root: string): Promise<Record<string, st
     date: new Date().toISOString().slice(0, 10),
   };
 
-  const branch = await firstLine("git rev-parse --abbrev-ref HEAD 2>/dev/null", root);
+  const branchOutput = await gitOutput(["rev-parse", "--abbrev-ref", "HEAD"], root);
+  const branch = branchOutput?.trim().split(/\r?\n/)[0];
   if (branch) {
     env.branch = branch;
-    const status = await firstLine("git status --porcelain 2>/dev/null | wc -l", root);
-    if (status) env.uncommittedFiles = status.trim();
+    const status = await gitOutput(["status", "--porcelain"], root);
+    if (status !== undefined) {
+      env.uncommittedFiles = String(status.split(/\r?\n/).filter(Boolean).length);
+    }
   }
 
   try {

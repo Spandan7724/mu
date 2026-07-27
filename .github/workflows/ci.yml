@@ -23,3 +23,17 @@ jobs:
       - run: bun packages/cli/dist/mu.js --version
       - run: bun pm pack --dry-run
         working-directory: packages/cli
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test packages/profiles/coding/src/windows-portability.test.ts
+      - run: bun run build:windows
+      - run: ./dist/mu-windows-x64.exe --version
+      - run: ./dist/mu-windows-x64.exe --help

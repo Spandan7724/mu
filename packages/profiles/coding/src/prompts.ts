@@ -11,7 +11,8 @@ Approach:
 Tools:
 - Read a file before editing or overwriting it.
 - Prefer edit over write for existing files; write replaces the whole file.
-- Use grep and glob to find things; use bash for building, testing and inspection.
+- Use grep and glob to find things; use bash for building, testing and inspection. The
+  bash tool runs the platform-native shell named in the environment (PowerShell on Windows).
 - Independent read-only lookups can be issued together in one turn.
 
 Communication:

@@ -23,6 +23,10 @@ export type GitRunner = (
   cwd: string,
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
+export function gitConfigNullDevice(platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? "NUL" : "/dev/null";
+}
+
 const defaultRun: GitRunner = async (args, env, cwd) => {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
@@ -109,8 +113,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       GIT_AUTHOR_EMAIL: "mu@localhost",
       GIT_COMMITTER_NAME: "mu",
       GIT_COMMITTER_EMAIL: "mu@localhost",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_CONFIG_GLOBAL: gitConfigNullDevice(),
+      GIT_CONFIG_NOSYSTEM: "1",
     };
   }
 
@@ -143,7 +147,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     // it is placed inside the session root — otherwise every snapshot grows by
     // its own history, and the directory shows up as junk in the user's
     // `git status`.
-    const inside = relative(this.root, this.shadowDir);
+    const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
     if (inside.length > 0 && !inside.startsWith("..")) {
       await mkdir(join(this.shadowDir, "info"), { recursive: true });
       await writeFile(join(this.shadowDir, "info", "exclude"), `/${inside}/\n`, "utf8");
