@@ -74,11 +74,9 @@ async function main(): Promise<number> {
           resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
         }
         try {
-          const configuredModes = (await loadUserConfig()).permissionModes;
-          const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
           const mode = args.allowAll
             ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
-            : permissionModeFor(profile, requestedMode);
+            : permissionModeFor(profile, args.permissionMode);
           resolved = {
             ...resolved,
             permissions: args.allowAll

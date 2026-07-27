@@ -9,7 +9,7 @@ import {
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
-import { loadUserConfig, resolveCliModel } from "./config.ts";
+import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
@@ -62,11 +62,9 @@ export async function runHeadless(
   }
   try {
     if (profile) {
-      const configuredModes = (await loadUserConfig()).permissionModes;
-      const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
       const mode = args.allowAll
         ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
-        : permissionModeFor(profile, requestedMode);
+        : permissionModeFor(profile, args.permissionMode);
       resolved = {
         ...resolved,
         permissions: args.allowAll

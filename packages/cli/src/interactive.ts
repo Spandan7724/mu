@@ -39,12 +39,7 @@ import {
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
-import {
-  loadUserConfig,
-  resolveCliModel,
-  saveDefaultModel,
-  saveDefaultPermissionMode,
-} from "./config.ts";
+import { resolveCliModel, saveDefaultModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import {
   type AccountLoginProvider,
@@ -164,12 +159,10 @@ export async function runInteractive(
   const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
   let activePermissionMode: PermissionMode | undefined;
   if (profile) {
-    const configuredModes = (await loadUserConfig()).permissionModes;
-    const requestedMode = args.permissionMode ?? configuredModes?.[profile.name];
     try {
       activePermissionMode = args.allowAll
         ? profile.permissionModes?.find((mode) => mode.id === "yolo")
-        : permissionModeFor(profile, requestedMode);
+        : permissionModeFor(profile, args.permissionMode);
     } catch (error) {
       process.stderr.write(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
       return 2;
@@ -387,19 +380,8 @@ export async function runInteractive(
           if (!mode || !profile) return;
           agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
           activePermissionMode = mode;
-          void saveDefaultPermissionMode(profile.name, mode.id)
-            .then(() => {
-              renderer.commit([`  permissions set to ${mode.label} · saved as default`]);
-            })
-            .catch((error) => {
-              renderer.commit([
-                `  permissions set to ${mode.label}`,
-                `  could not save default: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ]);
-            })
-            .finally(paint);
+          renderer.commit([`  permissions set to ${mode.label} · this session`]);
+          paint();
         },
         onBack: () => app.openCommandMenu(),
       });

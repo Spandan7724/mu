@@ -2,13 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  loadUserConfig,
-  resolveCliModel,
-  saveDefaultModel,
-  saveDefaultPermissionMode,
-  userConfigPath,
-} from "./config.ts";
+import { loadUserConfig, resolveCliModel, saveDefaultModel, userConfigPath } from "./config.ts";
 
 describe("user model configuration", () => {
   test("the user config lives under ~/.mu", () => {
@@ -42,22 +36,6 @@ describe("user model configuration", () => {
 
     expect(await resolveCliModel(undefined, file)).toBe("openai/gpt-5.1");
     expect(await resolveCliModel("anthropic/claude-opus-5", file)).toBe("anthropic/claude-opus-5");
-  });
-
-  test("permission modes are saved per profile without losing other settings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mu-permission-default-"));
-    const file = join(root, "config.json");
-    await saveDefaultModel("openai/gpt-5.1", file);
-    await saveDefaultPermissionMode("coding", "accept-edits", file);
-    await saveDefaultPermissionMode("automation", "locked-down", file);
-
-    expect(await loadUserConfig(file)).toEqual({
-      model: "openai/gpt-5.1",
-      permissionModes: {
-        coding: "accept-edits",
-        automation: "locked-down",
-      },
-    });
   });
 
   test("an unavailable saved model falls back to the catalog default", async () => {
