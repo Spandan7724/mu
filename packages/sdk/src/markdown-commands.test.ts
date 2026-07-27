@@ -41,6 +41,16 @@ describe("frontmatter", () => {
     const { meta } = parseFrontmatter(`---\ndescription: "Quoted value"\n---\nx`);
     expect(meta.description).toBe("Quoted value");
   });
+
+  test("CRLF and a UTF-8 BOM are normalized before parsing", () => {
+    const { meta, body } = parseFrontmatter(
+      "\uFEFF---\r\ndescription: Windows command\r\nallowed-tools: [read, grep]\r\n---\r\nDo it.\r\n",
+    );
+    expect(meta.description).toBe("Windows command");
+    expect(meta["allowed-tools"]).toEqual(["read", "grep"]);
+    expect(body).toBe("Do it.");
+    expect(body).not.toContain("---");
+  });
 });
 
 describe("argument substitution", () => {
@@ -162,5 +172,29 @@ describe("registry integration", () => {
       ),
     );
     expect(registry.list().map((c) => c.description)).toContain("Ship it");
+  });
+
+  test("without a callback the command returns a surface-managed run request", async () => {
+    const registry = new CommandRegistry();
+    registry.register(
+      toCommand(
+        parseMarkdownCommand(
+          "review",
+          "---\nmodel: openai/gpt-5.1\nallowed-tools: [read]\n---\nReview $1.",
+        ),
+      ),
+    );
+    const result = await registry.execute("/review src/a.ts", {
+      inject: () => {},
+      print: () => {},
+      getModel: () => "fake/fake-1",
+      setModel: () => {},
+    });
+    expect(result.data).toEqual({
+      kind: "markdown-command",
+      prompt: "Review src/a.ts.",
+      model: "openai/gpt-5.1",
+      allowedTools: ["read"],
+    });
   });
 });

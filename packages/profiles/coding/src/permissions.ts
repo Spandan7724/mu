@@ -12,6 +12,8 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "glob", pattern: "*", action: "allow" },
   { permission: "grep", pattern: "*", action: "allow" },
   { permission: "todo", pattern: "*", action: "allow" },
+  { permission: "task_output", pattern: "*", action: "allow" },
+  { permission: "task_list", pattern: "*", action: "allow" },
 ];
 
 export interface ProjectConfig {

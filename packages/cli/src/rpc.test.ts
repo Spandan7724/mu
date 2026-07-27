@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { CommandRegistry } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
-import { Agent } from "mu";
+import { Agent, parseMarkdownCommand, toCommand } from "mu";
 import { linesFrom, parseOp, type RpcOut, runRpc } from "./rpc.ts";
 
 // Drives the RPC surface exactly as an external script would: ops in, NDJSON out.
@@ -178,6 +179,98 @@ describe("runRpc", () => {
       results[0]?.type === "command_result" &&
         (results[0].data as { echoed?: string } | undefined)?.echoed,
     ).toBe("/model");
+  });
+
+  test("a second input is rejected instead of overlapping the active run", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "only answer" }], delayMs: 40 },
+      { content: [{ type: "text", text: "must not run" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({ type: "input", text: "first" }),
+      JSON.stringify({ type: "input", text: "second" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, { agent });
+
+    expect(provider.callCount).toBe(1);
+    const errors = parsed(written).filter((out) => out.type === "error");
+    expect(
+      errors.some((out) => out.type === "error" && out.message.includes("already active")),
+    ).toBe(true);
+    expect(JSON.stringify(provider.requests[0])).toContain("first");
+    expect(JSON.stringify(provider.requests[0])).not.toContain("second");
+  });
+
+  test("markdown commands stream through the managed run with model and tool restrictions", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "reviewed" }] }]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [
+        {
+          name: "read",
+          description: "read",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text" as const, text: "read" }] }),
+        },
+        {
+          name: "write",
+          description: "write",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text" as const, text: "write" }] }),
+        },
+      ],
+    });
+    const commands = new CommandRegistry();
+    commands.register(
+      toCommand(
+        parseMarkdownCommand(
+          "review",
+          [
+            "---",
+            "model: openai/gpt-5.1",
+            "allowed-tools: [read]",
+            "---",
+            "Review $ARGUMENTS carefully.",
+          ].join("\n"),
+        ),
+      ),
+    );
+    const { io, written } = harness([
+      JSON.stringify({ type: "command", text: "/review src/a.ts" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, {
+      agent,
+      runCommand: (text) =>
+        commands.execute(text, {
+          inject: () => {},
+          print: () => {},
+          getModel: () => agent.modelRef,
+          setModel: (ref) => agent.setModel(ref),
+        }),
+    });
+
+    expect(provider.callCount).toBe(1);
+    expect(JSON.stringify(provider.requests[0])).toContain("Review src/a.ts carefully.");
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).toEqual(["read"]);
+    const assistant = parsed(written).find(
+      (out) =>
+        out.type === "event" &&
+        out.event.type === "message_end" &&
+        out.event.message.role === "assistant",
+    );
+    expect(
+      assistant?.type === "event" &&
+        assistant.event.type === "message_end" &&
+        assistant.event.message.role === "assistant" &&
+        assistant.event.message.model,
+    ).toBe("openai/gpt-5.1");
+    expect(agent.modelRef).toBe("fake/fake-1");
+    const commandResult = parsed(written).find((out) => out.type === "command_result");
+    expect(commandResult).toEqual({ type: "command_result" });
   });
 
   test("abort stops an in-flight run", async () => {

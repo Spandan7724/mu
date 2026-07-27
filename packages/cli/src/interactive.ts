@@ -15,6 +15,7 @@ import {
 import {
   Agent,
   type AgentOptions,
+  type AgentRunOptions,
   type DiffCommandData,
   defaultModelRef,
   defaultSkillRoots,
@@ -22,6 +23,7 @@ import {
   ExtensionHost,
   listModels,
   loadMarkdownCommands,
+  type MarkdownCommandRun,
   optionsFromProfile,
   registryWithCoreCommands,
   skillsExtension,
@@ -49,6 +51,15 @@ export function renderDiffCommand(
       { width, depth },
     ),
   ]);
+}
+
+function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === "markdown-command" &&
+    typeof (data as { prompt?: unknown }).prompt === "string"
+  );
 }
 
 export async function runInteractive(
@@ -126,10 +137,7 @@ export async function runInteractive(
         // session and usage totals. Mid-run input is steering, which is what
         // the loop's steering queue exists for.
         if (activeRun) agent.send(text);
-        else
-          activeRun = startRun(text).finally(() => {
-            activeRun = undefined;
-          });
+        else beginRun(text);
       },
       onAbort: () => agent.abort(),
       onExit: () => {
@@ -147,13 +155,14 @@ export async function runInteractive(
   });
   // User- and project-authored markdown commands join the built-ins.
   for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
-    commands.register(toCommand(markdown, (prompt) => void startRun(prompt)));
+    commands.register(toCommand(markdown));
   }
   // /model and /resume open selection lists rather than needing exact typing.
   commands.register({
     name: "model",
     description: "Switch the active model",
     run: () => {
+      if (activeRun) return { handled: true, message: "Cannot switch models during a run." };
       app.openPicker({
         title: "select a model",
         items: listModels().map((m) => ({
@@ -174,6 +183,7 @@ export async function runInteractive(
     name: "resume",
     description: "Resume an earlier session",
     run: async () => {
+      if (activeRun) return { handled: true, message: "Cannot resume during a run." };
       const sessions = await agent.sessionStore.list();
       if (sessions.length === 0) return { handled: true, message: "No saved sessions." };
       app.openPicker({
@@ -181,20 +191,38 @@ export async function runInteractive(
         items: sessions.map((id) => ({ label: id })),
         onChoose: (label) => {
           void (async () => {
-            const tree = await agent.sessionStore.load(label);
-            if (!tree) {
-              renderer.commit([`  no such session: ${label}`]);
-              paint();
-              return;
+            try {
+              if (activeRun || agent.isRunning) {
+                renderer.commit(["  Cannot resume during a run."]);
+                paint();
+                return;
+              }
+              const tree = await agent.sessionStore.load(label);
+              if (!tree) {
+                renderer.commit([`  no such session: ${label}`]);
+                paint();
+                return;
+              }
+              if (activeRun || agent.isRunning) {
+                renderer.commit(["  Cannot resume during a run."]);
+                paint();
+                return;
+              }
+              agent.resume(tree);
+              // Replay the transcript into scrollback so the user sees what
+              // became the active session.
+              for (const message of tree.messagesAt()) {
+                const lines = app.handleEvent({ type: "message_end", message });
+                if (lines.length > 0) renderer.commit(lines);
+              }
+              app.setModel(agent.modelRef);
+              app.setThinking(agent.thinking);
+              renderer.commit([`  resumed ${label}`]);
+            } catch (error) {
+              renderer.commit([
+                `  Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`,
+              ]);
             }
-            // Replay the transcript into scrollback so the user sees what they
-            // are resuming, then continue that session.
-            for (const message of tree.messagesAt()) {
-              const lines = app.handleEvent({ type: "message_end", message });
-              if (lines.length > 0) renderer.commit(lines);
-            }
-            agent.resume(tree);
-            renderer.commit([`  resumed ${label}`]);
             paint();
           })();
         },
@@ -240,14 +268,27 @@ export async function runInteractive(
     return out;
   }
 
-  async function startRun(text: string): Promise<void> {
-    const stream = agent.stream(text);
+  function beginRun(text: string, options?: AgentRunOptions): void {
+    if (activeRun) {
+      renderer.commit(["  A run is already active; submit text to steer it."]);
+      paint();
+      return;
+    }
+    activeRun = startRun(text, options).finally(() => {
+      activeRun = undefined;
+    });
+  }
+
+  async function startRun(text: string, options?: AgentRunOptions): Promise<void> {
+    const stream = agent.stream(text, options);
     for await (const event of stream) {
       const lines = app.handleEvent(event);
       if (lines.length > 0) renderer.commit(lines);
       paint();
     }
-    await stream.result().catch(() => {});
+    await stream.result().catch((error) => {
+      renderer.commit([`  ${error instanceof Error ? error.message : String(error)}`]);
+    });
     paint();
   }
 
@@ -265,6 +306,7 @@ export async function runInteractive(
     const data = result.data as
       | DiffCommandData
       | { kind: "fork-points"; points: { id: string; description: string }[] }
+      | MarkdownCommandRun
       | undefined;
     if (data?.kind === "diff") {
       renderer.commit(renderDiffCommand(data, terminal.columns, depth));
@@ -282,6 +324,11 @@ export async function runInteractive(
             paint();
           })();
         },
+      });
+    } else if (isMarkdownCommandRun(data)) {
+      beginRun(data.prompt, {
+        ...(data.model ? { model: data.model } : {}),
+        ...(data.allowedTools ? { allowedTools: data.allowedTools } : {}),
       });
     } else if (result.message) {
       renderer.commit([`  ${result.message}`]);

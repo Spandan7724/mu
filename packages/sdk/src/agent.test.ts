@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PermissionRequest } from "@mu/core";
+import { type PermissionRequest, SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
@@ -462,5 +462,128 @@ describe("runtime model and thinking changes", () => {
       m.role === "user" ? m.content.filter((c) => c.type === "text").map((c) => c.text) : [],
     );
     expect(texts).toContain("original question");
+  });
+
+  test("resume resets session-scoped usage, context, flags, and queued messages", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "old answer" }] },
+      { content: [{ type: "text", text: "new answer" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    await agent.run("old prompt");
+    expect(agent.usage.inputTokens).toBeGreaterThan(0);
+
+    agent.send("stale steering");
+    agent.followUp("stale follow-up");
+    agent.requestCompaction();
+    const target = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "target-session",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    target.appendMessage(userMessage("target history"));
+    target.append({
+      type: "settings-change",
+      model: "openai/gpt-5.1",
+      thinkingLevel: "high",
+    });
+    agent.resume(target);
+
+    expect(agent.sessionId).toBe("target-session");
+    expect(agent.modelRef).toBe("openai/gpt-5.1");
+    expect(agent.thinking).toBe("high");
+    expect(agent.usage.inputTokens).toBe(0);
+    expect(agent.contextPercent).toBe(0);
+    await agent.run("next prompt");
+
+    const request = JSON.stringify(provider.requests[1]?.messages);
+    expect(request).toContain("target history");
+    expect(request).toContain("next prompt");
+    expect(request).not.toContain("old prompt");
+    expect(request).not.toContain("stale steering");
+    expect(request).not.toContain("stale follow-up");
+    expect(provider.callCount).toBe(2);
+    expect(JSON.stringify(target.messagesAt())).not.toContain("new answer");
+  });
+
+  test("resume and a second run are rejected while a run is active", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "active answer" }], delayMs: 40 },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const stream = agent.stream("active prompt");
+    expect(agent.isRunning).toBe(true);
+
+    const target = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "must-stay-separate",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    target.appendMessage(userMessage("target only"));
+    expect(() => agent.resume(target)).toThrow("while a run is active");
+    await expect(agent.run("overlap")).rejects.toThrow("active run");
+
+    await stream.result();
+    expect(agent.isRunning).toBe(false);
+    expect(agent.sessionId).not.toBe("must-stay-separate");
+    expect(JSON.stringify(target.messagesAt())).not.toContain("active answer");
+  });
+
+  test("resume rejects a headerless session without changing the active one", () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const sessionId = agent.sessionId;
+    expect(() => agent.resume(new SessionTree())).toThrow("invalid or unsupported");
+    expect(agent.sessionId).toBe(sessionId);
+  });
+
+  test("per-run model and tool restrictions fail closed and restore defaults", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "restricted" }] },
+      { content: [{ type: "text", text: "default" }] },
+      { content: [{ type: "text", text: "no tools" }] },
+    ]);
+    const read = tool({
+      name: "read",
+      description: "read",
+      inputSchema: z.object({}),
+      execute: () => "read",
+    });
+    const write = tool({
+      name: "write",
+      description: "write",
+      inputSchema: z.object({}),
+      execute: () => "write",
+    });
+    const agent = new Agent({ provider, model: fakeModel, tools: [read, write] });
+    const override = { ...fakeModel, id: "command-model" };
+
+    const restricted = await agent.run("review", {
+      model: override,
+      allowedTools: ["read"],
+    });
+    const restrictedAnswer = restricted.messages.at(-1);
+    expect(restrictedAnswer?.role === "assistant" && restrictedAnswer.model).toBe(
+      "fake/command-model",
+    );
+    expect(provider.requests[0]?.tools?.map((definition) => definition.name)).toEqual(["read"]);
+    expect(agent.modelRef).toBe("fake/fake-1");
+
+    await agent.run("normal");
+    expect(provider.requests[1]?.tools?.map((definition) => definition.name)).toEqual([
+      "read",
+      "write",
+    ]);
+    await agent.run("without tools", { allowedTools: [] });
+    expect(provider.requests[2]?.tools).toBeUndefined();
+    await expect(agent.run("bad", { allowedTools: ["missing"] })).rejects.toThrow(
+      "Unknown allowed tool",
+    );
+    expect(provider.callCount).toBe(3);
   });
 });

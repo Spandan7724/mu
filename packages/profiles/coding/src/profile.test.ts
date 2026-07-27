@@ -85,6 +85,13 @@ describe("permission defaults", () => {
     }
   });
 
+  test("task inspection is allowed while task mutation still asks", () => {
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_output", '{"taskId":"t1"}')).toBe("allow");
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_list", "{}")).toBe("allow");
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_write_stdin", '{"taskId":"t1"}')).toBe("ask");
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_kill", '{"taskId":"t1"}')).toBe("ask");
+  });
+
   test("project config layers over the profile defaults", () => {
     const layered = layerPermissions(CODING_PERMISSION_DEFAULTS, [
       { permission: "bash", pattern: "npm test*", action: "allow" },

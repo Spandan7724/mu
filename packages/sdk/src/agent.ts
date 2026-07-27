@@ -96,6 +96,12 @@ export interface RunResult {
   sessionId: string;
 }
 
+export interface AgentRunOptions<T = unknown> {
+  output?: z.ZodType<T>;
+  model?: string | ModelInfo;
+  allowedTools?: string[];
+}
+
 function resolveModel(model: AgentOptions["model"]): ModelInfo {
   if (model && typeof model !== "string") return model;
   const ref = model ?? defaultModelRef();
@@ -139,11 +145,13 @@ export class Agent {
   private readonly checkpoints = new CheckpointHistory();
   private externalEvents: AgentEvent[] = [];
   private recoveryAttempted = false;
+  private reactiveRecoveryPending = false;
   private snapshottedThisTurn = false;
   private pendingCheckpoint:
     | { beforeEntryId: string | null; beforeRef: string; label: string }
     | undefined;
   private currentThinking: ThinkingLevel;
+  private running = false;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -186,22 +194,70 @@ export class Agent {
     return this.currentThinking;
   }
 
+  get isRunning(): boolean {
+    return this.running;
+  }
+
   // Switching model also switches provider — they travel together.
   setModel(ref: string | ModelInfo): void {
     this.model = resolveModel(ref);
     this.provider = this.options.provider ?? getProvider(this.model.provider);
+    this.lastContextUsage = undefined;
+    this.lastContextPercent = 0;
+    this.tree.append({ type: "settings-change", model: this.modelRef });
   }
 
   setThinking(level: ThinkingLevel): void {
     this.currentThinking = level;
+    this.tree.append({ type: "settings-change", thinkingLevel: level });
   }
 
   // Adopts a previously stored session so the next run continues it rather
   // than starting a fresh transcript.
   resume(tree: SessionTree): void {
-    this.tree = tree;
-    const header = tree.header;
-    if (header) this._sessionId = header.id;
+    if (this.running) throw new Error("Cannot resume a session while a run is active.");
+    const candidate = SessionTree.fromJsonl(tree.toJsonl());
+    const header = candidate.header;
+    if (!header || header.version !== SESSION_VERSION) {
+      throw new Error("Cannot resume an invalid or unsupported session.");
+    }
+    this.tree = candidate;
+    this._sessionId = header.id;
+    this.totals = zeroUsage();
+    this.lastContextUsage = undefined;
+    this.lastContextPercent = 0;
+    this.compactRequested = false;
+    this.recoveryAttempted = false;
+    this.reactiveRecoveryPending = false;
+    this.steering = [];
+    this.followUps = [];
+    this.externalEvents = [];
+    this.snapshottedThisTurn = false;
+    this.pendingCheckpoint = undefined;
+    this.controller = new AbortController();
+    this.model = resolveModel(this.options.model);
+    this.provider = this.options.provider ?? getProvider(this.model.provider);
+    this.currentThinking = this.options.thinkingLevel ?? "off";
+    for (const entry of candidate.activePath()) {
+      if (entry.type !== "settings-change") continue;
+      if (entry.model) {
+        try {
+          this.model = resolveModel(entry.model);
+          this.provider = this.options.provider ?? getProvider(this.model.provider);
+        } catch {
+          // A removed catalog model must not make an otherwise valid session
+          // impossible to resume; retain the last valid setting.
+        }
+      }
+      if (
+        entry.thinkingLevel === "off" ||
+        entry.thinkingLevel === "low" ||
+        entry.thinkingLevel === "medium" ||
+        entry.thinkingLevel === "high"
+      ) {
+        this.currentThinking = entry.thinkingLevel;
+      }
+    }
     this.rebuildCheckpointHistory();
   }
 
@@ -237,6 +293,7 @@ export class Agent {
   // Undo restores the workspace AND rewinds the conversation together — either
   // alone would leave the session lying about its own state.
   async undo(): Promise<{ ok: boolean; message: string }> {
+    if (this.running) return { ok: false, message: "Cannot undo while a run is active." };
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support undo." };
     const step = this.checkpoints.peekUndo();
@@ -296,6 +353,7 @@ export class Agent {
   }
 
   async redo(): Promise<{ ok: boolean; message: string }> {
+    if (this.running) return { ok: false, message: "Cannot redo while a run is active." };
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support redo." };
     const step = this.checkpoints.peekRedo();
@@ -390,6 +448,7 @@ export class Agent {
   }
 
   async fork(entryId: string): Promise<{ ok: boolean; message: string }> {
+    if (this.running) return { ok: false, message: "Cannot fork while a run is active." };
     if (!this.tree.get(entryId)) {
       return { ok: false, message: `Could not fork: unknown entry ${entryId}.` };
     }
@@ -417,14 +476,14 @@ export class Agent {
     return this.lastContextPercent;
   }
 
-  async run(prompt: string | UserContent[]): Promise<RunResult>;
   async run<T>(
     prompt: string | UserContent[],
-    opts: { output: z.ZodType<T> },
+    opts: AgentRunOptions<T> & { output: z.ZodType<T> },
   ): Promise<RunResult & { output: T }>;
+  async run(prompt: string | UserContent[], opts?: AgentRunOptions): Promise<RunResult>;
   async run<T>(
     prompt: string | UserContent[],
-    opts?: { output: z.ZodType<T> },
+    opts?: AgentRunOptions<T>,
   ): Promise<RunResult | (RunResult & { output: T })> {
     const events: AgentEvent[] = [];
     const result = await this.execute(prompt, opts, (event) => void events.push(event));
@@ -434,6 +493,7 @@ export class Agent {
   // Streams events as they happen; the returned iterable also exposes result().
   stream(
     prompt: string | UserContent[],
+    opts?: AgentRunOptions,
   ): AsyncIterable<AgentEvent> & { result(): Promise<RunResult> } {
     const queue: AgentEvent[] = [];
     const waiters: ((value: IteratorResult<AgentEvent>) => void)[] = [];
@@ -445,7 +505,7 @@ export class Agent {
       else queue.push(event);
     };
 
-    const finished = this.execute(prompt, undefined, push).finally(() => {
+    const finished = this.execute(prompt, opts, push).finally(() => {
       done = true;
       while (waiters.length > 0) {
         waiters.shift()?.({ value: undefined as never, done: true });
@@ -567,13 +627,30 @@ export class Agent {
 
   private async execute<T>(
     prompt: string | UserContent[],
-    opts: { output?: z.ZodType<T> } | undefined,
+    opts: AgentRunOptions<T> | undefined,
+    emit: (event: AgentEvent) => void,
+  ): Promise<RunResult & { output?: T }> {
+    if (this.running) {
+      throw new Error("Agent already has an active run; use send() to steer it.");
+    }
+    this.running = true;
+    try {
+      return await this.executeRun(prompt, opts, emit);
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async executeRun<T>(
+    prompt: string | UserContent[],
+    opts: AgentRunOptions<T> | undefined,
     emit: (event: AgentEvent) => void,
   ): Promise<RunResult & { output?: T }> {
     this.controller = new AbortController();
     // Reactive recovery is "retry once per overflow", not once per Agent: a
     // long session must still be able to recover hours later.
     this.recoveryAttempted = false;
+    this.reactiveRecoveryPending = false;
 
     const promptMessage: AgentMessage =
       typeof prompt === "string"
@@ -582,10 +659,27 @@ export class Agent {
 
     let captured: T | undefined;
     const host = this.options.extensions;
-    const tools: AnyTool[] = [
+    let tools: AnyTool[] = [
       ...(this.options.tools ?? []),
       ...(host ? [...host.tools.values()] : []),
     ];
+    if (opts?.allowedTools) {
+      const available = new Set(tools.map((tool) => tool.name));
+      const unknown = opts.allowedTools.filter((name) => !available.has(name));
+      if (unknown.length > 0) {
+        throw new Error(
+          `Unknown allowed tool${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
+        );
+      }
+      const allowed = new Set(opts.allowedTools);
+      tools = tools.filter((tool) => allowed.has(tool.name));
+    }
+    const runModel = opts?.model ? resolveModel(opts.model) : this.model;
+    const runProvider = opts?.model
+      ? (this.options.provider ?? getProvider(runModel.provider))
+      : this.provider;
+    let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
+    if (opts?.model) this.lastContextUsage = undefined;
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
 
     if (opts?.output) {
@@ -612,10 +706,10 @@ export class Agent {
 
     const currentContextState = (messages: AgentMessage[]) =>
       contextState(
-        this.model,
+        runModel,
         messages,
-        this.lastContextUsage?.usage,
-        this.lastContextUsage?.estimatedTokensAtUsage,
+        runContextUsage?.usage,
+        runContextUsage?.estimatedTokensAtUsage,
       );
 
     const recordUsage = (
@@ -625,10 +719,11 @@ export class Agent {
     ): HaltReason | undefined => {
       this.totals = addUsage(this.totals, usage);
       if (requestMessages) {
-        this.lastContextUsage = {
+        runContextUsage = {
           usage,
           estimatedTokensAtUsage: estimateTokens(requestMessages),
         };
+        if (!opts?.model) this.lastContextUsage = runContextUsage;
       }
       const state = currentContextState(messages);
       this.lastContextPercent = state.percent;
@@ -644,8 +739,8 @@ export class Agent {
     };
 
     const config: LoopConfig = {
-      provider: this.provider,
-      model: this.model,
+      provider: runProvider,
+      model: runModel,
       ...(this.options.apiKey ? { streamOpts: { apiKey: this.options.apiKey } } : {}),
       thinkingLevel: this.currentThinking,
       ...(this.options.budget?.maxTurns !== undefined
@@ -730,7 +825,7 @@ export class Agent {
         if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
           const micro = microcompact(working, {
             targetTokens: Math.floor(
-              this.model.contextWindow *
+              runModel.contextWindow *
                 (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) *
                 0.8,
             ),
@@ -753,6 +848,7 @@ export class Agent {
                 replacements: changed,
               });
               working = micro.messages;
+              runContextUsage = undefined;
               this.lastContextUsage = undefined;
               this.lastContextPercent = currentContextState(working).percent;
               emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
@@ -767,13 +863,14 @@ export class Agent {
         if (!due) return { messages: working };
 
         this.compactRequested = false;
-        emit({ type: "compaction_start", layer: 2 });
+        const layer = this.reactiveRecoveryPending ? 3 : 2;
+        if (layer === 2) emit({ type: "compaction_start", layer });
         let compactionUsage: Usage | undefined;
         let usageRecorded = false;
         try {
           const result = await compact(working, {
-            provider: this.provider,
-            model: this.model,
+            provider: runProvider,
+            model: runModel,
             ...(this.options.carryoverExtractor
               ? { carryoverExtractor: this.options.carryoverExtractor }
               : {}),
@@ -806,15 +903,17 @@ export class Agent {
             summaryEntryId = boundary.id;
           }
 
+          runContextUsage = undefined;
           this.lastContextUsage = undefined;
           recordUsage(result.usage, compacted);
           usageRecorded = true;
           emit({
             type: "compaction_end",
-            layer: 2,
+            layer,
             tokensFreed: result.tokensFreed,
             ...(summaryEntryId ? { summaryEntryId } : {}),
           });
+          this.reactiveRecoveryPending = false;
           return { messages: compacted, stop: budgetHalt !== undefined };
         } catch (error) {
           const failedUsage =
@@ -822,7 +921,8 @@ export class Agent {
           if (failedUsage && !usageRecorded) recordUsage(failedUsage, working);
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
-          emit({ type: "compaction_end", layer: 2, tokensFreed: 0 });
+          emit({ type: "compaction_end", layer, tokensFreed: 0 });
+          this.reactiveRecoveryPending = false;
           return { messages: working, stop: budgetHalt !== undefined };
         }
       },
@@ -856,11 +956,12 @@ export class Agent {
         if (this.recoveryAttempted || !isContextTooLongResult(message)) return false;
         this.recoveryAttempted = true;
         this.compactRequested = true;
+        this.reactiveRecoveryPending = true;
         emit({ type: "compaction_start", layer: 3 });
-        emit({ type: "compaction_end", layer: 3, tokensFreed: 0 });
         return true;
       },
       shouldStopAfterTurn: async (turn: TurnInfo) => {
+        this.recoveryAttempted = false;
         await this.finishCheckpoint();
         this.snapshottedThisTurn = false;
         const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);

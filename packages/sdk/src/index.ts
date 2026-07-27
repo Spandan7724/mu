@@ -37,7 +37,7 @@ export {
   textResult,
   userMessage,
 } from "@mu/core";
-export type { AgentOptions, HaltReason, RunResult } from "./agent.ts";
+export type { AgentOptions, AgentRunOptions, HaltReason, RunResult } from "./agent.ts";
 export { Agent } from "./agent.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
@@ -47,7 +47,11 @@ export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";
 export type { FileSessionStoreOptions } from "./file-store.ts";
 export { FileSessionStore } from "./file-store.ts";
-export type { MarkdownCommand, MarkdownCommandOptions } from "./markdown-commands.ts";
+export type {
+  MarkdownCommand,
+  MarkdownCommandOptions,
+  MarkdownCommandRun,
+} from "./markdown-commands.ts";
 export {
   loadMarkdownCommands,
   parseFrontmatter,

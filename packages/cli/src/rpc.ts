@@ -1,6 +1,6 @@
 // RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
 // AgentEvent union every other surface consumes.
-import type { Agent, AgentEvent, CommandResult } from "mu";
+import type { Agent, AgentEvent, AgentRunOptions, CommandResult, MarkdownCommandRun } from "mu";
 
 export type RpcOp =
   | { type: "input"; text: string }
@@ -50,7 +50,29 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   const send = (out: RpcOut) => io.write(`${JSON.stringify(out)}\n`);
   send({ type: "ready" });
 
-  let active: Promise<unknown> | undefined;
+  let active: Promise<void> | undefined;
+
+  const launch = (text: string, options?: AgentRunOptions): boolean => {
+    if (active) {
+      send({ type: "error", message: "a run is already active; use steer or wait for it" });
+      return false;
+    }
+    const stream = deps.agent.stream(text, options);
+    const task = (async () => {
+      for await (const event of stream) send({ type: "event", event });
+      await stream.result().catch((error: unknown) => {
+        send({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    })();
+    active = task;
+    void task.finally(() => {
+      if (active === task) active = undefined;
+    });
+    return true;
+  };
 
   for await (const line of io.lines) {
     if (line.trim().length === 0) continue;
@@ -62,16 +84,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         break;
 
       case "input": {
-        const stream = deps.agent.stream(op.text);
-        active = (async () => {
-          for await (const event of stream) send({ type: "event", event });
-          await stream.result().catch((error: unknown) => {
-            send({
-              type: "error",
-              message: error instanceof Error ? error.message : String(error),
-            });
-          });
-        })();
+        launch(op.text);
         break;
       }
 
@@ -90,12 +103,30 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
       }
 
       case "command": {
-        const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
-        send({
-          type: "command_result",
-          ...(result.message ? { message: result.message } : {}),
-          ...(result.data !== undefined ? { data: result.data } : {}),
-        });
+        try {
+          const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
+          if (isMarkdownCommandRun(result.data)) {
+            launch(result.data.prompt, {
+              ...(result.data.model ? { model: result.data.model } : {}),
+              ...(result.data.allowedTools ? { allowedTools: result.data.allowedTools } : {}),
+            });
+            send({
+              type: "command_result",
+              ...(result.message ? { message: result.message } : {}),
+            });
+          } else {
+            send({
+              type: "command_result",
+              ...(result.message ? { message: result.message } : {}),
+              ...(result.data !== undefined ? { data: result.data } : {}),
+            });
+          }
+        } catch (error) {
+          send({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         break;
       }
 
@@ -116,6 +147,15 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   }
 
   await active;
+}
+
+function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === "markdown-command" &&
+    typeof (data as { prompt?: unknown }).prompt === "string"
+  );
 }
 
 export async function* linesFrom(stream: NodeJS.ReadableStream): AsyncGenerator<string> {

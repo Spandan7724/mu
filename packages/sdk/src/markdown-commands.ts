@@ -14,14 +14,22 @@ export interface MarkdownCommand {
   allowedTools?: string[];
 }
 
+export interface MarkdownCommandRun {
+  kind: "markdown-command";
+  prompt: string;
+  model?: string;
+  allowedTools?: string[];
+}
+
 // Minimal YAML: `key: value` and `key: [a, b]`. A real YAML parser would be a
 // new dependency for a format we deliberately keep this small.
 export function parseFrontmatter(source: string): {
   meta: Record<string, string | string[]>;
   body: string;
 } {
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(source);
-  if (!match) return { meta: {}, body: source.trim() };
+  const normalized = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(normalized);
+  if (!match) return { meta: {}, body: normalized.trim() };
 
   const meta: Record<string, string | string[]> = {};
   for (const line of (match[1] ?? "").split("\n")) {
@@ -39,7 +47,7 @@ export function parseFrontmatter(source: string): {
             .filter((item) => item.length > 0)
         : raw.replace(/^["']|["']$/g, "");
   }
-  return { meta, body: source.slice(match[0].length).trim() };
+  return { meta, body: normalized.slice(match[0].length).trim() };
 }
 
 // $ARGUMENTS is everything after the command; $1..$9 are whitespace-separated
@@ -124,17 +132,29 @@ export async function loadMarkdownCommands(
 // body as a prompt.
 export function toCommand(
   markdown: MarkdownCommand,
-  submit: (prompt: string, options: { model?: string; allowedTools?: string[] }) => void,
+  submit?: (
+    prompt: string,
+    options: { model?: string; allowedTools?: string[] },
+  ) => unknown | Promise<unknown>,
 ): Command {
   return {
     name: markdown.name,
     description: markdown.description,
-    run: (ctx) => {
-      submit(substituteArguments(markdown.body, ctx.args), {
+    run: async (ctx) => {
+      const request: MarkdownCommandRun = {
+        kind: "markdown-command",
+        prompt: substituteArguments(markdown.body, ctx.args),
         ...(markdown.model ? { model: markdown.model } : {}),
         ...(markdown.allowedTools ? { allowedTools: markdown.allowedTools } : {}),
-      });
-      return { handled: true };
+      };
+      if (submit) {
+        await submit(request.prompt, {
+          ...(request.model ? { model: request.model } : {}),
+          ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
+        });
+        return { handled: true };
+      }
+      return { handled: true, data: request };
     },
   };
 }

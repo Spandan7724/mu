@@ -412,4 +412,80 @@ describe("layer 3 — reactive recovery", () => {
     expect(result.reason).toBe("error");
     expect(provider.callCount).toBeLessThanOrEqual(4);
   });
+
+  test("separate overflow episodes in one tool-using run each recover once", async () => {
+    const tooLong = {
+      content: [{ type: "text" as const, text: "" }],
+      errorMessage: "prompt is too long: 250000 tokens > 200000 maximum",
+    };
+    const provider = new FakeProvider([
+      tooLong,
+      { content: [{ type: "text", text: "summary one" }] },
+      { content: [{ type: "toolCall", id: "c1", name: "noop", arguments: {} }] },
+      tooLong,
+      { content: [{ type: "text", text: "summary two" }] },
+      { content: [{ type: "text", text: "recovered twice" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      autoCompact: false,
+      tools: [
+        {
+          name: "noop",
+          description: "no-op",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text" as const, text: "ok" }] }),
+        },
+      ],
+    });
+    const events: AgentEvent[] = [];
+    const stream = agent.stream(longPrompt());
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(result.reason).toBe("done");
+    expect(result.text).toBe("recovered twice");
+    expect(provider.callCount).toBe(6);
+    expect(
+      events.filter((event) => event.type === "compaction_start" && event.layer === 3),
+    ).toHaveLength(2);
+    expect(
+      events.filter((event) => event.type === "compaction_end" && event.layer === 3),
+    ).toHaveLength(2);
+    expect(
+      events.filter(
+        (event) =>
+          (event.type === "compaction_start" || event.type === "compaction_end") &&
+          event.layer === 2,
+      ),
+    ).toHaveLength(0);
+  });
+
+  test("layer 3 ends only after the real compaction attempt", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "" }],
+        errorMessage: "context window exceeded",
+      },
+      { content: [{ type: "text", text: "reactive summary" }] },
+      { content: [{ type: "text", text: "answer" }] },
+    ]);
+    const events: AgentEvent[] = [];
+    const agent = new Agent({ provider, model: fakeModel, autoCompact: false });
+    const stream = agent.stream(longPrompt());
+    for await (const event of stream) events.push(event);
+    await stream.result();
+
+    const start = events.findIndex(
+      (event) => event.type === "compaction_start" && event.layer === 3,
+    );
+    const usage = events.findIndex((event) => event.type === "usage_updated");
+    const end = events.findIndex((event) => event.type === "compaction_end" && event.layer === 3);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(usage).toBeGreaterThan(start);
+    expect(end).toBeGreaterThan(usage);
+    const endEvent = events[end];
+    expect(endEvent?.type === "compaction_end" && endEvent.tokensFreed).toBeGreaterThan(0);
+  });
 });

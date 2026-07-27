@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 import {
   Agent,
-  defaultModelRef,
   loadMarkdownCommands,
   refreshModels,
   registryWithCoreCommands,
@@ -64,7 +63,7 @@ async function main(): Promise<number> {
         diff: () => agent.sessionDiff(),
       });
       for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
-        commands.register(toCommand(markdown, (prompt) => void agent.run(prompt)));
+        commands.register(toCommand(markdown));
       }
 
       await runRpc(
@@ -75,8 +74,8 @@ async function main(): Promise<number> {
             const result = await commands.execute(text, {
               inject: () => {},
               print: () => {},
-              getModel: () => args.model ?? defaultModelRef(),
-              setModel: () => {},
+              getModel: () => agent.modelRef,
+              setModel: (ref) => agent.setModel(ref),
             });
             return result;
           },
