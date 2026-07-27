@@ -37,6 +37,7 @@ import {
   apiKeyLoginProviders,
   loginMethods,
 } from "./login.ts";
+import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 const SPINNER_INTERVAL_MS = 120;
@@ -72,6 +73,7 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
 export async function runInteractive(
   args: ParsedArgs,
   options: AgentOptions = {},
+  modelCatalog?: ModelCatalog,
 ): Promise<number> {
   const terminal = new Terminal();
   if (!terminal.isTty) {
@@ -129,6 +131,7 @@ export async function runInteractive(
   // is gone.
   const shutdown = () => {
     loginController?.abort();
+    modelCatalog?.stop();
     agent.stop();
     for (const [id, resolve] of pendingPermissions) {
       resolve("deny");
@@ -173,14 +176,30 @@ export async function runInteractive(
   commands.register({
     name: "model",
     description: "Switch the active model",
-    run: () => {
+    run: async () => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot switch models during a run." };
       }
+      let refresh: ModelCatalogRefreshResult | undefined;
+      if (modelCatalog && !modelCatalog.hasFreshModels) {
+        renderer.commit(["  refreshing model catalog…"]);
+        paint();
+        refresh = await modelCatalog.ensureFresh();
+        if (!refresh.ok) {
+          renderer.commit([
+            `  model discovery failed · showing ${refresh.fallback} catalog`,
+            `  ${refresh.error}`,
+          ]);
+        } else if (refresh.cacheWarning) {
+          renderer.commit([`  ${refresh.cacheWarning}`]);
+        }
+      }
+      const models = listModels();
+      const source = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
       app.openPicker({
-        title: "select a model",
+        title: `select a model · ${models.length} available${source}`,
         filterable: true,
-        items: listModels().map((m) => ({
+        items: models.map((m) => ({
           label: `${m.provider}/${m.id}`,
           description: m.name ?? "",
         })),

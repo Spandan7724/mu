@@ -2,7 +2,7 @@ import data from "./models.json" with { type: "json" };
 import type { ModelInfo } from "./types.ts";
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
-const DISCOVERY_TIMEOUT_MS = 5_000;
+const DISCOVERY_TIMEOUT_MS = 15_000;
 const DISCOVERED_PROVIDERS = new Set(["anthropic", "openai", "google"]);
 const bundledModels = data.models as ModelInfo[];
 let models: ModelInfo[] = [...bundledModels];
