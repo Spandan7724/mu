@@ -7,6 +7,7 @@ import {
   registryWithCoreCommands,
   toCommand,
 } from "mu";
+import cliPackage from "../package.json";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
@@ -16,7 +17,7 @@ import { runInteractive } from "./interactive.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 
-const VERSION = "0.0.1";
+const VERSION = cliPackage.version;
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));

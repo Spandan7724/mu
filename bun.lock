@@ -18,9 +18,9 @@
       "name": "@mu/cli",
       "version": "0.0.1",
       "bin": {
-        "mu": "./src/main.ts",
+        "mu": "./dist/mu.js",
       },
-      "dependencies": {
+      "devDependencies": {
         "@mu/core": "workspace:*",
         "@mu/profile-coding": "workspace:*",
         "@mu/tui": "workspace:*",

@@ -10,17 +10,16 @@ Three surfaces, one kernel, one event stream:
 - **RPC / headless** — `mu --rpc` (NDJSON events/ops), `mu -p "..."` one-shot
 - **SDK** — `import { Agent } from "mu"` for building automations in TypeScript
 
-Design docs live in `docs/` — start with `docs/PROJECT.md`.
-
 ## Install
 
 ```sh
 # From npm (requires Bun)
-bun install -g mu
+bun install -g @mu/cli
 
-# Or grab a compiled binary — no runtime needed
-curl -fsSL -o mu https://github.com/…/releases/latest/download/mu-linux-x64
-chmod +x mu && ./mu --help
+# Or download the native artifact for your platform from the GitHub release
+# mu-linux-x64 or mu-darwin-arm64 — no runtime needed
+chmod +x mu-linux-x64
+./mu-linux-x64 --help
 ```
 
 Start mu and run `/login` to choose account sign-in or a stored API key. OpenAI
@@ -62,6 +61,7 @@ Requires [Bun](https://bun.sh).
 bun install
 bun run ci        # typecheck + lint + tests + kernel-purity check
 bun run build     # single-file binary at dist/mu
+bun run pack:npm  # publishable @mu/cli tarball in dist/
 ```
 
 Building for other platforms:

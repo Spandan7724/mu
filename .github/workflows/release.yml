@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Verify tag matches package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(bun -e 'console.log(require("./packages/cli/package.json").version)')"
+      - run: bun run ci
+      - run: bun pm pack --dry-run
+        working-directory: packages/cli
+
+  binaries:
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            build: build:linux
+            artifact: mu-linux-x64
+          - runner: macos-14
+            build: build:macos
+            artifact: mu-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run ${{ matrix.build }}
+      - name: Sign macOS binary
+        if: runner.os == 'macOS'
+        run: codesign --force --sign - dist/${{ matrix.artifact }}
+      - run: ./dist/${{ matrix.artifact }} --version
+      - name: Verify macOS signature
+        if: runner.os == 'macOS'
+        run: codesign --verify --verbose dist/${{ matrix.artifact }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  github-release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum mu-linux-x64 mu-darwin-arm64 > SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/mu-linux-x64 dist/mu-darwin-arm64 dist/SHA256SUMS --generate-notes --verify-tag
+
+  npm:
+    needs: github-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Publish @mu/cli
+        working-directory: packages/cli
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun publish --access public

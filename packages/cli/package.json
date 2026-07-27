@@ -1,14 +1,32 @@
 {
   "name": "@mu/cli",
   "version": "0.0.1",
+  "description": "A general-purpose, extensible AI agent for the terminal",
   "type": "module",
   "bin": {
-    "mu": "./src/main.ts"
+    "mu": "./dist/mu.js"
   },
-  "exports": {
-    ".": "./src/index.ts"
+  "files": [
+    "dist/mu.js"
+  ],
+  "scripts": {
+    "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js",
+    "prepack": "bun run build"
   },
-  "dependencies": {
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-agent",
+    "tui"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
     "@mu/profile-coding": "workspace:*",
     "@mu/tui": "workspace:*",
     "mu": "workspace:*",
