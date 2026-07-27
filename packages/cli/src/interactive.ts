@@ -53,6 +53,7 @@ import {
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
+import { resumePickerItems } from "./session-picker.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const SPINNER_INTERVAL_MS = 120;
@@ -465,12 +466,13 @@ export async function runInteractive(
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot resume during a run." };
       }
-      const sessions = await agent.sessionStore.list();
+      const sessions = await resumePickerItems(agent.sessionStore);
       if (sessions.length === 0) return { handled: true, message: "No saved sessions." };
       app.openPicker({
         title: "resume a session",
-        items: sessions.map((id) => ({ label: id })),
-        onChoose: (label) => {
+        filterable: true,
+        items: sessions,
+        onChoose: (sessionId) => {
           void (async () => {
             try {
               if (activeRun || agent.isRunning) {
@@ -478,9 +480,9 @@ export async function runInteractive(
                 paint();
                 return;
               }
-              const tree = await agent.sessionStore.load(label);
+              const tree = await agent.sessionStore.load(sessionId);
               if (!tree) {
-                commitLines([`  no such session: ${label}`]);
+                commitLines([`  no such session: ${sessionId}`]);
                 paint();
                 return;
               }
@@ -493,10 +495,12 @@ export async function runInteractive(
               app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking);
               app.replaceTranscript(tree.messagesAt(), app.banner());
-              commitLines([`  resumed ${label}`]);
+              commitLines([`  resumed ${sessionId}`]);
             } catch (error) {
               commitLines([
-                `  Could not resume ${label}: ${error instanceof Error ? error.message : String(error)}`,
+                `  Could not resume ${sessionId}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
               ]);
             }
             paint();

@@ -234,6 +234,7 @@ export class Editor {
 export interface SelectItem {
   label: string;
   description?: string;
+  value?: string;
 }
 
 export class SelectList {
@@ -277,15 +278,23 @@ export class SelectList {
 
     return visible.map((item, i) => {
       const isSelected = start + i === this.index;
-      const safeLabel = sanitizeUntrusted(item.label);
+      const available = Math.max(1, width - stringWidth(MARGIN) - 2);
+      const separator = ` ${GLYPHS.separator} `;
+      const safeDescription = item.description ? sanitizeUntrusted(item.description) : undefined;
+      const descriptionBudget = safeDescription
+        ? Math.min(Math.floor(available / 2), stringWidth(separator) + stringWidth(safeDescription))
+        : 0;
+      const descriptionText =
+        safeDescription && descriptionBudget > stringWidth(separator)
+          ? separator + truncateToWidth(safeDescription, descriptionBudget - stringWidth(separator))
+          : "";
+      const safeLabel = truncateToWidth(
+        sanitizeUntrusted(item.label),
+        Math.max(1, available - stringWidth(descriptionText)),
+      );
       const label = isSelected ? accent(safeLabel, depth) : safeLabel;
       const marker = isSelected ? accent(GLYPHS.userMarker, depth) : " ";
-      const description = item.description
-        ? dim(
-            ` ${GLYPHS.separator} ${truncateToWidth(sanitizeUntrusted(item.description), Math.floor(width / 2))}`,
-            depth,
-          )
-        : "";
+      const description = descriptionText ? dim(descriptionText, depth) : "";
       return `${MARGIN}${marker} ${label}${description}`;
     });
   }

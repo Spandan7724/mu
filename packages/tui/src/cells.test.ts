@@ -379,6 +379,15 @@ describe("components", () => {
     expect(visible(list.render(60, "none"))[1]).toBe("  ▸ gpt-5.1");
   });
 
+  test("select list truncates long session titles to the terminal width", () => {
+    const list = new SelectList([
+      { label: "implement a much longer first user prompt that cannot fit on one row" },
+    ]);
+    const [line] = visible(list.render(24, "none"));
+    expect(line).toBe("  ▸ implement a much lo…");
+    expect(stringWidth(line ?? "")).toBeLessThanOrEqual(24);
+  });
+
   test("markdown renders headings, bullets and code", () => {
     const lines = visible(renderMarkdown("# Title\n- one\n- two\n```\ncode\n```", 40, "none"));
     expect(lines[0]).toBe("Title");

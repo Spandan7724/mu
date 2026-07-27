@@ -1303,6 +1303,23 @@ describe("selection pickers (/model, /resume)", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 
+  test("a picker can display a friendly label while returning an opaque value", () => {
+    const chosen: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "resume a session",
+      items: [{ label: "fix the login flow", value: "sms3cabdw" }],
+      onChoose: (value) => chosen.push(value),
+    });
+
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("fix the login flow");
+    h.app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(chosen).toEqual(["sms3cabdw"]);
+  });
+
   test("escape cancels a picker without choosing", () => {
     const chosen: string[] = [];
     const h = harness();

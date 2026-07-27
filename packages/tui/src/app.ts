@@ -22,6 +22,7 @@ import {
   footer,
   type QueuedInputKind,
   queuedInputPreview,
+  type SelectItem,
   SelectList,
   Spinner,
 } from "./components.ts";
@@ -34,8 +35,8 @@ export type AppMode = "composing" | "approval" | "select" | "mention" | "picker"
 
 export interface PickerRequest {
   title: string;
-  items: { label: string; description?: string }[];
-  onChoose: (label: string) => void;
+  items: SelectItem[];
+  onChoose: (value: string) => void;
   onBack?: () => void;
   onCancel?: () => void;
   filterable?: boolean;
@@ -912,7 +913,7 @@ export class App {
       this.picker = undefined;
       this.pickerQuery = "";
       this.mode = "composing";
-      picker.onChoose(selected.label);
+      picker.onChoose(selected.value ?? selected.label);
       return;
     }
     if (picker.filterable && !key.ctrl && !key.alt && key.text) {
