@@ -142,7 +142,9 @@ describe("credential storage", () => {
     });
 
     await saveApiKey("openai", "sk-openai", { authFile });
-    expect((await readAuthFile({ authFile })).providers).toMatchObject({
+    const migrated = await readAuthFile({ authFile });
+    expect(migrated.activeProvider).toBe("openai");
+    expect(migrated.providers).toMatchObject({
       openai: { type: "apiKey", apiKey: "sk-openai" },
       "openai-codex": { type: "oauth", accountId: "account" },
     });
@@ -265,6 +267,7 @@ describe("OpenAI account login", () => {
         close: () => {},
       }),
     });
+    await saveApiKey("openai", "sk-direct", { authFile });
     const resolver = createCredentialResolver({ authFile, fetch: tokenFetch, now: () => now });
     const [first, second] = await Promise.all([resolver("openai-codex"), resolver("openai-codex")]);
 
@@ -275,7 +278,10 @@ describe("OpenAI account login", () => {
     });
     expect(refreshCalls).toBe(1);
     expect(await resolver("openai-codex")).toEqual(first);
-    expect((await readAuthFile({ authFile })).providers["openai-codex"]).toMatchObject({
+    const stored = await readAuthFile({ authFile });
+    expect(stored.activeProvider).toBe("openai");
+    expect(stored.providers.openai).toEqual({ type: "apiKey", apiKey: "sk-direct" });
+    expect(stored.providers["openai-codex"]).toMatchObject({
       refreshToken: "refresh-new",
     });
   });

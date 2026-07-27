@@ -9,8 +9,20 @@ export interface AuthPageOptions {
   detail: string;
 }
 
-const ACCENT = "#2dd4bf";
+const MUTED = "#8a8a8a";
 const ERROR = "#f87171";
+
+// "mu" on a 10x5 pixel grid, drawn as runs rather than per-pixel rects. A bitmap keeps the
+// mark self-contained: the callback is served off localhost, so no font can be fetched.
+const WORDMARK_PIXELS = [
+  { x: 0, y: 0, w: 5, h: 1 },
+  { x: 0, y: 1, w: 1, h: 4 },
+  { x: 2, y: 1, w: 1, h: 4 },
+  { x: 4, y: 1, w: 1, h: 4 },
+  { x: 6, y: 0, w: 1, h: 5 },
+  { x: 9, y: 0, w: 1, h: 5 },
+  { x: 7, y: 4, w: 2, h: 1 },
+];
 
 function escapeHtml(value: string): string {
   return value
@@ -20,8 +32,15 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function wordmark(): string {
+  const pixels = WORDMARK_PIXELS.map(
+    (pixel) => `<rect x="${pixel.x}" y="${pixel.y}" width="${pixel.w}" height="${pixel.h}"/>`,
+  ).join("");
+  return `<svg class="mark" viewBox="0 0 10 5" role="img" aria-label="mu">${pixels}</svg>`;
+}
+
 export function renderAuthPage(options: AuthPageOptions): string {
-  const mark = options.status === "success" ? ACCENT : ERROR;
+  const heading = options.status === "success" ? "#fff" : ERROR;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -49,26 +68,25 @@ export function renderAuthPage(options: AuthPageOptions): string {
     animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   .mark {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-      "Liberation Mono", monospace;
-    font-size: 3.25rem;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -0.04em;
-    color: ${mark};
+    display: block;
+    width: 90px;
+    height: 45px;
+    margin: 0 auto;
+    fill: ${MUTED};
+    shape-rendering: crispEdges;
   }
   h1 {
     margin: 2.25rem 0 0;
     font-size: 1.5rem;
     font-weight: 600;
     letter-spacing: -0.01em;
-    color: #fff;
+    color: ${heading};
   }
   p {
     margin: 0.75rem 0 0;
     font-size: 0.9375rem;
     line-height: 1.5;
-    color: #8a8a8a;
+    color: ${MUTED};
   }
   @keyframes rise {
     from { opacity: 0; transform: translateY(6px); }
@@ -81,7 +99,7 @@ export function renderAuthPage(options: AuthPageOptions): string {
 </head>
 <body>
 <main>
-  <div class="mark">mu</div>
+  ${wordmark()}
   <h1>${escapeHtml(options.heading)}</h1>
   <p>${escapeHtml(options.detail)}</p>
 </main>

@@ -6,16 +6,21 @@ describe("auth callback page", () => {
     const page = authSuccessPage("OpenAI");
     expect(page).toContain("Authentication successful");
     expect(page).toContain("OpenAI authentication completed. You can close this window.");
-    expect(page).toContain(">mu<");
-    expect(page).toContain("#2dd4bf");
     expect(page).toContain("background: #000");
   });
 
-  test("marks failures without the accent", () => {
+  test("draws the wordmark as grey crisp-edged pixels", () => {
+    const page = authSuccessPage("OpenAI");
+    expect(page).toContain('aria-label="mu"');
+    expect(page).toContain("shape-rendering: crispEdges");
+    expect(page).toContain("fill: #8a8a8a");
+  });
+
+  test("marks failures in the heading, not the wordmark", () => {
     const page = authErrorPage("OpenAI", "Return to mu and try again.");
     expect(page).toContain("Authentication failed");
-    expect(page).toContain("#f87171");
-    expect(page).not.toContain("#2dd4bf");
+    expect(page).toContain("color: #f87171");
+    expect(page).toContain("fill: #8a8a8a");
   });
 
   test("escapes provider-supplied copy", () => {

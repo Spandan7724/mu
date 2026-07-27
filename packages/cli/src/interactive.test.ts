@@ -197,6 +197,15 @@ describe("interactive model catalog", () => {
     expect(models.map((model) => model.id)).toContain("gpt-5.6-sol");
   });
 
+  test("the picker combines every authenticated provider instead of only the active one", () => {
+    const models = availableModels(new ExtensionHost(), new Set(["openai", "openai-codex"]));
+    const providers = new Set(models.map((model) => model.provider));
+
+    expect(providers).toEqual(new Set(["openai", "openai-codex"]));
+    expect(models).toContainEqual(expect.objectContaining({ provider: "openai" }));
+    expect(models).toContainEqual(expect.objectContaining({ provider: "openai-codex" }));
+  });
+
   test("model descriptions distinguish plan, API-key, and extension routes", () => {
     const model: ModelInfo = {
       provider: "openai-codex",

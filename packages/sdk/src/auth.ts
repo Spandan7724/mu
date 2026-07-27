@@ -151,7 +151,9 @@ export async function readAuthFile(options: AuthStoreOptions = {}): Promise<Auth
     else providers[normalizedProvider] ??= stored;
   }
   const activeProvider =
-    parsed.activeProvider === "openai" && providers[OPENAI_CODEX_PROVIDER]?.type === "oauth"
+    parsed.activeProvider === "openai" &&
+    !providers.openai &&
+    providers[OPENAI_CODEX_PROVIDER]?.type === "oauth"
       ? OPENAI_CODEX_PROVIDER
       : parsed.activeProvider;
 
@@ -371,7 +373,6 @@ export function createCredentialResolver(
           : await refreshOpenAi(latest, options);
       if (next !== latest) {
         latestFile.providers[OPENAI_CODEX_PROVIDER] = next;
-        latestFile.activeProvider = OPENAI_CODEX_PROVIDER;
         await writeAuthFile(latestFile, options);
       }
       return {
