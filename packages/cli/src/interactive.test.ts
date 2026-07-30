@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { App, RendererRegistry, stripAnsi } from "@mu/tui";
+import { App, RendererRegistry, stripAnsi, wrapText } from "@mu/tui";
 import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo } from "mu";
 import {
   availableModels,
+  formatAuthUrl,
   formatResumeHint,
   formatTerminalTitle,
   initializeInteractiveSession,
@@ -25,6 +26,28 @@ test("session close hint is a directly runnable resume command", () => {
   const colored = formatResumeHint("session-id", "truecolor");
   expect(colored).toContain("38;2;102;102;102mTo resume this session:");
   expect(colored).toContain("\u001b[0m mu --resume session-id");
+});
+
+describe("account login url", () => {
+  const url = `https://auth.openai.com/oauth/authorize?response_type=code&${"s".repeat(200)}`;
+
+  test("the whole url is one hyperlink, so wrapping keeps it clickable", () => {
+    const [heading, link, hint] = formatAuthUrl(url, false, "OpenAI", "truecolor", "linux");
+
+    expect(heading).toBe("  Could not open a browser. Open this URL to continue:");
+    expect(link).toContain(`\u001b]8;;${url}\u0007`);
+    expect(stripAnsi(link as string)).toBe(`  ${url}`);
+    expect(wrapText(link as string, 60).every((row) => row.includes(`]8;;${url}`))).toBe(true);
+    expect(stripAnsi(hint as string)).toBe("  ctrl+click to open");
+    expect(hint).toContain(`\u001b]8;;${url}\u0007`);
+  });
+
+  test("the url is offered even when a browser opened, with a platform click hint", () => {
+    const lines = formatAuthUrl(url, true, "OpenAI", "none", "darwin");
+
+    expect(lines[0]).toBe("  Complete the OpenAI sign-in in your browser, or open this URL:");
+    expect(stripAnsi(lines[2] as string)).toBe("  cmd+click to open");
+  });
 });
 
 test("a new interactive session is not persisted before any message is sent", async () => {

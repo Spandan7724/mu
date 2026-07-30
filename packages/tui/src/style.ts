@@ -148,6 +148,19 @@ export const AGENT_LABEL = "mu";
 export const AGENT_INDENT = " ".repeat(AGENT_LABEL.length + 2);
 
 export function stripAnsi(text: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: parsing terminal output requires it
-  return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+  return (
+    text
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: parsing terminal output requires it
+      .replace(/\u001b\]8;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: parsing terminal output requires it
+      .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
+  );
+}
+
+export function hyperlink(url: string, text = url): string {
+  // A control character in the payload would end the OSC early and let the
+  // rest of the string run as a separate terminal command.
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: that is the check
+  if (url.length === 0 || /[\u0000-\u001f\u007f-\u009f]/.test(url)) return text;
+  return `\u001b]8;;${url}\u0007${text}\u001b]8;;\u0007`;
 }

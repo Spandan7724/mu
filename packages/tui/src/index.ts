@@ -47,7 +47,7 @@ export type { ToolRendererFn, ToolRenderInfo } from "./registry.ts";
 export { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
 export { FullScreenRenderer } from "./renderer.ts";
 export type { ColorDepth, Style, SyntaxRole } from "./style.ts";
-export { detectColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
+export { detectColorDepth, GLYPHS, hyperlink, MARGIN, stripAnsi, styleText } from "./style.ts";
 export { highlightCode } from "./syntax-highlight.ts";
 export type { TerminalIo } from "./terminal.ts";
 export { CURSOR, nodeTerminalIo, Terminal } from "./terminal.ts";

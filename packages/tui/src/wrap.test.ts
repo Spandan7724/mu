@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { detectColorDepth, stripAnsi, styleText } from "./style.ts";
+import { detectColorDepth, hyperlink, stripAnsi, styleText } from "./style.ts";
 import { charWidth, graphemes, stringWidth, truncateToWidth } from "./width.ts";
 import { wrapLine, wrapText } from "./wrap.ts";
 
@@ -72,12 +72,64 @@ describe("wrapping", () => {
     expect(lines.map((l) => stripAnsi(l).trim()).join(" ")).toBe("alpha beta gamma delta");
   });
 
+  test("a long unbreakable word keeps the leading margin on its first row", () => {
+    const lines = wrapLine(`  ${"u".repeat(30)}`, 12);
+    expect(lines[0]).toBe("  uuuuuuuuuu");
+    expect(lines.join("")).toBe(`  ${"u".repeat(30)}`);
+  });
+
   test("wrapText splits on newlines first", () => {
     expect(wrapText("one\ntwo", 20)).toEqual(["one", "two"]);
   });
 
   test("an empty line stays a line", () => {
     expect(wrapText("", 10)).toEqual([""]);
+  });
+});
+
+describe("hyperlinks", () => {
+  const url = `https://auth.example.com/authorize?${"a".repeat(120)}`;
+
+  test("a hyperlink wraps its visible text, not its destination", () => {
+    const lines = wrapLine(`  ${hyperlink(url)}`, 40);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.map(stripAnsi).join("")).toBe(`  ${url}`);
+    for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(40);
+  });
+
+  test("every wrapped row reopens and closes the link with the same terminator", () => {
+    const lines = wrapLine(hyperlink(url), 40);
+    for (const line of lines) {
+      expect(line.startsWith(`\u001b]8;;${url}\u0007`)).toBe(true);
+      expect(line.endsWith("\u001b]8;;\u0007")).toBe(true);
+    }
+  });
+
+  test("a styled hyperlink keeps both its colour and its destination per row", () => {
+    const lines = wrapLine(styleText(hyperlink(url), { link: true }, "truecolor"), 40);
+    for (const line of lines) {
+      expect(line).toContain(`\u001b]8;;${url}\u0007`);
+      expect(line).toContain("38;2;96;165;250m");
+    }
+  });
+
+  test("link text may differ from the destination", () => {
+    const [line] = wrapLine(hyperlink(url, "ctrl+click to open"), 40);
+    expect(stripAnsi(line as string)).toBe("ctrl+click to open");
+    expect(stringWidth(line as string)).toBe(18);
+  });
+
+  test("a destination carrying control characters is not linked", () => {
+    expect(hyperlink("https://x.test/\u0007\u001b]0;pwned", "label")).toBe("label");
+    expect(hyperlink("", "label")).toBe("label");
+  });
+
+  test("ST-terminated links round-trip with their own terminator", () => {
+    const lines = wrapLine(`\u001b]8;;${url}\u001b\\${url}\u001b]8;;\u001b\\`, 40);
+    for (const line of lines) {
+      expect(line.startsWith(`\u001b]8;;${url}\u001b\\`)).toBe(true);
+      expect(line.endsWith("\u001b]8;;\u001b\\")).toBe(true);
+    }
   });
 });
 

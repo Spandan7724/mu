@@ -4,6 +4,30 @@ import { charWidth, stringWidth } from "./width.ts";
 interface Token {
   text: string; // visible characters
   ansi: string; // styling that applies from here on
+  link: string; // OSC 8 opener active here, "" outside a hyperlink
+}
+
+const OSC8_OPEN = "\u001b]8;";
+
+// Reuses the opener's terminator: a terminal that only accepts BEL-terminated
+// hyperlinks would otherwise lose the link on every row after the first.
+function closeLink(open: string): string {
+  return open.endsWith("\u0007") ? `${OSC8_OPEN};\u0007` : `${OSC8_OPEN};\u001b\\`;
+}
+
+// Reads an OSC 8 sequence at `start`, returning the whole sequence and the
+// index after it. The payload is `params;url`; an empty url closes the link.
+function readLink(line: string, start: number): { open: string; next: number } | undefined {
+  if (!line.startsWith(OSC8_OPEN, start)) return undefined;
+  const bel = line.indexOf("\u0007", start + OSC8_OPEN.length);
+  const st = line.indexOf("\u001b\\", start + OSC8_OPEN.length);
+  const bodyEnd = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st);
+  if (bodyEnd === -1) return undefined;
+  const next = bodyEnd + (bodyEnd === bel ? 1 : 2);
+  const body = line.slice(start + OSC8_OPEN.length, bodyEnd);
+  const separator = body.indexOf(";");
+  const url = separator === -1 ? "" : body.slice(separator + 1);
+  return { open: url === "" ? "" : line.slice(start, next), next };
 }
 
 // Splits a styled string into visible characters, each carrying the ANSI state
@@ -11,6 +35,7 @@ interface Token {
 function tokenize(line: string): Token[] {
   const tokens: Token[] = [];
   let active = "";
+  let link = "";
   let i = 0;
   while (i < line.length) {
     if (line[i] === "\u001b" && line[i + 1] === "[") {
@@ -21,8 +46,14 @@ function tokenize(line: string): Token[] {
       i = end + 1;
       continue;
     }
+    const hyperlink = readLink(line, i);
+    if (hyperlink) {
+      link = hyperlink.open;
+      i = hyperlink.next;
+      continue;
+    }
     const char = String.fromCodePoint(line.codePointAt(i) ?? 0);
-    tokens.push({ text: char, ansi: active });
+    tokens.push({ text: char, ansi: active, link });
     i += char.length;
   }
   return tokens;
@@ -31,7 +62,13 @@ function tokenize(line: string): Token[] {
 function renderTokens(tokens: Token[]): string {
   let out = "";
   let current = "";
+  let link = "";
   for (const token of tokens) {
+    if (token.link !== link) {
+      if (link !== "") out += closeLink(link);
+      out += token.link;
+      link = token.link;
+    }
     if (token.ansi !== current) {
       if (current !== "") out += RESET;
       out += token.ansi;
@@ -40,6 +77,7 @@ function renderTokens(tokens: Token[]): string {
     out += token.text;
   }
   if (current !== "") out += RESET;
+  if (link !== "") out += closeLink(link);
   return out;
 }
 
@@ -63,7 +101,8 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
     while (
       current.length > 0 &&
       current[current.length - 1]?.text === " " &&
-      current[current.length - 1]?.ansi === ""
+      current[current.length - 1]?.ansi === "" &&
+      current[current.length - 1]?.link === ""
     ) {
       current.pop();
     }
@@ -78,7 +117,10 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
 
     if (currentWidth + w > usable) {
       // Prefer breaking at the last space; hard-break if the word is too long.
-      if (wordStart > 0 && wordStart < current.length) {
+      // Breaking after leading margin alone would emit a blank row and push the
+      // word to column zero, which is what a long URL used to do.
+      const prefixHasText = current.slice(0, wordStart).some((t) => t.text !== " ");
+      if (prefixHasText && wordStart > 0 && wordStart < current.length) {
         const carried = current.slice(wordStart);
         current = current.slice(0, wordStart);
         flush();

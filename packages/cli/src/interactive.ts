@@ -11,6 +11,7 @@ import {
   diffLinesFromHunks,
   FullScreenRenderer,
   formatCwdForFooter,
+  hyperlink,
   InputDecoder,
   RendererRegistry,
   styleText,
@@ -103,6 +104,26 @@ export function renderCheckpointCommand(
     },
     { width, depth },
   );
+}
+
+// The authorization URL is far wider than any terminal, so it always wraps.
+// An OSC 8 hyperlink keeps every wrapped row part of one clickable link;
+// terminals without OSC 8 still show the complete URL as plain text.
+export function formatAuthUrl(
+  url: string,
+  opened: boolean,
+  provider: string,
+  depth: ColorDepth,
+  platform: string = process.platform,
+): string[] {
+  const modifier = platform === "darwin" ? "cmd" : "ctrl";
+  return [
+    opened
+      ? `  Complete the ${provider} sign-in in your browser, or open this URL:`
+      : `  Could not open a browser. Open this URL to continue:`,
+    `  ${styleText(hyperlink(url), { link: true }, depth)}`,
+    `  ${styleText(hyperlink(url, `${modifier}+click to open`), { dim: true }, depth)}`,
+  ];
 }
 
 export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
@@ -924,13 +945,7 @@ export async function runInteractive(
           paint();
         },
         onAuthUrl: (url) => {
-          const opened = openBrowser(url);
-          commitLines([
-            opened
-              ? "  Complete the OpenAI sign-in in your browser."
-              : "  Could not open a browser. Open this URL to continue:",
-            `  ${url}`,
-          ]);
+          commitLines(formatAuthUrl(url, openBrowser(url), provider.name, depth));
           paint();
         },
       });
