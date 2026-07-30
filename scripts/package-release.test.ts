@@ -94,19 +94,64 @@ describe("release packaging", () => {
     expect(await readFile(join(packageDir, "UNLICENSE"), "utf8")).toBe("Unlicense");
   });
 
-  test("platform package versions match the CLI release version", async () => {
+  test("npm release packages share the public scope, version, and repository metadata", async () => {
     const cli = JSON.parse(await readFile("packages/cli/package.json", "utf8")) as {
+      name: string;
       version: string;
+      author: string;
+      license: string;
+      main: string;
+      types: string;
+      exports: { ".": { types: string; import: string; default: string } };
+      bin: { mu: string };
+      files: string[];
+      dependencies: Record<string, string>;
+      optionalDependencies: Record<string, string>;
+      repository: { url: string };
+      publishConfig: { access: string; registry: string };
     };
-    for (const directory of [
-      "packages/ripgrep-linux-x64",
-      "packages/ripgrep-darwin-arm64",
-      "packages/ripgrep-windows-x64",
-    ]) {
+    expect(cli.name).toBe("@mu-agent/mu");
+    expect(cli.author).toBe("Spandan Chavan");
+    expect(cli.license).toBe("MIT");
+    expect(cli.repository.url).toBe("git+https://github.com/Spandan7724/mu.git");
+    expect(cli.main).toBe("./dist/index.js");
+    expect(cli.types).toBe("./dist/types/sdk/index.d.ts");
+    expect(cli.exports["."]).toEqual({
+      types: "./dist/types/sdk/index.d.ts",
+      import: "./dist/index.js",
+      default: "./dist/index.js",
+    });
+    expect(cli.bin).toEqual({ mu: "./dist/mu.js" });
+    expect(cli.files).toContain("dist/index.js");
+    expect(cli.files).toContain("dist/types");
+    expect(cli.dependencies).toEqual({ zod: "4.4.3" });
+    expect(cli.publishConfig).toEqual({
+      access: "public",
+      registry: "https://registry.npmjs.org/",
+    });
+
+    const platformPackages = {
+      "packages/ripgrep-linux-x64": "@mu-agent/ripgrep-linux-x64",
+      "packages/ripgrep-darwin-arm64": "@mu-agent/ripgrep-darwin-arm64",
+      "packages/ripgrep-windows-x64": "@mu-agent/ripgrep-windows-x64",
+    };
+    expect(cli.optionalDependencies).toEqual(
+      Object.fromEntries(Object.values(platformPackages).map((name) => [name, cli.version])),
+    );
+
+    for (const [directory, name] of Object.entries(platformPackages)) {
       const packageJson = JSON.parse(await readFile(join(directory, "package.json"), "utf8")) as {
+        name: string;
         version: string;
+        author: string;
+        repository: { url: string };
+        publishConfig: { access: string; registry: string };
       };
+      expect(packageJson.name).toBe(name);
       expect(packageJson.version).toBe(cli.version);
+      expect(packageJson.author).toBe(cli.author);
+      expect(packageJson.repository.url).toBe(cli.repository.url);
+      expect(packageJson.publishConfig).toEqual(cli.publishConfig);
     }
   });
 

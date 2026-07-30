@@ -1,8 +1,14 @@
 {
-  "name": "@mu/ripgrep-linux-x64",
+  "name": "@mu-agent/ripgrep-linux-x64",
   "version": "0.0.1",
-  "description": "Pinned ripgrep sidecar for mu on Linux x64",
+  "description": "Pinned ripgrep sidecar for Mu on Linux x64",
+  "author": "Spandan Chavan",
   "license": "MIT OR Unlicense",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spandan7724/mu.git",
+    "directory": "packages/ripgrep-linux-x64"
+  },
   "os": [
     "linux"
   ],
@@ -15,6 +21,7 @@
     "UNLICENSE"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

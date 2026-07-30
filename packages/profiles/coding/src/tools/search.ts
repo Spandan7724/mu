@@ -43,9 +43,9 @@ function bundledRipgrepPath(execPath: string, platform: NodeJS.Platform): string
 const RIPGREP_PACKAGE_BY_PLATFORM: Partial<
   Record<NodeJS.Platform, Partial<Record<NodeJS.Architecture, string>>>
 > = {
-  darwin: { arm64: "@mu/ripgrep-darwin-arm64" },
-  linux: { x64: "@mu/ripgrep-linux-x64" },
-  win32: { x64: "@mu/ripgrep-windows-x64" },
+  darwin: { arm64: "@mu-agent/ripgrep-darwin-arm64" },
+  linux: { x64: "@mu-agent/ripgrep-linux-x64" },
+  win32: { x64: "@mu-agent/ripgrep-windows-x64" },
 };
 
 export function resolveNpmRipgrepExecutable(

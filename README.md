@@ -8,13 +8,16 @@ Three surfaces, one kernel, one event stream:
 
 - **TUI** — interactive terminal app (`mu`)
 - **RPC / headless** — `mu --rpc` (NDJSON events/ops), `mu -p "..."` one-shot
-- **SDK** — `import { Agent } from "mu"` for building automations in TypeScript
+- **SDK** — `import { Agent } from "@mu-agent/mu"` for building automations in TypeScript
 
 ## Install
 
 ```sh
-# From npm (requires Bun)
-bun install -g @mu/cli
+# With npm (requires Bun)
+npm install -g @mu-agent/mu
+
+# Or with Bun
+bun install -g @mu-agent/mu
 
 # Or download the packaged native release — no runtime needed.
 # Linux:
@@ -34,6 +37,20 @@ Native packages and npm installs include a pinned, checksum-verified ripgrep sid
 fast search. npm uses an OS/CPU-specific optional package, with no postinstall download.
 The bare single-file binaries remain available and use `rg` from `PATH` or mu's built-in
 fallback.
+
+Install the same package locally to use the TypeScript SDK:
+
+```sh
+npm install @mu-agent/mu
+# or: bun add @mu-agent/mu
+```
+
+```ts
+import { Agent } from "@mu-agent/mu";
+
+const result = await new Agent().run("Summarize this directory");
+console.log(result.text);
+```
 
 Start mu and run `/login` to choose account sign-in or a stored API key. Account sign-in
 supports OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code, OpenRouter, and xAI. Anthropic
@@ -76,7 +93,7 @@ Requires [Bun](https://bun.sh).
 bun install
 bun run ci        # typecheck + lint + tests + kernel-purity check
 bun run build     # single-file binary at dist/mu
-bun run pack:npm  # publishable @mu/cli tarball in dist/
+bun run pack:npm  # publishable @mu-agent/mu tarball in dist/
 ```
 
 Building for other platforms:

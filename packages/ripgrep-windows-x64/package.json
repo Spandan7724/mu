@@ -1,8 +1,14 @@
 {
-  "name": "@mu/ripgrep-windows-x64",
+  "name": "@mu-agent/ripgrep-windows-x64",
   "version": "0.0.1",
-  "description": "Pinned ripgrep sidecar for mu on Windows x64",
+  "description": "Pinned ripgrep sidecar for Mu on Windows x64",
+  "author": "Spandan Chavan",
   "license": "MIT OR Unlicense",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spandan7724/mu.git",
+    "directory": "packages/ripgrep-windows-x64"
+  },
   "os": [
     "win32"
   ],
@@ -15,6 +21,7 @@
     "UNLICENSE"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

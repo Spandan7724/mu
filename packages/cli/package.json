@@ -1,17 +1,31 @@
 {
-  "name": "@mu/cli",
+  "name": "@mu-agent/mu",
   "version": "0.0.1",
-  "description": "A general-purpose, extensible AI agent for the terminal",
+  "description": "Mu, a general-purpose extensible AI agent platform for the terminal and TypeScript",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/types/sdk/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/sdk/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "mu": "./dist/mu.js"
   },
   "files": [
     "dist/mu.js",
+    "dist/index.js",
+    "dist/types",
+    "README.md",
+    "LICENSE",
     "THIRD_PARTY_LICENSES.txt"
   ],
   "scripts": {
-    "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js",
+    "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js && bun build ../sdk/src/index.ts --target=bun --minify --external zod --outfile dist/index.js && bun x tsc -b ../ai ../core ../sdk --force && bun ../../scripts/prepare-sdk-declarations.ts",
+    "verify:sdk": "bun run build && bun x tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun testing/sdk-consumer.ts && bun testing/sdk-consumer.ts",
     "prepack": "bun run build"
   },
   "keywords": [
@@ -19,18 +33,35 @@
     "agent",
     "cli",
     "coding-agent",
-    "tui"
+    "tui",
+    "sdk",
+    "typescript"
   ],
+  "author": "Spandan Chavan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spandan7724/mu.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Spandan7724/mu#readme",
+  "bugs": {
+    "url": "https://github.com/Spandan7724/mu/issues"
+  },
   "engines": {
     "bun": ">=1.3.0"
   },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
   "optionalDependencies": {
-    "@mu/ripgrep-darwin-arm64": "0.0.1",
-    "@mu/ripgrep-linux-x64": "0.0.1",
-    "@mu/ripgrep-windows-x64": "0.0.1"
+    "@mu-agent/ripgrep-darwin-arm64": "0.0.1",
+    "@mu-agent/ripgrep-linux-x64": "0.0.1",
+    "@mu-agent/ripgrep-windows-x64": "0.0.1"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
     "@mu/profile-coding": "workspace:*",

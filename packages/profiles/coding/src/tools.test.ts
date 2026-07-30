@@ -504,7 +504,7 @@ describe("ripgrep detection", () => {
 
   test("finds the matching optional npm platform package", async () => {
     const root = await scratch();
-    const packageRoot = join(root, "node_modules", "@mu", "ripgrep-linux-x64");
+    const packageRoot = join(root, "node_modules", "@mu-agent", "ripgrep-linux-x64");
     const executable = join(packageRoot, "vendor", "rg");
     await mkdir(join(packageRoot, "vendor"), { recursive: true });
     await writeFile(join(packageRoot, "package.json"), "{}");

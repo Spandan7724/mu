@@ -1,10 +1,35 @@
-# @mu/cli
+# @mu-agent/mu
 
-The terminal distribution of mu, a general-purpose extensible AI agent.
+The terminal and TypeScript SDK distribution of Mu, a general-purpose extensible AI
+agent platform. Coding is the default profile, not a constraint of the underlying kernel.
 
 ```sh
-bun install -g @mu/cli
+# npm (requires Bun)
+npm install -g @mu-agent/mu
+
+# Bun
+bun install -g @mu-agent/mu
 mu
+```
+
+Update a global npm or Bun installation:
+
+```sh
+mu self update
+```
+
+Install the package locally to embed Mu:
+
+```sh
+npm install @mu-agent/mu
+# or: bun add @mu-agent/mu
+```
+
+```ts
+import { Agent } from "@mu-agent/mu";
+
+const result = await new Agent().run("Summarize this directory");
+console.log(result.text);
 ```
 
 The matching OS/CPU package supplies a pinned ripgrep binary for fast search; installs
