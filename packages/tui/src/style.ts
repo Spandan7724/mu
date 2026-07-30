@@ -1,4 +1,3 @@
-
 export type ColorDepth = "truecolor" | "ansi256" | "ansi16" | "none";
 
 export function detectColorDepth(

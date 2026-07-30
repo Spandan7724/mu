@@ -3,9 +3,6 @@ import { dirname, join } from "node:path";
 import type { PermissionMode, PermissionRule } from "@mu/core";
 import type { InstructionSettings } from "./context.ts";
 
-// Reads allow; anything that writes or executes asks. This is the restrictive
-// layer the bare SDK deliberately does not have — it lives here because
-// only a domain knows which of its tools are dangerous.
 export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "*", pattern: "*", action: "ask" },
   { permission: "read", pattern: "*", action: "allow" },

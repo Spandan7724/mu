@@ -1,6 +1,3 @@
-// Kernel-purity check: @mu/core and @mu/ai must contain no domain concepts.
-// Scans source text for forbidden identifiers; fails CI on any hit.
-
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 

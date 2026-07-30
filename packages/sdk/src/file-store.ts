@@ -1,5 +1,3 @@
-// File-backed session store. Lives in the SDK rather than the kernel because
-// the kernel may not reference the filesystem.
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";

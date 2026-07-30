@@ -122,7 +122,6 @@ export interface ModelInfo {
 
 export type ThinkingLevel = "off" | "low" | "medium" | "high";
 
-// Per : resolved before every request; clients never cache tokens.
 export type Credential =
   | { type: "apiKey"; apiKey: string }
   | {

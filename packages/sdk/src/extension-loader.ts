@@ -1,5 +1,3 @@
-// Loads extensions from user paths. Bun imports .ts directly — no build step.
-// Lives in the SDK because the kernel may not touch the filesystem.
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";

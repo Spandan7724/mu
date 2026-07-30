@@ -1,7 +1,3 @@
-// Record/replay HTTP harness. Cassettes are plain JSON: record once with
-// a real key (scripts/record-fixtures.ts), replay deterministically in tests.
-// This module is fs-free; persistence belongs to the recording script.
-
 export interface RecordedInteraction {
   request: { method: string; url: string; body?: string };
   response: { status: number; headers?: Record<string, string>; body: string };

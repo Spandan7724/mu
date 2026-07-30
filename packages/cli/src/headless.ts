@@ -46,8 +46,6 @@ export async function runHeadless(
     return EXIT.usage;
   }
 
-  // The profile supplies the toolset, prompt and — importantly — the
-  // restrictive permission defaults the bare SDK does not have.
   const useBuiltIns = !options.tools;
   let profileCommands: Command[] = [];
   let profile: Profile | undefined;

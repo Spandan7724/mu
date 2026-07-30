@@ -1,4 +1,3 @@
-
 import type { CheckpointDiffFile } from "@mu/core";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";

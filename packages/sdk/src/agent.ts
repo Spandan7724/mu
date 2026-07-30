@@ -55,9 +55,6 @@ import {
   structuredOutputTool,
 } from "./structured-output.ts";
 
-// Per : tools reach the SDK only because the user registered them in their
-// own code, so the bare SDK allows them. Restrictive rules come from profiles.
-// An `ask` with no onPermission callback still denies (never hangs).
 const DEFAULT_PERMISSIONS: PermissionRule[] = [{ permission: "*", pattern: "*", action: "allow" }];
 
 const DEFAULT_SYSTEM_PROMPT =

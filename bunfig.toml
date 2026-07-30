@@ -1,5 +1,4 @@
 [install]
 exact = true
 
-# supply-chain: don't install releases younger than 3 days
 minimumReleaseAge = 4320
