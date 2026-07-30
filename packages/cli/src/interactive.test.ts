@@ -8,6 +8,7 @@ import {
   formatTerminalTitle,
   initializeInteractiveSession,
   modelPickerDescription,
+  preferredProviderModel,
   registerDeclaredRenderers,
   renderCheckpointCommand,
   renderDiffCommand,
@@ -243,5 +244,40 @@ describe("interactive model catalog", () => {
     expect(modelPickerDescription(model, "oauth")).toBe("GPT-5.6 Sol · ChatGPT plan");
     expect(modelPickerDescription(model, "apiKey")).toBe("GPT-5.6 Sol · API key");
     expect(modelPickerDescription(model, "extension")).toBe("GPT-5.6 Sol · extension");
+
+    expect(modelPickerDescription({ ...model, provider: "github-copilot" }, "oauth")).toBe(
+      "GPT-5.6 Sol · Copilot plan",
+    );
+    expect(modelPickerDescription({ ...model, provider: "kimi-coding" }, "oauth")).toBe(
+      "GPT-5.6 Sol · Kimi Code plan",
+    );
+  });
+
+  test("account login selects a provider-specific supported default", () => {
+    const models = [
+      {
+        provider: "github-copilot",
+        id: "gpt-5.6-sol",
+      },
+      {
+        provider: "github-copilot",
+        id: "gpt-5.3-codex",
+      },
+      {
+        provider: "openai-codex",
+        id: "gpt-5.6-sol",
+      },
+    ].map(
+      (model): ModelInfo => ({
+        ...model,
+        contextWindow: 400_000,
+        maxOutput: 128_000,
+        modalities: ["text"],
+        pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+    );
+
+    expect(preferredProviderModel("github-copilot", models)?.id).toBe("gpt-5.3-codex");
+    expect(preferredProviderModel("openai-codex", models)?.id).toBe("gpt-5.6-sol");
   });
 });

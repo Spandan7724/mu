@@ -1,6 +1,7 @@
 import { builtinProviderConfigs, modelApi } from "./provider-config.ts";
 import { anthropic } from "./providers/anthropic.ts";
 import { gemini } from "./providers/gemini.ts";
+import { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
 import { openai, openaiCodex } from "./providers/openai.ts";
 import { streamOpenAICompletions } from "./providers/openai-completions.ts";
 import type { Provider } from "./types.ts";
@@ -30,6 +31,7 @@ function builtinProvider(id: string): Provider {
           return streamOpenAICompletions(model, context, options);
       }
     },
+    ...(id === "github-copilot" ? { discoverModels: discoverGitHubCopilotModels } : {}),
   };
 }
 

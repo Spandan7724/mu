@@ -98,9 +98,6 @@ describe("built-in LLM providers", () => {
       id: "deepseek-chat",
       api: "openai-completions",
     });
-    expect(findModel("github-copilot/claude-sonnet-4.6")).toMatchObject({
-      api: "anthropic-messages",
-    });
     expect(findModel("xai/grok-4.5")).toMatchObject({ api: "openai-responses" });
     expect(findModel("cloudflare-ai-gateway/openai/gpt-5.2")).toMatchObject({
       id: "gpt-5.2",

@@ -14,6 +14,14 @@ const OPENAI_SCOPE =
   "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const OPENAI_AUTH_CLAIM = "https://api.openai.com/auth";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
+const GITHUB_COPILOT_PROVIDER = "github-copilot";
+const GITHUB_COPILOT_HEADERS = {
+  "user-agent": "GitHubCopilotChat/0.35.0",
+  "editor-version": "vscode/1.107.0",
+  "editor-plugin-version": "copilot-chat/0.35.0",
+  "copilot-integration-id": "vscode-chat",
+} as const;
+const GITHUB_COPILOT_API_VERSION = "2026-06-01";
 const REFRESH_SKEW_MS = 60_000;
 const REFRESH_TIMEOUT_MS = 15_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
@@ -41,6 +49,7 @@ export interface StoredPlanOAuth {
   accountId?: string;
   idToken?: string;
   baseUrl?: string;
+  availableModelIds?: string[];
 }
 
 export type StoredCredential = StoredApiKey | StoredPlanOAuth;
@@ -148,6 +157,10 @@ function parseStoredCredential(value: unknown, provider: string): StoredCredenti
       expiresAt: value.expiresAt,
       ...(typeof value.accountId === "string" ? { accountId: value.accountId } : {}),
       ...(typeof value.baseUrl === "string" ? { baseUrl: value.baseUrl } : {}),
+      ...(Array.isArray(value.availableModelIds) &&
+      value.availableModelIds.every((id): id is string => typeof id === "string")
+        ? { availableModelIds: value.availableModelIds }
+        : {}),
     };
   }
   throw new Error(`Invalid stored credentials for "${provider}"`);
@@ -384,7 +397,15 @@ function runtimeCredential(stored: StoredPlanOAuth): Credential {
     accessToken: stored.accessToken,
     ...(stored.accountId ? { accountId: stored.accountId } : {}),
     ...(stored.baseUrl ? { baseUrl: stored.baseUrl } : {}),
+    ...(stored.availableModelIds ? { availableModelIds: stored.availableModelIds } : {}),
   };
+}
+
+function storedOAuthIsFresh(provider: string, stored: StoredPlanOAuth, now: number): boolean {
+  return (
+    stored.expiresAt > now + REFRESH_SKEW_MS &&
+    (provider !== GITHUB_COPILOT_PROVIDER || stored.availableModelIds !== undefined)
+  );
 }
 
 async function readJsonObject(
@@ -441,6 +462,100 @@ function copilotBaseUrl(token: string): string {
     : "https://api.individual.githubcopilot.com";
 }
 
+function copilotModelEntries(value: unknown): Record<string, unknown>[] {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as { data?: unknown }).data)
+  ) {
+    throw new Error("GitHub Copilot models response is invalid");
+  }
+  return (value as { data: unknown[] }).data.filter(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === "object" && entry !== null && !Array.isArray(entry),
+  );
+}
+
+function copilotModelSelectable(model: Record<string, unknown>): boolean {
+  const policy =
+    typeof model.policy === "object" && model.policy !== null
+      ? (model.policy as Record<string, unknown>)
+      : undefined;
+  const capabilities =
+    typeof model.capabilities === "object" && model.capabilities !== null
+      ? (model.capabilities as Record<string, unknown>)
+      : undefined;
+  const supports =
+    typeof capabilities?.supports === "object" && capabilities.supports !== null
+      ? (capabilities.supports as Record<string, unknown>)
+      : undefined;
+  return (
+    model.model_picker_enabled === true &&
+    policy?.state !== "disabled" &&
+    supports?.tool_calls !== false
+  );
+}
+
+async function fetchCopilotModels(
+  accessToken: string,
+  baseUrl: string,
+  doFetch: typeof fetch,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>[]> {
+  const response = await doFetch(`${baseUrl.replace(/\/+$/, "")}/models`, {
+    headers: {
+      accept: "application/json",
+      authorization: `Bearer ${accessToken}`,
+      ...GITHUB_COPILOT_HEADERS,
+      "x-github-api-version": GITHUB_COPILOT_API_VERSION,
+    },
+    ...(signal ? { signal } : {}),
+  });
+  return copilotModelEntries(await readJsonObject(response, "GitHub Copilot model discovery"));
+}
+
+async function availableCopilotModelIds(
+  accessToken: string,
+  baseUrl: string,
+  doFetch: typeof fetch,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return (await fetchCopilotModels(accessToken, baseUrl, doFetch, signal))
+    .filter(copilotModelSelectable)
+    .map((model) => model.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+async function enableCopilotModels(
+  accessToken: string,
+  baseUrl: string,
+  doFetch: typeof fetch,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const models = await fetchCopilotModels(accessToken, baseUrl, doFetch, signal);
+  await Promise.all(
+    models.map(async (model) => {
+      if (typeof model.id !== "string" || model.id.length === 0) return;
+      await doFetch(
+        `${baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(model.id)}/policy`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${accessToken}`,
+            ...GITHUB_COPILOT_HEADERS,
+            "openai-intent": "chat-policy",
+            "x-interaction-type": "chat-policy",
+          },
+          body: JSON.stringify({ state: "enabled" }),
+          ...(signal ? { signal } : {}),
+        },
+      ).catch(() => undefined);
+    }),
+  );
+  return availableCopilotModelIds(accessToken, baseUrl, doFetch, signal);
+}
+
 async function refreshPlanOAuth(
   provider: string,
   previous: StoredPlanOAuth,
@@ -473,15 +588,12 @@ async function refreshPlanOAuth(
     });
     return oauthTokens(await readJsonObject(response, "xAI token refresh"), previous, 5 * 60_000);
   }
-  if (provider === "github-copilot") {
+  if (provider === GITHUB_COPILOT_PROVIDER) {
     const response = await doFetch("https://api.github.com/copilot_internal/v2/token", {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${previous.refreshToken}`,
-        "user-agent": "GitHubCopilotChat/0.35.0",
-        "editor-version": "vscode/1.107.0",
-        "editor-plugin-version": "copilot-chat/0.35.0",
-        "copilot-integration-id": "vscode-chat",
+        ...GITHUB_COPILOT_HEADERS,
       },
       signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
     });
@@ -489,11 +601,18 @@ async function refreshPlanOAuth(
     if (typeof value.token !== "string" || typeof value.expires_at !== "number") {
       throw new Error("GitHub Copilot token refresh returned invalid credentials");
     }
+    const accessToken = value.token;
+    const baseUrl = copilotBaseUrl(accessToken);
+    const discoverySignal = AbortSignal.timeout(REFRESH_TIMEOUT_MS);
+    const availableModelIds = previous.availableModelIds
+      ? await availableCopilotModelIds(accessToken, baseUrl, doFetch, discoverySignal)
+      : await enableCopilotModels(accessToken, baseUrl, doFetch, discoverySignal);
     return {
       ...previous,
-      accessToken: value.token,
+      accessToken,
       expiresAt: value.expires_at * 1_000 - 5 * 60_000,
-      baseUrl: copilotBaseUrl(value.token),
+      baseUrl,
+      availableModelIds,
     };
   }
   if (provider === OPENAI_CODEX_PROVIDER) {
@@ -514,7 +633,7 @@ export function createCredentialResolver(
     if (stored.type === "apiKey") return { type: "apiKey", apiKey: stored.apiKey };
 
     const now = (options.now ?? Date.now)();
-    if (stored.expiresAt > now + REFRESH_SKEW_MS) {
+    if (storedOAuthIsFresh(provider, stored, now)) {
       return runtimeCredential(stored);
     }
     const activeRefresh = refreshes.get(provider);
@@ -528,10 +647,9 @@ export function createCredentialResolver(
         throw new Error(`${provider} login is no longer available`);
       }
       const latestNow = (options.now ?? Date.now)();
-      const next =
-        latest.expiresAt > latestNow + REFRESH_SKEW_MS
-          ? latest
-          : await refreshPlanOAuth(provider, latest, options);
+      const next = storedOAuthIsFresh(provider, latest, latestNow)
+        ? latest
+        : await refreshPlanOAuth(provider, latest, options);
       if (next !== latest) {
         latestFile.providers[provider] = next;
         await writeAuthFile(latestFile, options);
@@ -941,10 +1059,7 @@ export async function loginGitHubCopilot(options: PlanLoginOptions = {}): Promis
     headers: {
       accept: "application/json",
       authorization: `Bearer ${githubToken}`,
-      "user-agent": "GitHubCopilotChat/0.35.0",
-      "editor-version": "vscode/1.107.0",
-      "editor-plugin-version": "copilot-chat/0.35.0",
-      "copilot-integration-id": "vscode-chat",
+      ...GITHUB_COPILOT_HEADERS,
     },
     ...(options.signal ? { signal: options.signal } : {}),
   });
@@ -954,14 +1069,25 @@ export async function loginGitHubCopilot(options: PlanLoginOptions = {}): Promis
   if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
     throw new Error("GitHub Copilot response is missing expires_at");
   }
+  const baseUrl = copilotBaseUrl(accessToken);
+  const discoverySignal = options.signal
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(REFRESH_TIMEOUT_MS)])
+    : AbortSignal.timeout(REFRESH_TIMEOUT_MS);
+  const availableModelIds = await enableCopilotModels(
+    accessToken,
+    baseUrl,
+    doFetch,
+    discoverySignal,
+  );
   await saveOAuthCredential(
-    "github-copilot",
+    GITHUB_COPILOT_PROVIDER,
     {
       type: "oauth",
       accessToken,
       refreshToken: githubToken,
       expiresAt: expiresAt * 1_000 - 5 * 60_000,
-      baseUrl: copilotBaseUrl(accessToken),
+      baseUrl,
+      availableModelIds,
     },
     options,
   );

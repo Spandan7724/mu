@@ -110,9 +110,7 @@ export async function discoverOpenAICodexModels(
     throw new Error("Could not discover ChatGPT models: invalid catalog response");
   }
   const catalogModels = (payload as { models: unknown[] }).models;
-  if (catalogModels.length === 0) {
-    throw new Error("Could not discover ChatGPT models: catalog returned no models");
-  }
+  if (catalogModels.length === 0) return undefined;
   const discovered = catalogModels
     .map((model) => codexModelInfo(model, options.currentModels))
     .filter((model): model is ModelInfo & { priority: number } => model !== undefined)

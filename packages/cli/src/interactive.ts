@@ -189,8 +189,33 @@ export function modelPickerDescription(
   source: "apiKey" | "oauth" | "extension",
 ): string {
   const authentication =
-    source === "oauth" ? "ChatGPT plan" : source === "apiKey" ? "API key" : "extension";
+    source === "oauth"
+      ? (accountLoginProviders.find((provider) => provider.id === model.provider)?.description ??
+        "account")
+      : source === "apiKey"
+        ? "API key"
+        : "extension";
   return model.name ? `${model.name} · ${authentication}` : authentication;
+}
+
+const PREFERRED_ACCOUNT_MODELS: Readonly<Record<string, string>> = {
+  "openai-codex": "gpt-5.6-sol",
+  "github-copilot": "gpt-5.3-codex",
+  "kimi-coding": "kimi-for-coding",
+  openrouter: "auto",
+  xai: "grok-4.3",
+};
+
+export function preferredProviderModel(
+  provider: string,
+  models: readonly ModelInfo[],
+): ModelInfo | undefined {
+  const providerModels = models.filter((model) => model.provider === provider);
+  const preferred = PREFERRED_ACCOUNT_MODELS[provider];
+  return (
+    (preferred ? providerModels.find((model) => model.id === preferred) : undefined) ??
+    providerModels[0]
+  );
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -826,11 +851,7 @@ export async function runInteractive(
   }
 
   async function selectProviderModel(provider: string): Promise<void> {
-    const providerModels = availableModels(extensions).filter(
-      (candidate) => candidate.provider === provider,
-    );
-    const model =
-      providerModels.find((candidate) => candidate.id === "gpt-5.6-sol") ?? providerModels[0];
+    const model = preferredProviderModel(provider, availableModels(extensions));
     if (!model) return;
     const ref = `${model.provider}/${model.id}`;
     agent.setModel(ref);

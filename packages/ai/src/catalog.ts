@@ -302,7 +302,24 @@ function message(error: unknown): string {
 }
 
 async function discoverModelSources(options: ModelDiscoveryOptions): Promise<DiscoveryResult> {
-  const sources: Promise<DiscoveryResult | undefined>[] = [discoverPublicModels(options)];
+  const discovered: ModelInfo[] = [];
+  const authoritativeProviders = new Set<string>();
+  const failures: string[] = [];
+  let currentModels = models;
+  try {
+    const publicModels = await discoverPublicModels(options);
+    discovered.push(...publicModels.models);
+    for (const provider of publicModels.authoritativeProviders) {
+      authoritativeProviders.add(provider);
+    }
+    const merged = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]));
+    for (const model of publicModels.models) merged.set(`${model.provider}/${model.id}`, model);
+    currentModels = [...merged.values()];
+  } catch (error) {
+    failures.push(message(error));
+  }
+
+  const sources: Promise<DiscoveryResult | undefined>[] = [];
   const getCredentials = options.getCredentials;
   for (const provider of options.providers ?? registeredProviders.values()) {
     if (!provider.discoverModels) continue;
@@ -313,7 +330,7 @@ async function discoverModelSources(options: ModelDiscoveryOptions): Promise<Dis
           ...(options.signal ? { signal: options.signal } : {}),
           ...(getCredentials ? { getCredentials: () => getCredentials(provider.id) } : {}),
           ...(options.clientVersion ? { clientVersion: options.clientVersion } : {}),
-          currentModels: models,
+          currentModels,
         })
         .then((discovered) => {
           if (discovered === undefined) return undefined;
@@ -329,19 +346,19 @@ async function discoverModelSources(options: ModelDiscoveryOptions): Promise<Dis
   }
 
   const settled = await Promise.allSettled(sources);
-  const discovered: ModelInfo[] = [];
-  const authoritativeProviders = new Set<string>();
-  const failures: string[] = [];
   for (const result of settled) {
     if (result.status === "rejected") {
       failures.push(message(result.reason));
       continue;
     }
     if (!result.value) continue;
-    discovered.push(...result.value.models);
     for (const provider of result.value.authoritativeProviders) {
+      for (let index = discovered.length - 1; index >= 0; index--) {
+        if (discovered[index]?.provider === provider) discovered.splice(index, 1);
+      }
       authoritativeProviders.add(provider);
     }
+    discovered.push(...result.value.models);
   }
   if (authoritativeProviders.size === 0) {
     throw new Error(failures[0] ?? "Could not discover models: no discovery source was available");

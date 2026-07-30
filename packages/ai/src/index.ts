@@ -23,6 +23,7 @@ export {
 } from "./provider-config.ts";
 export { anthropic, streamAnthropic } from "./providers/anthropic.ts";
 export { gemini, streamGemini } from "./providers/gemini.ts";
+export { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
 export {
   discoverOpenAICodexModels,
   openai,

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createCredentialResolver,
   loginGitHubCopilot,
@@ -90,7 +90,9 @@ describe("coding-plan account authentication", () => {
 
   test("exchanges a GitHub device token for a Copilot request token", async () => {
     const authFile = await authPath();
-    const fakeFetch = (async (input: string | URL | Request) => {
+    let modelFetches = 0;
+    const enabled: string[] = [];
+    const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/login/device/code")) {
         return Response.json({
@@ -104,6 +106,29 @@ describe("coding-plan account authentication", () => {
       if (url.endsWith("/login/oauth/access_token")) {
         return Response.json({ access_token: "github-access" });
       }
+      if (url.endsWith("/models") && init?.method !== "POST") {
+        modelFetches++;
+        return Response.json({
+          data: [
+            {
+              id: "gpt-5.3-codex",
+              model_picker_enabled: modelFetches > 1,
+              policy: { state: modelFetches > 1 ? "enabled" : "disabled" },
+              capabilities: { supports: { tool_calls: true } },
+            },
+            {
+              id: "gpt-no-tools",
+              model_picker_enabled: true,
+              policy: { state: "enabled" },
+              capabilities: { supports: { tool_calls: false } },
+            },
+          ],
+        });
+      }
+      if (url.includes("/models/") && url.endsWith("/policy")) {
+        enabled.push(decodeURIComponent(url.split("/models/")[1]?.replace("/policy", "") ?? ""));
+        return new Response("", { status: 200 });
+      }
       return Response.json({
         token: "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=x",
         expires_at: Math.floor(Date.now() / 1_000) + 3_600,
@@ -114,6 +139,66 @@ describe("coding-plan account authentication", () => {
     expect(await createCredentialResolver({ authFile })("github-copilot")).toMatchObject({
       type: "oauth",
       baseUrl: "https://api.individual.githubcopilot.com",
+      availableModelIds: ["gpt-5.3-codex"],
+    });
+    expect(enabled).toEqual(["gpt-5.3-codex", "gpt-no-tools"]);
+  });
+
+  test("repairs an existing Copilot login that predates account model discovery", async () => {
+    const authFile = await authPath();
+    await mkdir(dirname(authFile), { recursive: true });
+    await writeFile(
+      authFile,
+      JSON.stringify({
+        version: 1,
+        activeProvider: "github-copilot",
+        providers: {
+          "github-copilot": {
+            type: "oauth",
+            accessToken: "old-copilot-token",
+            refreshToken: "github-access",
+            expiresAt: Date.now() + 3_600_000,
+            baseUrl: "https://api.individual.githubcopilot.com",
+          },
+        },
+      }),
+    );
+    let modelFetches = 0;
+    let exchanges = 0;
+    const fakeFetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/copilot_internal/v2/token")) {
+        exchanges++;
+        return Response.json({
+          token: "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=x",
+          expires_at: Math.floor(Date.now() / 1_000) + 3_600,
+        });
+      }
+      if (url.endsWith("/models")) {
+        modelFetches++;
+        return Response.json({
+          data: [
+            {
+              id: "gpt-5.3-codex",
+              model_picker_enabled: modelFetches > 1,
+              policy: { state: modelFetches > 1 ? "enabled" : "disabled" },
+              capabilities: { supports: { tool_calls: true } },
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/policy")) return new Response("", { status: 200 });
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as typeof fetch;
+
+    expect(
+      await createCredentialResolver({ authFile, fetch: fakeFetch })("github-copilot"),
+    ).toMatchObject({
+      availableModelIds: ["gpt-5.3-codex"],
+    });
+    expect(exchanges).toBe(1);
+    expect((await readAuthFile({ authFile })).providers["github-copilot"]).toMatchObject({
+      availableModelIds: ["gpt-5.3-codex"],
     });
   });
 

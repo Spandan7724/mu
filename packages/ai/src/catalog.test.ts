@@ -10,6 +10,7 @@ import {
   registerModels,
 } from "./catalog.ts";
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
+import { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
 import { openaiCodex } from "./providers/openai.ts";
 import type { ModelInfo, Provider } from "./types.ts";
 
@@ -306,7 +307,7 @@ describe("catalog refresh merges rather than replaces", () => {
 
     expect(findModel("openai-codex/gpt-5.6-sol")).toBeDefined();
     expect(findModel("openai-codex/gpt-5.6-terra")).toBeDefined();
-    expect(warnings).toContain("Could not discover ChatGPT models: catalog returned no models");
+    expect(warnings).toEqual([]);
   });
 
   test("empty provider discovery preserves every coding-plan fallback", async () => {
@@ -369,5 +370,45 @@ describe("catalog refresh merges rather than replaces", () => {
     for (const [provider, model] of Object.entries(codingPlanFallbacks)) {
       expect(findModel(`${provider}/${model}`)).toBeDefined();
     }
+  });
+
+  test("Copilot account discovery filters the fresh public catalog", async () => {
+    await refreshModels({
+      providers: [
+        {
+          id: "github-copilot",
+          discoverModels: discoverGitHubCopilotModels,
+        } as unknown as Provider,
+      ],
+      getCredentials: async () => ({
+        type: "oauth",
+        accessToken: "copilot-token",
+        availableModelIds: ["claude-sonnet-4.6"],
+      }),
+      fetch: async () =>
+        Response.json({
+          "github-copilot": {
+            models: {
+              supported: {
+                id: "claude-sonnet-4.6",
+                name: "Supported",
+                tool_call: true,
+                limit: { context: 400_000, output: 128_000 },
+              },
+              unavailable: {
+                id: "gpt-account-unavailable",
+                name: "Unavailable",
+                tool_call: true,
+                limit: { context: 400_000, output: 128_000 },
+              },
+            },
+          },
+        }),
+    });
+
+    expect(findModel("github-copilot/claude-sonnet-4.6")).toMatchObject({
+      api: "anthropic-messages",
+    });
+    expect(findModel("github-copilot/gpt-account-unavailable")).toBeUndefined();
   });
 });

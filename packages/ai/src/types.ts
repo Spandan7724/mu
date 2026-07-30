@@ -130,6 +130,7 @@ export type Credential =
       accountId?: string;
       baseUrl?: string;
       headers?: Record<string, string>;
+      availableModelIds?: string[];
     };
 
 // Returning undefined falls through to explicit/env API-key resolution. This
