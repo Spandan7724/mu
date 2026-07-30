@@ -315,14 +315,16 @@ async function discoverModelSources(options: ModelDiscoveryOptions): Promise<Dis
           ...(options.clientVersion ? { clientVersion: options.clientVersion } : {}),
           currentModels: models,
         })
-        .then((discovered) =>
-          discovered === undefined
-            ? undefined
-            : {
-                models: discovered,
-                authoritativeProviders: new Set([provider.id]),
-              },
-        ),
+        .then((discovered) => {
+          if (discovered === undefined) return undefined;
+          if (discovered.length === 0) {
+            throw new Error(`Could not discover ${provider.id} models: catalog returned no models`);
+          }
+          return {
+            models: discovered,
+            authoritativeProviders: new Set([provider.id]),
+          };
+        }),
     );
   }
 

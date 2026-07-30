@@ -10,7 +10,18 @@ import {
   registerModels,
 } from "./catalog.ts";
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
+import { openaiCodex } from "./providers/openai.ts";
 import type { ModelInfo, Provider } from "./types.ts";
+
+const codingPlanFallbacks = {
+  "openai-codex": "gpt-5.6-sol",
+  "github-copilot": "gpt-5.3-codex",
+  "kimi-coding": "kimi-for-coding",
+  openrouter: "auto",
+  xai: "grok-4.3",
+  zai: "glm-5.1",
+  "qwen-token-plan": "qwen3.7-max",
+} as const;
 
 describe("catalog", () => {
   test("finds model by provider/id ref", () => {
@@ -265,5 +276,98 @@ describe("catalog refresh merges rather than replaces", () => {
 
     expect(discovered).toEqual([providerModel]);
     expect(warnings).toEqual(["models.dev is offline"]);
+  });
+
+  test("an empty Codex account catalog restores bundled plan models", async () => {
+    const warnings: string[] = [];
+    await refreshModels({
+      providers: [openaiCodex],
+      getCredentials: async () => ({
+        type: "oauth",
+        accessToken: "access",
+        accountId: "account",
+      }),
+      fetch: async (input) =>
+        String(input).includes("backend-api/codex/models")
+          ? Response.json({ models: [] })
+          : Response.json({
+              google: {
+                models: {
+                  usable: {
+                    id: "gemini-fallback-test",
+                    tool_call: true,
+                    limit: { context: 1_000_000, output: 64_000 },
+                  },
+                },
+              },
+            }),
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    expect(findModel("openai-codex/gpt-5.6-sol")).toBeDefined();
+    expect(findModel("openai-codex/gpt-5.6-terra")).toBeDefined();
+    expect(warnings).toContain("Could not discover ChatGPT models: catalog returned no models");
+  });
+
+  test("empty provider discovery preserves every coding-plan fallback", async () => {
+    const warnings: string[] = [];
+    const providers = Object.keys(codingPlanFallbacks).map(
+      (id) =>
+        ({
+          id,
+          discoverModels: async () => [],
+        }) as unknown as Provider,
+    );
+    await refreshModels({
+      providers,
+      fetch: async () =>
+        Response.json({
+          google: {
+            models: {
+              usable: {
+                id: "gemini-provider-fallback-test",
+                tool_call: true,
+                limit: { context: 1_000_000, output: 64_000 },
+              },
+            },
+          },
+        }),
+      onWarning: (warning) => warnings.push(warning),
+    });
+
+    for (const [provider, model] of Object.entries(codingPlanFallbacks)) {
+      expect(findModel(`${provider}/${model}`)).toBeDefined();
+      expect(warnings).toContain(
+        `Could not discover ${provider} models: catalog returned no models`,
+      );
+    }
+  });
+
+  test("empty public catalogs preserve every coding-plan fallback", async () => {
+    await refreshModels({
+      providers: [],
+      fetch: async () =>
+        Response.json({
+          google: {
+            models: {
+              usable: {
+                id: "gemini-public-fallback-test",
+                tool_call: true,
+                limit: { context: 1_000_000, output: 64_000 },
+              },
+            },
+          },
+          "github-copilot": { models: {} },
+          "kimi-for-coding": { models: {} },
+          openrouter: { models: {} },
+          xai: { models: {} },
+          "zai-coding-plan": { models: {} },
+          "alibaba-token-plan": { models: {} },
+        }),
+    });
+
+    for (const [provider, model] of Object.entries(codingPlanFallbacks)) {
+      expect(findModel(`${provider}/${model}`)).toBeDefined();
+    }
   });
 });

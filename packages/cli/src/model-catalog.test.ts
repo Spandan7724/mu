@@ -25,7 +25,7 @@ function model(id: string): ModelInfo {
 
 function cacheBody(models: ModelInfo[]): string {
   return JSON.stringify({
-    version: 4,
+    version: 5,
     updatedAt: "2026-07-27T00:00:00.000Z",
     models,
   });
@@ -56,7 +56,7 @@ describe("model catalog cache", () => {
       version: number;
       models: ModelInfo[];
     };
-    expect(stored.version).toBe(4);
+    expect(stored.version).toBe(5);
     expect(stored.models).toEqual(discovered);
 
     const secondRegistered: ModelInfo[][] = [];
@@ -93,7 +93,7 @@ describe("model catalog cache", () => {
     await writeFile(
       file,
       JSON.stringify({
-        version: 3,
+        version: 4,
         updatedAt: "2026-07-27T00:00:00.000Z",
         models: [model("gpt-stale")],
       }),

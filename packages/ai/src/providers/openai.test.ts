@@ -120,6 +120,20 @@ describe("discoverOpenAICodexModels", () => {
     expect(await discoverOpenAICodexModels(options)).toBeUndefined();
     expect(fetched).toBe(false);
   });
+
+  test("rejects an empty account catalog so bundled Codex models remain available", async () => {
+    const options: ProviderModelDiscoveryOptions = {
+      currentModels: [],
+      getCredentials: async () => ({
+        type: "oauth",
+        accessToken: "access",
+        accountId: "account",
+      }),
+      fetch: (async () => Response.json({ models: [] })) as unknown as typeof fetch,
+    };
+
+    await expect(discoverOpenAICodexModels(options)).rejects.toThrow("catalog returned no models");
+  });
 });
 
 describe("streamOpenAI", () => {

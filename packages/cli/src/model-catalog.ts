@@ -10,7 +10,7 @@ import {
   registerModels,
 } from "mu";
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 2;
 

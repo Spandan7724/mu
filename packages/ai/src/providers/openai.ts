@@ -109,12 +109,16 @@ export async function discoverOpenAICodexModels(
   if (typeof payload !== "object" || payload === null || !Array.isArray((payload as Json).models)) {
     throw new Error("Could not discover ChatGPT models: invalid catalog response");
   }
-  const discovered = (payload as { models: unknown[] }).models
+  const catalogModels = (payload as { models: unknown[] }).models;
+  if (catalogModels.length === 0) {
+    throw new Error("Could not discover ChatGPT models: catalog returned no models");
+  }
+  const discovered = catalogModels
     .map((model) => codexModelInfo(model, options.currentModels))
     .filter((model): model is ModelInfo & { priority: number } => model !== undefined)
     .sort((left, right) => left.priority - right.priority)
     .map(({ priority: _priority, ...model }) => model);
-  if (discovered.length === 0 && (payload as { models: unknown[] }).models.length > 0) {
+  if (discovered.length === 0) {
     throw new Error("Could not discover ChatGPT models: catalog contained no compatible models");
   }
   return discovered;
