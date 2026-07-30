@@ -78,6 +78,15 @@ describe("parseArgs", () => {
     expect(parseArgs(["--help"]).mode).toBe("help");
     expect(parseArgs(["-v"]).mode).toBe("version");
   });
+
+  test("self update selects the package updater", () => {
+    expect(parseArgs(["self", "update"])).toMatchObject({
+      mode: "self-update",
+      errors: [],
+    });
+    expect(parseArgs(["self"]).errors[0]).toContain('expects the "update" command');
+    expect(HELP_TEXT).toContain("mu self update");
+  });
 });
 
 describe("runHeadless", () => {

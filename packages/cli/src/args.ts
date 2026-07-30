@@ -1,5 +1,5 @@
 export interface ParsedArgs {
-  mode: "tui" | "headless" | "rpc" | "help" | "version";
+  mode: "tui" | "headless" | "rpc" | "help" | "version" | "self-update";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -55,6 +55,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--rpc":
         parsed.mode = "rpc";
         break;
+      case "self":
+        if (argv[i + 1] !== "update") {
+          parsed.errors.push('self expects the "update" command');
+          break;
+        }
+        parsed.mode = "self-update";
+        i++;
+        break;
       case "--json":
         parsed.json = true;
         break;
@@ -106,6 +114,7 @@ Usage:
   mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
+  mu self update           update a global npm or Bun installation
 
 Options:
   -p, --print <prompt>     headless one-shot mode

@@ -24,6 +24,7 @@ import {
   sessionStoreForProfile,
 } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
+import { runSelfUpdate } from "./self-update.ts";
 
 const VERSION = cliPackage.version;
 
@@ -74,6 +75,15 @@ async function main(): Promise<number> {
       case "version":
         io.stdout(`mu ${VERSION}\n`);
         return 0;
+      case "self-update":
+        return runSelfUpdate(
+          {
+            currentVersion: VERSION,
+            packageName: cliPackage.name,
+            entryPath: process.argv[1],
+          },
+          io,
+        );
       case "headless":
         return runHeadless(args, {}, io);
       case "rpc": {

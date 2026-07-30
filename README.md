@@ -19,6 +19,9 @@ npm install -g @mu-agent/mu
 # Or with Bun
 bun install -g @mu-agent/mu
 
+# Update an existing global npm or Bun installation
+mu self update
+
 # Or download the packaged native release — no runtime needed.
 # Linux:
 tar -xzf mu-linux-x64.tar.gz
