@@ -9,6 +9,9 @@ import { truncateOutput, withNotice } from "../truncate.ts";
 export interface ToolDeps {
   root: string;
   state: FileState;
+  instructions?: {
+    instructionsForPath: (path: string) => Promise<{ text: string; sources: string[] }>;
+  };
 }
 
 // Every path is resolved against the session root and must stay inside it.
@@ -111,10 +114,18 @@ export function readTool(deps: ToolDeps) {
       const slice = allLines.slice(start, limit ? start + limit : undefined);
       const numbered = slice.map((line, i) => `${String(start + i + 1).padStart(5)}  ${line}`);
       const body = withNotice(truncateOutput(numbered.join("\n")), "file is large");
+      const instructions = await deps.instructions?.instructionsForPath(absolute);
+      const text = [body || "(empty file)", instructions?.text].filter(Boolean).join("\n\n");
 
       return {
-        content: [{ type: "text", text: body || "(empty file)" }],
-        details: { path: absolute, lines: allLines.length },
+        content: [{ type: "text", text }],
+        details: {
+          path: absolute,
+          lines: allLines.length,
+          ...(instructions && instructions.sources.length > 0
+            ? { loadedInstructions: instructions.sources }
+            : {}),
+        },
       };
     },
   });

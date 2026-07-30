@@ -84,6 +84,12 @@ export interface AgentOptions {
   // Typed context messages seeded once at the start of a session (profiles use
   // this for environment + project instructions — never a system-prompt edit).
   initialMessages?: AgentMessage[];
+  // Domain-neutral refresh seam for profile-owned context. Returned messages
+  // are persisted before the next run, including after session resume.
+  refreshContext?: (
+    messages: AgentMessage[],
+    context: { sessionId: string },
+  ) => Promise<AgentMessage[]> | AgentMessage[];
   // Compaction (M7). Auto-compaction runs when the context crosses the
   // threshold; the profile supplies what its domain must not lose.
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
@@ -1021,10 +1027,15 @@ export class Agent {
     const initial =
       seeded.length === 0 && this.options.initialMessages ? this.options.initialMessages : [];
     for (const message of initial) this.tree.appendMessage(message);
+    const refreshed =
+      (await this.options.refreshContext?.([...seeded, ...initial], {
+        sessionId: this._sessionId,
+      })) ?? [];
+    for (const message of refreshed) this.tree.appendMessage(message);
 
     const context: AgentContext = {
       systemPrompt,
-      messages: [...initial, ...seeded],
+      messages: [...seeded, ...initial, ...refreshed],
       ...(tools.length > 0 ? { tools } : {}),
     };
     await this.beginCheckpoint(this.tree.head);

@@ -20,6 +20,7 @@ export async function optionsFromProfile(
     // Profile defaults come first so per-run rules override them (last match wins).
     permissions: [...profile.permissionDefaults, ...(overrides.permissions ?? [])],
     ...(contextMessages.length > 0 ? { initialMessages: contextMessages } : {}),
+    ...(profile.refreshContext ? { refreshContext: profile.refreshContext } : {}),
     ...(profile.carryoverExtractor ? { carryoverExtractor: profile.carryoverExtractor } : {}),
     ...((overrides.runtime ?? profile.runtime)
       ? { runtime: overrides.runtime ?? profile.runtime }

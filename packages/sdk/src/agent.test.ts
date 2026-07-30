@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type AgentEvent,
+  customMessage,
   type PermissionRequest,
   type ProfileRuntime,
   type ProfileRuntimeHost,
@@ -690,6 +691,42 @@ describe("session persistence", () => {
     const secondRequest = provider.requests[1];
     expect(secondRequest?.messages.length).toBeGreaterThanOrEqual(3);
     expect(agent.session.messagesAt().length).toBe(4);
+  });
+
+  test("profile context refreshes once, persists, and runs again after resume", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "one" }] },
+      { content: [{ type: "text", text: "two" }] },
+      { content: [{ type: "text", text: "three" }] },
+    ]);
+    let revision = "one";
+    const refreshContext = (messages: import("@mu/core").AgentMessage[]) => {
+      const type = `instructions-${revision}`;
+      return messages.some((message) => message.role === "custom" && message.customType === type)
+        ? []
+        : [customMessage(type, revision)];
+    };
+    const first = agentWith(provider, { refreshContext });
+    await first.run("first");
+    await first.run("second");
+
+    expect(
+      provider.requests[0]?.messages.filter((message) => message.role === "user"),
+    ).toHaveLength(2);
+    expect(first.session.messagesAt().filter((message) => message.role === "custom")).toHaveLength(
+      1,
+    );
+
+    revision = "two";
+    const resumed = agentWith(provider, { refreshContext });
+    resumed.resume(first.session);
+    await resumed.run("third");
+    const custom = resumed.session.messagesAt().filter((message) => message.role === "custom");
+    expect(custom).toHaveLength(2);
+    const latest = custom.at(-1);
+    expect(
+      latest?.role === "custom" && latest.content[0]?.type === "text" && latest.content[0].text,
+    ).toBe("two");
   });
 });
 

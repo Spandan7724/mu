@@ -12,7 +12,12 @@ import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
+import {
+  DEFAULT_PROFILE,
+  profileOptionsFromArgs,
+  resolveProfile,
+  sessionStoreForProfile,
+} from "./profiles.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
 // 130 aborted — so callers can branch on how a run ended.
@@ -49,7 +54,10 @@ export async function runHeadless(
   let resolved: AgentOptions = options;
   if (!options.tools) {
     try {
-      profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+      profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE, profileOptionsFromArgs(args));
+      for (const diagnostic of profile.diagnostics ?? []) {
+        io.stderr(`mu: instruction warning: ${diagnostic}\n`);
+      }
       profileCommands = profile.commands ?? [];
       resolved = await optionsFromProfile(profile, await resolveCliModel(args.model), options);
       if (!resolved.session) {

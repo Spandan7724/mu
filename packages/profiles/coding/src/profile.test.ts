@@ -198,7 +198,11 @@ describe("project context discovery", () => {
     await writeFile(join(root, "AGENTS.md"), "always use tabs");
     const profile = await codingProfile({ root });
 
-    const messages = (await profile.contextMessages?.()) ?? [];
+    const initial = (await profile.contextMessages?.()) ?? [];
+    const messages = [
+      ...initial,
+      ...((await profile.refreshContext?.(initial, { sessionId: "test-session" })) ?? []),
+    ];
     expect(messages.length).toBeGreaterThanOrEqual(2); // environment + AGENTS.md
     for (const message of messages) expect(message.role).toBe("custom");
     const joined = messages

@@ -22,3 +22,26 @@ the direct resume command when an interactive session closes. Use `/new` to clea
 terminal and start a fresh chat without deleting the previous saved session. Use
 `/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
 behavior, including while the agent is running.
+
+Mu loads coding instructions from `~/.mu/AGENTS.md` and from the active project, stopping
+at its Git root. `AGENTS.override.md` takes precedence over `AGENTS.md`; Claude-compatible
+fallback files, `.mu/rules/`, `.claude/rules/`, conditional `paths` frontmatter, and safe
+`@file` imports are supported. Run `/instructions` to see the exact loaded files and
+warnings, `/instructions reload` (or `/reload`) to rescan, or start with
+`--no-instructions` to disable loading for one invocation.
+
+Instruction settings can be placed in user or project `.mu/config.json`; project values
+override user values:
+
+```json
+{
+  "instructions": {
+    "enabled": true,
+    "maxBytes": 32768,
+    "fallbackFilenames": [".mu/AGENTS.md", "CLAUDE.md"],
+    "projectRootMarkers": [".git"],
+    "imports": true,
+    "claudeRules": true
+  }
+}
+```

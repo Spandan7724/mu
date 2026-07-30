@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   type AgentMessage,
   type AnyTool,
@@ -8,7 +10,12 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
-import { codingEnvironment, contextMessages, environmentMessage } from "./context.ts";
+import {
+  codingEnvironment,
+  environmentMessage,
+  InstructionLoader,
+  type InstructionSettings,
+} from "./context.ts";
 import {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
@@ -31,19 +38,49 @@ export interface CodingProfileOptions {
   spawn?: Parameters<typeof bashTool>[0]["spawn"];
   spawner?: ConstructorParameters<typeof ProcessManager>[0];
   processEvents?: ConstructorParameters<typeof ProcessManager>[1];
+  home?: string;
+  instructions?: InstructionSettings;
+  managedInstructionPaths?: string[];
 }
 
 export interface CodingProfile extends Profile {
   fileState: FileState;
   todos: TodoStore;
   processes: ProcessManager;
+  instructions: InstructionLoader;
+}
+
+async function userInstructionSettings(home: string): Promise<InstructionSettings> {
+  try {
+    const parsed = JSON.parse(await readFile(join(home, ".mu", "config.json"), "utf8")) as {
+      instructions?: unknown;
+    };
+    return parsed.instructions &&
+      typeof parsed.instructions === "object" &&
+      !Array.isArray(parsed.instructions)
+      ? (parsed.instructions as InstructionSettings)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 export async function codingProfile(options: CodingProfileOptions = {}): Promise<CodingProfile> {
   const root = resolve(options.root ?? process.cwd());
+  const home = resolve(options.home ?? homedir());
   const fileState = new FileState();
   const todos = new TodoStore();
-  const deps = { root, state: fileState };
+  const projectConfig = await loadProjectConfig(root);
+  const instructionLoader = new InstructionLoader({
+    root,
+    home,
+    ...(await userInstructionSettings(home)),
+    ...(projectConfig.instructions ?? {}),
+    ...(options.instructions ?? {}),
+    ...(options.managedInstructionPaths ? { managedPaths: options.managedInstructionPaths } : {}),
+  });
+  await instructionLoader.reload();
+  const deps = { root, state: fileState, instructions: instructionLoader };
   const processes = new ProcessManager(
     options.spawner ?? shellSpawner(root),
     options.processEvents ?? {},
@@ -61,7 +98,6 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...taskTools(processes),
   ] as AnyTool[];
 
-  const projectConfig = await loadProjectConfig(root);
   const runtime: ProfileRuntime = {
     attach: (host) => {
       processes.setEvents({
@@ -106,7 +142,41 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     environment: () => codingEnvironment(root),
     contextMessages: async (): Promise<AgentMessage[]> => [
       environmentMessage(await codingEnvironment(root)),
-      ...(await contextMessages(root)),
+    ],
+    refreshContext: (messages, context) =>
+      instructionLoader.refreshedMessages(messages, context.sessionId),
+    diagnostics: instructionLoader.snapshot.diagnostics.map((diagnostic) =>
+      diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+    ),
+    commands: [
+      {
+        name: "instructions",
+        description: "Show or reload instruction files",
+        run: async (ctx) => {
+          const action = ctx.args.trim();
+          if (action && action !== "reload") {
+            return { handled: true, message: "Usage: /instructions [reload]" };
+          }
+          if (action === "reload") await instructionLoader.reload({ resetNested: true });
+          return {
+            handled: true,
+            message: instructionLoader.formatStatus(
+              action === "reload" ? "instructions reloaded" : "instructions",
+            ),
+          };
+        },
+      },
+      {
+        name: "reload",
+        description: "Reload instruction files",
+        run: async () => {
+          await instructionLoader.reload({ resetNested: true });
+          return {
+            handled: true,
+            message: instructionLoader.formatStatus("instructions reloaded"),
+          };
+        },
+      },
     ],
     // What compaction must not lose: which files this session touched.
     carryoverExtractor: () => ({
@@ -120,6 +190,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     fileState,
     todos,
     processes,
+    instructions: instructionLoader,
   };
 }
 
@@ -128,8 +199,17 @@ export { gitConfigNullDevice, ShadowCheckpointProvider } from "./checkpoint.ts";
 export {
   codingEnvironment,
   contextMessages,
+  DEFAULT_INSTRUCTION_FALLBACKS,
+  DEFAULT_INSTRUCTION_MAX_BYTES,
+  DEFAULT_PROJECT_ROOT_MARKERS,
   discoverContextFiles,
   environmentMessage,
+  type InstructionDiagnostic,
+  InstructionLoader,
+  type InstructionLoaderOptions,
+  type InstructionSettings,
+  type InstructionSnapshot,
+  type InstructionSource,
 } from "./context.ts";
 export {
   CODING_PERMISSION_DEFAULTS,

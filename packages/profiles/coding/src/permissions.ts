@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PermissionMode, PermissionRule } from "@mu/core";
+import type { InstructionSettings } from "./context.ts";
 
 // Reads allow; anything that writes or executes asks. This is the restrictive
 // layer the bare SDK deliberately does not have — it lives here because
@@ -56,6 +57,7 @@ export const CODING_PERMISSION_MODES: PermissionMode[] = [
 export interface ProjectConfig {
   permissions?: PermissionRule[];
   model?: string;
+  instructions?: InstructionSettings;
 }
 
 export function configPath(root: string): string {

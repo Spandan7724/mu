@@ -17,7 +17,12 @@ import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
 import { initializeModelCatalog, type ModelCatalog } from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
+import {
+  DEFAULT_PROFILE,
+  profileOptionsFromArgs,
+  resolveProfile,
+  sessionStoreForProfile,
+} from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 
 const VERSION = cliPackage.version;
@@ -75,7 +80,13 @@ async function main(): Promise<number> {
         // Permission asks are forwarded to the embedder, which answers with a
         // permission_reply op; nothing is auto-denied in RPC mode.
         const pending = new Map<string, (outcome: "allow" | "deny") => void>();
-        const profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+        const profile = await resolveProfile(
+          args.profile ?? DEFAULT_PROFILE,
+          profileOptionsFromArgs(args),
+        );
+        for (const diagnostic of profile.diagnostics ?? []) {
+          io.stderr(`mu: instruction warning: ${diagnostic}\n`);
+        }
         let resolved = withStoredCredentials(
           await optionsFromProfile(profile, await resolveCliModel(args.model)),
         );

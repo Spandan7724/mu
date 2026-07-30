@@ -9,6 +9,7 @@ export interface ParsedArgs {
   maxCostUsd?: number | undefined;
   permissionMode?: string | undefined;
   allowAll: boolean;
+  noInstructions: boolean;
   errors: string[];
 }
 
@@ -26,7 +27,13 @@ function numberFlag(raw: string | undefined, name: string, errors: string[]): nu
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = { mode: "tui", json: false, allowAll: false, errors: [] };
+  const parsed: ParsedArgs = {
+    mode: "tui",
+    json: false,
+    allowAll: false,
+    noInstructions: false,
+    errors: [],
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
@@ -72,6 +79,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--allow-all":
         parsed.allowAll = true;
         break;
+      case "--no-instructions":
+        parsed.noInstructions = true;
+        break;
       case "--permission-mode":
         parsed.permissionMode = argv[++i];
         if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
@@ -108,6 +118,7 @@ Options:
       --permission-mode <mode>
                            default | accept-edits | plan-readonly | yolo
       --allow-all          alias for --permission-mode yolo
+      --no-instructions    disable global and project instruction loading
   -h, --help               show this help
   -v, --version            show the version
 `;

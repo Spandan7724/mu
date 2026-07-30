@@ -55,7 +55,12 @@ import {
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import { DEFAULT_PROFILE, resolveProfile, sessionStoreForProfile } from "./profiles.ts";
+import {
+  DEFAULT_PROFILE,
+  profileOptionsFromArgs,
+  resolveProfile,
+  sessionStoreForProfile,
+} from "./profiles.ts";
 import { resumePickerItems } from "./session-picker.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
@@ -217,7 +222,10 @@ export async function runInteractive(
   let profile: Profile | undefined;
   let resolved = options;
   if (!options.tools) {
-    profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE);
+    profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE, profileOptionsFromArgs(args));
+    for (const diagnostic of profile.diagnostics ?? []) {
+      process.stderr.write(`mu: instruction warning: ${diagnostic}\n`);
+    }
     profileCommands = profile.commands ?? [];
     profileRenderers = profile.renderers ?? {};
     resolved = await optionsFromProfile(profile, modelRef, options);

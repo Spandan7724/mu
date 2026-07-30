@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { ExtensionHost } from "mu";
-import { parseArgs } from "./args.ts";
+import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 
 function io() {
@@ -60,6 +60,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--permission-mode", "plan-readonly"]).permissionMode).toBe("plan-readonly");
     expect(parseArgs(["--allow-all"]).allowAll).toBe(true);
     expect(parseArgs(["--permission-mode"]).errors[0]).toContain("requires a value");
+  });
+
+  test("instruction loading can be disabled for one invocation", () => {
+    expect(parseArgs(["--no-instructions"]).noInstructions).toBe(true);
+    expect(HELP_TEXT).toContain("--no-instructions");
   });
 
   test("unknown flags and bad numbers are reported", () => {
@@ -195,7 +200,13 @@ describe("runHeadless", () => {
     const provider = new FakeProvider([]);
     const { io: sink } = io();
     const code = await runHeadless(
-      { mode: "headless", json: false, allowAll: false, errors: [] },
+      {
+        mode: "headless",
+        json: false,
+        allowAll: false,
+        noInstructions: false,
+        errors: [],
+      },
       base(provider),
       sink,
     );

@@ -50,6 +50,14 @@ export interface Profile {
   // Domain context injected per session as typed messages, never as a
   // system-prompt edit (cache hygiene).
   contextMessages?: () => Promise<AgentMessage[]> | AgentMessage[];
+  // Re-evaluates domain context against the active transcript before a run.
+  // The profile returns only new typed messages that should be appended.
+  refreshContext?: (
+    messages: AgentMessage[],
+    context: { sessionId: string },
+  ) => Promise<AgentMessage[]> | AgentMessage[];
+  // Actionable startup diagnostics from profile-owned resource discovery.
+  diagnostics?: string[];
   // Compaction carryover: what this domain must not forget when summarizing.
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
   // Snapshot/restore for this domain (coding: a shadow repository).

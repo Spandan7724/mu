@@ -49,4 +49,10 @@ describe("optionsFromProfile", () => {
       override,
     );
   });
+
+  test("propagates the profile context refresh hook", async () => {
+    const refreshContext = () => [];
+    const source = { ...profile(provider("profile")), refreshContext };
+    expect((await optionsFromProfile(source, "fake/model")).refreshContext).toBe(refreshContext);
+  });
 });

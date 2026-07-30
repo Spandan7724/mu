@@ -23,6 +23,12 @@ export async function resolveProfile(
 
 export const DEFAULT_PROFILE = "coding";
 
+export function profileOptionsFromArgs(args: {
+  noInstructions?: boolean;
+}): Record<string, unknown> {
+  return args.noInstructions ? { instructions: { enabled: false } } : {};
+}
+
 export async function sessionStoreForProfile(
   profile: Profile,
   root?: string,
