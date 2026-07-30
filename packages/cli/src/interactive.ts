@@ -919,6 +919,10 @@ export async function runInteractive(
     try {
       await provider.login({
         signal: controller.signal,
+        onDeviceCode: (_url, code) => {
+          commitLines([`  device code · ${code}`]);
+          paint();
+        },
         onAuthUrl: (url) => {
           const opened = openBrowser(url);
           commitLines([

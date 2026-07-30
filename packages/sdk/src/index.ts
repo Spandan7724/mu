@@ -8,6 +8,7 @@ export type {
   Usage,
 } from "@mu/ai";
 export {
+  builtinProviderConfigs,
   defaultModelRef,
   discoverModels,
   findModel,
@@ -69,14 +70,22 @@ export type {
   OpenAiCallbackServer,
   OpenAiLoginOptions,
   OpenAiLoginResult,
+  PlanLoginCallbackServer,
+  PlanLoginOptions,
+  PlanLoginResult,
   StoredApiKey,
   StoredCredential,
   StoredOpenAiOAuth,
+  StoredPlanOAuth,
 } from "./auth.ts";
 export {
   createCredentialResolver,
   defaultAuthFile,
+  loginGitHubCopilot,
+  loginKimiCoding,
   loginOpenAI,
+  loginOpenRouter,
+  loginXai,
   preferredAuthProvider,
   readAuthFile,
   removeStoredCredential,

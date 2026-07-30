@@ -35,12 +35,13 @@ fast search. npm uses an OS/CPU-specific optional package, with no postinstall d
 The bare single-file binaries remain available and use `rg` from `PATH` or mu's built-in
 fallback.
 
-Start mu and run `/login` to choose account sign-in or a stored API key. OpenAI
-account sign-in uses your ChatGPT plan. Environment variables remain available for
-unattended use:
+Start mu and run `/login` to choose account sign-in or a stored API key. Account sign-in
+supports OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code, OpenRouter, and xAI. Anthropic
+is API-key-only. Z.AI Coding Plan and Qwen Token Plan are also available through their
+API-key endpoints. Environment variables remain available for unattended use:
 
 ```sh
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY / provider-specific key
 mu                             # interactive; /login configures authentication
 mu --resume <session-id>       # continue a saved interactive session
 mu -p "fix the failing test"   # one-shot

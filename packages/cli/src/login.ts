@@ -1,7 +1,17 @@
-import { type AuthFile, listModels, loginOpenAI } from "mu";
+import {
+  type AuthFile,
+  builtinProviderConfigs,
+  listModels,
+  loginGitHubCopilot,
+  loginKimiCoding,
+  loginOpenAI,
+  loginOpenRouter,
+  loginXai,
+} from "mu";
 
 export interface AccountLoginOptions {
   onAuthUrl?: (url: string) => void | Promise<void>;
+  onDeviceCode?: (url: string, code: string) => void | Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -52,6 +62,34 @@ export const accountLoginProviders: AccountLoginProvider[] = [
     successMessage: "Signed in to OpenAI with your ChatGPT plan.",
     login: loginOpenAI,
   },
+  {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    description: "Copilot plan",
+    successMessage: "Signed in to GitHub Copilot.",
+    login: loginGitHubCopilot,
+  },
+  {
+    id: "kimi-coding",
+    name: "Kimi Code",
+    description: "Kimi Code plan",
+    successMessage: "Signed in to Kimi Code.",
+    login: loginKimiCoding,
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    description: "OpenRouter account",
+    successMessage: "Signed in to OpenRouter.",
+    login: loginOpenRouter,
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    description: "Grok plan",
+    successMessage: "Signed in to xAI.",
+    login: loginXai,
+  },
 ];
 
 export function providerName(provider: string): string {
@@ -60,6 +98,11 @@ export function providerName(provider: string): string {
     openai: "OpenAI",
     "openai-codex": "OpenAI",
     google: "Google",
+    "github-copilot": "GitHub Copilot",
+    "kimi-coding": "Kimi Code",
+    openrouter: "OpenRouter",
+    xai: "xAI",
+    zai: "Z.AI",
   };
   return (
     known[provider] ??
@@ -73,9 +116,9 @@ export function providerName(provider: string): string {
 export function apiKeyLoginProviders(): ApiKeyLoginProvider[] {
   return [
     ...new Set(
-      listModels()
-        .map((model) => model.provider)
-        .filter((provider) => provider !== "openai-codex"),
+      [...builtinProviderConfigs.keys(), ...listModels().map((model) => model.provider)].filter(
+        (provider) => provider !== "openai-codex",
+      ),
     ),
   ].map((id) => ({
     id,

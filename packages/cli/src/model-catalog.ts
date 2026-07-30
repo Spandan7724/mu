@@ -10,7 +10,7 @@ import {
   registerModels,
 } from "mu";
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 2;
 
@@ -74,6 +74,18 @@ function isModel(value: unknown): value is ModelInfo {
     return false;
   }
   if (value.name !== undefined && typeof value.name !== "string") return false;
+  if (
+    value.api !== undefined &&
+    ![
+      "anthropic-messages",
+      "google-generative-ai",
+      "google-vertex",
+      "openai-completions",
+      "openai-responses",
+    ].includes(String(value.api))
+  ) {
+    return false;
+  }
   if (value.baseUrl !== undefined && typeof value.baseUrl !== "string") return false;
   if (value.thinking !== undefined && typeof value.thinking !== "boolean") return false;
   if (

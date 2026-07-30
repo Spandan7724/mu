@@ -1,4 +1,3 @@
-import { resolveCredential } from "../auth.ts";
 import { AiError } from "../errors.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -11,9 +10,8 @@ import type {
   StreamOpts,
   ThinkingLevel,
 } from "../types.ts";
+import { credentialBaseUrl, credentialHeaders, resolveProviderCredential } from "./request.ts";
 import { driveStream, postSse, updateCost } from "./shared.ts";
-
-const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
 type Json = Record<string, unknown>;
 
@@ -152,16 +150,25 @@ export function streamGemini(
   opts?: StreamOpts,
 ): AssistantStream {
   return driveStream(model, opts, async (stream, output) => {
-    const baseUrl = opts?.baseUrl ?? model.baseUrl ?? DEFAULT_BASE_URL;
-    const url = `${baseUrl}/v1beta/models/${model.id}:streamGenerateContent?alt=sse`;
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
       async () => {
-        const credential = await resolveCredential("google", "GEMINI_API_KEY", opts);
+        const credential = await resolveProviderCredential(model, opts);
         if (credential.type !== "apiKey") {
-          throw new AiError("auth", "Gemini supports API-key auth only in v1");
+          throw new AiError("auth", `${model.provider} requires API-key auth`);
         }
-        return postSse(url, { "x-goog-api-key": credential.apiKey, ...opts?.headers }, body, opts);
+        const baseUrl = credentialBaseUrl(model, credential, opts).replace(/\/+$/, "");
+        const path =
+          model.provider === "google-vertex"
+            ? `/models/${model.id}:streamGenerateContent?alt=sse`
+            : `/models/${model.id}:streamGenerateContent?alt=sse`;
+        const url = `${baseUrl}${path}`;
+        return postSse(
+          url,
+          { ...credentialHeaders(model, credential), ...opts?.headers },
+          body,
+          opts,
+        );
       },
       {
         ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),

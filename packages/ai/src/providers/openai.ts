@@ -1,4 +1,3 @@
-import { resolveCredential } from "../auth.ts";
 import { classifyHttpError } from "../errors.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
@@ -13,9 +12,14 @@ import type {
   ProviderModelDiscoveryOptions,
   StreamOpts,
 } from "../types.ts";
+import {
+  apiPath,
+  credentialBaseUrl,
+  credentialHeaders,
+  resolveProviderCredential,
+} from "./request.ts";
 import { driveStream, postSse, updateCost } from "./shared.ts";
 
-const API_BASE_URL = "https://api.openai.com";
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const MAX_OPENAI_CACHE_KEY_LENGTH = 64;
 const DEFAULT_CODEX_MAX_OUTPUT = 128_000;
@@ -85,7 +89,7 @@ export async function discoverOpenAICodexModels(
   options: ProviderModelDiscoveryOptions,
 ): Promise<ModelInfo[] | undefined> {
   const credential = await options.getCredentials?.();
-  if (!credential || credential.type !== "oauth") return undefined;
+  if (!credential || credential.type !== "oauth" || !credential.accountId) return undefined;
 
   const url = new URL(`${CODEX_BASE_URL}/models`);
   url.searchParams.set("client_version", options.clientVersion ?? "0.0.0");
@@ -121,7 +125,10 @@ function resolveAuthMode(
   opts?: StreamOpts,
   model?: ModelInfo,
 ): { url: string; headers: Record<string, string> } {
-  if (credential.type === "oauth") {
+  if (model?.provider === "openai-codex") {
+    if (credential.type !== "oauth" || !credential.accountId) {
+      throw new Error("OpenAI Codex requires a ChatGPT account credential");
+    }
     const base = (opts?.baseUrl ?? CODEX_BASE_URL).replace(/\/+$/, "");
     const sessionId = codexSessionId(opts?.sessionId);
     return {
@@ -140,10 +147,11 @@ function resolveAuthMode(
       },
     };
   }
-  const base = (opts?.baseUrl ?? model?.baseUrl ?? API_BASE_URL).replace(/\/+$/, "");
+  if (!model) throw new Error("A model is required");
+  const base = credentialBaseUrl(model, credential, opts);
   return {
-    url: `${base}/v1/responses`,
-    headers: { authorization: `Bearer ${credential.apiKey}` },
+    url: apiPath(base, "/responses"),
+    headers: credentialHeaders(model, credential),
   };
 }
 
@@ -256,11 +264,7 @@ export function streamOpenAI(
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
       async () => {
-        const credential = await resolveCredential(
-          model.provider,
-          model.provider === "openai" ? "OPENAI_API_KEY" : undefined,
-          opts,
-        );
+        const credential = await resolveProviderCredential(model, opts);
         const { url, headers } = resolveAuthMode(credential, opts, model);
         return postSse(url, { ...headers, ...opts?.headers }, body, opts);
       },

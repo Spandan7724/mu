@@ -97,11 +97,20 @@ export interface ModelPricing {
   cacheWrite: number;
 }
 
+export type LlmApi =
+  | "anthropic-messages"
+  | "google-generative-ai"
+  | "google-vertex"
+  | "openai-completions"
+  | "openai-responses";
+
 export interface ModelInfo {
   provider: string; // "anthropic" | "openai" | "google" | custom
   id: string;
   name?: string;
+  api?: LlmApi;
   baseUrl?: string;
+  headers?: Record<string, string>;
   contextWindow: number;
   maxOutput: number;
   modalities: ("text" | "image")[];
@@ -116,7 +125,13 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high";
 // Per : resolved before every request; clients never cache tokens.
 export type Credential =
   | { type: "apiKey"; apiKey: string }
-  | { type: "oauth"; accessToken: string; accountId: string };
+  | {
+      type: "oauth";
+      accessToken: string;
+      accountId?: string;
+      baseUrl?: string;
+      headers?: Record<string, string>;
+    };
 
 // Returning undefined falls through to explicit/env API-key resolution. This
 // lets one provider-aware resolver serve a multi-provider Agent.

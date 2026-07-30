@@ -1,4 +1,3 @@
-import { resolveCredential } from "../auth.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -15,9 +14,14 @@ import type {
   ToolResultContent,
   UserContent,
 } from "../types.ts";
+import {
+  apiPath,
+  credentialBaseUrl,
+  credentialHeaders,
+  resolveProviderCredential,
+} from "./request.ts";
 import { driveStream, postSse, updateCost } from "./shared.ts";
 
-const DEFAULT_BASE_URL = "https://api.anthropic.com";
 const API_VERSION = "2023-06-01";
 
 const CACHE_CONTROL = { type: "ephemeral" } as const;
@@ -64,7 +68,7 @@ function convertAssistantBlocks(content: AssistantContent[]): Json[] {
   return blocks;
 }
 
-function convertMessages(messages: AiMessage[]): Json[] {
+function convertMessages(messages: AiMessage[], cacheControl: boolean): Json[] {
   const out: Json[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i] as AiMessage;
@@ -94,7 +98,7 @@ function convertMessages(messages: AiMessage[]): Json[] {
   }
   // Recent-message cache breakpoint.
   const last = out[out.length - 1];
-  if (last && last.role === "user") {
+  if (cacheControl && last && last.role === "user") {
     const content = last.content as Json[];
     const lastBlock = content[content.length - 1];
     if (lastBlock) lastBlock.cache_control = CACHE_CONTROL;
@@ -122,10 +126,11 @@ function buildThinking(model: ModelInfo, level: ThinkingLevel | undefined, body:
 }
 
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
+  const cacheControl = model.provider === "anthropic";
   const body: Json = {
     model: model.id,
     max_tokens: opts?.maxTokens ?? model.maxOutput,
-    messages: convertMessages(ctx.messages),
+    messages: convertMessages(ctx.messages, cacheControl),
     stream: true,
   };
 
@@ -138,7 +143,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
       type: "text",
       text: section.text,
       // Cache breakpoint at the static→dynamic boundary.
-      ...(i === lastStatic ? { cache_control: CACHE_CONTROL } : {}),
+      ...(cacheControl && i === lastStatic ? { cache_control: CACHE_CONTROL } : {}),
     }));
   }
 
@@ -147,7 +152,9 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema,
-      ...(i === (ctx.tools?.length ?? 0) - 1 ? { cache_control: CACHE_CONTROL } : {}),
+      ...(cacheControl && i === (ctx.tools?.length ?? 0) - 1
+        ? { cache_control: CACHE_CONTROL }
+        : {}),
     }));
   }
 
@@ -186,22 +193,17 @@ export function streamAnthropic(
   opts?: StreamOpts,
 ): AssistantStream {
   return driveStream(model, opts, async (stream, output) => {
-    const baseUrl = opts?.baseUrl ?? model.baseUrl ?? DEFAULT_BASE_URL;
     const body = buildBody(model, ctx, opts);
     const response = await withRetries(
       async () => {
-        const credential = await resolveCredential("anthropic", "ANTHROPIC_API_KEY", opts);
+        const credential = await resolveProviderCredential(model, opts);
+        const baseUrl = credentialBaseUrl(model, credential, opts);
         const headers: Record<string, string> = {
           "anthropic-version": API_VERSION,
-          ...(credential.type === "apiKey"
-            ? { "x-api-key": credential.apiKey }
-            : {
-                authorization: `Bearer ${credential.accessToken}`,
-                "anthropic-beta": "oauth-2025-04-20",
-              }),
+          ...credentialHeaders(model, credential),
           ...opts?.headers,
         };
-        return postSse(`${baseUrl}/v1/messages`, headers, body, opts);
+        return postSse(apiPath(baseUrl, "/v1/messages"), headers, body, opts);
       },
       {
         ...(opts?.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
