@@ -67,7 +67,10 @@ async function defaultSpawn(
 ): Promise<SpawnResult> {
   const proc = Bun.spawn(shellCommand(command), {
     cwd,
-    detached: true,
+    // `detached` creates the POSIX process group used by
+    // terminateProcessTree. Windows taskkill can walk descendants directly,
+    // and this foreground command never needs to outlive mu.
+    detached: process.platform !== "win32",
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",

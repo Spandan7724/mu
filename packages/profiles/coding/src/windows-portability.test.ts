@@ -91,7 +91,7 @@ describe("Windows portability", () => {
     expect(textOf(result)).toContain("native-shell-ok");
   });
 
-  test("background commands execute through PTY or ConPTY", async () => {
+  test("background commands execute through the host-native transport", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-native-pty-"));
     const manager = new ProcessManager(shellSpawner(root));
     const command =

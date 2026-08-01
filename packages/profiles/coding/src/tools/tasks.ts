@@ -14,6 +14,55 @@ import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
   return ({ command, onOutput, cols, rows }): ManagedProcessHandle => {
+    // Bun 1.3.14's built-in terminal is POSIX-only. Use ordinary pipes on
+    // Windows until Bun exposes a ConPTY-backed terminal there; commands still
+    // run in native PowerShell and taskkill still terminates their full tree.
+    if (process.platform === "win32") {
+      const proc = Bun.spawn(shellCommand(command, { interactive: true }), {
+        cwd: root,
+        detached: true,
+        env: process.env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+
+      const pump = async (stream: ReadableStream<Uint8Array>) => {
+        const decoder = new TextDecoder();
+        for await (const chunk of stream) {
+          const text = decoder.decode(chunk, { stream: true });
+          if (text) onOutput(text);
+        }
+        const final = decoder.decode();
+        if (final) onOutput(final);
+      };
+      const outputDrained = Promise.all([pump(proc.stdout), pump(proc.stderr)]);
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+      return {
+        write: (data) => {
+          proc.stdin.write(data);
+          proc.stdin.flush();
+        },
+        // Pipes have no terminal dimensions.
+        resize: () => {},
+        detach: () => proc.unref(),
+        kill: () => {
+          terminateProcessTree(proc, "SIGTERM");
+          killTimer = setTimeout(() => {
+            if (proc.exitCode === null) terminateProcessTree(proc, "SIGKILL");
+          }, 1_000);
+          killTimer.unref?.();
+        },
+        exited: Promise.all([proc.exited, outputDrained])
+          .then(([code]) => code ?? null)
+          .finally(() => {
+            if (killTimer) clearTimeout(killTimer);
+          }),
+      };
+    }
+
     const decoder = new TextDecoder();
     let flushed = false;
     let resolveTerminalExit: (() => void) | undefined;
