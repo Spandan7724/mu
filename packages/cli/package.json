@@ -4,10 +4,10 @@
   "description": "Mu, a general-purpose extensible AI agent platform for the terminal and TypeScript",
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/types/sdk/index.d.ts",
+  "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/types/sdk/index.d.ts",
+      "types": "./dist/types/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
@@ -24,8 +24,8 @@
     "THIRD_PARTY_LICENSES.txt"
   ],
   "scripts": {
-    "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js && bun build ../sdk/src/index.ts --target=bun --minify --external zod --outfile dist/index.js && bun x tsc -b ../ai ../core ../sdk --force && bun ../../scripts/prepare-sdk-declarations.ts",
-    "verify:sdk": "bun run build && bun x tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --types bun testing/sdk-consumer.ts && bun testing/sdk-consumer.ts",
+    "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu.js && bun build src/sdk.ts --target=bun --minify --external zod --outfile dist/index.js && bun ../../node_modules/typescript/bin/tsc -b ./tsconfig.json --force && bun ../../scripts/prepare-sdk-declarations.ts",
+    "verify:sdk": "bun run build && bun ../../node_modules/typescript/bin/tsc --noEmit --strict --allowImportingTsExtensions --target ESNext --module ESNext --moduleResolution bundler --types bun testing/sdk-consumer.ts && bun testing/sdk-consumer.ts",
     "prepack": "bun run build"
   },
   "keywords": [

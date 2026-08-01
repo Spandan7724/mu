@@ -26,10 +26,19 @@ npm install @mu-agent/mu
 ```
 
 ```ts
-import { Agent } from "@mu-agent/mu";
+import { Agent, createAgent } from "@mu-agent/mu";
 
-const result = await new Agent().run("Summarize this directory");
-console.log(result.text);
+// A domain-neutral agent with a general prompt and no tools.
+const assistant = new Agent();
+console.log((await assistant.run("Explain how an AI agent loop works")).text);
+
+// Mu's built-in coding profile: file, search, shell, task, and checkpoint tools.
+const codingAgent = await createAgent({
+  profile: "coding",
+  profileOptions: { root: process.cwd() },
+});
+console.log((await codingAgent.run("Summarize this directory")).text);
+await codingAgent.shutdown();
 ```
 
 The matching OS/CPU package supplies a pinned ripgrep binary for fast search; installs

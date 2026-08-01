@@ -1,4 +1,4 @@
-import { Agent, MemorySessionStore, tool } from "@mu-agent/mu";
+import { Agent, createAgent, MemorySessionStore, tool } from "@mu-agent/mu";
 import { z } from "zod";
 
 const echo = tool({
@@ -14,3 +14,14 @@ const agent = new Agent({
 });
 
 if (!(agent instanceof Agent)) throw new Error("SDK package export did not construct Agent");
+
+const codingAgent = await createAgent({
+  profile: "coding",
+  profileOptions: {
+    root: process.cwd(),
+    home: process.cwd(),
+    instructions: { enabled: false },
+  },
+});
+if (!(codingAgent instanceof Agent)) throw new Error("SDK package did not create coding Agent");
+await codingAgent.shutdown();

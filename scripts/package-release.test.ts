@@ -115,9 +115,9 @@ describe("release packaging", () => {
     expect(cli.license).toBe("MIT");
     expect(cli.repository.url).toBe("git+https://github.com/Spandan7724/mu.git");
     expect(cli.main).toBe("./dist/index.js");
-    expect(cli.types).toBe("./dist/types/sdk/index.d.ts");
+    expect(cli.types).toBe("./dist/types/index.d.ts");
     expect(cli.exports["."]).toEqual({
-      types: "./dist/types/sdk/index.d.ts",
+      types: "./dist/types/index.d.ts",
       import: "./dist/index.js",
       default: "./dist/index.js",
     });
