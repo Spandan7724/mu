@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -37,3 +41,147 @@ jobs:
       - run: bun run build:windows
       - run: ./dist/mu-windows-x64.exe --version
       - run: ./dist/mu-windows-x64.exe --help
+
+  publish-platforms:
+    name: Publish ${{ matrix.package }}
+    needs:
+      - test
+      - windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            directory: packages/ripgrep-linux-x64
+            package: "@mu-agent/ripgrep-linux-x64"
+          - target: darwin-arm64
+            directory: packages/ripgrep-darwin-arm64
+            package: "@mu-agent/ripgrep-darwin-arm64"
+          - target: windows-x64
+            directory: packages/ripgrep-windows-x64
+            package: "@mu-agent/ripgrep-windows-x64"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Check whether the version is already published
+        id: registry
+        working-directory: ${{ matrix.directory }}
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          set +e
+          output=$(npm view "${{ matrix.package }}@$version" version --prefer-online 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${{ matrix.package }}@$version already exists; skipping publish."
+          elif grep -q "E404" <<< "$output"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "${{ matrix.package }}@$version is not published yet."
+          else
+            echo "$output" >&2
+            exit "$status"
+          fi
+      - name: Prepare pinned ripgrep package
+        if: steps.registry.outputs.exists == 'false'
+        run: bun scripts/prepare-ripgrep-package.ts ${{ matrix.target }} ${{ matrix.directory }}
+      - name: Publish platform package with npm trusted publishing
+        if: steps.registry.outputs.exists == 'false'
+        working-directory: ${{ matrix.directory }}
+        run: npm publish --access public
+      - name: Wait for platform package registry replication
+        if: steps.registry.outputs.exists == 'false'
+        working-directory: ${{ matrix.directory }}
+        shell: bash
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          for attempt in $(seq 1 60); do
+            if npm view "${{ matrix.package }}@$version" version --prefer-online >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "${{ matrix.package }}@$version did not reach the public registry within 10 minutes." >&2
+          exit 1
+
+  publish-npm:
+    name: Publish @mu-agent/mu
+    needs: publish-platforms
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - name: Check whether the version is already published
+        id: registry
+        working-directory: packages/cli
+        shell: bash
+        run: |
+          package=$(node -p 'require("./package.json").name')
+          version=$(node -p 'require("./package.json").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          set +e
+          output=$(npm view "$package@$version" version --prefer-online 2>&1)
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$package@$version already exists; skipping publish."
+          elif grep -q "E404" <<< "$output"; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "$package@$version is not published yet."
+          else
+            echo "$output" >&2
+            exit "$status"
+          fi
+      - name: Publish CLI and SDK with npm trusted publishing
+        if: steps.registry.outputs.exists == 'false'
+        working-directory: packages/cli
+        run: npm publish --access public
+      - name: Wait for main package registry replication
+        if: steps.registry.outputs.exists == 'false'
+        working-directory: packages/cli
+        shell: bash
+        run: |
+          package=$(node -p 'require("./package.json").name')
+          version=${{ steps.registry.outputs.version }}
+          for attempt in $(seq 1 60); do
+            if npm view "$package@$version" version --prefer-online >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "$package@$version did not reach the public registry within 10 minutes." >&2
+          exit 1
+      - name: Smoke-test the published CLI
+        if: steps.registry.outputs.exists == 'false'
+        shell: bash
+        run: |
+          prefix="$RUNNER_TEMP/mu-registry-smoke"
+          npm install --prefix "$prefix" "@mu-agent/mu@${{ steps.registry.outputs.version }}" --prefer-online
+          "$prefix/node_modules/.bin/mu" --version

@@ -54,6 +54,18 @@ async function fixture() {
 }
 
 describe("release packaging", () => {
+  test("publishes npm packages through trusted publishing after CI", async () => {
+    const ci = await readFile(".github/workflows/ci.yml", "utf8");
+    const release = await readFile(".github/workflows/release.yml", "utf8");
+
+    expect(ci).toContain("id-token: write");
+    expect(ci).toContain("npm publish --access public");
+    expect(ci).toContain("github.ref == 'refs/heads/main'");
+    expect(ci).not.toContain("NPM_CONFIG_TOKEN");
+    expect(release).not.toContain("npm publish");
+    expect(release).not.toContain("NPM_CONFIG_TOKEN");
+  });
+
   test("the pinned artifacts cover every native release target", () => {
     expect(Object.keys(RELEASE_SPECS).sort()).toEqual(["darwin-arm64", "linux-x64", "windows-x64"]);
     for (const spec of Object.values(RELEASE_SPECS)) {

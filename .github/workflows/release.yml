@@ -1,4 +1,4 @@
-name: Release
+name: GitHub Release
 
 on:
   push:
@@ -98,48 +98,3 @@ jobs:
           dist/mu-linux-x64.tar.gz dist/mu-darwin-arm64.tar.gz
           dist/mu-windows-x64.zip dist/THIRD_PARTY_LICENSES.txt dist/SHA256SUMS
           --generate-notes --verify-tag
-
-  npm-platforms:
-    needs: github-release
-    strategy:
-      matrix:
-        include:
-          - target: linux-x64
-            directory: packages/ripgrep-linux-x64
-          - target: darwin-arm64
-            directory: packages/ripgrep-darwin-arm64
-          - target: windows-x64
-            directory: packages/ripgrep-windows-x64
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - name: Prepare pinned ripgrep package
-        run: bun scripts/prepare-ripgrep-package.ts ${{ matrix.target }} ${{ matrix.directory }}
-      - name: Publish platform package
-        working-directory: ${{ matrix.directory }}
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish --access public
-
-  npm:
-    needs: npm-platforms
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - name: Publish @mu-agent/mu
-        working-directory: packages/cli
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bun publish --access public
