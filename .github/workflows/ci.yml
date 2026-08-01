@@ -35,6 +35,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-windows-x64-baseline.zip
+          no-cache: true
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test packages/profiles/coding/src/windows-portability.test.ts

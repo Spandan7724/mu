@@ -75,6 +75,21 @@ describe("release packaging", () => {
     }
   });
 
+  test("Windows workflows install the pinned baseline Bun runtime before compiling", async () => {
+    const rootPackage = JSON.parse(await readFile("package.json", "utf8")) as {
+      packageManager: string;
+    };
+    const version = rootPackage.packageManager.replace(/^bun@/, "");
+    const baselineUrl = `https://github.com/oven-sh/bun/releases/download/bun-v${version}/bun-windows-x64-baseline.zip`;
+    const [ci, release] = await Promise.all([
+      readFile(".github/workflows/ci.yml", "utf8"),
+      readFile(".github/workflows/release.yml", "utf8"),
+    ]);
+
+    expect(ci).toContain(baselineUrl);
+    expect(release).toContain(baselineUrl);
+  });
+
   test("builds the canonical sidecar layout with licenses and metadata", async () => {
     const { root, archive, binary, spec } = await fixture();
     const output = join(root, "mu-linux-x64.tar.gz");

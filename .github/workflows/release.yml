@@ -48,8 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        if: runner.os != 'Windows'
         with:
           bun-version-file: package.json
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'Windows'
+        with:
+          bun-version-file: package.json
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-windows-x64-baseline.zip
+          no-cache: true
       - run: bun install --frozen-lockfile
       - run: bun run ${{ matrix.build }}
       - name: Sign macOS binary
