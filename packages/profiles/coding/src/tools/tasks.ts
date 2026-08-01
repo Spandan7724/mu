@@ -20,7 +20,10 @@ export function shellSpawner(root: string): Spawner {
     if (process.platform === "win32") {
       const proc = Bun.spawn(shellCommand(command, { interactive: true }), {
         cwd: root,
-        detached: true,
+        // Windows has no POSIX process-group requirement here: taskkill /T
+        // walks descendants from the shell PID. Detached PowerShell processes
+        // do not reliably retain their redirected stdio on Bun 1.3.14.
+        detached: false,
         env: process.env,
         stdin: "pipe",
         stdout: "pipe",
@@ -29,9 +32,12 @@ export function shellSpawner(root: string): Spawner {
       });
 
       const pump = async (stream: ReadableStream<Uint8Array>) => {
+        const reader = stream.getReader();
         const decoder = new TextDecoder();
-        for await (const chunk of stream) {
-          const text = decoder.decode(chunk, { stream: true });
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value, { stream: true });
           if (text) onOutput(text);
         }
         const final = decoder.decode();

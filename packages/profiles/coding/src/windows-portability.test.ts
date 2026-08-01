@@ -129,7 +129,12 @@ describe("Windows portability", () => {
       if (await readFile(marker, "utf8").catch(() => "")) break;
       await Bun.sleep(50);
     }
-    expect(await readFile(marker, "utf8")).not.toBe("");
+    const beforeKill = await readFile(marker, "utf8").catch(() => "");
+    expect({
+      marker: beforeKill,
+      output: manager.output(task.id, "start")?.text ?? "",
+      task: manager.get(task.id),
+    }).toMatchObject({ marker: expect.stringMatching(/\d+/) });
 
     manager.kill(task.id);
     await manager.wait(task.id);
