@@ -1427,7 +1427,13 @@ export class Agent {
           if (directive?.args) args = directive.args;
         }
 
-        const pattern = JSON.stringify(args);
+        const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
+        let pattern = JSON.stringify(args);
+        try {
+          pattern = selectedTool?.permissionPattern?.(args) ?? pattern;
+        } catch {
+          // A broken profile projection must not bypass the generic permission rules.
+        }
         const action = evaluate(this.permissionRules, info.toolCall.name, pattern);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
         if (action === "allow") {
@@ -1436,7 +1442,6 @@ export class Agent {
         if (action === "deny") {
           return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
         }
-        const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
         const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
           () => undefined,
         );

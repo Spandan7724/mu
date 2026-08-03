@@ -17,6 +17,8 @@ export interface Tool<Args = Record<string, unknown>> {
   isConcurrencySafe?: (args: Args) => boolean;
   executionMode?: "sequential"; // hard override: never parallel with anything
   changesState?: boolean | ((args: Args) => boolean);
+  // Profile-owned value matched by permission rules and persisted by "always allow".
+  permissionPattern?: (args: Args) => string;
   permissionDetails?: (
     args: Args,
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;

@@ -116,6 +116,15 @@ describe("permission defaults", () => {
     expect(evaluate(layered, "bash", "rm -rf /")).toBe("ask");
   });
 
+  test("bash projects its command for permission matching", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const bash = profile.toolset.find((candidate) => candidate.name === "bash");
+
+    expect(bash?.permissionPattern?.({ command: "npm test", description: "Run tests" })).toBe(
+      "npm test",
+    );
+  });
+
   test("project config is read from .mu/config.json", async () => {
     const root = await scratch();
     await mkdir(join(root, ".mu"), { recursive: true });

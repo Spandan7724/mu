@@ -372,6 +372,38 @@ describe("permissions", () => {
     expect(asked).toBe(false);
   });
 
+  test("tool-owned permission patterns are matched and exposed to approvals", async () => {
+    let ran = false;
+    let request: PermissionRequest | undefined;
+    const danger = tool({
+      name: "danger",
+      description: "does something risky",
+      inputSchema: z.object({ x: z.number() }),
+      permissionPattern: ({ x }) => `value ${x}`,
+      execute: () => {
+        ran = true;
+        return "ran";
+      },
+    });
+
+    await agentWith(dangerProvider(), {
+      tools: [danger],
+      permissions: [{ permission: "danger", pattern: "value 1", action: "allow" }],
+      onPermission: async () => "deny" as const,
+    }).run("go");
+    expect(ran).toBe(true);
+
+    await agentWith(dangerProvider(), {
+      tools: [danger],
+      permissions: [{ permission: "danger", pattern: "value 2", action: "allow" }],
+      onPermission: async (asked: PermissionRequest) => {
+        request = asked;
+        return "deny";
+      },
+    }).run("go");
+    expect(request?.pattern).toBe("value 1");
+  });
+
   test("deny rules block without asking", async () => {
     let asked = false;
     await agentWith(dangerProvider(), {

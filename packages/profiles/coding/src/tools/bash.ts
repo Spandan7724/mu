@@ -128,6 +128,7 @@ export function bashTool(deps: BashDeps) {
   return tool({
     name: "bash",
     changesState: true,
+    permissionPattern: ({ command }) => command,
     description:
       "Run a command with the platform-native shell in the session root. Use for building, testing and inspecting the project. Prefer the dedicated read/edit/grep/glob tools for file work.",
     inputSchema: z.object({
