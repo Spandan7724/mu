@@ -215,6 +215,8 @@ export class App {
   private commandList = new SelectList([]);
   private mode: AppMode = "composing";
   private running = false;
+  private compacting = false;
+  private compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
   // A parallel-safe tool batch can raise several asks at once, so they queue
   // rather than overwriting each other. One is shown; resolving removes only
   // the matching id and advances to the next.
@@ -348,6 +350,8 @@ export class App {
 
       case "agent_end": {
         this.running = false;
+        this.compacting = false;
+        this.compactionStage = undefined;
         if (event.reason !== "error") return [];
         // Show *why* it failed. "run ended with an error" tells the user
         // nothing and hides actionable messages like a missing API key.
@@ -486,8 +490,44 @@ export class App {
         return [];
       }
 
+      case "compaction_start":
+        this.compacting = event.layer !== 1;
+        this.compactionStage = this.compacting ? "summarizing" : undefined;
+        return [];
+
+      case "compaction_update":
+        this.compacting = true;
+        this.compactionStage = event.stage;
+        return [];
+
       case "compaction_end": {
-        const lines = [...compactionCell(event.tokensFreed, this.ctx), ""];
+        this.compacting = false;
+        this.compactionStage = undefined;
+        const lines =
+          event.status === "failed" || event.status === "cancelled"
+            ? [
+                ...errorCell(
+                  event.errorMessage ?? "Compaction failed; original context preserved.",
+                  this.ctx,
+                ),
+                "",
+              ]
+            : [
+                ...compactionCell(event.tokensFreed, this.ctx, {
+                  ...(event.status ? { status: event.status } : {}),
+                  ...(event.contextTokensBefore !== undefined
+                    ? { contextTokensBefore: event.contextTokensBefore }
+                    : {}),
+                  ...(event.contextTokensAfter !== undefined
+                    ? { contextTokensAfter: event.contextTokensAfter }
+                    : {}),
+                  ...(event.toolResultsCleared !== undefined
+                    ? { toolResultsCleared: event.toolResultsCleared }
+                    : {}),
+                  ...(event.keptTokens !== undefined ? { keptTokens: event.keptTokens } : {}),
+                }),
+                "",
+              ];
         this.appendTranscript(lines);
         return lines;
       }
@@ -828,9 +868,17 @@ export class App {
 
     const toolHint = "ctrl+o";
     if (this.running) {
+      const compactStage =
+        this.compactionStage === "clearing-tool-output"
+          ? "clearing tool output"
+          : this.compactionStage === "installing"
+            ? "installing checkpoint"
+            : "summarizing earlier context";
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
-          ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc interrupt ${GLYPHS.separator} ${toolHint}`,
+          this.compacting
+            ? ` compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
+            : ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
@@ -977,12 +1025,15 @@ export class App {
         } else if (text.startsWith("/") && this.options.callbacks.onCommand) {
           this.options.callbacks.onCommand(text);
         } else {
-          const accepted =
-            this.running && this.options.callbacks.onSteer
+          const queueDuringCompaction =
+            this.running && this.compacting && this.options.callbacks.onFollowUp;
+          const accepted = queueDuringCompaction
+            ? this.options.callbacks.onFollowUp?.(text)
+            : this.running && this.options.callbacks.onSteer
               ? this.options.callbacks.onSteer(text)
               : this.options.callbacks.onSubmit(text);
           if (this.running && accepted !== false) {
-            this.pendingInputs.push({ kind: "steer", text });
+            this.pendingInputs.push({ kind: queueDuringCompaction ? "follow-up" : "steer", text });
           }
         }
         return;

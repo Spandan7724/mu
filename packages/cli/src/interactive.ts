@@ -346,7 +346,7 @@ export async function runInteractive(
   const depth = detectColorDepth();
   let app: App;
   const commands = registryWithCoreCommands({
-    requestCompaction: () => agent.requestCompaction(),
+    requestCompaction: (focus) => agent.compactNow(focus),
     usage: () => ({
       ...agent.usage,
       contextPercent: agent.contextPercent,
@@ -1029,6 +1029,7 @@ export async function runInteractive(
       | CheckpointActionData
       | DiffCommandData
       | { kind: "fork-points"; points: { id: string; description: string }[] }
+      | { kind: "compaction"; status: string }
       | MarkdownCommandRun
       | undefined;
     if (data?.kind === "checkpoint") {
@@ -1061,6 +1062,9 @@ export async function runInteractive(
         ...(data.model ? { model: data.model } : {}),
         ...(data.allowedTools ? { allowedTools: data.allowedTools } : {}),
       });
+    } else if (data?.kind === "compaction" && data.status !== "queued") {
+      // Standalone compaction reports its durable boundary through AgentEvent;
+      // avoid printing the same outcome twice in the interactive transcript.
     } else if (result.message) {
       commitLines([`  ${result.message}`]);
     }

@@ -24,8 +24,10 @@ import {
   CheckpointHistory,
   type CheckpointProvider,
   CompactionError,
-  compact,
+  type CompactionTrigger,
+  compact as compactContext,
   contextState,
+  DEFAULT_KEEP_RECENT_TOKENS,
   type EventSink,
   type ExtensionHost,
   estimateTokens,
@@ -124,6 +126,16 @@ export interface CheckpointActionResult {
   data?: CheckpointActionData;
 }
 
+export interface ManualCompactionResult {
+  status: "completed" | "queued" | "failed" | "cancelled" | "noop";
+  message: string;
+  tokensBefore?: number;
+  tokensAfter?: number;
+  tokensFreed?: number;
+  toolResultsCleared?: number;
+  summaryEntryId?: string;
+}
+
 export interface AgentRunOptions<T = unknown> {
   output?: z.ZodType<T>;
   model?: string | ModelInfo;
@@ -172,6 +184,11 @@ export class Agent {
   private followUps: AgentMessage[] = [];
   private totals: Usage = zeroUsage();
   private compactRequested = false;
+  private compactRequestedFocus: string | undefined;
+  private queuedManualCompactionFocus: string | undefined;
+  private manualCompactionQueued = false;
+  private compacting = false;
+  private compactorOverride: { model: ModelInfo; provider: Provider } | undefined;
   private lastContextPercent = 0;
   private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
@@ -244,6 +261,10 @@ export class Agent {
     return this.running;
   }
 
+  get isCompacting(): boolean {
+    return this.compacting;
+  }
+
   get permissions(): PermissionRule[] {
     return [...this.permissionRules];
   }
@@ -258,8 +279,19 @@ export class Agent {
 
   // Switching model also switches provider — they travel together.
   setModel(ref: string | ModelInfo): void {
-    this.model = resolveModel(ref, this.options.extensions);
-    this.provider = this.providerFor(this.model);
+    const previous = { model: this.model, provider: this.provider };
+    const next = resolveModel(ref, this.options.extensions);
+    const visible = this.tree.messagesAt();
+    if (
+      visible.length > 0 &&
+      estimateTokens(visible) >=
+        next.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD)
+    ) {
+      this.compactRequested = true;
+      this.compactorOverride = previous;
+    }
+    this.model = next;
+    this.provider = this.providerFor(next);
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
     this.tree.append({ type: "settings-change", model: this.modelRef });
@@ -286,6 +318,11 @@ export class Agent {
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
     this.compactRequested = false;
+    this.compactRequestedFocus = undefined;
+    this.queuedManualCompactionFocus = undefined;
+    this.manualCompactionQueued = false;
+    this.compacting = false;
+    this.compactorOverride = undefined;
     this.recoveryAttempted = false;
     this.reactiveRecoveryPending = false;
     this.steering = [];
@@ -341,6 +378,11 @@ export class Agent {
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
     this.compactRequested = false;
+    this.compactRequestedFocus = undefined;
+    this.queuedManualCompactionFocus = undefined;
+    this.manualCompactionQueued = false;
+    this.compacting = false;
+    this.compactorOverride = undefined;
     this.recoveryAttempted = false;
     this.reactiveRecoveryPending = false;
     this.steering = [];
@@ -405,7 +447,12 @@ export class Agent {
   }
 
   waitForIdle(): Promise<void> {
-    if (!this.running && !this.autonomousScheduled && this.followUps.length === 0) {
+    if (
+      !this.running &&
+      !this.autonomousScheduled &&
+      !this.manualCompactionQueued &&
+      this.followUps.length === 0
+    ) {
       return Promise.resolve();
     }
     return new Promise((resolve) => this.idleWaiters.add(resolve));
@@ -417,6 +464,8 @@ export class Agent {
     if (this.stopping) return;
     this.stopping = true;
     this.followUps = [];
+    this.manualCompactionQueued = false;
+    this.queuedManualCompactionFocus = undefined;
     try {
       this.options.runtime?.stop?.();
     } catch {
@@ -448,9 +497,272 @@ export class Agent {
     this.controller.abort();
   }
 
-  // Requests compaction before the next LLM call (what /compact invokes).
-  requestCompaction(): void {
+  // Requests compaction before the next LLM call. Kept for SDK callers that
+  // deliberately want deferred compaction; interactive /compact uses
+  // compactNow() so the command has immediate, inspectable semantics.
+  requestCompaction(focus?: string): void {
     this.compactRequested = true;
+    this.compactRequestedFocus = focus?.trim() || undefined;
+  }
+
+  // Runs /compact as a real standalone operation. If a normal turn owns the
+  // agent, queue it behind that turn so compaction never races session writes
+  // or treats user input as summarizer steering.
+  compactNow(focus?: string): Promise<ManualCompactionResult> {
+    const normalizedFocus = focus?.trim() || undefined;
+    if (this.stopping) {
+      return Promise.resolve({
+        status: "failed",
+        message: "Compaction is unavailable after stop.",
+      });
+    }
+    if (this.running) {
+      this.manualCompactionQueued = true;
+      this.queuedManualCompactionFocus = normalizedFocus;
+      return Promise.resolve({
+        status: "queued",
+        message: "Compaction queued — it will run after the current turn.",
+      });
+    }
+
+    this.running = true;
+    this.compacting = true;
+    this.controller = new AbortController();
+    const publish = (event: AgentEvent) => {
+      this.publishToSubscribers(event);
+      if (event.type === "agent_start" && !this.sessionStarted) {
+        this.sessionStarted = true;
+        this.options.extensions?.emitLifecycle({
+          type: "session_start",
+          sessionId: this._sessionId,
+        });
+      }
+      this.options.extensions?.emit(event);
+    };
+    this.activeEmit = publish;
+    const execution = this.executeManualCompaction(normalizedFocus, publish).finally(() => {
+      this.running = false;
+      this.compacting = false;
+      this.activeEmit = undefined;
+      this.activeExecution = undefined;
+      if (this.manualCompactionQueued && !this.stopping) this.scheduleManualCompaction();
+      else if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
+      this.resolveIdleIfDone();
+    });
+    this.activeExecution = execution;
+    return execution;
+  }
+
+  private async executeManualCompaction(
+    focus: string | undefined,
+    emit: (event: AgentEvent) => void,
+  ): Promise<ManualCompactionResult> {
+    emit({ type: "agent_start" });
+    const original = this.tree.messagesAt();
+    const tokensBefore = contextState(
+      this.model,
+      original,
+      this.lastContextUsage?.usage,
+      this.lastContextUsage?.estimatedTokensAtUsage,
+    ).tokens;
+    emit({
+      type: "compaction_start",
+      layer: 2,
+      trigger: "manual",
+      contextTokensBefore: tokensBefore,
+    });
+
+    const micro = microcompact(original, {
+      targetTokens: Math.floor(
+        this.model.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) * 0.8,
+      ),
+    });
+    let working = original;
+    let replacements: { entryId: string; message: AgentMessage }[] = [];
+    if (micro.evicted > 0) {
+      emit({
+        type: "compaction_update",
+        layer: 2,
+        stage: "clearing-tool-output",
+        toolResultsCleared: micro.evicted,
+      });
+      replacements = micro.messages.flatMap((message, index) => {
+        const prior = original[index];
+        if (!prior || message === prior) return [];
+        const entryId = this.tree.entryIdForMessage(prior);
+        return entryId ? [{ entryId, message }] : [];
+      });
+      const changedCount = micro.messages.filter(
+        (message, index) => message !== original[index],
+      ).length;
+      if (replacements.length === changedCount) working = micro.messages;
+      else replacements = [];
+    }
+
+    const compactor = this.compactorOverride ?? { model: this.model, provider: this.provider };
+    this.compactorOverride = undefined;
+    emit({ type: "compaction_update", layer: 2, stage: "summarizing" });
+    let compactionUsage: Usage | undefined;
+    let usageRecorded = false;
+    try {
+      const credentialResolver = this.options.getCredentials;
+      const result = await compactContext(working, {
+        provider: compactor.provider,
+        model: compactor.model,
+        keepRecentTokens: Math.min(
+          DEFAULT_KEEP_RECENT_TOKENS,
+          Math.max(2, Math.floor(this.model.contextWindow * 0.2)),
+        ),
+        ...(focus ? { customInstructions: focus } : {}),
+        ...(this.options.carryoverExtractor
+          ? { carryoverExtractor: this.options.carryoverExtractor }
+          : {}),
+        signal: this.controller.signal,
+        streamOpts: {
+          sessionId: this._sessionId,
+          ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
+          ...(credentialResolver
+            ? { getCredentials: () => credentialResolver(compactor.model.provider) }
+            : {}),
+        },
+      });
+      compactionUsage = result.usage;
+      if (result.summary.length === 0) {
+        const tokensAfter = estimateTokens(original);
+        emit({
+          type: "compaction_end",
+          layer: 2,
+          trigger: "manual",
+          status: "noop",
+          tokensFreed: 0,
+          contextTokensBefore: tokensBefore,
+          contextTokensAfter: tokensAfter,
+        });
+        emit({ type: "agent_end", messages: original, reason: "done" });
+        return {
+          status: "noop",
+          message: "Context is already compact enough — no changes made.",
+          tokensBefore,
+          tokensAfter,
+          tokensFreed: 0,
+        };
+      }
+
+      emit({ type: "compaction_update", layer: 2, stage: "installing" });
+      const compacted = applyCompaction(result);
+      const firstKept = result.keptMessages[0];
+      let firstKeptEntryId: string | null = null;
+      if (firstKept) {
+        const workingIndex = working.indexOf(firstKept);
+        const originalMessage = workingIndex === -1 ? firstKept : original[workingIndex];
+        const mapped = originalMessage ? this.tree.entryIdForMessage(originalMessage) : undefined;
+        if (!mapped) throw new Error("Compaction tail could not be mapped to the session");
+        firstKeptEntryId = mapped;
+      }
+      const summaryMessage = compacted[0];
+      const refreshed =
+        (await this.options.refreshContext?.(compacted, {
+          sessionId: this._sessionId,
+        })) ?? [];
+      const tokensAfterSummary = estimateTokens([...compacted, ...refreshed]);
+      const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
+      if (replacements.length > 0) {
+        candidateTree.append({ type: "microcompaction", replacements });
+      }
+      const windowNumber =
+        candidateTree.activePath().filter((entry) => entry.type === "compaction").length + 1;
+      const boundary = candidateTree.append({
+        type: "compaction",
+        summary: result.summary,
+        ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
+        firstKeptEntryId,
+        ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+        trigger: "manual",
+        contextTokensBefore: tokensBefore,
+        contextTokensAfter: tokensAfterSummary,
+        model: this.modelRef,
+        compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
+        windowNumber,
+        strategy: "summary-tail",
+        keptTokens: estimateTokens(result.keptMessages),
+        toolResultsCleared: replacements.length,
+      });
+
+      for (const message of refreshed) candidateTree.appendMessage(message);
+      const visible = candidateTree.messagesAt();
+      const tokensAfter = estimateTokens(visible);
+      const tokensFreed = Math.max(0, tokensBefore - tokensAfter);
+      await this.store.save(this._sessionId, candidateTree);
+      this.tree = candidateTree;
+      this.totals = addUsage(this.totals, result.usage);
+      usageRecorded = true;
+      this.lastContextUsage = undefined;
+      this.lastContextPercent =
+        this.model.contextWindow > 0 ? tokensAfter / this.model.contextWindow : 0;
+      emit({
+        type: "usage_updated",
+        sessionTotals: this.totals,
+        contextTokens: tokensAfter,
+        contextPercent: this.lastContextPercent,
+      });
+      emit({
+        type: "compaction_end",
+        layer: 2,
+        trigger: "manual",
+        status: "completed",
+        tokensFreed,
+        summaryEntryId: boundary.id,
+        contextTokensBefore: tokensBefore,
+        contextTokensAfter: tokensAfter,
+        toolResultsCleared: replacements.length,
+        keptTokens: estimateTokens(result.keptMessages),
+      });
+      emit({ type: "agent_end", messages: visible, reason: "done" });
+      return {
+        status: "completed",
+        message: `Context compacted: ${tokensBefore.toLocaleString()} → ${tokensAfter.toLocaleString()} tokens (${tokensFreed.toLocaleString()} freed).`,
+        tokensBefore,
+        tokensAfter,
+        tokensFreed,
+        toolResultsCleared: replacements.length,
+        summaryEntryId: boundary.id,
+      };
+    } catch (error) {
+      const failedUsage =
+        compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
+      if (failedUsage && !usageRecorded) {
+        this.totals = addUsage(this.totals, failedUsage);
+        emit({
+          type: "usage_updated",
+          sessionTotals: this.totals,
+          contextTokens: tokensBefore,
+          contextPercent:
+            this.model.contextWindow > 0 ? tokensBefore / this.model.contextWindow : 0,
+        });
+      }
+      const cancelled = this.controller.signal.aborted;
+      const message = cancelled
+        ? "Compaction cancelled — original conversation preserved."
+        : `Compaction failed: ${error instanceof Error ? error.message : String(error)} Original conversation preserved.`;
+      emit({
+        type: "compaction_end",
+        layer: 2,
+        trigger: "manual",
+        status: cancelled ? "cancelled" : "failed",
+        tokensFreed: 0,
+        contextTokensBefore: tokensBefore,
+        contextTokensAfter: tokensBefore,
+        errorMessage: message,
+      });
+      emit({ type: "agent_end", messages: original, reason: cancelled ? "aborted" : "done" });
+      return {
+        status: cancelled ? "cancelled" : "failed",
+        message,
+        tokensBefore,
+        tokensAfter: tokensBefore,
+        tokensFreed: 0,
+      };
+    }
   }
 
   get checkpointHistory(): CheckpointHistory {
@@ -939,7 +1251,8 @@ export class Agent {
       this.running = false;
       this.activeEmit = undefined;
       this.activeExecution = undefined;
-      if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
+      if (this.manualCompactionQueued && !this.stopping) this.scheduleManualCompaction();
+      else if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
       this.resolveIdleIfDone();
     });
     this.activeExecution = execution;
@@ -1198,19 +1511,51 @@ export class Agent {
           (auto && shouldCompact(after, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
         if (!due) return { messages: working };
 
+        const trigger: CompactionTrigger = this.reactiveRecoveryPending
+          ? "overflow"
+          : this.compactorOverride
+            ? "model-change"
+            : this.compactRequested
+              ? "manual"
+              : "threshold";
+        const focus = this.compactRequestedFocus;
+        const compactor = this.compactorOverride ?? { model: runModel, provider: runProvider };
         this.compactRequested = false;
+        this.compactRequestedFocus = undefined;
+        this.compactorOverride = undefined;
         const layer = this.reactiveRecoveryPending ? 3 : 2;
-        if (layer === 2) emit({ type: "compaction_start", layer });
+        if (layer === 2)
+          emit({
+            type: "compaction_start",
+            layer,
+            trigger,
+            contextTokensBefore: after.tokens,
+          });
         let compactionUsage: Usage | undefined;
         let usageRecorded = false;
         try {
-          const result = await compact(working, {
-            provider: runProvider,
-            model: runModel,
-            ...(config.streamOpts ? { streamOpts: config.streamOpts } : {}),
+          emit({ type: "compaction_update", layer, stage: "summarizing" });
+          const result = await compactContext(working, {
+            provider: compactor.provider,
+            model: compactor.model,
+            keepRecentTokens: Math.min(
+              DEFAULT_KEEP_RECENT_TOKENS,
+              Math.max(2, Math.floor(runModel.contextWindow * 0.2)),
+            ),
+            ...(config.streamOpts
+              ? {
+                  streamOpts: {
+                    ...config.streamOpts,
+                    ...(credentialResolver
+                      ? { getCredentials: () => credentialResolver(compactor.model.provider) }
+                      : {}),
+                  },
+                }
+              : {}),
             ...(this.options.carryoverExtractor
               ? { carryoverExtractor: this.options.carryoverExtractor }
               : {}),
+            ...(focus ? { customInstructions: focus } : {}),
             signal: this.controller.signal,
           });
           compactionUsage = result.usage;
@@ -1236,6 +1581,15 @@ export class Agent {
               ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
               firstKeptEntryId,
               ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+              trigger,
+              contextTokensBefore: after.tokens,
+              contextTokensAfter: estimateTokens(compacted),
+              model: `${runModel.provider}/${runModel.id}`,
+              compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
+              windowNumber:
+                this.tree.activePath().filter((entry) => entry.type === "compaction").length + 1,
+              strategy: "summary-tail",
+              keptTokens: estimateTokens(result.keptMessages),
             });
             summaryEntryId = boundary.id;
           }
@@ -1248,6 +1602,11 @@ export class Agent {
             type: "compaction_end",
             layer,
             tokensFreed: result.tokensFreed,
+            trigger,
+            status: result.summary.length > 0 ? "completed" : "noop",
+            contextTokensBefore: after.tokens,
+            contextTokensAfter: currentContextState(compacted).tokens,
+            keptTokens: estimateTokens(result.keptMessages),
             ...(summaryEntryId ? { summaryEntryId } : {}),
           });
           this.reactiveRecoveryPending = false;
@@ -1258,7 +1617,17 @@ export class Agent {
           if (failedUsage && !usageRecorded) recordUsage(failedUsage, working);
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
-          emit({ type: "compaction_end", layer, tokensFreed: 0 });
+          emit({
+            type: "compaction_end",
+            layer,
+            tokensFreed: 0,
+            trigger,
+            status: this.controller.signal.aborted ? "cancelled" : "failed",
+            contextTokensBefore: after.tokens,
+            contextTokensAfter: after.tokens,
+            errorMessage:
+              error instanceof Error ? error.message : "Compaction failed for an unknown reason",
+          });
           this.reactiveRecoveryPending = false;
           return { messages: working, stop: budgetHalt !== undefined };
         }
@@ -1294,7 +1663,7 @@ export class Agent {
         this.recoveryAttempted = true;
         this.compactRequested = true;
         this.reactiveRecoveryPending = true;
-        emit({ type: "compaction_start", layer: 3 });
+        emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
         return true;
       },
       shouldStopAfterTurn: async (turn: TurnInfo) => {
@@ -1385,8 +1754,32 @@ export class Agent {
     });
   }
 
+  private scheduleManualCompaction(): void {
+    if (this.running || this.autonomousScheduled || this.stopping || !this.manualCompactionQueued) {
+      return;
+    }
+    const focus = this.queuedManualCompactionFocus;
+    this.manualCompactionQueued = false;
+    this.queuedManualCompactionFocus = undefined;
+    this.autonomousScheduled = true;
+    queueMicrotask(() => {
+      this.autonomousScheduled = false;
+      if (this.running || this.stopping) {
+        this.resolveIdleIfDone();
+        return;
+      }
+      void this.compactNow(focus).catch(() => {});
+    });
+  }
+
   private resolveIdleIfDone(): void {
-    if (this.running || this.autonomousScheduled || this.followUps.length > 0) return;
+    if (
+      this.running ||
+      this.autonomousScheduled ||
+      this.manualCompactionQueued ||
+      this.followUps.length > 0
+    )
+      return;
     for (const resolve of this.idleWaiters) resolve();
     this.idleWaiters.clear();
   }

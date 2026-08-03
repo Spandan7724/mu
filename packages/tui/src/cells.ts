@@ -227,8 +227,34 @@ export function errorCell(message: string, ctx: RenderContext): string[] {
 }
 
 // A compaction boundary is a visible, honest marker that history was summarized.
-export function compactionCell(tokensFreed: number, ctx: RenderContext): string[] {
-  const label = `compacted ${GLYPHS.separator} ${tokensFreed.toLocaleString()} tokens freed`;
+export interface CompactionCellDetails {
+  status?: "completed" | "failed" | "cancelled" | "noop";
+  contextTokensBefore?: number;
+  contextTokensAfter?: number;
+  toolResultsCleared?: number;
+  keptTokens?: number;
+}
+
+export function compactionCell(
+  tokensFreed: number,
+  ctx: RenderContext,
+  details: CompactionCellDetails = {},
+): string[] {
+  const counts =
+    details.contextTokensBefore !== undefined && details.contextTokensAfter !== undefined
+      ? `${details.contextTokensBefore.toLocaleString()} → ${details.contextTokensAfter.toLocaleString()} tokens`
+      : `${tokensFreed.toLocaleString()} tokens freed`;
+  const extras = [
+    `${tokensFreed.toLocaleString()} freed`,
+    details.keptTokens !== undefined
+      ? `${details.keptTokens.toLocaleString()} recent tokens kept`
+      : "",
+    details.toolResultsCleared ? `${details.toolResultsCleared} tool outputs cleared` : "",
+  ].filter(Boolean);
+  const label =
+    details.status === "noop"
+      ? "context already compact"
+      : `compacted ${GLYPHS.separator} ${counts}${details.contextTokensBefore !== undefined ? ` ${GLYPHS.separator} ${extras.join(` ${GLYPHS.separator} `)}` : ""}`;
   const width = body(ctx);
   const rule = "─".repeat(Math.max(0, width - stringWidth(label) - 3));
   return [MARGIN + dim(`${rule} ${label}`, ctx.depth)];

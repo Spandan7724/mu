@@ -129,7 +129,7 @@ export async function runHeadless(
 
   try {
     const commands = registryWithCoreCommands({
-      requestCompaction: () => agent.requestCompaction(),
+      requestCompaction: (focus) => agent.compactNow(focus),
       usage: () => ({
         ...agent.usage,
         contextPercent: agent.contextPercent,

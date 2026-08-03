@@ -79,6 +79,20 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
+## Context compaction
+
+Mu automatically compacts context near 85% of the active model window and recovers once
+from provider context-overflow errors. Run `/compact` to compact immediately, or add a
+focus such as `/compact preserve the migration decisions`. If a turn is active, the
+operation queues behind it. The TUI shows compaction progress and a durable before/after
+boundary; a failed or cancelled compaction preserves the original conversation.
+
+The compactor clears old reproducible tool output first, summarizes a bounded labelled
+history, and retains a token-budgeted recent tail with tool calls and results kept
+together. Compaction metadata is stored in the JSONL session tree, so resuming reconstructs
+the same summary and verbatim tail. Switching to a smaller-window model uses the previous
+model to summarize while sizing the retained tail for the destination window.
+
 ## Transcript export
 
 Run `/export` in the interactive app to save the complete current chat branch as a

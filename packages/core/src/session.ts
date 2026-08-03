@@ -27,6 +27,15 @@ export type SessionEntry =
       carryover?: unknown;
       firstKeptEntryId: string | null;
       timestamp?: number;
+      trigger?: "manual" | "threshold" | "overflow" | "model-change";
+      contextTokensBefore?: number;
+      contextTokensAfter?: number;
+      model?: string;
+      compactorModel?: string;
+      windowNumber?: number;
+      strategy?: "summary-tail";
+      keptTokens?: number;
+      toolResultsCleared?: number;
     }
   | {
       type: "microcompaction";

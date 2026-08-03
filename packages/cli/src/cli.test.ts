@@ -137,7 +137,7 @@ describe("runHeadless", () => {
 
     expect(code).toBe(EXIT.done);
     expect(provider.callCount).toBe(0);
-    expect(out.join("")).toContain("Compacting before the next turn.");
+    expect(out.join("")).toContain("already compact enough");
   });
 
   test("headless commands have a JSON result shape", async () => {

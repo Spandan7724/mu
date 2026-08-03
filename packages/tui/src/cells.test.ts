@@ -228,6 +228,20 @@ describe("transcript cells (golden lines)", () => {
     expect(line).toContain("compacted");
     expect(line).toContain("12,345 tokens freed");
   });
+
+  test("compaction boundary includes rich checkpoint accounting", () => {
+    const line = visible(
+      compactionCell(64000, plain, {
+        contextTokensBefore: 92000,
+        contextTokensAfter: 28000,
+        keptTokens: 20000,
+        toolResultsCleared: 7,
+      }),
+    )[0];
+    expect(line).toContain("92,000 → 28,000");
+    expect(line).toContain("64,000 freed");
+    expect(line).toContain("7 tool outputs cleared");
+  });
 });
 
 describe("diff rendering", () => {
