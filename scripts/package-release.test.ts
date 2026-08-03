@@ -121,7 +121,7 @@ describe("release packaging", () => {
     expect(await readFile(join(packageDir, "UNLICENSE"), "utf8")).toBe("Unlicense");
   });
 
-  test("npm release packages share the public scope, version, and repository metadata", async () => {
+  test("npm release packages share public metadata while platform versions stay pinned", async () => {
     const cli = JSON.parse(await readFile("packages/cli/package.json", "utf8")) as {
       name: string;
       version: string;
@@ -163,7 +163,7 @@ describe("release packaging", () => {
       "packages/ripgrep-windows-x64": "@mu-agent/ripgrep-windows-x64",
     };
     expect(cli.optionalDependencies).toEqual(
-      Object.fromEntries(Object.values(platformPackages).map((name) => [name, cli.version])),
+      Object.fromEntries(Object.values(platformPackages).map((name) => [name, "0.0.1"])),
     );
 
     for (const [directory, name] of Object.entries(platformPackages)) {
@@ -175,7 +175,7 @@ describe("release packaging", () => {
         publishConfig: { access: string; registry: string };
       };
       expect(packageJson.name).toBe(name);
-      expect(packageJson.version).toBe(cli.version);
+      expect(packageJson.version).toBe("0.0.1");
       expect(packageJson.author).toBe(cli.author);
       expect(packageJson.repository.url).toBe(cli.repository.url);
       expect(packageJson.publishConfig).toEqual(cli.publishConfig);

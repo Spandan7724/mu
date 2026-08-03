@@ -55,9 +55,9 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@mu-agent/ripgrep-darwin-arm64": "0.0.2",
-    "@mu-agent/ripgrep-linux-x64": "0.0.2",
-    "@mu-agent/ripgrep-windows-x64": "0.0.2"
+    "@mu-agent/ripgrep-darwin-arm64": "0.0.1",
+    "@mu-agent/ripgrep-linux-x64": "0.0.1",
+    "@mu-agent/ripgrep-windows-x64": "0.0.1"
   },
   "publishConfig": {
     "access": "public",

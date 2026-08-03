@@ -1,6 +1,6 @@
 {
   "name": "@mu-agent/ripgrep-windows-x64",
-  "version": "0.0.2",
+  "version": "0.0.1",
   "description": "Pinned ripgrep sidecar for Mu on Windows x64",
   "author": "Spandan Chavan",
   "license": "MIT OR Unlicense",
