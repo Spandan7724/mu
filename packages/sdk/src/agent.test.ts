@@ -790,6 +790,50 @@ describe("runtime model and thinking changes", () => {
     await agent.run("go");
   });
 
+  test("uses model-specific defaults and supported thinking levels", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const agent = new Agent({
+      provider,
+      model: {
+        ...fakeModel,
+        thinkingLevels: ["low", "medium", "xhigh", "ultra"],
+        defaultThinkingLevel: "low",
+      },
+    });
+
+    expect(agent.thinking).toBe("low");
+    expect(agent.thinkingLevels).toEqual(["low", "medium", "xhigh", "ultra"]);
+    agent.setThinking("ultra");
+    agent.setThinking("minimal");
+    expect(agent.thinking).toBe("low");
+
+    await agent.run("go");
+    expect(provider.streamOptions[0]?.thinkingLevel).toBe("low");
+  });
+
+  test("model switches replace an unsupported effort with the new model's default", () => {
+    const provider = new FakeProvider([]);
+    const agent = new Agent({
+      provider,
+      model: {
+        ...fakeModel,
+        thinkingLevels: ["low", "medium", "xhigh", "ultra"],
+        defaultThinkingLevel: "low",
+      },
+      thinkingLevel: "ultra",
+    });
+
+    agent.setModel({
+      ...fakeModel,
+      id: "fake-2",
+      thinkingLevels: ["low", "medium", "high"],
+      defaultThinkingLevel: "medium",
+    });
+
+    expect(agent.thinking).toBe("medium");
+    expect(agent.thinkingLevels).toEqual(["low", "medium", "high"]);
+  });
+
   test("resume adopts a stored session instead of starting fresh", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "first" }] },

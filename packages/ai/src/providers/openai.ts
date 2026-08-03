@@ -40,6 +40,10 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function reasoningEffort(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function codexModelInfo(
   value: unknown,
   currentModels: readonly ModelInfo[],
@@ -71,7 +75,21 @@ function codexModelInfo(
   }
   const reasoningLevels = Array.isArray(model.supported_reasoning_levels)
     ? model.supported_reasoning_levels
+        .map((level) =>
+          typeof level === "object" && level !== null
+            ? reasoningEffort((level as Json).effort)
+            : undefined,
+        )
+        .filter((level): level is string => level !== undefined)
     : [];
+  const fallbackLevels = fallback?.thinkingLevels;
+  const levels = reasoningLevels.length > 0 ? reasoningLevels : fallbackLevels;
+  const defaultCandidate =
+    reasoningEffort(model.default_reasoning_level) ?? fallback?.defaultThinkingLevel;
+  const defaultLevel =
+    defaultCandidate && (!levels || levels.includes(defaultCandidate))
+      ? defaultCandidate
+      : undefined;
   return {
     provider: "openai-codex",
     id: model.slug,
@@ -79,7 +97,9 @@ function codexModelInfo(
     contextWindow,
     maxOutput: fallback?.maxOutput ?? DEFAULT_CODEX_MAX_OUTPUT,
     modalities,
-    ...(reasoningLevels.length > 0 || fallback?.thinking ? { thinking: true } : {}),
+    ...(levels?.length || defaultLevel || fallback?.thinking ? { thinking: true } : {}),
+    ...(levels && levels.length > 0 ? { thinkingLevels: levels } : {}),
+    ...(defaultLevel ? { defaultThinkingLevel: defaultLevel } : {}),
     pricing: fallback?.pricing ?? ZERO_PRICING,
     priority: finiteNumber(model.priority) ?? Number.MAX_SAFE_INTEGER,
   };

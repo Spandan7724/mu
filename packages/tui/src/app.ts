@@ -73,6 +73,7 @@ export interface AppOptions {
   model: string;
   cwd?: string;
   contextWindow?: number;
+  thinkingLevels?: readonly string[];
   callbacks: AppCallbacks;
   registry?: RendererRegistry;
 }
@@ -250,6 +251,7 @@ export class App {
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
   private thinkingLevel = "off";
+  private thinkingLevels: string[];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private prompt: InputPromptRequest | undefined;
@@ -258,6 +260,7 @@ export class App {
 
   constructor(private options: AppOptions) {
     this.registry = options.registry ?? new RendererRegistry();
+    this.thinkingLevels = [...new Set(options.thinkingLevels ?? ["off", "low", "medium", "high"])];
     this.footerData = {
       cwd: options.cwd ?? ".",
       model: options.model,
@@ -295,8 +298,11 @@ export class App {
     };
   }
 
-  setThinking(level: string): void {
-    this.thinkingLevel = level;
+  setThinking(level: string, levels?: readonly string[]): void {
+    if (levels && levels.length > 0) this.thinkingLevels = [...new Set(levels)];
+    this.thinkingLevel = this.thinkingLevels.includes(level)
+      ? level
+      : (this.thinkingLevels[0] ?? "off");
   }
 
   get thinking(): string {
@@ -983,7 +989,8 @@ export class App {
 
     // Ctrl+T cycles thinking depth without leaving the composer.
     if (key.ctrl && key.name === "t") {
-      const levels = ["off", "low", "medium", "high"];
+      const levels = this.thinkingLevels;
+      if (levels.length < 2) return;
       const next = levels[(levels.indexOf(this.thinkingLevel) + 1) % levels.length] as string;
       this.thinkingLevel = next;
       this.options.callbacks.onThinkingChange?.(next);

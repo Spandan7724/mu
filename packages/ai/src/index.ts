@@ -39,4 +39,9 @@ export { iterateSse } from "./sse.ts";
 export { AssistantStream, EventStream } from "./stream.ts";
 export type { Cassette, RecordedInteraction, ReplayCall, ReplayHandle } from "./testing/replay.ts";
 export { recordFetch, replayFetch } from "./testing/replay.ts";
+export {
+  defaultThinkingLevel,
+  supportedThinkingLevels,
+  thinkingLevelForModel,
+} from "./thinking.ts";
 export * from "./types.ts";

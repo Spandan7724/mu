@@ -8,7 +8,9 @@ import {
   type ModelInfo,
   type PromptSection,
   type Provider,
+  supportedThinkingLevels,
   type ThinkingLevel,
+  thinkingLevelForModel,
   type Usage,
   zeroUsage,
 } from "@mu/ai";
@@ -210,8 +212,8 @@ export class Agent {
   constructor(options: AgentOptions = {}) {
     this.options = options;
     this.permissionRules = [...(options.permissions ?? DEFAULT_PERMISSIONS)];
-    this.currentThinking = options.thinkingLevel ?? "off";
     this.model = resolveModel(options.model, options.extensions);
+    this.currentThinking = thinkingLevelForModel(this.model, options.thinkingLevel);
     this.provider = this.providerFor(this.model);
     this.store = options.session ?? new MemorySessionStore();
     this._sessionId = options.sessionId ?? createSessionId();
@@ -257,6 +259,10 @@ export class Agent {
     return this.currentThinking;
   }
 
+  get thinkingLevels(): ThinkingLevel[] {
+    return supportedThinkingLevels(this.model);
+  }
+
   get isRunning(): boolean {
     return this.running;
   }
@@ -292,15 +298,24 @@ export class Agent {
     }
     this.model = next;
     this.provider = this.providerFor(next);
+    const nextThinking = thinkingLevelForModel(next, this.currentThinking);
+    const thinkingChanged = nextThinking !== this.currentThinking;
+    this.currentThinking = nextThinking;
     this.lastContextUsage = undefined;
     this.lastContextPercent = 0;
-    this.tree.append({ type: "settings-change", model: this.modelRef });
+    this.tree.append({
+      type: "settings-change",
+      model: this.modelRef,
+      ...(thinkingChanged ? { thinkingLevel: nextThinking } : {}),
+    });
     this.options.extensions?.emitLifecycle({ type: "model_select", model: this.modelRef });
   }
 
   setThinking(level: ThinkingLevel): void {
-    this.currentThinking = level;
-    this.tree.append({ type: "settings-change", thinkingLevel: level });
+    const next = thinkingLevelForModel(this.model, level);
+    if (next === this.currentThinking) return;
+    this.currentThinking = next;
+    this.tree.append({ type: "settings-change", thinkingLevel: next });
   }
 
   // Adopts a previously stored session so the next run continues it rather
@@ -332,7 +347,7 @@ export class Agent {
     this.controller = new AbortController();
     this.model = resolveModel(this.options.model, this.options.extensions);
     this.provider = this.providerFor(this.model);
-    this.currentThinking = this.options.thinkingLevel ?? "off";
+    this.currentThinking = thinkingLevelForModel(this.model, this.options.thinkingLevel);
     for (const entry of candidate.activePath()) {
       if (entry.type !== "settings-change") continue;
       if (entry.model) {
@@ -344,15 +359,11 @@ export class Agent {
           // impossible to resume; retain the last valid setting.
         }
       }
-      if (
-        entry.thinkingLevel === "off" ||
-        entry.thinkingLevel === "low" ||
-        entry.thinkingLevel === "medium" ||
-        entry.thinkingLevel === "high"
-      ) {
+      if (typeof entry.thinkingLevel === "string" && entry.thinkingLevel.length > 0) {
         this.currentThinking = entry.thinkingLevel;
       }
     }
+    this.currentThinking = thinkingLevelForModel(this.model, this.currentThinking);
     this.rebuildCheckpointHistory();
   }
 
@@ -1320,6 +1331,7 @@ export class Agent {
     }
     const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
+    const runThinking = thinkingLevelForModel(runModel, this.currentThinking);
     let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
@@ -1397,7 +1409,7 @@ export class Agent {
           ? { getCredentials: () => credentialResolver(runModel.provider) }
           : {}),
       },
-      thinkingLevel: this.currentThinking,
+      thinkingLevel: runThinking,
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
         : {}),

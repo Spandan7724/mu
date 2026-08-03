@@ -14,6 +14,8 @@ function model(id: string): ModelInfo {
     maxOutput: 128_000,
     modalities: ["text", "image"],
     thinking: true,
+    thinkingLevels: ["none", "low", "xhigh"],
+    defaultThinkingLevel: "none",
     pricing: {
       input: 1,
       output: 2,
@@ -25,7 +27,7 @@ function model(id: string): ModelInfo {
 
 function cacheBody(models: ModelInfo[]): string {
   return JSON.stringify({
-    version: 5,
+    version: 6,
     updatedAt: "2026-07-27T00:00:00.000Z",
     models,
   });
@@ -56,7 +58,7 @@ describe("model catalog cache", () => {
       version: number;
       models: ModelInfo[];
     };
-    expect(stored.version).toBe(5);
+    expect(stored.version).toBe(6);
     expect(stored.models).toEqual(discovered);
 
     const secondRegistered: ModelInfo[][] = [];
@@ -93,7 +95,7 @@ describe("model catalog cache", () => {
     await writeFile(
       file,
       JSON.stringify({
-        version: 4,
+        version: 5,
         updatedAt: "2026-07-27T00:00:00.000Z",
         models: [model("gpt-stale")],
       }),

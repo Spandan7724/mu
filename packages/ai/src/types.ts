@@ -115,12 +115,26 @@ export interface ModelInfo {
   maxOutput: number;
   modalities: ("text" | "image")[];
   thinking?: boolean;
+  // Ordered, model-specific values accepted by the provider. When omitted,
+  // clients retain the legacy off/low/medium/high controls.
+  thinkingLevels?: ThinkingLevel[];
+  defaultThinkingLevel?: ThinkingLevel;
   // Anthropic: "adaptive" (effort-based, 4.6+) vs "budget" (budget_tokens, older).
   thinkingMode?: "adaptive" | "budget";
   pricing: ModelPricing;
 }
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
+export type ThinkingLevel =
+  | "off"
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra"
+  | (string & {});
 
 export type Credential =
   | { type: "apiKey"; apiKey: string }

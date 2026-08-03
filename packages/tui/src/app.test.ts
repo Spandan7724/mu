@@ -1981,6 +1981,34 @@ describe("thinking toggle", () => {
     expect(app.thinking).toBe("medium");
   });
 
+  test("ctrl+t follows the active model's thinking levels", () => {
+    const levels: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "openai-codex/gpt-specific",
+      thinkingLevels: ["low", "xhigh", "max", "ultra"],
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+        onThinkingChange: (level) => levels.push(level),
+      },
+    });
+    app.setThinking("low");
+
+    const ctrlT = {
+      type: "key" as const,
+      key: { name: "t", ctrl: true, alt: false, shift: false },
+    };
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
+
+    expect(levels).toEqual(["xhigh", "max", "ultra"]);
+    expect(app.thinking).toBe("ultra");
+  });
+
   test("the footer shows the current thinking level when idle", () => {
     const h = harness();
     expect(stripAnsi(h.app.renderBottom().at(-1) ?? "")).toContain("think off");

@@ -46,9 +46,26 @@ describe("catalog", () => {
     }
   });
 
-  test("uses the Codex backend context limit for ChatGPT-plan models", () => {
-    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
-      expect(findModel(`openai-codex/${id}`)?.contextWindow).toBe(272_000);
+  test("bundles Codex-compatible ChatGPT-plan reasoning metadata", () => {
+    const expected = {
+      "gpt-5.6-sol": {
+        defaultThinkingLevel: "low",
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      },
+      "gpt-5.6-terra": {
+        defaultThinkingLevel: "medium",
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      },
+      "gpt-5.6-luna": {
+        defaultThinkingLevel: "medium",
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+    } as const;
+    for (const [id, metadata] of Object.entries(expected)) {
+      expect(findModel(`openai-codex/${id}`)).toMatchObject({
+        contextWindow: 272_000,
+        ...metadata,
+      });
     }
   });
 
@@ -123,6 +140,33 @@ describe("catalog", () => {
 
     await expect(refreshModels({ fetch: mockFetch })).rejects.toThrow("503");
     expect(listModels().map(modelRef)).toEqual(before);
+  });
+
+  test("preserves model-specific reasoning efforts from public metadata", async () => {
+    const discovered = await discoverModels({
+      fetch: async () =>
+        Response.json({
+          openai: {
+            models: {
+              specific: {
+                id: "gpt-specific",
+                tool_call: true,
+                reasoning: true,
+                reasoning_options: [
+                  {
+                    type: "effort",
+                    values: ["none", "minimal", "low", "xhigh", "default", null],
+                  },
+                ],
+                limit: { context: 200_000, output: 32_000 },
+                modalities: { input: ["text"], output: ["text"] },
+              },
+            },
+          },
+        }),
+    });
+
+    expect(discovered[0]?.thinkingLevels).toEqual(["none", "minimal", "low", "xhigh"]);
   });
 });
 

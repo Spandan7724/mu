@@ -10,6 +10,7 @@ export type {
 export {
   builtinProviderConfigs,
   defaultModelRef,
+  defaultThinkingLevel,
   discoverModels,
   findModel,
   listModels,
@@ -17,6 +18,8 @@ export {
   refreshModels,
   registerModels,
   registerProvider,
+  supportedThinkingLevels,
+  thinkingLevelForModel,
 } from "@mu/ai";
 // Re-exported so SDK users never need to reach into the kernel packages.
 export type {

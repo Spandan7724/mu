@@ -10,7 +10,7 @@ import {
   registerModels,
 } from "mu";
 
-const CACHE_VERSION = 5;
+const CACHE_VERSION = 6;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_ATTEMPTS = 2;
 
@@ -88,6 +88,24 @@ function isModel(value: unknown): value is ModelInfo {
   }
   if (value.baseUrl !== undefined && typeof value.baseUrl !== "string") return false;
   if (value.thinking !== undefined && typeof value.thinking !== "boolean") return false;
+  if (
+    value.thinkingLevels !== undefined &&
+    (!Array.isArray(value.thinkingLevels) ||
+      value.thinkingLevels.length === 0 ||
+      value.thinkingLevels.length > 64 ||
+      !value.thinkingLevels.every((level) => typeof level === "string" && level.length > 0))
+  ) {
+    return false;
+  }
+  if (
+    value.defaultThinkingLevel !== undefined &&
+    (typeof value.defaultThinkingLevel !== "string" ||
+      value.defaultThinkingLevel.length === 0 ||
+      (Array.isArray(value.thinkingLevels) &&
+        !value.thinkingLevels.includes(value.defaultThinkingLevel)))
+  ) {
+    return false;
+  }
   if (
     value.thinkingMode !== undefined &&
     value.thinkingMode !== "adaptive" &&

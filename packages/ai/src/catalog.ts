@@ -154,6 +154,19 @@ function thinkingMode(model: JsonObject): "adaptive" | "budget" {
     : "budget";
 }
 
+function thinkingLevels(model: JsonObject): string[] | undefined {
+  if (!Array.isArray(model.reasoning_options)) return undefined;
+  const levels: string[] = [];
+  for (const option of model.reasoning_options) {
+    if (!isObject(option) || option.type !== "effort" || !Array.isArray(option.values)) continue;
+    for (const value of option.values) {
+      if (typeof value !== "string" || value.length === 0 || value === "default") continue;
+      if (!levels.includes(value)) levels.push(value);
+    }
+  }
+  return levels.length > 0 ? levels : undefined;
+}
+
 function apiForModel(provider: string, model: JsonObject): LlmApi {
   if (provider === "cloudflare-ai-gateway" && typeof model.id === "string") {
     if (model.id.startsWith("openai/")) return "openai-responses";
@@ -232,6 +245,7 @@ function toModelInfo(provider: string, model: JsonObject): ModelInfo | undefined
   const modalities: ModelInfo["modalities"] = ["text"];
   if (inputModalities.includes("image")) modalities.push("image");
   const thinking = model.reasoning === true;
+  const levels = thinking ? thinkingLevels(model) : undefined;
   const route = routedModel(provider, model);
   if (!route) return undefined;
 
@@ -245,6 +259,7 @@ function toModelInfo(provider: string, model: JsonObject): ModelInfo | undefined
     maxOutput,
     modalities,
     ...(thinking ? { thinking: true } : {}),
+    ...(levels ? { thinkingLevels: levels } : {}),
     ...(thinking && provider === "anthropic" ? { thinkingMode: thinkingMode(model) } : {}),
     pricing: {
       input: finiteNumber(cost.input) ?? 0,

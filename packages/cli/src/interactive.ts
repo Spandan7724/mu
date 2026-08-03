@@ -40,6 +40,7 @@ import {
   registryWithCoreCommands,
   removeStoredCredential,
   saveApiKey,
+  type ThinkingLevel,
   type ToolRenderer,
   toCommand,
 } from "mu";
@@ -145,7 +146,10 @@ export async function initializeInteractiveSession(
 }
 
 export function startNewInteractiveSession(
-  agent: Pick<Agent, "newSession" | "sessionId" | "modelRef" | "contextWindow" | "thinking">,
+  agent: Pick<
+    Agent,
+    "newSession" | "sessionId" | "modelRef" | "contextWindow" | "thinking" | "thinkingLevels"
+  >,
   app: Pick<
     App,
     "setModel" | "setThinking" | "handleEvent" | "replaceTranscript" | "banner" | "renderScreen"
@@ -154,7 +158,7 @@ export function startNewInteractiveSession(
 ): string {
   agent.newSession();
   app.setModel(agent.modelRef, agent.contextWindow);
-  app.setThinking(agent.thinking);
+  app.setThinking(agent.thinking, agent.thinkingLevels);
   app.handleEvent({
     type: "usage_updated",
     sessionTotals: {
@@ -391,6 +395,7 @@ export async function runInteractive(
     model: modelRef,
     cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
     contextWindow: agent.contextWindow,
+    thinkingLevels: agent.thinkingLevels,
     registry,
     callbacks: {
       onSubmit: (text) => {
@@ -440,7 +445,7 @@ export async function runInteractive(
         void runCommand(text);
       },
       onMentionQuery: (query) => mentionCandidates(query),
-      onThinkingChange: (level) => agent.setThinking(level as "off" | "low" | "medium" | "high"),
+      onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
       onPermissionReply: (id, outcome, remember) => {
         const pending = pendingPermissions.get(id);
         if (!pending) return;
@@ -528,6 +533,7 @@ export async function runInteractive(
         onChoose: async (label) => {
           agent.setModel(label);
           app.setModel(label, agent.contextWindow);
+          app.setThinking(agent.thinking, agent.thinkingLevels);
           try {
             await saveDefaultModel(label);
             commitLines([`  model set to ${label} · saved as default`]);
@@ -663,7 +669,7 @@ export async function runInteractive(
               agent.resume(tree);
               sessionResumable = true;
               app.setModel(agent.modelRef, agent.contextWindow);
-              app.setThinking(agent.thinking);
+              app.setThinking(agent.thinking, agent.thinkingLevels);
               app.replaceTranscript(tree.messagesAt(), app.banner());
               commitLines([`  resumed ${sessionId}`]);
             } catch (error) {
@@ -874,6 +880,7 @@ export async function runInteractive(
     const ref = `${model.provider}/${model.id}`;
     agent.setModel(ref);
     app.setModel(ref, agent.contextWindow);
+    app.setThinking(agent.thinking, agent.thinkingLevels);
     try {
       await saveDefaultModel(ref);
     } catch (error) {
@@ -1080,7 +1087,7 @@ export async function runInteractive(
   terminal.start();
   terminal.setTitle(formatTerminalTitle(process.cwd()));
   app.setModel(agent.modelRef, agent.contextWindow);
-  app.setThinking(agent.thinking);
+  app.setThinking(agent.thinking, agent.thinkingLevels);
   if (args.resumeSessionId) {
     app.replaceTranscript(agent.session.messagesAt(), app.banner());
   } else {

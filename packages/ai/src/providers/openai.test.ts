@@ -57,7 +57,13 @@ describe("discoverOpenAICodexModels", () => {
               display_name: "GPT New",
               context_window: 400_000,
               input_modalities: ["text", "image"],
-              supported_reasoning_levels: [{ effort: "medium" }],
+              default_reasoning_level: "low",
+              supported_reasoning_levels: [
+                { effort: "low" },
+                { effort: "medium" },
+                { effort: "xhigh" },
+                { effort: "ultra" },
+              ],
               visibility: "list",
               supported_in_api: true,
               priority: 1,
@@ -97,6 +103,8 @@ describe("discoverOpenAICodexModels", () => {
       maxOutput: 128_000,
       modalities: ["text", "image"],
       thinking: true,
+      thinkingLevels: ["low", "medium", "xhigh", "ultra"],
+      defaultThinkingLevel: "low",
     });
     expect(discovered?.[1]).toMatchObject({
       contextWindow: 272_000,

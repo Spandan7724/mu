@@ -87,13 +87,24 @@ function convertContents(messages: AiMessage[]): {
 function thinkingBudget(level: ThinkingLevel): number {
   switch (level) {
     case "off":
+    case "none":
       return 0;
+    case "minimal":
+      return 512;
     case "low":
       return 2048;
     case "medium":
       return 8192;
     case "high":
       return 24576;
+    case "xhigh":
+      return 32768;
+    case "max":
+      return 49152;
+    case "ultra":
+      return 65536;
+    default:
+      return 8192;
   }
 }
 
@@ -118,7 +129,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
   if (model.thinking && opts?.thinkingLevel) {
     generationConfig.thinkingConfig = {
       thinkingBudget: thinkingBudget(opts.thinkingLevel),
-      includeThoughts: opts.thinkingLevel !== "off",
+      includeThoughts: opts.thinkingLevel !== "off" && opts.thinkingLevel !== "none",
     };
   }
   body.generationConfig = generationConfig;
