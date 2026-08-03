@@ -4,6 +4,8 @@ A general-purpose, extensible AI agent platform. Out of the box mu is a polished
 agent; swap its **profile** (tools + prompts + permissions + UI renderers) and the same
 kernel becomes a computer-use agent, an automation agent, or any other tool-using agent.
 
+![mu terminal interface](assets/mu-tui.png)
+
 Three surfaces, one kernel, one event stream:
 
 - **TUI** — interactive terminal app (`mu`)
@@ -90,6 +92,14 @@ history, and retains a token-budgeted recent tail with tool calls and results ke
 together. Compaction metadata is stored in the JSONL session tree, so resuming reconstructs
 the same summary and verbatim tail. Switching to a smaller-window model uses the previous
 model to summarize while sizing the retained tail for the destination window.
+
+## Transcript export
+
+Run `/export` in the interactive app to save the complete current chat branch as a
+timestamped Markdown file in the current directory, or use `/export path/to/chat.md`.
+Export includes turns older than compaction boundaries and follows the active fork/undo
+branch, while hidden instruction snapshots stay private. Existing files are never
+overwritten. SDK consumers can produce the same representation with `sessionToMarkdown()`.
 
 ## MCP servers
 

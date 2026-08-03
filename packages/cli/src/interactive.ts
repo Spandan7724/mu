@@ -46,6 +46,7 @@ import {
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel, saveDefaultModel } from "./config.ts";
+import { transcriptExportCommand } from "./export-command.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import {
   type AccountLoginProvider,
@@ -63,6 +64,7 @@ import {
   sessionStoreForProfile,
 } from "./profiles.ts";
 import { resumePickerItems } from "./session-picker.ts";
+import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const SPINNER_INTERVAL_MS = 120;
@@ -691,6 +693,22 @@ export async function runInteractive(
       return { handled: true };
     },
   });
+  commands.register(
+    transcriptExportCommand({
+      getSession: () => agent.session,
+      getSessionId: () => agent.sessionId,
+      getModel: () => agent.modelRef,
+      isRunning: () => Boolean(activeRun || agent.isRunning),
+      save: async (markdown, requestedPath, now) =>
+        (
+          await saveTranscriptMarkdown(markdown, {
+            cwd: process.cwd(),
+            requestedPath,
+            now,
+          })
+        ).displayPath,
+    }),
+  );
 
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 

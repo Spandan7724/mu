@@ -140,3 +140,8 @@ export {
 } from "./structured-output.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";
 export { tool } from "./tool.ts";
+export type {
+  MarkdownTranscript,
+  TranscriptMarkdownOptions,
+} from "./transcript-markdown.ts";
+export { sessionToMarkdown } from "./transcript-markdown.ts";
