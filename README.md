@@ -77,6 +77,14 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
+## Transcript export
+
+Run `/export` in the interactive app to save the complete current chat branch as a
+timestamped Markdown file in the current directory, or use `/export path/to/chat.md`.
+Export includes turns older than compaction boundaries and follows the active fork/undo
+branch, while hidden instruction snapshots stay private. Existing files are never
+overwritten. SDK consumers can produce the same representation with `sessionToMarkdown()`.
+
 ## MCP servers
 
 Add stdio servers to `~/.mu/config.json` or a project's `.mu/config.json`:
