@@ -158,15 +158,21 @@ export class InputDecoder {
         const codePoint = Number(parts[0]);
         if (!Number.isNaN(codePoint)) {
           const char = String.fromCodePoint(codePoint);
+          const name = SIMPLE[char] ?? char;
           return {
             type: "key",
             key: {
-              name: char,
+              name,
               ...modifiers,
-              ...(!modifiers.ctrl && !modifiers.alt ? { text: char } : {}),
+              ...(!SIMPLE[char] && !modifiers.ctrl && !modifiers.alt ? { text: char } : {}),
             },
           };
         }
+      }
+      // Backtab is conventionally encoded as CSI Z without an explicit
+      // modifier parameter.
+      if (final === "Z") {
+        return { type: "key", key: { name: "tab", ...modifiers, shift: true } };
       }
       const name = CSI_FINAL[final];
       return name ? { type: "key", key: { name, ...modifiers } } : { type: "unknown", raw };

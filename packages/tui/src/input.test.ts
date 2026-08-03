@@ -43,6 +43,14 @@ describe("InputDecoder", () => {
     expect(altEvents[0]?.type === "key" && altEvents[0].key.alt).toBe(true);
   });
 
+  test("decodes shift+tab", () => {
+    for (const sequence of [`${ESC}[Z`, `${ESC}[9;2u`]) {
+      const events = new InputDecoder().push(sequence);
+      expect(events[0]?.type === "key" && events[0].key.name).toBe("tab");
+      expect(events[0]?.type === "key" && events[0].key.shift).toBe(true);
+    }
+  });
+
   test("decodes home/end/delete", () => {
     expect(keys(new InputDecoder().push(`${ESC}[3~${ESC}[5~`))).toEqual(["delete", "pageup"]);
   });

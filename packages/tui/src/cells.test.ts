@@ -206,15 +206,21 @@ describe("transcript cells (golden lines)", () => {
     expect(failed).toContain("[31m");
   });
 
-  test("thinking collapses to one dim line by default", () => {
+  test("hidden thinking retains a discoverable placeholder", () => {
     const lines = visible(thinkingCell("First I should check the client.\nThen the tests.", plain));
     expect(lines.length).toBe(1);
-    expect(lines[0]).toContain("thinking · First I should check the client.");
+    expect(lines[0]).toContain("thinking · hidden · ctrl+t to show");
+    expect(lines[0]).not.toContain("First I should check the client.");
   });
 
-  test("thinking expands behind the rule", () => {
+  test("visible thinking has a labeled body behind the rule", () => {
     const lines = visible(thinkingCell("one\ntwo", plain, true));
-    expect(lines).toEqual(["  │ one", "  │ two"]);
+    expect(lines).toEqual(["  │ thinking · ctrl+t to hide", "  │ one", "  │ two"]);
+  });
+
+  test("streaming thinking uses an active label", () => {
+    const lines = visible(thinkingCell("checking", plain, true, true));
+    expect(lines[0]).toBe("  │ thinking… · ctrl+t to hide");
   });
 
   test("error cell", () => {
