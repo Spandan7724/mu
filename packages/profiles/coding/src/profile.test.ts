@@ -45,9 +45,11 @@ describe("codingProfile", () => {
     for (const safe of ["read", "ls", "glob", "grep"]) {
       expect(byName.get(safe)?.isConcurrencySafe?.({})).toBe(true);
     }
-    for (const unsafe of ["write", "edit", "bash"]) {
+    for (const unsafe of ["write", "edit"]) {
       expect(byName.get(unsafe)?.isConcurrencySafe).toBeUndefined();
     }
+    expect(byName.get("bash")?.isConcurrencySafe?.({ command: "rg --files" })).toBe(true);
+    expect(byName.get("bash")?.isConcurrencySafe?.({ command: "npm test" })).toBe(false);
   });
 
   test("carryover reports the files the session touched", async () => {
@@ -87,6 +89,13 @@ describe("permission defaults", () => {
     }
   });
 
+  test("proven shell inspection is allowed without allowing ordinary bash", () => {
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, ["bash", "bash:inspect"], "rg --files")).toBe(
+      "allow",
+    );
+    expect(evaluate(CODING_PERMISSION_DEFAULTS, "bash", "npm test")).toBe("ask");
+  });
+
   test("task inspection is allowed while task mutation still asks", () => {
     expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_output", '{"taskId":"t1"}')).toBe("allow");
     expect(evaluate(CODING_PERMISSION_DEFAULTS, "task_list", "{}")).toBe("allow");
@@ -105,6 +114,9 @@ describe("permission defaults", () => {
     expect(evaluate(rules("plan-readonly"), "read", "{}")).toBe("allow");
     expect(evaluate(rules("plan-readonly"), "write", "{}")).toBe("deny");
     expect(evaluate(rules("plan-readonly"), "bash", "{}")).toBe("deny");
+    expect(evaluate(rules("plan-readonly"), ["bash", "bash:inspect"], "git status --short")).toBe(
+      "allow",
+    );
     expect(evaluate(rules("yolo"), "bash", "{}")).toBe("allow");
   });
 
@@ -122,6 +134,17 @@ describe("permission defaults", () => {
 
     expect(bash?.permissionPattern?.({ command: "npm test", description: "Run tests" })).toBe(
       "npm test",
+    );
+  });
+
+  test("bash derives inspection scope only for proven foreground inspection", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const bash = profile.toolset.find((candidate) => candidate.name === "bash");
+
+    expect(bash?.permissionScope?.({ command: "rg --files | head -20" })).toBe("bash:inspect");
+    expect(bash?.permissionScope?.({ command: "rg --files > files.txt" })).toBe("bash");
+    expect(bash?.permissionScope?.({ command: "rg --files", run_in_background: true })).toBe(
+      "bash",
     );
   });
 

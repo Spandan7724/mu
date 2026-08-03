@@ -1440,13 +1440,23 @@ export class Agent {
         }
 
         const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
+        let permission = info.toolCall.name;
+        try {
+          permission = selectedTool?.permissionScope?.(args) ?? permission;
+        } catch {
+          // A broken profile classifier must fall back to the concrete tool.
+        }
         let pattern = JSON.stringify(args);
         try {
           pattern = selectedTool?.permissionPattern?.(args) ?? pattern;
         } catch {
           // A broken profile projection must not bypass the generic permission rules.
         }
-        const action = evaluate(this.permissionRules, info.toolCall.name, pattern);
+        const permissionTargets =
+          permission === info.toolCall.name
+            ? [info.toolCall.name]
+            : [info.toolCall.name, permission];
+        const action = evaluate(this.permissionRules, permissionTargets, pattern);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
         if (action === "allow") {
           return rewritten;
@@ -1461,6 +1471,7 @@ export class Agent {
           id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
           toolCallId: info.toolCall.id,
           toolName: info.toolCall.name,
+          permission,
           pattern,
           description: details?.description ?? `Run ${info.toolCall.name}`,
           ...(details?.preview ? { preview: details.preview } : {}),

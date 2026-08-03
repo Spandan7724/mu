@@ -512,6 +512,7 @@ describe("approval overlay", () => {
       id: "p1",
       toolCallId: "c1",
       toolName: "bash",
+      permission: "bash",
       pattern: "rm -rf build",
       description: "run bash",
     },
@@ -535,6 +536,7 @@ describe("approval overlay", () => {
         id: "p2",
         toolCallId: "c2",
         toolName: "edit",
+        permission: "edit",
         pattern: '{"path":"code.ts"}',
         description: "Edit code.ts",
         preview: {
@@ -944,6 +946,7 @@ describe("tool output toggle", () => {
         id: "p1",
         toolCallId: "c2",
         toolName: "edit",
+        permission: "edit",
         pattern: "{}",
         description: "Edit large.txt",
         preview: {
@@ -1897,6 +1900,7 @@ describe("concurrent permission asks", () => {
       id,
       toolCallId: `c-${id}`,
       toolName: tool,
+      permission: tool,
       pattern: "{}",
       description: `run ${tool}`,
     },

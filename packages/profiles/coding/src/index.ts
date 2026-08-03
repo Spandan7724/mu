@@ -220,6 +220,12 @@ export {
 } from "./permissions.ts";
 export { codingPrompt } from "./prompts.ts";
 export { shellCommand, terminateProcessTree, windowsTaskkillCommand } from "./shell.ts";
+export {
+  classifyShellCommand,
+  isInspectionShellCommand,
+  parseInspectionCommands,
+  type ShellCommandClassification,
+} from "./shell-inspection.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";

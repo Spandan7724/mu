@@ -160,6 +160,45 @@ describe("shadow checkpoints", () => {
     await expect(access(join(root, "created.secret"))).rejects.toThrow();
   });
 
+  test("ignored dependency and cache directories are preserved but not checkpointed", async () => {
+    const root = await scratch();
+    await writeFile(join(root, ".gitignore"), ".venv/\nnode_modules/\n*.secret\n");
+    await mkdir(join(root, ".venv", "bin"), { recursive: true });
+    await writeFile(join(root, ".venv", "bin", "python"), "original environment\n");
+    await writeFile(join(root, "user.secret"), "original user state\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, ".venv", "bin", "python"), "updated environment\n");
+    await mkdir(join(root, "node_modules", "example"), { recursive: true });
+    await writeFile(join(root, "node_modules", "example", "index.js"), "generated\n");
+    await writeFile(join(root, "user.secret"), "updated user state\n");
+
+    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["user.secret"]);
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, ".venv", "bin", "python"), "utf8")).toBe(
+      "updated environment\n",
+    );
+    expect(await readFile(join(root, "node_modules", "example", "index.js"), "utf8")).toBe(
+      "generated\n",
+    );
+    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("original user state\n");
+  });
+
+  test("a dependency-named directory is checkpointed when it is not ignored", async () => {
+    const root = await scratch();
+    await mkdir(join(root, "venv"), { recursive: true });
+    await writeFile(join(root, "venv", "source.txt"), "original\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, "venv", "source.txt"), "changed\n");
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, "venv", "source.txt"), "utf8")).toBe("original\n");
+  });
+
   test("diff reports per-file added and removed counts", async () => {
     const root = await scratch();
     await writeFile(join(root, "a.txt"), "one\ntwo\n");
@@ -229,6 +268,25 @@ describe("shadow checkpoints", () => {
 
     const second = new ShadowCheckpointProvider({ root: secondRoot, shadowDir });
     await expect(second.snapshot()).rejects.toThrow("belongs to");
+  });
+
+  test("an older shadow-store format is rebuilt without touching the workspace", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "source.txt"), "workspace state\n");
+    const shadowDir = join(tmpdir(), `mu-shadow-version-${process.pid}-${shadowCounter++}`);
+    const first = new ShadowCheckpointProvider({ root, shadowDir });
+    await first.snapshot("old history");
+    await writeFile(join(shadowDir, "mu-checkpoint-version"), "1\n");
+    await writeFile(join(shadowDir, "obsolete-shadow-data"), "old\n");
+
+    const rebuilt = new ShadowCheckpointProvider({ root, shadowDir });
+    await rebuilt.snapshot("new history");
+
+    await expect(access(join(shadowDir, "obsolete-shadow-data"))).rejects.toThrow();
+    expect(await readFile(join(root, "source.txt"), "utf8")).toBe("workspace state\n");
+    expect((await git(root, `--git-dir=${shadowDir}`, "rev-list", "--count", "HEAD")).trim()).toBe(
+      "1",
+    );
   });
 });
 

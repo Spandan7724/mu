@@ -12,6 +12,7 @@ export interface PermissionRequest {
   id: string;
   toolCallId: string;
   toolName: string;
+  permission: string; // evaluated scope; may be narrower than toolName
   pattern: string; // what was matched, e.g. the command being run
   description: string; // human-readable summary for UI
   preview?: PermissionPreview;
@@ -37,12 +38,16 @@ function matches(pattern: string, value: string): boolean {
 // default "ask".
 export function evaluate(
   rules: PermissionRule[],
-  permission: string,
+  permission: string | readonly string[],
   pattern: string,
 ): PermissionAction {
+  const permissions = typeof permission === "string" ? [permission] : permission;
   let action: PermissionAction = "ask";
   for (const rule of rules) {
-    if (matches(rule.permission, permission) && matches(rule.pattern, pattern)) {
+    if (
+      permissions.some((candidate) => matches(rule.permission, candidate)) &&
+      matches(rule.pattern, pattern)
+    ) {
       action = rule.action;
     }
   }

@@ -2,6 +2,7 @@ import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, terminateProcessTree } from "../shell.ts";
+import { isInspectionShellCommand } from "../shell-inspection.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -127,10 +128,15 @@ export function bashTool(deps: BashDeps) {
   const spawn = deps.spawn ?? defaultSpawn;
   return tool({
     name: "bash",
-    changesState: true,
+    changesState: ({ command, run_in_background }) =>
+      run_in_background === true || !isInspectionShellCommand(command),
+    isConcurrencySafe: ({ command, run_in_background }) =>
+      run_in_background !== true && isInspectionShellCommand(command),
+    permissionScope: ({ command, run_in_background }) =>
+      run_in_background !== true && isInspectionShellCommand(command) ? "bash:inspect" : "bash",
     permissionPattern: ({ command }) => command,
     description:
-      "Run a command with the platform-native shell in the session root. Use for building, testing and inspecting the project. Prefer the dedicated read/edit/grep/glob tools for file work.",
+      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only rg, sed, head, tail, find, and git status/diff commands to search and narrow before reading files. Use write/edit tools for file changes.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
       description: z

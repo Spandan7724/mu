@@ -68,6 +68,16 @@ describe("permission engine", () => {
     expect(evaluate(mcp, "bash", "anything")).toBe("ask");
   });
 
+  test("derived scopes and concrete tool names are both rule targets", () => {
+    const scoped: PermissionRule[] = [
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "bash:inspect", pattern: "*", action: "allow" },
+      { permission: "bash", pattern: "special status", action: "deny" },
+    ];
+    expect(evaluate(scoped, ["bash", "bash:inspect"], "rg --files")).toBe("allow");
+    expect(evaluate(scoped, ["bash", "bash:inspect"], "special status")).toBe("deny");
+  });
+
   test("patterns are anchored, not substring matches", () => {
     const anchored: PermissionRule[] = [{ permission: "bash", pattern: "ls", action: "allow" }];
     expect(evaluate(anchored, "bash", "ls")).toBe("allow");

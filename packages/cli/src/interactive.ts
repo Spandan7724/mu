@@ -451,7 +451,7 @@ export async function runInteractive(
         if (!pending) return;
         if (outcome === "allow" && remember) {
           const rule: PermissionRule = {
-            permission: pending.request.toolName,
+            permission: pending.request.permission,
             pattern: pending.request.pattern,
             action: "allow",
           };

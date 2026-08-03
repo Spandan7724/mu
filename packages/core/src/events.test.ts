@@ -56,6 +56,7 @@ const samples: AgentEvent[] = [
       id: "p1",
       toolCallId: "c1",
       toolName: "echo",
+      permission: "echo",
       pattern: "echo *",
       description: "Run echo",
     },

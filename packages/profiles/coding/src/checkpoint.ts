@@ -78,6 +78,32 @@ function workspaceKey(root: string, scope?: string): string {
   return `${readable}-${hash}`;
 }
 
+const DISPOSABLE_IGNORED_DIRECTORIES = new Set([
+  ".venv",
+  "venv",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".next",
+  ".nuxt",
+  ".cache",
+  "coverage",
+]);
+const SHADOW_STORE_VERSION = "2";
+
+function disposableDirectoryFor(path: string): string | undefined {
+  const parts = path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "").split("/");
+  const disposableIndex = parts.findIndex((part) => DISPOSABLE_IGNORED_DIRECTORIES.has(part));
+  if (disposableIndex === -1) return undefined;
+  return parts.slice(0, disposableIndex + 1).join("/");
+}
+
+function cleanExcludePattern(path: string): string {
+  return `/${path.replaceAll("\\", "\\\\").replace(/[?*[#]/g, "\\$&")}/`;
+}
+
 export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly root: string;
   private readonly shadowDir: string;
@@ -128,20 +154,37 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     if (this.initialized) return;
     await mkdir(this.shadowDir, { recursive: true });
     const ownerFile = join(this.shadowDir, "mu-worktree");
+    let existingStore = false;
     try {
       const owner = (await readFile(ownerFile, "utf8")).trim();
       if (owner !== this.root) {
         throw new Error(`Checkpoint store belongs to ${owner}, not ${this.root}`);
       }
+      existingStore = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await writeFile(ownerFile, `${this.root}\n`, "utf8");
     }
+
+    const versionFile = join(this.shadowDir, "mu-checkpoint-version");
+    if (existingStore) {
+      const version = await readFile(versionFile, "utf8").catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (version?.trim() !== SHADOW_STORE_VERSION) {
+        // Version 1 force-tracked ignored dependency trees. Rebuild only Mu's
+        // shadow repository; the user's worktree is outside this directory.
+        await rm(this.shadowDir, { recursive: true, force: true });
+        await mkdir(this.shadowDir, { recursive: true });
+      }
+    }
+    await writeFile(ownerFile, `${this.root}\n`, "utf8");
 
     const check = await this.git("rev-parse", "--git-dir");
     if (check.exitCode !== 0) {
       await this.git("init", "--quiet");
     }
+    await writeFile(versionFile, `${SHADOW_STORE_VERSION}\n`, "utf8");
 
     // The shadow repository must never snapshot itself. This matters whenever
     // it is placed inside the session root — otherwise every snapshot grows by
@@ -155,9 +198,48 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     this.initialized = true;
   }
 
+  private async ignoredDisposableDirectories(): Promise<string[]> {
+    // Include cached paths so a directory that became ignored after an older
+    // checkpoint is still recognized. --directory lets Git collapse ignored,
+    // untracked trees instead of enumerating dependencies and cache contents.
+    const ignored = await this.git(
+      "ls-files",
+      "--cached",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    );
+    if (ignored.exitCode !== 0) return [];
+
+    const directories = new Set<string>();
+    for (const path of ignored.stdout.split("\0")) {
+      if (path.length === 0) continue;
+      const directory = disposableDirectoryFor(path);
+      if (directory) directories.add(directory);
+    }
+    return [...directories].sort();
+  }
+
+  private checkpointPathspecs(directories: string[]): string[] {
+    return [
+      ...this.excludedPathspecs,
+      ...directories.map((directory) => `:(exclude,literal)${directory}`),
+    ];
+  }
+
   async snapshot(label?: string): Promise<string | undefined> {
     await this.ensure();
-    const add = await this.git("add", "-A", "--force", "--", ".", ...this.excludedPathspecs);
+    const disposable = await this.ignoredDisposableDirectories();
+    const add = await this.git(
+      "add",
+      "-A",
+      "--force",
+      "--",
+      ".",
+      ...this.checkpointPathspecs(disposable),
+    );
     if (add.exitCode !== 0) return undefined;
 
     const commit = await this.git(
@@ -182,6 +264,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     if (readTree.exitCode !== 0) {
       throw new Error(`Could not restore checkpoint ${ref}: ${readTree.stderr.trim()}`);
     }
+    const disposable = await this.ignoredDisposableDirectories();
     const clean = await this.git(
       "clean",
       "--force",
@@ -193,6 +276,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       ...(relative(this.root, this.shadowDir).startsWith("..")
         ? []
         : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),
+      ...disposable.flatMap((directory) => ["-e", cleanExcludePattern(directory)]),
     );
     if (clean.exitCode !== 0) {
       throw new Error(`Could not clean checkpoint ${ref}: ${clean.stderr.trim()}`);
@@ -251,7 +335,15 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     await this.ensure();
     if (!toRef) {
-      const add = await this.git("add", "-A", "--force", "--", ".", ...this.excludedPathspecs);
+      const disposable = await this.ignoredDisposableDirectories();
+      const add = await this.git(
+        "add",
+        "-A",
+        "--force",
+        "--",
+        ".",
+        ...this.checkpointPathspecs(disposable),
+      );
       if (add.exitCode !== 0) return [];
     }
     const args = toRef

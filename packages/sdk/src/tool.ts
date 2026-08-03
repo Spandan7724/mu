@@ -11,6 +11,7 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   isConcurrencySafe?: (args: z.infer<Schema>) => boolean;
   executionMode?: "sequential";
   changesState?: boolean | ((args: z.infer<Schema>) => boolean);
+  permissionScope?: (args: z.infer<Schema>) => string;
   permissionPattern?: (args: z.infer<Schema>) => string;
   permissionDetails?: (
     args: z.infer<Schema>,
@@ -42,6 +43,16 @@ export function tool<Schema extends z.ZodType>(
     ...(definition.isConcurrencySafe ? { isConcurrencySafe: definition.isConcurrencySafe } : {}),
     ...(definition.executionMode ? { executionMode: definition.executionMode } : {}),
     ...(definition.changesState !== undefined ? { changesState: definition.changesState } : {}),
+    ...(definition.permissionScope
+      ? {
+          permissionScope: (rawArgs) => {
+            const parsed = definition.inputSchema.safeParse(rawArgs);
+            return parsed.success
+              ? (definition.permissionScope?.(parsed.data) ?? definition.name)
+              : definition.name;
+          },
+        }
+      : {}),
     ...(definition.permissionPattern
       ? {
           permissionPattern: (rawArgs) => {

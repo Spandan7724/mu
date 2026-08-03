@@ -17,6 +17,10 @@ export interface Tool<Args = Record<string, unknown>> {
   isConcurrencySafe?: (args: Args) => boolean;
   executionMode?: "sequential"; // hard override: never parallel with anything
   changesState?: boolean | ((args: Args) => boolean);
+  // Profile-owned permission category derived from validated arguments. The
+  // concrete tool name remains an additional match target, so broad rules such
+  // as `bash: deny` still govern narrower scopes such as `bash:inspect`.
+  permissionScope?: (args: Args) => string;
   // Profile-owned value matched by permission rules and persisted by "always allow".
   permissionPattern?: (args: Args) => string;
   permissionDetails?: (

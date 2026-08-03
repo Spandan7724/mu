@@ -12,6 +12,7 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "todo", pattern: "*", action: "allow" },
   { permission: "task_output", pattern: "*", action: "allow" },
   { permission: "task_list", pattern: "*", action: "allow" },
+  { permission: "bash:inspect", pattern: "*", action: "allow" },
 ];
 
 export const CODING_PERMISSION_MODES: PermissionMode[] = [
@@ -38,6 +39,7 @@ export const CODING_PERMISSION_MODES: PermissionMode[] = [
       { permission: "write", pattern: "*", action: "deny" },
       { permission: "edit", pattern: "*", action: "deny" },
       { permission: "bash", pattern: "*", action: "deny" },
+      { permission: "bash:inspect", pattern: "*", action: "allow" },
       { permission: "task_write_stdin", pattern: "*", action: "deny" },
       { permission: "task_kill", pattern: "*", action: "deny" },
       { permission: "task_detach", pattern: "*", action: "deny" },

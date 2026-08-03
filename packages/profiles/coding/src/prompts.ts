@@ -15,6 +15,8 @@ Tools:
 - Prefer edit over write for existing files; write replaces the whole file.
 - Use grep and glob to find things; use bash for building, testing and inspection. The
   bash tool runs the platform-native shell named in the environment (PowerShell on Windows).
+- During repository exploration, prefer one batched read-only bash call using rg, targeted
+  sed/head/tail ranges, and git status/diff over many whole-file reads. Search and narrow first.
 - Independent read-only lookups can be issued together in one turn.
 
 Communication:

@@ -404,6 +404,45 @@ describe("permissions", () => {
     expect(request?.pattern).toBe("value 1");
   });
 
+  test("tool-owned permission scopes retain concrete tool rule matching", async () => {
+    let ran = 0;
+    const inspect = tool({
+      name: "danger",
+      description: "inspect",
+      inputSchema: z.object({ x: z.number() }),
+      permissionScope: () => "danger:inspect",
+      permissionPattern: ({ x }) => `inspect ${x}`,
+      execute: () => {
+        ran++;
+        return "done";
+      },
+    });
+
+    await agentWith(dangerProvider(), {
+      tools: [inspect],
+      permissions: [
+        { permission: "*", pattern: "*", action: "ask" },
+        { permission: "danger:inspect", pattern: "*", action: "allow" },
+      ],
+    }).run("go");
+    expect(ran).toBe(1);
+
+    let request: PermissionRequest | undefined;
+    await agentWith(dangerProvider(), {
+      tools: [inspect],
+      permissions: [
+        { permission: "danger:inspect", pattern: "*", action: "allow" },
+        { permission: "danger", pattern: "*", action: "ask" },
+      ],
+      onPermission: async (asked: PermissionRequest) => {
+        request = asked;
+        return "deny";
+      },
+    }).run("go");
+    expect(request?.toolName).toBe("danger");
+    expect(request?.permission).toBe("danger:inspect");
+  });
+
   test("deny rules block without asking", async () => {
     let asked = false;
     await agentWith(dangerProvider(), {
@@ -513,7 +552,7 @@ describe("permissions", () => {
       onPermission: async (request: PermissionRequest) => {
         asked++;
         agent.addPermissionRule({
-          permission: request.toolName,
+          permission: request.permission,
           pattern: request.pattern,
           action: "allow",
         });
