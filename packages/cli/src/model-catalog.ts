@@ -37,6 +37,21 @@ export type ModelCatalogRefreshResult =
       fallback: "cached" | "bundled";
     };
 
+export function modelCatalogDiagnostics(
+  result: ModelCatalogRefreshResult,
+  options: { includePartialWarnings?: boolean } = {},
+): string[] {
+  if (!result.ok) {
+    return [`model discovery failed; using ${result.fallback} catalog: ${result.error}`];
+  }
+  return [
+    ...(result.cacheWarning ? [result.cacheWarning] : []),
+    ...(options.includePartialWarnings === false
+      ? []
+      : (result.warnings ?? []).map((warning) => `model discovery warning: ${warning}`)),
+  ];
+}
+
 export interface ModelCatalogOptions {
   cacheFile?: string;
   timeoutMs?: number;

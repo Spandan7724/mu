@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelInfo } from "mu";
-import { ModelCatalog, modelCatalogCachePath } from "./model-catalog.ts";
+import { ModelCatalog, modelCatalogCachePath, modelCatalogDiagnostics } from "./model-catalog.ts";
 
 function model(id: string): ModelInfo {
   return {
@@ -239,5 +239,41 @@ describe("model catalog cache", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.attempts).toBe(1);
     expect(calls).toBe(1);
+  });
+});
+
+describe("model catalog diagnostics", () => {
+  test("headless output suppresses partial provider warnings", () => {
+    const result = {
+      ok: true as const,
+      models: [model("gpt-new")],
+      attempts: 1,
+      warnings: ["Could not discover github-copilot models: catalog returned no models"],
+    };
+
+    expect(modelCatalogDiagnostics(result, { includePartialWarnings: false })).toEqual([]);
+    expect(modelCatalogDiagnostics(result)).toEqual([
+      "model discovery warning: Could not discover github-copilot models: catalog returned no models",
+    ]);
+  });
+
+  test("fatal fallback and cache diagnostics remain visible", () => {
+    expect(
+      modelCatalogDiagnostics(
+        { ok: false, error: "offline", attempts: 2, fallback: "cached" },
+        { includePartialWarnings: false },
+      ),
+    ).toEqual(["model discovery failed; using cached catalog: offline"]);
+    expect(
+      modelCatalogDiagnostics(
+        {
+          ok: true,
+          models: [model("gpt-new")],
+          attempts: 1,
+          cacheWarning: "could not save model cache: read-only",
+        },
+        { includePartialWarnings: false },
+      ),
+    ).toEqual(["could not save model cache: read-only"]);
   });
 });

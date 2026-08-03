@@ -15,7 +15,11 @@ import { loadUserConfig, resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
-import { initializeModelCatalog, type ModelCatalog } from "./model-catalog.ts";
+import {
+  initializeModelCatalog,
+  type ModelCatalog,
+  modelCatalogDiagnostics,
+} from "./model-catalog.ts";
 import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import {
   DEFAULT_PROFILE,
@@ -52,17 +56,10 @@ async function main(): Promise<number> {
       typeof configured === "string" && configured.length > 0 && !findModel(configured);
     if (args.mode !== "tui" || needsConfiguredModel) {
       const result = await modelCatalog.ensureFresh();
-      if (!result.ok) {
-        io.stderr(
-          `mu: model discovery failed; using ${result.fallback} catalog: ${result.error}\n`,
-        );
-      } else if (result.cacheWarning) {
-        io.stderr(`mu: ${result.cacheWarning}\n`);
-      }
-      if (result.ok) {
-        for (const warning of result.warnings ?? []) {
-          io.stderr(`mu: model discovery warning: ${warning}\n`);
-        }
+      for (const diagnostic of modelCatalogDiagnostics(result, {
+        includePartialWarnings: args.mode !== "headless",
+      })) {
+        io.stderr(`mu: ${diagnostic}\n`);
       }
     }
   }
