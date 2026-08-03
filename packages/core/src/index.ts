@@ -7,6 +7,7 @@ export { CheckpointHistory } from "./checkpoint.ts";
 export type { Command, CommandContext, CommandResult } from "./commands.ts";
 export { CommandRegistry } from "./commands.ts";
 export type {
+  CompactionPlan,
   CompactionRequest,
   CompactionResult,
   CompactorOptions,
@@ -19,16 +20,20 @@ export {
   compact,
   compactionSummaryMessage,
   contextState,
+  DEFAULT_KEEP_RECENT_TOKENS,
   estimateTokens,
   formatCarryover,
   planCompaction,
   SUMMARY_PROMPT,
+  serializeCompactionMessages,
   shouldCompact,
 } from "./compaction.ts";
 export type {
   AgentEndReason,
   AgentEvent,
   AgentEventType,
+  CompactionStage,
+  CompactionTrigger,
   EventSink,
   StreamDelta,
 } from "./events.ts";

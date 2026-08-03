@@ -192,6 +192,46 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("compacted");
   });
 
+  test("compaction shows its stage and queues enter as a follow-up", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+    h.app.handleEvent({
+      type: "compaction_start",
+      layer: 2,
+      trigger: "manual",
+      contextTokensBefore: 90_000,
+    });
+    h.app.handleEvent({ type: "compaction_update", layer: 2, stage: "installing" });
+
+    const running = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(running).toContain("compacting context");
+    expect(running).toContain("installing checkpoint");
+    expect(running.replace(/\s+/g, " ")).toContain("enter queue");
+    feed(h.app, "continue after compaction\r");
+    expect(h.followUps).toEqual(["continue after compaction"]);
+    expect(h.steers).toEqual([]);
+  });
+
+  test("rich compaction completion reports before, after, retained, and cleared context", () => {
+    const { app } = harness();
+    const lines = app.handleEvent({
+      type: "compaction_end",
+      layer: 2,
+      trigger: "manual",
+      status: "completed",
+      tokensFreed: 62_000,
+      contextTokensBefore: 90_000,
+      contextTokensAfter: 28_000,
+      keptTokens: 20_000,
+      toolResultsCleared: 4,
+    });
+    const rendered = lines.map(stripAnsi).join("\n");
+    expect(rendered).toContain("90,000 → 28,000");
+    expect(rendered).toContain("62,000 freed");
+    expect(rendered).toContain("20,000 recent tokens kept");
+    expect(rendered).toContain("4 tool outputs cleared");
+  });
+
   test("background task count reaches the footer", () => {
     const { app } = harness();
     app.handleEvent({ type: "task_started", taskId: "t1", command: "bun dev", background: true });

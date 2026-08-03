@@ -129,7 +129,7 @@ async function main(): Promise<number> {
             new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
         });
         const commands = registryWithCoreCommands({
-          requestCompaction: () => agent.requestCompaction(),
+          requestCompaction: (focus) => agent.compactNow(focus),
           usage: () => ({
             ...agent.usage,
             contextPercent: agent.contextPercent,

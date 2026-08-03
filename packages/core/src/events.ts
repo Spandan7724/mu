@@ -16,6 +16,8 @@ export type StreamDelta =
   | { kind: "toolcall_end"; contentIndex: number; toolCallId: string };
 
 export type AgentEndReason = "done" | "aborted" | "budget" | "maxTurns" | "error";
+export type CompactionTrigger = "manual" | "threshold" | "overflow" | "model-change";
+export type CompactionStage = "clearing-tool-output" | "summarizing" | "installing";
 
 // THE contract. Every consumer (UI, session persistence, extensions, RPC
 // clients, SDK streaming) reads this union, and nothing user-visible happens
@@ -38,8 +40,31 @@ export type AgentEvent =
       outcome: "allow" | "deny";
       remembered?: boolean;
     }
-  | { type: "compaction_start"; layer: 1 | 2 | 3 }
-  | { type: "compaction_end"; layer: 1 | 2 | 3; tokensFreed: number; summaryEntryId?: string }
+  | {
+      type: "compaction_start";
+      layer: 1 | 2 | 3;
+      trigger?: CompactionTrigger;
+      contextTokensBefore?: number;
+    }
+  | {
+      type: "compaction_update";
+      layer: 1 | 2 | 3;
+      stage: CompactionStage;
+      toolResultsCleared?: number;
+    }
+  | {
+      type: "compaction_end";
+      layer: 1 | 2 | 3;
+      tokensFreed: number;
+      summaryEntryId?: string;
+      trigger?: CompactionTrigger;
+      status?: "completed" | "failed" | "cancelled" | "noop";
+      contextTokensBefore?: number;
+      contextTokensAfter?: number;
+      toolResultsCleared?: number;
+      keptTokens?: number;
+      errorMessage?: string;
+    }
   | { type: "task_started"; taskId: string; command: string; background: boolean }
   | { type: "task_output"; taskId: string; chunk: string }
   | {

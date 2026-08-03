@@ -6,6 +6,7 @@ import {
   contextState,
   estimateTokens,
   planCompaction,
+  serializeCompactionMessages,
   shouldCompact,
 } from "./compaction.ts";
 import { type AgentMessage, customMessage, userMessage } from "./messages.ts";
@@ -93,9 +94,12 @@ describe("planCompaction", () => {
     expect(keepFromIndex).toBeLessThan(messages.length);
   });
 
-  test("short conversations are left alone", () => {
+  test("short conversations can be summarized as a whole", () => {
     const messages = [userMessage("a"), assistant("b")];
-    expect(planCompaction(messages).keepFromIndex).toBe(messages.length);
+    expect(planCompaction(messages)).toMatchObject({
+      keepFromIndex: messages.length,
+      keptTokens: 0,
+    });
   });
 
   test("never splits a tool call from its result", () => {
@@ -129,7 +133,11 @@ describe("compact", () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "The user asked for a refactor; retries were added." }] },
     ]);
-    const result = await compact(longHistory(), { provider, model: fakeModel });
+    const result = await compact(longHistory(), {
+      provider,
+      model: fakeModel,
+      keepRecentTokens: 8,
+    });
 
     expect(result.summary).toContain("retries were added");
     expect(result.keptMessages.length).toBeGreaterThan(0);
@@ -139,11 +147,89 @@ describe("compact", () => {
 
   test("the summarization request carries the enumerated instructions", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "summary" }] }]);
-    await compact(longHistory(), { provider, model: fakeModel });
+    await compact(longHistory(), { provider, model: fakeModel, keepRecentTokens: 8 });
 
     const prompt = provider.requests[0]?.systemPrompt?.[0]?.text ?? "";
     expect(prompt).toContain("Decisions taken and why");
     expect(prompt).toContain("Current task state");
+  });
+
+  test("uses a token budget rather than message count", () => {
+    const messages = [
+      userMessage("old"),
+      assistant("x".repeat(7_000)),
+      userMessage("recent"),
+      assistant("done"),
+    ];
+    const plan = planCompaction(messages, 20);
+    expect(plan.keepFromIndex).toBe(2);
+    expect(plan.keptTokens).toBeLessThan(20);
+  });
+
+  test("marks a mid-turn cut and retains the initiating tool call with its results", () => {
+    const messages = [
+      userMessage("large request"),
+      assistant("early progress ".repeat(100)),
+      assistant("calling tool"),
+      toolResult("result"),
+    ];
+    const plan = planCompaction(messages, 10);
+    expect(plan.isSplitTurn).toBe(true);
+    expect(messages[plan.keepFromIndex]?.role).toBe("assistant");
+  });
+
+  test("bounds tool results only in the summarizer representation", () => {
+    const huge = toolResult("x".repeat(5_000));
+    const serialized = serializeCompactionMessages([huge]);
+    expect(serialized).toContain("characters omitted");
+    expect(serialized.length).toBeLessThan(2_200);
+    expect(huge.content[0]?.type === "text" && huge.content[0].text.length).toBe(5_000);
+  });
+
+  test("retries a context-overflowing compactor with less oldest input", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [],
+        stopReason: "error",
+        errorMessage: "maximum context length exceeded",
+      },
+      { content: [{ type: "text", text: "bounded summary" }] },
+    ]);
+    await compact(longHistory(), { provider, model: fakeModel, keepRecentTokens: 3 });
+    expect(provider.callCount).toBe(2);
+    const first = JSON.stringify(provider.requests[0]);
+    const second = JSON.stringify(provider.requests[1]);
+    expect(second.length).toBeLessThan(first.length);
+    expect(provider.streamOptions[0]?.sessionId).not.toBe(provider.streamOptions[1]?.sessionId);
+  });
+
+  test("bounds repeated compactor overflow to three attempts", async () => {
+    const overflow = {
+      content: [],
+      stopReason: "error" as const,
+      errorMessage: "maximum context length exceeded",
+    };
+    const provider = new FakeProvider([overflow, overflow, overflow, overflow]);
+
+    await expect(
+      compact(longHistory(), { provider, model: fakeModel, keepRecentTokens: 3 }),
+    ).rejects.toThrow("Compaction failed");
+
+    expect(provider.callCount).toBe(3);
+    expect(new Set(provider.streamOptions.map((options) => options?.sessionId)).size).toBe(3);
+  });
+
+  test("passes custom focus without replacing mandatory preservation rules", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "summary" }] }]);
+    await compact(longHistory(), {
+      provider,
+      model: fakeModel,
+      keepRecentTokens: 8,
+      customInstructions: "preserve the authentication decision",
+    });
+    const request = JSON.stringify(provider.requests[0]);
+    expect(request).toContain("preserve the authentication decision");
+    expect(request).toContain("Current task state");
   });
 
   test("compaction receives the same credential resolver as ordinary turns", async () => {

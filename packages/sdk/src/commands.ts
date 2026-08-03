@@ -1,6 +1,6 @@
 import { findModel, listModels, type Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
-import type { CheckpointActionResult } from "./agent.ts";
+import type { CheckpointActionResult, ManualCompactionResult } from "./agent.ts";
 
 export interface ForkPoint {
   id: string;
@@ -14,7 +14,9 @@ export interface DiffCommandData {
 
 // Built-in commands available on every surface (TUI, RPC, headless).
 export interface CoreCommandHooks {
-  requestCompaction?: () => void;
+  requestCompaction?: (
+    focus?: string,
+  ) => ManualCompactionResult | undefined | Promise<ManualCompactionResult | undefined>;
   usage?: () => Usage & { contextPercent: number };
   undo?: () => Promise<CheckpointActionResult>;
   redo?: () => Promise<CheckpointActionResult>;
@@ -71,13 +73,14 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     },
     {
       name: "compact",
-      description: "Summarize the conversation so far to free context",
-      run: () => {
+      description: "Summarize older context now while preserving recent work: /compact [focus]",
+      run: async (ctx) => {
         if (!hooks.requestCompaction) {
           return { handled: true, message: "Compaction is not available on this surface." };
         }
-        hooks.requestCompaction();
-        return { handled: true, message: "Compacting before the next turn." };
+        const result = await hooks.requestCompaction(ctx.args.trim() || undefined);
+        if (!result) return { handled: true, message: "Compaction requested." };
+        return { handled: true, message: result.message, data: { kind: "compaction", ...result } };
       },
     },
     {

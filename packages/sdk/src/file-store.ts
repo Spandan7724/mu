@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type SessionStore, SessionTree } from "@mu/core";
@@ -34,7 +35,15 @@ export class FileSessionStore implements SessionStore {
 
   async save(sessionId: string, tree: SessionTree): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    await writeFile(this.path(sessionId), tree.toJsonl(), "utf8");
+    const destination = this.path(sessionId);
+    const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, tree.toJsonl(), "utf8");
+      await rename(temporary, destination);
+    } catch (error) {
+      await rm(temporary, { force: true }).catch(() => {});
+      throw error;
+    }
   }
 
   async list(): Promise<string[]> {

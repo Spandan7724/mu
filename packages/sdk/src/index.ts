@@ -61,6 +61,7 @@ export type {
   CheckpointActionData,
   CheckpointActionResult,
   HaltReason,
+  ManualCompactionResult,
   RunResult,
 } from "./agent.ts";
 export { Agent } from "./agent.ts";

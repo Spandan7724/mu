@@ -493,16 +493,20 @@ describe("core commands", () => {
     expect(harness.getModelValue()).toBe("fake/fake-1");
   });
 
-  test("/compact asks the surface to compact before the next turn", async () => {
+  test("/compact asks the surface to compact immediately and forwards focus", async () => {
     let requested = false;
+    let focus: string | undefined;
     const registry = registryWithCoreCommands({
-      requestCompaction: () => {
+      requestCompaction: (value) => {
         requested = true;
+        focus = value;
+        return { status: "completed", message: "Context compacted." };
       },
     });
-    const result = await registry.execute("/compact", ctx().ctx);
+    const result = await registry.execute("/compact preserve auth", ctx().ctx);
     expect(requested).toBe(true);
-    expect(result.message).toContain("Compacting");
+    expect(focus).toBe("preserve auth");
+    expect(result.message).toContain("compacted");
   });
 
   test("/compact says so plainly when the surface cannot compact", async () => {

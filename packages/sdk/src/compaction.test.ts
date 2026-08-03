@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type AgentEvent, SessionTree } from "@mu/core";
+import { type AgentEvent, MemorySessionStore, SessionTree } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
 
@@ -155,6 +155,118 @@ describe("/compact on demand", () => {
     await stream.result();
 
     expect(events.map((e) => e.type)).toContain("compaction_start");
+  });
+
+  test("compactNow runs immediately, forwards focus, and persists checkpoint metadata", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first answer" }] },
+      { content: [{ type: "text", text: "manual summary" }] },
+    ]);
+    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    await agent.run(longPrompt());
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => {
+      events.push(event);
+    });
+
+    const result = await agent.compactNow("preserve authentication decisions");
+
+    expect(result.status).toBe("completed");
+    expect(provider.callCount).toBe(2);
+    expect(JSON.stringify(provider.requests[1])).toContain("preserve authentication decisions");
+    const entry = agent.session.activePath().find((candidate) => candidate.type === "compaction");
+    expect(entry?.type === "compaction" && entry.trigger).toBe("manual");
+    expect(entry?.type === "compaction" && entry.strategy).toBe("summary-tail");
+    expect(entry?.type === "compaction" && entry.contextTokensBefore).toBeGreaterThan(0);
+    expect(entry?.type === "compaction" && entry.contextTokensAfter).toBeGreaterThan(0);
+    expect(
+      events.some((event) => event.type === "compaction_update" && event.stage === "summarizing"),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === "compaction_update" && event.stage === "installing"),
+    ).toBe(true);
+  });
+
+  test("compactNow preserves the original session on failure", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first answer" }] },
+      { content: [{ type: "text", text: "" }], errorMessage: "summarizer unavailable" },
+    ]);
+    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    await agent.run(longPrompt());
+    const before = agent.session.toJsonl();
+
+    const result = await agent.compactNow();
+
+    expect(result.status).toBe("failed");
+    expect(agent.session.toJsonl()).toBe(before);
+    expect(result.message).toContain("Original conversation preserved");
+  });
+
+  test("compactNow does not install a candidate boundary when persistence fails", async () => {
+    class FailManualSaveStore extends MemorySessionStore {
+      private saves = 0;
+
+      override async save(sessionId: string, tree: SessionTree): Promise<void> {
+        this.saves++;
+        if (this.saves === 2) throw new Error("disk unavailable");
+        await super.save(sessionId, tree);
+      }
+    }
+
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first answer" }] },
+      { content: [{ type: "text", text: "valid summary" }] },
+    ]);
+    const store = new FailManualSaveStore();
+    const agent = new Agent({ provider, model: smallModel, autoCompact: false, session: store });
+    await agent.run(longPrompt());
+    const before = agent.session.toJsonl();
+
+    const result = await agent.compactNow();
+
+    expect(result.status).toBe("failed");
+    expect(result.message).toContain("disk unavailable");
+    expect(agent.session.toJsonl()).toBe(before);
+    expect(agent.session.activePath().some((entry) => entry.type === "compaction")).toBe(false);
+  });
+
+  test("manual compaction queues behind an active turn", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first answer" }], delayMs: 10 },
+      { content: [{ type: "text", text: "queued summary" }] },
+    ]);
+    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const running = agent.run(longPrompt());
+
+    const queued = await agent.compactNow("preserve queue state");
+    expect(queued.status).toBe("queued");
+    await running;
+    await agent.waitForIdle();
+
+    expect(provider.callCount).toBe(2);
+    expect(JSON.stringify(provider.requests[1])).toContain("preserve queue state");
+    expect(agent.session.activePath().some((entry) => entry.type === "compaction")).toBe(true);
+  });
+
+  test("switching to a smaller model compacts with model-change metadata before sampling", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first answer" }] },
+      { content: [{ type: "text", text: "downshift summary" }] },
+      { content: [{ type: "text", text: "second answer" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel, autoCompact: false });
+    await agent.run(longPrompt());
+    agent.setModel({ ...smallModel, id: "fake-small" });
+
+    await agent.run("continue");
+
+    expect(provider.callCount).toBe(3);
+    expect(JSON.stringify(provider.requests[2])).not.toContain("context filler");
+    const entry = agent.session.activePath().find((candidate) => candidate.type === "compaction");
+    expect(entry?.type === "compaction" && entry.trigger).toBe("model-change");
+    expect(entry?.type === "compaction" && entry.compactorModel).toBe("fake/fake-1");
+    expect(entry?.type === "compaction" && entry.model).toBe("fake/fake-small");
   });
 });
 
