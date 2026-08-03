@@ -201,7 +201,7 @@ type TranscriptItem =
   | {
       kind: "assistant";
       message: AssistantMessage;
-      rendered?: { width: number; thinkingVisible: boolean; lines: string[] };
+      rendered?: { width: number; lines: string[] };
     }
   | {
       kind: "tool";
@@ -231,31 +231,19 @@ export class App {
     | {
         version: number;
         width: number;
-        toolExpanded: boolean;
-        thinkingVisible: boolean;
+        expanded: boolean;
         rows: string[];
       }
     | undefined;
   private toolOutputExpanded = false;
-  private thinkingBlocksVisible = true;
   private backgroundTasks = new Map<string, LiveTask>();
   // The assistant message currently streaming, shown live above the composer.
   private streaming: string | undefined;
-  private streamingThinking: string | undefined;
   private streamingCache:
     | {
         text: string;
         width: number;
         height: number;
-        rows: string[];
-      }
-    | undefined;
-  private streamingThinkingCache:
-    | {
-        text: string;
-        width: number;
-        height: number;
-        visible: boolean;
         rows: string[];
       }
     | undefined;
@@ -325,10 +313,6 @@ export class App {
     return this.toolOutputExpanded;
   }
 
-  get areThinkingBlocksVisible(): boolean {
-    return this.thinkingBlocksVisible;
-  }
-
   get isShellMode(): boolean {
     return this.options.callbacks.onShell !== undefined && this.editor.text.startsWith("!");
   }
@@ -387,9 +371,7 @@ export class App {
       case "message_start":
         if (event.message.role === "assistant") {
           this.streaming = "";
-          this.streamingThinking = "";
           this.streamingCache = undefined;
-          this.streamingThinkingCache = undefined;
         }
         return [];
 
@@ -397,9 +379,6 @@ export class App {
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
           this.streamingCache = undefined;
-        } else if (event.delta.kind === "thinking_delta") {
-          this.streamingThinking = (this.streamingThinking ?? "") + event.delta.text;
-          this.streamingThinkingCache = undefined;
         } else if (
           event.delta.kind === "toolcall_start" ||
           event.delta.kind === "toolcall_delta" ||
@@ -451,9 +430,7 @@ export class App {
         }
         if (message.role === "assistant") {
           this.streaming = undefined;
-          this.streamingThinking = undefined;
           this.streamingCache = undefined;
-          this.streamingThinkingCache = undefined;
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
@@ -462,11 +439,7 @@ export class App {
             this.pushTranscript({
               kind: "assistant",
               message,
-              rendered: {
-                width: this.options.width,
-                thinkingVisible: this.thinkingBlocksVisible,
-                lines,
-              },
+              rendered: { width: this.options.width, lines },
             });
           }
           return lines.length > 0 ? [...lines, ""] : [];
@@ -641,7 +614,7 @@ export class App {
     const { depth, width } = this.ctx;
     const shell = this.options.callbacks.onShell ? ` ${GLYPHS.separator} ! for shell` : "";
     const affordances = styleText(
-      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thoughts ${GLYPHS.separator} shift+tab thinking level ${GLYPHS.separator} ctrl+c to exit`,
+      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
       { dim: true },
       depth,
     );
@@ -672,9 +645,7 @@ export class App {
     this.pendingTools.clear();
     this.pendingInputs = [];
     this.streaming = undefined;
-    this.streamingThinking = undefined;
     this.streamingCache = undefined;
-    this.streamingThinkingCache = undefined;
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
     for (const message of messages) {
@@ -692,11 +663,7 @@ export class App {
           this.pushTranscript({
             kind: "assistant",
             message,
-            rendered: {
-              width: this.options.width,
-              thinkingVisible: this.thinkingBlocksVisible,
-              lines,
-            },
+            rendered: { width: this.options.width, lines },
           });
         }
         for (const block of message.content) {
@@ -738,8 +705,7 @@ export class App {
     if (
       cached?.version === this.transcriptVersion &&
       cached.width === this.options.width &&
-      cached.toolExpanded === this.toolOutputExpanded &&
-      cached.thinkingVisible === this.thinkingBlocksVisible
+      cached.expanded === this.toolOutputExpanded
     ) {
       return cached.rows;
     }
@@ -747,13 +713,9 @@ export class App {
       if (item.kind === "lines") return item.lines;
       if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
       if (item.kind === "assistant") {
-        if (
-          item.rendered?.width !== this.options.width ||
-          item.rendered.thinkingVisible !== this.thinkingBlocksVisible
-        ) {
+        if (item.rendered?.width !== this.options.width) {
           item.rendered = {
             width: this.options.width,
-            thinkingVisible: this.thinkingBlocksVisible,
             lines: this.assistantRows(item.message),
           };
         }
@@ -778,8 +740,7 @@ export class App {
     this.transcriptCache = {
       version: this.transcriptVersion,
       width: this.options.width,
-      toolExpanded: this.toolOutputExpanded,
-      thinkingVisible: this.thinkingBlocksVisible,
+      expanded: this.toolOutputExpanded,
       rows,
     };
     return rows;
@@ -793,9 +754,6 @@ export class App {
 
     // Live region: streaming assistant text and running tool cells, so a long
     // turn is never a frozen screen with only a spinner.
-    if (this.streamingThinking && this.streamingThinking.trim().length > 0) {
-      lines.push(...this.streamingThinkingRows());
-    }
     if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
     for (const pending of this.pendingTools.values()) {
       lines.push(
@@ -936,7 +894,7 @@ export class App {
       ? undefined
       : this.isShellMode
         ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
-        : `${toolHint} ${GLYPHS.separator} thoughts ${this.thinkingBlocksVisible ? "shown" : "hidden"} ${GLYPHS.separator} ctrl+t ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} shift+tab`;
+        : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }
@@ -967,36 +925,6 @@ export class App {
     return rows;
   }
 
-  private streamingThinkingRows(): string[] {
-    if (!this.streamingThinking) return [];
-    const height = this.options.height ?? 24;
-    const cached = this.streamingThinkingCache;
-    if (
-      cached?.text === this.streamingThinking &&
-      cached.width === this.options.width &&
-      cached.height === height &&
-      cached.visible === this.thinkingBlocksVisible
-    ) {
-      return cached.rows;
-    }
-    const maxChars = Math.max(
-      MIN_STREAMING_PREVIEW_CHARS,
-      Math.min(MAX_STREAMING_PREVIEW_CHARS, this.options.width * height * STREAMING_VIEWPORTS),
-    );
-    const preview = streamingMarkdownPreview(this.streamingThinking, maxChars);
-    const rows = this.toTerminalRows(
-      thinkingCell(preview.text, this.ctx, this.thinkingBlocksVisible, true),
-    );
-    this.streamingThinkingCache = {
-      text: this.streamingThinking,
-      width: this.options.width,
-      height,
-      visible: this.thinkingBlocksVisible,
-      rows,
-    };
-    return rows;
-  }
-
   private pushTranscript(item: TranscriptItem): void {
     this.transcript.push(item);
     this.transcriptVersion++;
@@ -1007,7 +935,7 @@ export class App {
     const lines: string[] = [];
     for (const block of message.content) {
       if (block.type === "thinking" && block.thinking.trim()) {
-        lines.push(...thinkingCell(block.thinking, this.ctx, this.thinkingBlocksVisible));
+        lines.push(...thinkingCell(block.thinking, this.ctx));
       } else if (block.type === "text" && block.text.trim()) {
         lines.push(...this.toTerminalRows(agentCell(block.text, this.ctx)));
       }
@@ -1059,17 +987,8 @@ export class App {
       return;
     }
 
-    // Ctrl+T controls transcript visibility; Shift+Tab changes the provider
-    // effort. Keeping those actions separate avoids changing model behavior
-    // when the user only wants a quieter transcript.
+    // Ctrl+T cycles thinking depth without leaving the composer.
     if (key.ctrl && key.name === "t") {
-      this.thinkingBlocksVisible = !this.thinkingBlocksVisible;
-      this.transcriptCache = undefined;
-      this.streamingThinkingCache = undefined;
-      return;
-    }
-
-    if (key.shift && key.name === "tab") {
       const levels = this.thinkingLevels;
       if (levels.length < 2) return;
       const next = levels[(levels.indexOf(this.thinkingLevel) + 1) % levels.length] as string;

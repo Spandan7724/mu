@@ -44,24 +44,16 @@ export function agentCell(text: string, ctx: RenderContext): string[] {
   );
 }
 
-// Thinking is dim and behind the rule. Hidden blocks retain an explicit,
-// discoverable placeholder; visible blocks keep their content beneath a label.
-export function thinkingCell(
-  text: string,
-  ctx: RenderContext,
-  visible = false,
-  active = false,
-): string[] {
+// Thinking is dim and behind the rule; collapsed to one line unless expanded.
+export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const safe = sanitizeUntrusted(text);
-  const label = active ? "thinking…" : "thinking";
-  const state = visible ? "ctrl+t to hide" : `hidden ${GLYPHS.separator} ctrl+t to show`;
-  const header = MARGIN + rule + dim(`${label} ${GLYPHS.separator} ${state}`, ctx.depth);
-  if (!visible) return [header];
-  return [
-    header,
-    ...wrapText(safe, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth)),
-  ];
+  if (!expanded) {
+    const first = safe.trim().split("\n")[0] ?? "";
+    const summary = truncateToWidth(first, body(ctx) - 12);
+    return [MARGIN + rule + dim(`thinking ${GLYPHS.separator} ${summary}`, ctx.depth)];
+  }
+  return wrapText(safe, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
 }
 
 export interface ToolCellOptions {

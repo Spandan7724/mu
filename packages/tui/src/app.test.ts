@@ -1657,29 +1657,6 @@ describe("live streaming region", () => {
     expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("thinking out loud");
   });
 
-  test("streaming thinking follows the visibility toggle", () => {
-    const { app } = harness();
-    app.handleEvent({ type: "agent_start" });
-    app.handleEvent({ type: "message_start", message: assistant("") });
-    app.handleEvent({
-      type: "message_update",
-      message: {
-        ...assistant(""),
-        content: [{ type: "thinking", thinking: "Checking the edge cases." }],
-      },
-      delta: { kind: "thinking_delta", contentIndex: 0, text: "Checking the edge cases." },
-    });
-
-    let live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("thinking… · ctrl+t to hide");
-    expect(live).toContain("Checking the edge cases.");
-
-    feed(app, "\u0014");
-    live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("thinking… · hidden · ctrl+t to show");
-    expect(live).not.toContain("Checking the edge cases.");
-  });
-
   test("long assistant output remains one mutable screen cell while streaming", () => {
     const { app } = harness();
     const text = Array.from({ length: 80 }, (_, index) => `word-${index}`).join(" ");
@@ -1979,40 +1956,8 @@ describe("command popup filtering", () => {
   });
 });
 
-describe("thinking controls", () => {
-  test("ctrl+t hides and restores retained thinking blocks without changing effort", () => {
-    const { app } = harness();
-    app.handleEvent({
-      type: "message_end",
-      message: {
-        ...assistant("The answer is 42."),
-        content: [
-          { type: "thinking", thinking: "I should carefully calculate this." },
-          { type: "text", text: "The answer is 42." },
-        ],
-      },
-    });
-
-    expect(app.areThinkingBlocksVisible).toBe(true);
-    expect(app.renderScreen().map(stripAnsi).join("\n")).toContain(
-      "I should carefully calculate this.",
-    );
-
-    feed(app, "\u0014");
-    const hidden = app.renderScreen().map(stripAnsi).join("\n");
-    expect(app.areThinkingBlocksVisible).toBe(false);
-    expect(hidden).toContain("thinking · hidden · ctrl+t to show");
-    expect(hidden).not.toContain("I should carefully calculate this.");
-    expect(hidden).toContain("The answer is 42.");
-
-    feed(app, "\u0014");
-    expect(app.areThinkingBlocksVisible).toBe(true);
-    expect(app.renderScreen().map(stripAnsi).join("\n")).toContain(
-      "I should carefully calculate this.",
-    );
-  });
-
-  test("shift+tab cycles the level and reports it", () => {
+describe("thinking toggle", () => {
+  test("ctrl+t cycles the level and reports it", () => {
     const levels: string[] = [];
     const app = new App({
       width: 60,
@@ -2026,12 +1971,17 @@ describe("thinking controls", () => {
       },
     });
 
-    feed(app, `${ESC}[Z${ESC}[Z`);
+    const ctrlT = {
+      type: "key" as const,
+      key: { name: "t", ctrl: true, alt: false, shift: false },
+    };
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
     expect(levels).toEqual(["low", "medium"]);
     expect(app.thinking).toBe("medium");
   });
 
-  test("shift+tab follows the active model's thinking levels", () => {
+  test("ctrl+t follows the active model's thinking levels", () => {
     const levels: string[] = [];
     const app = new App({
       width: 60,
@@ -2047,22 +1997,21 @@ describe("thinking controls", () => {
     });
     app.setThinking("low");
 
-    feed(app, `${ESC}[Z${ESC}[Z${ESC}[Z`);
+    const ctrlT = {
+      type: "key" as const,
+      key: { name: "t", ctrl: true, alt: false, shift: false },
+    };
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
+    app.handleInput(ctrlT);
 
     expect(levels).toEqual(["xhigh", "max", "ultra"]);
     expect(app.thinking).toBe("ultra");
   });
 
   test("the footer shows the current thinking level when idle", () => {
-    const app = new App({
-      width: 120,
-      depth: "none",
-      model: "fake/fake-1",
-      callbacks: { onSubmit: () => {}, onAbort: () => {}, onExit: () => {} },
-    });
-    const footer = stripAnsi(app.renderBottom().at(-1) ?? "");
-    expect(footer).toContain("thoughts shown · ctrl+t");
-    expect(footer).toContain("think off · shift+tab");
+    const h = harness();
+    expect(stripAnsi(h.app.renderBottom().at(-1) ?? "")).toContain("think off");
   });
 });
 
@@ -2076,7 +2025,6 @@ describe("startup banner", () => {
     expect(banner).toContain("openai/gpt-5.1");
     expect(banner).toContain("/ for commands");
     expect(banner).toContain("ctrl+t");
-    expect(banner).toContain("shift+tab thinking level");
     expect(banner).toContain("ctrl+c to exit");
   });
 });
