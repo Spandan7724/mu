@@ -4,6 +4,8 @@ A general-purpose, extensible AI agent platform. Out of the box mu is a polished
 agent; swap its **profile** (tools + prompts + permissions + UI renderers) and the same
 kernel becomes a computer-use agent, an automation agent, or any other tool-using agent.
 
+![mu terminal interface](assets/mu-tui.png)
+
 Three surfaces, one kernel, one event stream:
 
 - **TUI** — interactive terminal app (`mu`)
