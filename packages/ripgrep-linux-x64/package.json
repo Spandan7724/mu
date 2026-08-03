@@ -1,6 +1,6 @@
 {
   "name": "@mu-agent/ripgrep-linux-x64",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Pinned ripgrep sidecar for Mu on Linux x64",
   "author": "Spandan Chavan",
   "license": "MIT OR Unlicense",

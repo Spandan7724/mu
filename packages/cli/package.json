@@ -1,6 +1,6 @@
 {
   "name": "@mu-agent/mu",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Mu, a general-purpose extensible AI agent platform for the terminal and TypeScript",
   "type": "module",
   "main": "./dist/index.js",
@@ -55,9 +55,9 @@
     "zod": "4.4.3"
   },
   "optionalDependencies": {
-    "@mu-agent/ripgrep-darwin-arm64": "0.0.1",
-    "@mu-agent/ripgrep-linux-x64": "0.0.1",
-    "@mu-agent/ripgrep-windows-x64": "0.0.1"
+    "@mu-agent/ripgrep-darwin-arm64": "0.0.2",
+    "@mu-agent/ripgrep-linux-x64": "0.0.2",
+    "@mu-agent/ripgrep-windows-x64": "0.0.2"
   },
   "publishConfig": {
     "access": "public",
