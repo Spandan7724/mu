@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { App, RendererRegistry, stripAnsi, wrapText } from "@mu/tui";
-import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo } from "mu";
+import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo, userMessage } from "mu";
 import {
   availableModels,
   formatAuthUrl,
@@ -57,6 +57,39 @@ test("a new interactive session is not persisted before any message is sent", as
 
   expect(await initializeInteractiveSession(agent, undefined)).toBe(false);
   expect(await store.list()).toEqual([]);
+});
+
+test("a resumed session reports its restored context before any message is sent", async () => {
+  const store = new MemorySessionStore();
+  const source = new Agent({ session: store });
+  source.session.appendMessage(userMessage("a".repeat(8000)));
+  await store.save(source.sessionId, source.session);
+
+  const agent = new Agent({ session: store });
+  expect(await initializeInteractiveSession(agent, source.sessionId)).toBe(true);
+  expect(agent.contextTokens).toBeGreaterThan(0);
+
+  const app = new App({
+    width: 80,
+    height: 24,
+    depth: "none",
+    model: agent.modelRef,
+    contextWindow: agent.contextWindow,
+    callbacks: {
+      onSubmit: () => {},
+      onAbort: () => {},
+      onExit: () => {},
+    },
+  });
+  app.handleEvent({
+    type: "usage_updated",
+    sessionTotals: agent.usage,
+    contextTokens: agent.contextTokens,
+    contextPercent: agent.contextPercent,
+  });
+
+  const footer = app.renderBottom().map(stripAnsi).join(" ");
+  expect(footer).toMatch(/[1-9]\d*\.\d%|0\.[1-9]%/);
 });
 
 test("/new starts a fresh chat and clears the terminal", () => {

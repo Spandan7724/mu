@@ -926,7 +926,10 @@ describe("runtime model and thinking changes", () => {
     expect(agent.modelRef).toBe("openai/gpt-5.1");
     expect(agent.thinking).toBe("high");
     expect(agent.usage.inputTokens).toBe(0);
-    expect(agent.contextPercent).toBe(0);
+    // Cost is this process's spend, but context belongs to the restored
+    // transcript and must be accounted for before the next request.
+    expect(agent.contextTokens).toBeGreaterThan(0);
+    expect(agent.contextPercent).toBeGreaterThan(0);
     await agent.run("next prompt");
 
     const request = JSON.stringify(provider.requests[1]?.messages);
@@ -937,6 +940,36 @@ describe("runtime model and thinking changes", () => {
     expect(request).not.toContain("stale follow-up");
     expect(provider.callCount).toBe(2);
     expect(JSON.stringify(target.messagesAt())).not.toContain("new answer");
+  });
+
+  test("resume publishes the restored context to idle subscribers", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "answer" }] }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const usage: { contextTokens: number; contextPercent: number }[] = [];
+    agent.subscribe((event) => {
+      if (event.type === "usage_updated") {
+        usage.push({ contextTokens: event.contextTokens, contextPercent: event.contextPercent });
+      }
+    });
+
+    const target = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "resumed-session",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    target.appendMessage(userMessage("a".repeat(4000)));
+    agent.resume(target);
+    await Promise.resolve();
+
+    expect(usage.at(-1)?.contextTokens).toBeGreaterThan(0);
+    expect(usage.at(-1)?.contextPercent).toBeGreaterThan(0);
+
+    agent.newSession();
+    await Promise.resolve();
+    expect(usage.at(-1)).toEqual({ contextTokens: 0, contextPercent: 0 });
   });
 
   test("resume and a second run are rejected while a run is active", async () => {

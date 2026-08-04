@@ -1090,6 +1090,14 @@ export async function runInteractive(
   app.setThinking(agent.thinking, agent.thinkingLevels);
   if (args.resumeSessionId) {
     app.replaceTranscript(agent.session.messagesAt(), app.banner());
+    // Startup resume happens before the event subscription exists, so the
+    // restored context has to be handed to the footer directly.
+    app.handleEvent({
+      type: "usage_updated",
+      sessionTotals: agent.usage,
+      contextTokens: agent.contextTokens,
+      contextPercent: agent.contextPercent,
+    });
   } else {
     commitLines(app.banner());
   }

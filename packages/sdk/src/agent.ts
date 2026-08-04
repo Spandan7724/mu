@@ -192,6 +192,7 @@ export class Agent {
   private compacting = false;
   private compactorOverride: { model: ModelInfo; provider: Provider } | undefined;
   private lastContextPercent = 0;
+  private lastContextTokens = 0;
   private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
   private recoveryAttempted = false;
@@ -301,8 +302,10 @@ export class Agent {
     const nextThinking = thinkingLevelForModel(next, this.currentThinking);
     const thinkingChanged = nextThinking !== this.currentThinking;
     this.currentThinking = nextThinking;
+    // Usage reported by the previous model cannot be reconciled against the new
+    // window, so accounting falls back to an estimate rather than to zero.
     this.lastContextUsage = undefined;
-    this.lastContextPercent = 0;
+    this.refreshContextAccounting();
     this.tree.append({
       type: "settings-change",
       model: this.modelRef,
@@ -331,7 +334,6 @@ export class Agent {
     this._sessionId = header.id;
     this.totals = zeroUsage();
     this.lastContextUsage = undefined;
-    this.lastContextPercent = 0;
     this.compactRequested = false;
     this.compactRequestedFocus = undefined;
     this.queuedManualCompactionFocus = undefined;
@@ -365,6 +367,7 @@ export class Agent {
     }
     this.currentThinking = thinkingLevelForModel(this.model, this.currentThinking);
     this.rebuildCheckpointHistory();
+    this.refreshContextAccounting();
   }
 
   // Starts an independent conversation while keeping this Agent's configured
@@ -387,7 +390,6 @@ export class Agent {
     });
     this.totals = zeroUsage();
     this.lastContextUsage = undefined;
-    this.lastContextPercent = 0;
     this.compactRequested = false;
     this.compactRequestedFocus = undefined;
     this.queuedManualCompactionFocus = undefined;
@@ -402,6 +404,7 @@ export class Agent {
     this.checkpoints.restore([]);
     this.sessionStarted = false;
     this.controller = new AbortController();
+    this.refreshContextAccounting();
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
@@ -440,12 +443,7 @@ export class Agent {
   // them immediately; persistent subscribers also see them while the Agent is
   // idle, rather than receiving a stale event on some later user turn.
   emitTaskEvent(event: AgentEvent): void {
-    if (this.activeEmit) {
-      this.activeEmit(event);
-      return;
-    }
-    this.publishToSubscribers(event);
-    this.options.extensions?.emit(event);
+    this.publishEvent(event);
   }
 
   subscribe(listener: EventSink): () => void {
@@ -710,6 +708,7 @@ export class Agent {
       this.lastContextUsage = undefined;
       this.lastContextPercent =
         this.model.contextWindow > 0 ? tokensAfter / this.model.contextWindow : 0;
+      this.lastContextTokens = tokensAfter;
       emit({
         type: "usage_updated",
         sessionTotals: this.totals,
@@ -854,6 +853,7 @@ export class Agent {
     const details = this.checkpointDetails(step);
     this.checkpoints.restore(nextDone, nextUndone);
     this.tree = candidate;
+    this.refreshContextAccounting();
     return {
       ok: true,
       message: "Undid the last turn.",
@@ -940,6 +940,7 @@ export class Agent {
     const details = this.checkpointDetails(step);
     this.checkpoints.restore(nextDone, nextUndone);
     this.tree = candidate;
+    this.refreshContextAccounting();
     return {
       ok: true,
       message: "Redid the turn.",
@@ -1009,11 +1010,16 @@ export class Agent {
     }
     this.tree = candidate;
     this.rebuildCheckpointHistory();
+    this.refreshContextAccounting();
     return { ok: true, message: `Forked from ${entryId}.` };
   }
 
   get contextPercent(): number {
     return this.lastContextPercent;
+  }
+
+  get contextTokens(): number {
+    return this.lastContextTokens;
   }
 
   async run<T>(
@@ -1387,6 +1393,7 @@ export class Agent {
       }
       const state = currentContextState(messages);
       this.lastContextPercent = state.percent;
+      this.lastContextTokens = state.tokens;
       emit({
         type: "usage_updated",
         sessionTotals: this.totals,
@@ -1493,6 +1500,7 @@ export class Agent {
       prepareContext: async (messages) => {
         const state = currentContextState(messages);
         this.lastContextPercent = state.percent;
+        this.lastContextTokens = state.tokens;
 
         const auto = this.options.autoCompact !== false;
 
@@ -1527,7 +1535,9 @@ export class Agent {
               working = micro.messages;
               runContextUsage = undefined;
               this.lastContextUsage = undefined;
-              this.lastContextPercent = currentContextState(working).percent;
+              const microState = currentContextState(working);
+              this.lastContextPercent = microState.percent;
+              this.lastContextTokens = microState.tokens;
               emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
             }
           }
@@ -1750,6 +1760,35 @@ export class Agent {
       this.options.extensions?.providers.get(model.provider) ??
       getProvider(model.provider)
     );
+  }
+
+  private publishEvent(event: AgentEvent): void {
+    if (this.activeEmit) {
+      this.activeEmit(event);
+      return;
+    }
+    this.publishToSubscribers(event);
+    this.options.extensions?.emit(event);
+  }
+
+  // Active context belongs to the transcript, not to this process's activity.
+  // Resuming, starting over, or moving to another window must republish it
+  // instead of leaving consumers on a stale figure until the next request.
+  private refreshContextAccounting(): void {
+    const state = contextState(
+      this.model,
+      this.tree.messagesAt(),
+      this.lastContextUsage?.usage,
+      this.lastContextUsage?.estimatedTokensAtUsage,
+    );
+    this.lastContextPercent = state.percent;
+    this.lastContextTokens = state.tokens;
+    this.publishEvent({
+      type: "usage_updated",
+      sessionTotals: this.totals,
+      contextTokens: state.tokens,
+      contextPercent: state.percent,
+    });
   }
 
   private publishToSubscribers(event: AgentEvent): void {
