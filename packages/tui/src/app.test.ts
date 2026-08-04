@@ -189,7 +189,7 @@ describe("fake-agent session", () => {
   test("compaction is shown as a visible boundary", () => {
     const { app } = harness();
     const lines = app.handleEvent({ type: "compaction_end", layer: 2, tokensFreed: 5000 });
-    expect(stripAnsi(lines[0] ?? "")).toContain("compacted");
+    expect(stripAnsi(lines[0] ?? "")).toContain("• Context compacted");
   });
 
   test("compaction shows its stage and queues enter as a follow-up", () => {
@@ -225,7 +225,8 @@ describe("fake-agent session", () => {
       keptTokens: 20_000,
       toolResultsCleared: 4,
     });
-    const rendered = lines.map(stripAnsi).join("\n");
+    const rendered = lines.map(stripAnsi).join(" ").replace(/\s+/g, " ");
+    expect(rendered).toContain("• Context compacted");
     expect(rendered).toContain("90,000 → 28,000");
     expect(rendered).toContain("62,000 freed");
     expect(rendered).toContain("20,000 recent tokens kept");

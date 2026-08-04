@@ -225,22 +225,30 @@ describe("transcript cells (golden lines)", () => {
 
   test("compaction boundary is visible and honest", () => {
     const line = visible(compactionCell(12345, plain))[0];
-    expect(line).toContain("compacted");
+    expect(line).toContain("• Context compacted");
     expect(line).toContain("12,345 tokens freed");
   });
 
   test("compaction boundary includes rich checkpoint accounting", () => {
-    const line = visible(
+    const rendered = visible(
       compactionCell(64000, plain, {
         contextTokensBefore: 92000,
         contextTokensAfter: 28000,
         keptTokens: 20000,
         toolResultsCleared: 7,
       }),
-    )[0];
-    expect(line).toContain("92,000 → 28,000");
-    expect(line).toContain("64,000 freed");
-    expect(line).toContain("7 tool outputs cleared");
+    )
+      .join(" ")
+      .replace(/\s+/g, " ");
+    expect(rendered).toContain("• Context compacted");
+    expect(rendered).toContain("92,000 → 28,000");
+    expect(rendered).toContain("64,000 freed");
+    expect(rendered).toContain("7 tool outputs cleared");
+  });
+
+  test("a no-op compaction says so instead of reporting a boundary", () => {
+    const line = visible(compactionCell(0, plain, { status: "noop" }))[0];
+    expect(line).toBe("  • Context already compact");
   });
 });
 

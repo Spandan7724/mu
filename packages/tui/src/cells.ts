@@ -251,13 +251,18 @@ export function compactionCell(
       : "",
     details.toolResultsCleared ? `${details.toolResultsCleared} tool outputs cleared` : "",
   ].filter(Boolean);
-  const label =
+  const headline = details.status === "noop" ? "Context already compact" : "Context compacted";
+  const detail =
     details.status === "noop"
-      ? "context already compact"
-      : `compacted ${GLYPHS.separator} ${counts}${details.contextTokensBefore !== undefined ? ` ${GLYPHS.separator} ${extras.join(` ${GLYPHS.separator} `)}` : ""}`;
-  const width = body(ctx);
-  const rule = "─".repeat(Math.max(0, width - stringWidth(label) - 3));
-  return [MARGIN + dim(`${rule} ${label}`, ctx.depth)];
+      ? ""
+      : `${counts}${details.contextTokensBefore !== undefined ? ` ${GLYPHS.separator} ${extras.join(` ${GLYPHS.separator} `)}` : ""}`;
+  const glyph = accent(GLYPHS.bullet, ctx.depth);
+  const text = detail ? `${headline} ${GLYPHS.separator} ${detail}` : headline;
+  return wrapText(text, body(ctx) - 2, "  ").map((line, index) => {
+    if (index > 0) return MARGIN + dim(line, ctx.depth);
+    // The headline stays undimmed so the boundary is legible at a glance.
+    return `${MARGIN}${glyph} ${line.slice(0, headline.length)}${dim(line.slice(headline.length), ctx.depth)}`;
+  });
 }
 
 export interface CheckpointCellOptions {

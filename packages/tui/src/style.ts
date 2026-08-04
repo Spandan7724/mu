@@ -138,6 +138,7 @@ export const GLYPHS = {
   nestedRule: "│ │",
   ok: "✓",
   error: "✗",
+  bullet: "•",
   separator: "·",
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
 } as const;
