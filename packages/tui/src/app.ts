@@ -910,6 +910,7 @@ export class App {
         : this.isShellMode
           ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
           : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+    lines.push(composerRule(width, depth));
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }

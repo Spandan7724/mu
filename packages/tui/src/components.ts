@@ -427,7 +427,7 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   return [MARGIN + dim(cwd, depth), MARGIN + styleFooterText(stats, depth)];
 }
 
-// The one rule line on screen, above the composer.
+// Brackets the composer: once above it, once below (before the footer).
 export function composerRule(width: number, depth: ColorDepth): string {
   return MARGIN + dim("─".repeat(Math.max(0, width - MARGIN.length * 2)), depth);
 }
