@@ -34,6 +34,7 @@ const defaultRun: GitRunner = async (args, env, cwd) => {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    windowsHide: true,
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

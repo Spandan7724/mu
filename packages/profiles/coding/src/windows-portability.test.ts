@@ -11,6 +11,10 @@ import { shellSpawner } from "./tools/tasks.ts";
 
 const signal = new AbortController().signal;
 
+// Windows PowerShell's first launch in a job pays a cold CLR/assembly load that
+// alone can exceed Bun's 5s default, so shell-spawning cases get their own budget.
+const SHELL_TEST_TIMEOUT_MS = 60_000;
+
 async function git(cwd: string, ...args: string[]): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
@@ -79,68 +83,80 @@ describe("Windows portability", () => {
     expect(environment.uncommittedFiles).toBe("1");
   });
 
-  test("the foreground tool executes through the host-native shell", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mu-native-shell-"));
-    const command =
-      process.platform === "win32"
-        ? 'Write-Output "native-shell-ok"'
-        : 'printf "native-shell-ok\\n"';
-    const result = await (bashTool({ root }) as AnyTool).execute("call-1", { command }, signal);
+  test(
+    "the foreground tool executes through the host-native shell",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "mu-native-shell-"));
+      const command =
+        process.platform === "win32"
+          ? 'Write-Output "native-shell-ok"'
+          : 'printf "native-shell-ok\\n"';
+      const result = await (bashTool({ root }) as AnyTool).execute("call-1", { command }, signal);
 
-    expect(result.isError).toBeFalsy();
-    expect(textOf(result)).toContain("native-shell-ok");
-  });
+      expect(textOf(result)).toContain("native-shell-ok");
+      expect(result.isError).toBeFalsy();
+    },
+    SHELL_TEST_TIMEOUT_MS,
+  );
 
-  test("background commands execute through the host-native transport", async () => {
-    const root = await mkdtemp(join(tmpdir(), "mu-native-pty-"));
-    const manager = new ProcessManager(shellSpawner(root));
-    const command =
-      process.platform === "win32" ? 'Write-Output "native-pty-ok"' : 'printf "native-pty-ok\\n"';
-    const task = manager.start(command);
+  test(
+    "background commands execute through the host-native transport",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "mu-native-pty-"));
+      const manager = new ProcessManager(shellSpawner(root));
+      const command =
+        process.platform === "win32" ? 'Write-Output "native-pty-ok"' : 'printf "native-pty-ok\\n"';
+      const task = manager.start(command);
 
-    await manager.wait(task.id);
+      await manager.wait(task.id);
 
-    expect(manager.output(task.id, "start")?.text).toContain("native-pty-ok");
-    expect(manager.get(task.id)?.exitCode).toBe(0);
-  });
+      expect(manager.output(task.id, "start")?.text).toContain("native-pty-ok");
+      expect(manager.get(task.id)?.exitCode).toBe(0);
+    },
+    SHELL_TEST_TIMEOUT_MS,
+  );
 
-  test("task kill terminates Windows descendants", async () => {
-    if (process.platform !== "win32") return;
-    const root = await mkdtemp(join(tmpdir(), "mu-windows-tree-"));
-    const marker = join(root, "child-alive.txt");
-    const escapedMarker = marker.replaceAll("'", "''");
-    const childScript = [
-      "while ($true) {",
-      `  [IO.File]::WriteAllText('${escapedMarker}', [DateTime]::UtcNow.Ticks.ToString())`,
-      "  Start-Sleep -Milliseconds 50",
-      "}",
-    ].join("\n");
-    const encoded = Buffer.from(childScript, "utf16le").toString("base64");
-    const command = [
-      "$child = Start-Process powershell.exe",
-      `-ArgumentList '-NoLogo','-NoProfile','-EncodedCommand','${encoded}'`,
-      "-PassThru",
-      "; Wait-Process -Id $child.Id",
-    ].join(" ");
-    const manager = new ProcessManager(shellSpawner(root));
-    const task = manager.start(command);
+  test(
+    "task kill terminates Windows descendants",
+    async () => {
+      if (process.platform !== "win32") return;
+      const root = await mkdtemp(join(tmpdir(), "mu-windows-tree-"));
+      const marker = join(root, "child-alive.txt");
+      const escapedMarker = marker.replaceAll("'", "''");
+      const childScript = [
+        "while ($true) {",
+        `  [IO.File]::WriteAllText('${escapedMarker}', [DateTime]::UtcNow.Ticks.ToString())`,
+        "  Start-Sleep -Milliseconds 50",
+        "}",
+      ].join("\n");
+      const encoded = Buffer.from(childScript, "utf16le").toString("base64");
+      const command = [
+        "$child = Start-Process powershell.exe",
+        `-ArgumentList '-NoLogo','-NoProfile','-EncodedCommand','${encoded}'`,
+        "-PassThru",
+        "; Wait-Process -Id $child.Id",
+      ].join(" ");
+      const manager = new ProcessManager(shellSpawner(root));
+      const task = manager.start(command);
 
-    for (let attempt = 0; attempt < 40; attempt++) {
-      if (await readFile(marker, "utf8").catch(() => "")) break;
-      await Bun.sleep(50);
-    }
-    const beforeKill = await readFile(marker, "utf8").catch(() => "");
-    expect({
-      marker: beforeKill,
-      output: manager.output(task.id, "start")?.text ?? "",
-      task: manager.get(task.id),
-    }).toMatchObject({ marker: expect.stringMatching(/\d+/) });
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (await readFile(marker, "utf8").catch(() => "")) break;
+        await Bun.sleep(50);
+      }
+      const beforeKill = await readFile(marker, "utf8").catch(() => "");
+      expect({
+        marker: beforeKill,
+        output: manager.output(task.id, "start")?.text ?? "",
+        task: manager.get(task.id),
+      }).toMatchObject({ marker: expect.stringMatching(/\d+/) });
 
-    manager.kill(task.id);
-    await manager.wait(task.id);
-    const afterKill = await readFile(marker, "utf8");
-    await Bun.sleep(250);
+      manager.kill(task.id);
+      await manager.wait(task.id);
+      const afterKill = await readFile(marker, "utf8");
+      await Bun.sleep(250);
 
-    expect(await readFile(marker, "utf8")).toBe(afterKill);
-  });
+      expect(await readFile(marker, "utf8")).toBe(afterKill);
+    },
+    SHELL_TEST_TIMEOUT_MS,
+  );
 });

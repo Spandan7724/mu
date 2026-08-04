@@ -122,6 +122,7 @@ const defaultRipgrepRunner: RipgrepRunner = async (args, cwd, signal, onLine) =>
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      windowsHide: true,
     });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;

@@ -75,6 +75,7 @@ async function defaultSpawn(
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
+    windowsHide: true,
   });
 
   let timedOut = false;

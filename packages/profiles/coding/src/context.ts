@@ -1009,7 +1009,12 @@ export async function contextMessages(root: string): Promise<AgentMessage[]> {
 
 async function gitOutput(args: string[], cwd: string): Promise<string | undefined> {
   try {
-    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
+    const proc = Bun.spawn(["git", ...args], {
+      cwd,
+      stdout: "pipe",
+      stderr: "ignore",
+      windowsHide: true,
+    });
     const text = await new Response(proc.stdout).text();
     return (await proc.exited) === 0 ? text : undefined;
   } catch {
