@@ -1,8 +1,8 @@
 // Integration: a scripted fake-agent event stream drives the whole UI with
 // zero network, exactly as the milestone requires.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { AgentEvent, AgentMessage } from "@mu/core";
-import { App, type AppCallbacks } from "./app.ts";
+import { App, type AppCallbacks, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { InputDecoder } from "./input.ts";
 import { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
 import { FullScreenRenderer } from "./renderer.ts";
@@ -181,7 +181,7 @@ describe("fake-agent session", () => {
     const runningHint = app.renderBottom().map(stripAnsi).join("\n");
     expect(runningHint).toContain("enter steer");
     expect(runningHint).toContain("tab follow-up");
-    expect(runningHint).toContain("esc interrupt");
+    expect(runningHint).toContain("esc/ctrl+c interrupt");
     app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("enter steer");
   });
@@ -474,10 +474,54 @@ describe("input handling", () => {
     expect(h.aborted).toBe(true);
   });
 
-  test("ctrl+c exits cleanly", () => {
+  test("ctrl+c aborts a running agent instead of exiting", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "\u0003");
+    expect(h.aborted).toBe(true);
+    expect(h.exited).toBe(false);
+  });
+
+  test("idle ctrl+c clears composer text instead of exiting", () => {
+    const h = harness();
+    feed(h.app, "hello");
+    expect(h.app.editor.text).toBe("hello");
+    feed(h.app, "\u0003");
+    expect(h.app.editor.text).toBe("");
+    expect(h.exited).toBe(false);
+  });
+
+  test("idle ctrl+c on an empty composer requires a second press to exit", () => {
     const h = harness();
     feed(h.app, "\u0003");
+    expect(h.exited).toBe(false);
+    expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("press ctrl+c again");
+    feed(h.app, "\u0003");
     expect(h.exited).toBe(true);
+  });
+
+  test("the ctrl+c exit window expires and re-arms instead of exiting", () => {
+    const h = harness();
+    const now = Date.now();
+    const spy = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      feed(h.app, "\u0003");
+      expect(h.exited).toBe(false);
+      spy.mockReturnValue(now + CTRL_C_EXIT_WINDOW_MS + 1);
+      feed(h.app, "\u0003");
+      expect(h.exited).toBe(false);
+      expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("press ctrl+c again");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("other input disarms a pending ctrl+c exit", () => {
+    const h = harness();
+    feed(h.app, "\u0003");
+    feed(h.app, "a");
+    feed(h.app, "\u0003");
+    expect(h.exited).toBe(false);
   });
 
   test("slash opens the command popup and selects a command", () => {
@@ -2057,6 +2101,38 @@ describe("thinking toggle", () => {
   test("the footer shows the current thinking level when idle", () => {
     const h = harness();
     expect(stripAnsi(h.app.renderBottom().at(-1) ?? "")).toContain("think off");
+  });
+});
+
+describe("permission mode cycling", () => {
+  test("shift+tab signals a cycle regardless of decoding path", () => {
+    let calls = 0;
+    const h = harness({ onCyclePermissionMode: () => calls++ });
+
+    h.app.handleInput({
+      type: "key",
+      key: { name: "tab", ctrl: false, alt: false, shift: true },
+    });
+    expect(calls).toBe(1);
+
+    // CSI Z (back-tab) — the universal, protocol-independent encoding.
+    feed(h.app, `${ESC}[Z`);
+    expect(calls).toBe(2);
+  });
+
+  test("plain tab does not trigger the cycle", () => {
+    let calls = 0;
+    const h = harness({ onCyclePermissionMode: () => calls++ });
+    feed(h.app, "\t");
+    expect(calls).toBe(0);
+  });
+
+  test("shift+tab works from any mode, like ctrl+t", () => {
+    let calls = 0;
+    const h = harness({ onCyclePermissionMode: () => calls++ });
+    h.app.openCommandMenu();
+    feed(h.app, `${ESC}[Z`);
+    expect(calls).toBe(1);
   });
 });
 

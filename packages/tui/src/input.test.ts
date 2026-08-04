@@ -94,6 +94,13 @@ describe("InputDecoder", () => {
     expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.shift).toBe(true);
   });
 
+  test("CSI Z (back-tab) decodes as Shift+Tab on every terminal", () => {
+    const events = new InputDecoder().push(`${ESC}[Z`);
+    expect(events[0]?.type === "key" && events[0].key.name).toBe("tab");
+    expect(events[0]?.type === "key" && events[0].key.shift).toBe(true);
+    expect(events[0]?.type === "key" && events[0].key.ctrl).toBe(false);
+  });
+
   test("kitty disambiguated escape decodes as the escape key", () => {
     const events = new InputDecoder().push(`${ESC}[27u`);
     expect(events[0]?.type === "key" && events[0].key.name).toBe("escape");

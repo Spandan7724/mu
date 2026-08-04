@@ -64,6 +64,9 @@ export interface AppCallbacks {
   onPermissionReply?: (requestId: string, outcome: "allow" | "deny", remember: boolean) => void;
   onCommand?: (text: string) => void;
   onThinkingChange?: (level: string) => void;
+  // Shift+Tab. The surface owns the mode list (profile-defined), so this is
+  // just a "cycle to the next one" signal, same shape as onAbort/onExit.
+  onCyclePermissionMode?: () => void;
 }
 
 export interface AppOptions {
@@ -99,6 +102,9 @@ const PENDING_INPUT_ROWS = 3;
 const MIN_STREAMING_PREVIEW_CHARS = 8_000;
 const MAX_STREAMING_PREVIEW_CHARS = 16_000;
 const STREAMING_VIEWPORTS = 2;
+// Idle Ctrl+C arms a "press again to exit" window instead of exiting on the
+// first press, so one stray keystroke can't kill the session.
+export const CTRL_C_EXIT_WINDOW_MS = 2_000;
 
 interface MarkdownFence {
   marker: string;
@@ -248,6 +254,7 @@ export class App {
       }
     | undefined;
   private lastError: string | undefined;
+  private ctrlCArmedAt = 0;
   private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
   private thinkingLevel = "off";
@@ -343,6 +350,12 @@ export class App {
 
   get currentMode(): AppMode {
     return this.mode;
+  }
+
+  // True while a first idle Ctrl+C is armed, waiting for a confirming second
+  // press within CTRL_C_EXIT_WINDOW_MS.
+  get ctrlCPending(): boolean {
+    return this.ctrlCArmedAt !== 0 && Date.now() - this.ctrlCArmedAt < CTRL_C_EXIT_WINDOW_MS;
   }
 
   // Events that produce transcript output return their rendered lines for
@@ -884,7 +897,7 @@ export class App {
         `${MARGIN}${this.spinner.render(depth)}${styleText(
           this.compacting
             ? ` compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-            : ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc interrupt ${GLYPHS.separator} ${toolHint}`,
+            : ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
@@ -892,9 +905,11 @@ export class App {
     }
     const hint = this.running
       ? undefined
-      : this.isShellMode
-        ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
-        : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+      : this.ctrlCPending
+        ? "press ctrl+c again to exit"
+        : this.isShellMode
+          ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
+          : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }
@@ -958,7 +973,36 @@ export class App {
     ];
   }
 
+  // Mirrors Escape: aborts an active run rather than killing the session
+  // outright. When idle, clears composer text like a normal interrupt (pi's
+  // behavior); an empty composer arms a "press again" exit window instead of
+  // exiting immediately, so a single stray keystroke can't drop in-flight work.
+  private handleCtrlC(): void {
+    if (this.running) {
+      this.options.callbacks.onAbort();
+      this.ctrlCArmedAt = 0;
+      return;
+    }
+    if (this.mode === "composing" && this.editor.text.length > 0) {
+      this.editor.setText("");
+      this.ctrlCArmedAt = 0;
+      return;
+    }
+    if (this.ctrlCPending) {
+      this.options.callbacks.onExit();
+      return;
+    }
+    this.ctrlCArmedAt = Date.now();
+  }
+
   handleInput(event: InputEvent): void {
+    // Any input other than the confirming Ctrl+C disarms the exit window.
+    if (
+      this.ctrlCArmedAt !== 0 &&
+      !(event.type === "key" && event.key.ctrl && event.key.name === "c")
+    ) {
+      this.ctrlCArmedAt = 0;
+    }
     if (event.type === "paste") {
       if (this.mode === "prompt") {
         this.promptEditor.insert(event.text.replace(/[\r\n]+/g, ""));
@@ -977,7 +1021,7 @@ export class App {
     const key = event.key;
 
     if (key.ctrl && key.name === "c") {
-      this.options.callbacks.onExit();
+      this.handleCtrlC();
       return;
     }
 
@@ -994,6 +1038,14 @@ export class App {
       const next = levels[(levels.indexOf(this.thinkingLevel) + 1) % levels.length] as string;
       this.thinkingLevel = next;
       this.options.callbacks.onThinkingChange?.(next);
+      return;
+    }
+
+    // Shift+Tab cycles permission modes. The mode list itself is
+    // profile-owned (the surface decides what "next" means), so this is a
+    // bare signal — unlike Ctrl+T, App holds no permission-mode state.
+    if (key.shift && key.name === "tab") {
+      this.options.callbacks.onCyclePermissionMode?.();
       return;
     }
 

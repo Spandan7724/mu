@@ -5,7 +5,7 @@ export type {
   InputPromptRequest,
   PickerRequest,
 } from "./app.ts";
-export { App } from "./app.ts";
+export { App, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 export type {
   CheckpointCellOptions,
   DiffFile,
@@ -43,6 +43,8 @@ export {
 } from "./components.ts";
 export type { InputEvent, Key } from "./input.ts";
 export { InputDecoder, PasteBurstDetector } from "./input.ts";
+export type { Keybinding, KeybindingGroup } from "./keybindings.ts";
+export { formatKeybindings, KEYBINDING_GROUPS } from "./keybindings.ts";
 export type { ToolRendererFn, ToolRenderInfo } from "./registry.ts";
 export { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
 export { FullScreenRenderer } from "./renderer.ts";

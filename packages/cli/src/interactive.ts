@@ -4,6 +4,7 @@ import { bashTool } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
+  CTRL_C_EXIT_WINDOW_MS,
   checkpointCell,
   codingRenderers,
   detectColorDepth,
@@ -11,6 +12,7 @@ import {
   diffLinesFromHunks,
   FullScreenRenderer,
   formatCwdForFooter,
+  formatKeybindings,
   hyperlink,
   InputDecoder,
   RendererRegistry,
@@ -57,7 +59,7 @@ import {
   logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
-import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import {
   DEFAULT_PROFILE,
   profileOptionsFromArgs,
@@ -446,6 +448,7 @@ export async function runInteractive(
       },
       onMentionQuery: (query) => mentionCandidates(query),
       onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
+      onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember) => {
         const pending = pendingPermissions.get(id);
         if (!pending) return;
@@ -623,11 +626,7 @@ export async function runInteractive(
         })),
         onChoose: (label) => {
           const mode = modes.find((candidate) => candidate.label === label);
-          if (!mode || !profile) return;
-          agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
-          activePermissionMode = mode;
-          commitLines([`  permissions set to ${mode.label} · this session`]);
-          paint();
+          if (mode) applyPermissionMode(mode);
         },
         onBack: () => app.openCommandMenu(),
       });
@@ -699,6 +698,14 @@ export async function runInteractive(
       return { handled: true };
     },
   });
+  commands.register({
+    name: "keybindings",
+    description: "List every keybinding",
+    run: (ctx) => {
+      ctx.print(formatKeybindings());
+      return { handled: true };
+    },
+  });
   commands.register(
     transcriptExportCommand({
       getSession: () => agent.session,
@@ -762,6 +769,18 @@ export async function runInteractive(
     };
     walk(root, 0);
     return out;
+  }
+
+  function applyPermissionMode(mode: PermissionMode): void {
+    agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
+    activePermissionMode = mode;
+    commitLines([`  permissions set to ${mode.label} · this session`]);
+    paint();
+  }
+
+  function cyclePermissionMode(): void {
+    const next = nextPermissionMode(profile?.permissionModes ?? [], activePermissionMode);
+    if (next) applyPermissionMode(next);
   }
 
   function beginRun(text: string, options?: AgentRunOptions): void {
@@ -1136,17 +1155,28 @@ export async function runInteractive(
     }, 30);
   };
 
+  // An idle Ctrl+C arms a "press again to exit" hint; without a follow-up
+  // repaint the hint would stay on screen past the window if the user never
+  // touches the keyboard again.
+  let ctrlCHintTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleCtrlCHintClear = () => {
+    if (ctrlCHintTimer) clearTimeout(ctrlCHintTimer);
+    ctrlCHintTimer = setTimeout(paint, CTRL_C_EXIT_WINDOW_MS + 10);
+  };
+
   paint();
 
   try {
     for await (const chunk of process.stdin) {
       for (const event of decoder.push(String(chunk))) app.handleInput(event);
       if (decoder.pending.length > 0) scheduleEscapeFlush();
+      if (app.ctrlCPending) scheduleCtrlCHintClear();
       paint();
       if (exiting) break;
     }
   } finally {
     if (escapeTimer) clearTimeout(escapeTimer);
+    if (ctrlCHintTimer) clearTimeout(ctrlCHintTimer);
     shutdown();
     // Let the aborted run unwind before the terminal is handed back, so it
     // cannot repaint over a restored screen.

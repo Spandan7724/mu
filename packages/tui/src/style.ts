@@ -124,7 +124,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
 export function diffLineStyle(kind: "add" | "del" | "context", depth: ColorDepth): string {
   if (depth === "none" || kind === "context") return "";
   if (depth === "truecolor") {
-    return kind === "add" ? `${ESC}48;2;33;41;34m` : `${ESC}48;2;60;23;15m`;
+    return kind === "add" ? `${ESC}48;2;2;40;0m` : `${ESC}48;2;61;1;0m`;
   }
   if (depth === "ansi256") {
     return kind === "add" ? `${ESC}48;5;22m` : `${ESC}48;5;52m`;

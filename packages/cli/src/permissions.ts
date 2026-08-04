@@ -29,3 +29,15 @@ export function rulesForPermissionMode(
 ): PermissionRule[] {
   return [...(base ?? []), ...(mode?.rules ?? [])];
 }
+
+// Shift+Tab. Wraps to the first mode after the last; undefined `current` (or
+// one no longer in the list) starts from the first. A single mode has
+// nothing to cycle to.
+export function nextPermissionMode(
+  modes: readonly PermissionMode[],
+  current: PermissionMode | undefined,
+): PermissionMode | undefined {
+  if (modes.length < 2) return undefined;
+  const currentIndex = modes.findIndex((mode) => mode.id === current?.id);
+  return modes[(currentIndex + 1) % modes.length];
+}

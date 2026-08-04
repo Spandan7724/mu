@@ -203,6 +203,14 @@ export class InputDecoder {
           };
         }
       }
+      // CSI Z (CBT, "cursor backward tab") is the universal Shift+Tab
+      // encoding — classic xterm behavior with no params, sent regardless of
+      // kitty/modifyOtherKeys support, so this works even on terminals that
+      // support neither. Reported unconditionally as shift, not derived from
+      // `modifiers` (there is no modifier parameter on this sequence).
+      if (final === "Z") {
+        return { type: "key", key: { name: "tab", ctrl: false, alt: false, shift: true } };
+      }
       const name = CSI_FINAL[final];
       return name ? { type: "key", key: { name, ...modifiers } } : { type: "unknown", raw };
     }
