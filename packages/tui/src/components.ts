@@ -31,6 +31,10 @@ export class Editor {
     return { row: this.row, col: this.col };
   }
 
+  get textBeforeCursor(): string {
+    return (this.lines[this.row] ?? "").slice(0, this.col);
+  }
+
   // Absolute offset of the cursor within `text`, so callers can splice at the
   // real insertion point rather than assuming it sits at the very end.
   get offset(): number {

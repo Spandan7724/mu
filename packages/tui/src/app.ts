@@ -1018,12 +1018,36 @@ export class App {
       return;
     }
 
+    // Ctrl+J inserts a newline on every terminal — it's a raw control byte
+    // (0x0A), not a reported modifier, so unlike Shift/Ctrl/Alt+Enter it needs
+    // no terminal protocol support at all.
+    if (key.ctrl && key.name === "j") {
+      this.editor.newline();
+      return;
+    }
+
     switch (key.name) {
       case "escape":
         if (this.running) this.options.callbacks.onAbort();
         else if (this.isShellMode) this.editor.setText("");
         return;
       case "return": {
+        // Two ways to insert a newline instead of submitting. Shift/Ctrl/Alt+Enter
+        // work only where the terminal reports the modifier (kitty keyboard
+        // protocol / xterm modifyOtherKeys — see terminal.ts). A trailing
+        // backslash works on every terminal, needing no modifier reporting: an
+        // odd run of backslashes before the cursor is a line continuation, so
+        // one backslash is consumed and a newline is inserted.
+        if (key.shift || key.ctrl || key.alt) {
+          this.editor.newline();
+          return;
+        }
+        const trailingBackslashes = /\\*$/.exec(this.editor.textBeforeCursor)?.[0].length ?? 0;
+        if (trailingBackslashes % 2 === 1) {
+          this.editor.backspace();
+          this.editor.newline();
+          return;
+        }
         if (this.isShellMode && this.editor.text.slice(1).trim().length === 0) return;
         const text = this.editor.submit();
         if (text.trim().length === 0) return;

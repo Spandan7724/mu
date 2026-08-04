@@ -21,7 +21,6 @@ const PASTE_END = "\u001b[201~";
 
 const SIMPLE: Record<string, string> = {
   "\r": "return",
-  "\n": "return",
   "\t": "tab",
   "\u007f": "backspace",
   "\b": "backspace",
@@ -58,6 +57,16 @@ function modifiersFrom(param: number | undefined): Pick<Key, "ctrl" | "alt" | "s
 
 function plainKey(name: string, text?: string): Key {
   return { name, ctrl: false, alt: false, shift: false, ...(text !== undefined ? { text } : {}) };
+}
+
+// A keyboard-protocol report carries the raw codepoint of the key, so Enter,
+// Tab, Backspace, Space, and Escape arrive as their control codes rather than
+// the canonical names the rest of the app switches on. Escape (27) is not in
+// SIMPLE because a bare ESC starts an escape sequence in the legacy encoding;
+// here it is unambiguously the Escape key.
+function keyNameForCodePoint(codePoint: number): string {
+  if (codePoint === 27) return "escape";
+  return SIMPLE[String.fromCodePoint(codePoint)] ?? String.fromCodePoint(codePoint);
 }
 
 // Stateful because a paste — or an escape sequence — can be split across reads.
@@ -126,7 +135,11 @@ export class InputDecoder {
         };
       const code = char.charCodeAt(0);
       if (code < 0x20) {
-        // Ctrl+letter arrives as the control code itself.
+        // Ctrl+letter arrives as the control code itself. Notably this is how
+        // Ctrl+J (0x0A, LF) is reachable at all: LF is deliberately absent from
+        // SIMPLE (unlike CR) so it falls through to here as ctrl+"j" instead of
+        // colliding with Enter — real keyboards send CR for Enter under raw
+        // mode, never bare LF, so this never misfires on a real Enter press.
         return {
           type: "key",
           key: { name: String.fromCharCode(code + 96), ctrl: true, alt: false, shift: false },
@@ -150,6 +163,24 @@ export class InputDecoder {
       const modifiers = modifiersFrom(Number(parts[1]));
 
       if (final === "~") {
+        // xterm modifyOtherKeys: CSI 27 ; modifier ; codepoint ~ — a modified
+        // key (e.g. Ctrl+Enter as 27;5;13) that the legacy encoding could not
+        // express distinctly.
+        if (parts[0] === "27" && parts[2] !== undefined) {
+          const codePoint = Number(parts[2]);
+          if (!Number.isNaN(codePoint)) {
+            const char = String.fromCodePoint(codePoint);
+            const printable = codePoint >= 0x20 && !modifiers.ctrl && !modifiers.alt;
+            return {
+              type: "key",
+              key: {
+                name: keyNameForCodePoint(codePoint),
+                ...modifiers,
+                ...(printable ? { text: char } : {}),
+              },
+            };
+          }
+        }
         const name = CSI_TILDE[parts[0] ?? ""];
         return name ? { type: "key", key: { name, ...modifiers } } : { type: "unknown", raw };
       }
@@ -158,12 +189,16 @@ export class InputDecoder {
         const codePoint = Number(parts[0]);
         if (!Number.isNaN(codePoint)) {
           const char = String.fromCodePoint(codePoint);
+          // Enter/tab/backspace/space/escape arrive here as their raw control
+          // code when modified (or, for Escape, always under the disambiguate
+          // flag); canonicalize the name so a modified Enter is still "return".
+          const printable = codePoint >= 0x20 && !modifiers.ctrl && !modifiers.alt;
           return {
             type: "key",
             key: {
-              name: char,
+              name: keyNameForCodePoint(codePoint),
               ...modifiers,
-              ...(!modifiers.ctrl && !modifiers.alt ? { text: char } : {}),
+              ...(printable ? { text: char } : {}),
             },
           };
         }
@@ -185,7 +220,12 @@ export class InputDecoder {
     const char = String.fromCodePoint(buffer.codePointAt(1) ?? 0);
     this.buffer = buffer.slice(1 + char.length);
     if (char === "\u001b") return { type: "key", key: plainKey("escape") };
-    return { type: "key", key: { name: char, ctrl: false, alt: true, shift: false } };
+    // Alt+Enter reaches here as ESC + CR on terminals without the kitty
+    // protocol; canonicalize so it lands on the "return" branch too.
+    return {
+      type: "key",
+      key: { name: SIMPLE[char] ?? char, ctrl: false, alt: true, shift: false },
+    };
   }
 
   // Flushes a lone pending ESC as the Escape key. Call on an idle timer: a real

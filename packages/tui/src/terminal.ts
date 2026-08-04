@@ -9,6 +9,18 @@ const END_SYNC = "\u001b[?2026l";
 const BRACKETED_PASTE_ON = "\u001b[?2004h";
 const BRACKETED_PASTE_OFF = "\u001b[?2004l";
 
+// Ask the terminal to report modified keys the legacy encoding collapses into a
+// single byte — Ctrl/Shift+Enter otherwise arrive as a bare CR, indistinguishable
+// from Enter. Two mechanisms because none is universal: the kitty keyboard
+// protocol (disambiguate flag, push/pop) covers modern terminals (kitty, foot,
+// ghostty, wezterm, alacritty, rio, recent Windows Terminal); xterm
+// modifyOtherKeys covers the xterm family. A terminal honors at most one, so
+// enabling both is safe, and both are commands with no reply — the input loop
+// never sees stray bytes. (Terminals that support neither simply ignore these;
+// the composer's backslash-continuation still inserts newlines there.)
+const KEYBOARD_PROTOCOL_ON = "\u001b[>1u\u001b[>4;2m";
+const KEYBOARD_PROTOCOL_OFF = "\u001b[<u\u001b[>4;0m";
+
 export interface TerminalIo {
   write: (data: string) => void;
   columns: number;
@@ -94,7 +106,7 @@ export class Terminal {
 
     this.active = true;
     this.io.setRawMode?.(true);
-    this.io.write(HIDE_CURSOR + BRACKETED_PASTE_ON);
+    this.io.write(HIDE_CURSOR + BRACKETED_PASTE_ON + KEYBOARD_PROTOCOL_ON);
   }
 
   private onFatal = (error: unknown) => {
@@ -107,7 +119,9 @@ export class Terminal {
   restore(): void {
     if (!this.active) return;
     this.active = false;
-    this.io.write(BRACKETED_PASTE_OFF + SHOW_CURSOR);
+    // Disable the keyboard protocols before restoring the cursor so a late key
+    // release cannot leak an escape sequence onto the restored screen.
+    this.io.write(KEYBOARD_PROTOCOL_OFF + BRACKETED_PASTE_OFF + SHOW_CURSOR);
     this.io.setRawMode?.(false);
     for (const cleanup of this.cleanupHandlers.splice(0)) cleanup();
   }

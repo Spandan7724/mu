@@ -305,6 +305,46 @@ describe("input handling", () => {
     expect(h.submitted).toEqual(["hello"]);
   });
 
+  test("Shift+Enter inserts a newline instead of submitting", () => {
+    const h = harness();
+    const shiftEnter = "\u001b[13;2u"; // Shift+Enter (kitty)
+    feed(h.app, "first");
+    feed(h.app, shiftEnter);
+    feed(h.app, "second");
+    expect(h.submitted).toEqual([]);
+    expect(h.app.editor.text).toBe("first\nsecond");
+    feed(h.app, "\r"); // plain Enter now submits the whole thing
+    expect(h.submitted).toEqual(["first\nsecond"]);
+  });
+
+  test("a trailing backslash turns Enter into a newline on any terminal", () => {
+    const h = harness();
+    feed(h.app, "first\\\r"); // backslash then plain Enter
+    feed(h.app, "second");
+    expect(h.submitted).toEqual([]);
+    // The continuation backslash is consumed; a newline replaces it.
+    expect(h.app.editor.text).toBe("first\nsecond");
+    feed(h.app, "\r");
+    expect(h.submitted).toEqual(["first\nsecond"]);
+  });
+
+  test("an escaped double backslash before Enter still submits", () => {
+    const h = harness();
+    feed(h.app, "path\\\\\r"); // two backslashes = one literal, not a continuation
+    expect(h.submitted).toEqual(["path\\\\"]);
+  });
+
+  test("Ctrl+J inserts a newline on any terminal, no protocol needed", () => {
+    const h = harness();
+    feed(h.app, "first");
+    feed(h.app, "\n"); // Ctrl+J
+    feed(h.app, "second");
+    expect(h.submitted).toEqual([]);
+    expect(h.app.editor.text).toBe("first\nsecond");
+    feed(h.app, "\r");
+    expect(h.submitted).toEqual(["first\nsecond"]);
+  });
+
   test("tab queues a follow-up only while the agent is running", () => {
     const h = harness();
     feed(h.app, "not yet\t");
@@ -1065,7 +1105,7 @@ describe("terminal safety", () => {
     const result = await runSafetyChild("signal");
 
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout).toContain('write:"\\u001b[?2004l\\u001b[?25h"');
+    expect(result.stdout).toContain('write:"\\u001b[<u\\u001b[>4;0m\\u001b[?2004l\\u001b[?25h"');
     expect(result.stdout).toContain("raw:false");
     expect(result.stdout).toContain("signal:SIGTERM");
   });
@@ -1074,7 +1114,7 @@ describe("terminal safety", () => {
     const result = await runSafetyChild("throw");
 
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain('write:"\\u001b[?2004l\\u001b[?25h"');
+    expect(result.stdout).toContain('write:"\\u001b[<u\\u001b[>4;0m\\u001b[?2004l\\u001b[?25h"');
     expect(result.stdout).toContain("raw:false");
     expect(result.stderr).toContain("mu crashed: Error: terminal safety fixture crash");
   });

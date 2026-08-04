@@ -24,6 +24,14 @@ describe("InputDecoder", () => {
     expect(events[0]?.type === "key" && events[0].key.ctrl).toBe(true);
   });
 
+  test("Ctrl+J decodes as a plain ctrl combo, not Enter", () => {
+    const events = new InputDecoder().push("\n"); // Ctrl+J / bare LF
+    expect(events[0]?.type === "key" && events[0].key.name).toBe("j");
+    expect(events[0]?.type === "key" && events[0].key.ctrl).toBe(true);
+    // CR remains the only byte that decodes as Enter.
+    expect(keys(new InputDecoder().push("\r"))).toEqual(["return"]);
+  });
+
   test("decodes arrow keys", () => {
     expect(keys(new InputDecoder().push(`${ESC}[A${ESC}[B${ESC}[C${ESC}[D`))).toEqual([
       "up",
@@ -57,6 +65,39 @@ describe("InputDecoder", () => {
     const events = new InputDecoder().push(`${ESC}b`);
     expect(events[0]?.type === "key" && events[0].key.name).toBe("b");
     expect(events[0]?.type === "key" && events[0].key.alt).toBe(true);
+  });
+
+  test("modified enter keeps the 'return' name (kitty + alt-prefix)", () => {
+    const shiftEnter = new InputDecoder().push(`${ESC}[13;2u`); // Shift+Enter
+    expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.name).toBe("return");
+    expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.shift).toBe(true);
+    // Control code must not leak into printable text.
+    expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.text).toBeUndefined();
+
+    const ctrlEnter = new InputDecoder().push(`${ESC}[13;5u`); // Ctrl+Enter
+    expect(ctrlEnter[0]?.type === "key" && ctrlEnter[0].key.name).toBe("return");
+    expect(ctrlEnter[0]?.type === "key" && ctrlEnter[0].key.ctrl).toBe(true);
+
+    const altEnter = new InputDecoder().push(`${ESC}\r`); // Alt+Enter (ESC + CR)
+    expect(altEnter[0]?.type === "key" && altEnter[0].key.name).toBe("return");
+    expect(altEnter[0]?.type === "key" && altEnter[0].key.alt).toBe(true);
+  });
+
+  test("xterm modifyOtherKeys reports modified enter", () => {
+    const ctrlEnter = new InputDecoder().push(`${ESC}[27;5;13~`); // Ctrl+Enter
+    expect(ctrlEnter[0]?.type === "key" && ctrlEnter[0].key.name).toBe("return");
+    expect(ctrlEnter[0]?.type === "key" && ctrlEnter[0].key.ctrl).toBe(true);
+    expect(ctrlEnter[0]?.type === "key" && ctrlEnter[0].key.text).toBeUndefined();
+
+    const shiftEnter = new InputDecoder().push(`${ESC}[27;2;13~`); // Shift+Enter
+    expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.name).toBe("return");
+    expect(shiftEnter[0]?.type === "key" && shiftEnter[0].key.shift).toBe(true);
+  });
+
+  test("kitty disambiguated escape decodes as the escape key", () => {
+    const events = new InputDecoder().push(`${ESC}[27u`);
+    expect(events[0]?.type === "key" && events[0].key.name).toBe("escape");
+    expect(events[0]?.type === "key" && events[0].key.text).toBeUndefined();
   });
 
   test("a lone escape waits, then flushes as the escape key", () => {
