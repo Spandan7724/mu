@@ -217,6 +217,38 @@ type ApplyResult =
   | { ok: true; updated: string; replacements: number }
   | { ok: false; message: string };
 
+// A UTF-8 read keeps the BOM as the first character, where it is invisible in tool
+// output and so never appears in an oldString anchored at the start of the file.
+const BOM = "\uFEFF";
+
+function splitBom(content: string): { bom: string; text: string } {
+  return content.startsWith(BOM)
+    ? { bom: BOM, text: content.slice(1) }
+    : { bom: "", text: content };
+}
+
+const toCRLF = (text: string) => text.replace(/\r?\n/g, "\r\n");
+const toLF = (text: string) => text.replace(/\r\n/g, "\n");
+
+// Tool output carries a file's line endings verbatim, but models reproduce them
+// inconsistently — a CRLF file read back as oldString usually returns with bare LF.
+// Rewriting the file to one convention would touch every line, so adapt the edit to
+// whichever convention actually matches instead, leaving unchanged bytes alone.
+function adaptLineEndings(content: string, oldString: string, newString: string): EditItem {
+  if (oldString.includes("\n") && !content.includes(oldString)) {
+    for (const convert of [toCRLF, toLF]) {
+      const converted = convert(oldString);
+      if (converted !== oldString && content.includes(converted)) {
+        return { oldString: converted, newString: convert(newString) };
+      }
+    }
+    return { oldString, newString };
+  }
+  // Matched as written. Inserted lines still follow the file's convention, so a
+  // replacement never leaves LF endings behind in a CRLF file.
+  return { oldString, newString: content.includes("\r\n") ? toCRLF(newString) : newString };
+}
+
 // Every edit is matched against the file as it was read, never against the result of an
 // earlier edit in the same call, so the model can describe all of them from one read.
 // Splicing by offset rather than String.replace is also what keeps $&, $`, $', $$ and $n
@@ -226,7 +258,8 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
   const ranges: EditRange[] = [];
 
   for (const [index, edit] of edits.entries()) {
-    const { oldString, newString, replaceAll } = edit;
+    const { replaceAll } = edit;
+    const { oldString, newString } = adaptLineEndings(content, edit.oldString, edit.newString);
     if (oldString === "") {
       return { ok: false, message: `${at(index)}oldString is empty — nothing to match.` };
     }
@@ -265,9 +298,12 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
   let previous: EditRange | undefined;
   for (const range of ranges) {
     if (previous && previous.end > range.start) {
+      const same = previous.start === range.start && previous.end === range.end;
       return {
         ok: false,
-        message: `edits[${previous.index}] and edits[${range.index}] overlap in ${label}. Merge them into one edit, or target text that does not overlap.`,
+        message: same
+          ? `edits[${previous.index}] and edits[${range.index}] match the same text in ${label}. Drop the duplicate, or give each edit different text to match.`
+          : `edits[${previous.index}] and edits[${range.index}] overlap in ${label}. Merge them into one edit, or target text that does not overlap.`,
       };
     }
     previous = range;
@@ -299,11 +335,19 @@ export function coerceEditInput(raw: unknown): unknown {
     }
   }
 
-  if (!Array.isArray(args.edits) && ("oldString" in args || "newString" in args)) {
+  // Only a complete flat pair is unambiguous. Anything less is left alone so the schema
+  // reports the shape it actually wants, rather than a path inside an array the model
+  // never sent. A flat pair alongside `edits` is an extra edit, not a replacement for
+  // the array — dropping it would apply part of the call and report success.
+  if (typeof args.oldString === "string" && typeof args.newString === "string") {
     const { oldString, newString, replaceAll, ...rest } = args;
+    const existing = Array.isArray(args.edits) ? args.edits : [];
     return {
       ...rest,
-      edits: [{ oldString, newString, ...(replaceAll === undefined ? {} : { replaceAll }) }],
+      edits: [
+        ...existing,
+        { oldString, newString, ...(replaceAll === undefined ? {} : { replaceAll }) },
+      ],
     };
   }
 
@@ -335,13 +379,14 @@ export function editTool(deps: ToolDeps) {
       } catch {
         return { description: `Edit ${relativePath}` };
       }
-      const applied = applyEdits(content, edits, relativePath);
+      const { text } = splitBom(content);
+      const applied = applyEdits(text, edits, relativePath);
       if (!applied.ok) return { description: `Edit ${relativePath}` };
       return {
         description: `Edit ${relativePath}`,
         preview: {
           kind: "diff",
-          file: filePermissionDiff(relativePath, content, applied.updated),
+          file: filePermissionDiff(relativePath, text, applied.updated),
         },
       };
     },
@@ -370,11 +415,12 @@ export function editTool(deps: ToolDeps) {
         );
       }
 
-      const applied = applyEdits(content, edits, display(deps.root, absolute));
+      const { bom, text } = splitBom(content);
+      const applied = applyEdits(text, edits, display(deps.root, absolute));
       if (!applied.ok) return errorResult(applied.message);
 
       const { updated, replacements: occurrences } = applied;
-      await writeFile(absolute, updated, "utf8");
+      await writeFile(absolute, bom + updated, "utf8");
       deps.state.markWritten(absolute);
 
       return {

@@ -406,6 +406,81 @@ describe("edit", () => {
     expect(result.isError).toBeFalsy();
     expect(await readFile(join(root, "code.ts"), "utf8")).toBe("const a = 3;\n");
   });
+
+  test("a flat edit sent alongside edits[] is an extra edit, not a discarded one", async () => {
+    const { root, state } = await prepared("p\nq\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [{ oldString: "p", newString: "P" }],
+      oldString: "q",
+      newString: "Q",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain("2 replacements");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("P\nQ\n");
+  });
+
+  test("an incomplete flat edit is reported against the shape the tool documents", async () => {
+    const { root, state } = await prepared("p\n");
+    const result = await run(editTool({ root, state }), { path: "code.ts", oldString: "p" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("edits");
+    expect(textOf(result)).not.toContain("edits.0.newString");
+  });
+
+  test("duplicate edits are named as duplicates rather than as an overlap", async () => {
+    const { root, state } = await prepared("foo\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "foo", newString: "a" },
+        { oldString: "foo", newString: "b" },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("match the same text");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("foo\n");
+  });
+
+  test("edits a CRLF file when oldString comes back with bare newlines", async () => {
+    const { root, state } = await prepared("line1\r\nline2\r\nline3\r\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [{ oldString: "line1\nline2", newString: "changed1\nchanged2" }],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("changed1\r\nchanged2\r\nline3\r\n");
+  });
+
+  test("leaves an LF file alone when oldString arrives with CRLF", async () => {
+    const { root, state } = await prepared("line1\nline2\nline3\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [{ oldString: "line1\r\nline2", newString: "changed1\r\nchanged2" }],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("changed1\nchanged2\nline3\n");
+  });
+
+  test("inserted lines follow the file's line endings", async () => {
+    const { root, state } = await prepared("a\r\nb\r\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [{ oldString: "a", newString: "one\ntwo" }],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("one\r\ntwo\r\nb\r\n");
+  });
+
+  test("edits a file that starts with a byte order mark and keeps it", async () => {
+    const { root, state } = await prepared("\uFEFFconst a = 1;\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [{ oldString: "const a = 1;", newString: "const a = 2;" }],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("\uFEFFconst a = 2;\n");
+  });
 });
 
 describe("ls, glob and grep", () => {
