@@ -93,6 +93,10 @@ const DISPOSABLE_IGNORED_DIRECTORIES = new Set([
   "coverage",
 ]);
 const SHADOW_STORE_VERSION = "2";
+// Mu's own project state. A permission grant ("always allow") or a model
+// choice is written here mid-turn, so snapshotting it would make undo revoke
+// decisions the user made deliberately — state the turn did not author.
+const STATE_DIRECTORY = ".mu";
 
 function disposableDirectoryFor(path: string): string | undefined {
   const parts = path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "").split("/");
@@ -121,6 +125,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     this.excludedPathspecs = [
       ":(exclude,literal).git",
       ":(exclude,glob).git/**",
+      `:(exclude,literal)${STATE_DIRECTORY}`,
+      `:(exclude,glob)${STATE_DIRECTORY}/**`,
       ...(inside.length > 0 && !inside.startsWith("..")
         ? [`:(exclude,literal)${inside}`, `:(exclude,glob)${inside}/**`]
         : []),
@@ -274,6 +280,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       "--quiet",
       "-e",
       ".git",
+      "-e",
+      cleanExcludePattern(STATE_DIRECTORY),
       ...(relative(this.root, this.shadowDir).startsWith("..")
         ? []
         : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),

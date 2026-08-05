@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Tool } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "mu";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingProfile } from "./index.ts";
+import { loadProjectConfig } from "./permissions.ts";
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mu-ckpt-"));
@@ -197,6 +199,43 @@ describe("shadow checkpoints", () => {
     await p.restore(ref as string);
 
     expect(await readFile(join(root, "venv", "source.txt"), "utf8")).toBe("original\n");
+  });
+
+  test("mu's own project state is never checkpointed, restored or cleaned away", async () => {
+    const root = await scratch();
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(join(root, ".mu", "config.json"), '{"permissions":[]}\n');
+    await writeFile(join(root, "source.txt"), "original\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, ".mu", "config.json"), '{"permissions":["bash"]}\n');
+    await writeFile(join(root, ".mu", "model"), "opus\n");
+    await writeFile(join(root, "source.txt"), "changed\n");
+
+    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["source.txt"]);
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, ".mu", "config.json"), "utf8")).toBe(
+      '{"permissions":["bash"]}\n',
+    );
+    expect(await readFile(join(root, ".mu", "model"), "utf8")).toBe("opus\n");
+    expect(await readFile(join(root, "source.txt"), "utf8")).toBe("original\n");
+  });
+
+  test("project state created after a snapshot is not removed by restore", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "source.txt"), "original\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(join(root, ".mu", "config.json"), '{"permissions":["bash"]}\n');
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, ".mu", "config.json"), "utf8")).toBe(
+      '{"permissions":["bash"]}\n',
+    );
   });
 
   test("diff reports per-file added and removed counts", async () => {
@@ -449,5 +488,55 @@ describe("turn-level agent undo", () => {
 
     expect((await agent.redo()).ok).toBe(true);
     expect(await readFile(join(root, "fibonacci.py"), "utf8")).toContain("0 1 1 2 3");
+  });
+
+  test("a permission granted mid-turn survives undo of that turn", async () => {
+    const root = await scratch();
+    const profile = await codingProfile({ root });
+    const checkpoints = provider(root);
+    // Stands in for the user answering "always allow" while the turn is running.
+    const grant: Tool = {
+      name: "grant",
+      description: "remember a permission",
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => {
+        await profile.rememberPermission?.("bash", "npm test*");
+        return { content: [{ type: "text", text: "granted" }] };
+      },
+    };
+    const agent = new Agent({
+      provider: new FakeProvider([
+        {
+          content: [
+            {
+              type: "toolCall",
+              id: "write-1",
+              name: "write",
+              arguments: { path: "app.py", content: "print('hi')\n" },
+            },
+          ],
+        },
+        { content: [{ type: "toolCall", id: "grant-1", name: "grant", arguments: {} }] },
+        { content: [{ type: "text", text: "Done." }] },
+      ]),
+      model: fakeModel,
+      tools: [...profile.toolset, grant],
+      checkpointProvider: checkpoints,
+      permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+    });
+
+    await agent.run("create app.py");
+    expect(await loadProjectConfig(root)).toMatchObject({
+      permissions: [{ permission: "bash", pattern: "npm test*", action: "allow" }],
+    });
+
+    const undone = await agent.undo();
+    expect(undone.ok).toBe(true);
+    expect(undone.data?.files.map((file) => file.path)).toEqual(["app.py"]);
+    await expect(access(join(root, "app.py"))).rejects.toThrow();
+    // The turn's edit is gone; the user's own decision is not.
+    expect(await loadProjectConfig(root)).toMatchObject({
+      permissions: [{ permission: "bash", pattern: "npm test*", action: "allow" }],
+    });
   });
 });
