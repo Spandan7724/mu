@@ -154,6 +154,16 @@ function openFenceAtEnd(text: string): MarkdownFence | undefined {
   return open;
 }
 
+function formatDuration(durationMs: number): string {
+  const ms = Math.max(0, durationMs);
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  if (ms < 10_000) return `${(ms / 1_000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1_000);
+  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+}
+
 class LiveToolOutput {
   private lines: string[] = [];
   private partial = "";
@@ -222,6 +232,7 @@ export class App {
   private commandList = new SelectList([]);
   private mode: AppMode = "composing";
   private running = false;
+  private runStartedAt = 0;
   private compacting = false;
   private compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
   // A parallel-safe tool batch can raise several asks at once, so they queue
@@ -365,18 +376,28 @@ export class App {
     switch (event.type) {
       case "agent_start":
         this.running = true;
+        this.runStartedAt = Date.now();
         return [];
 
       case "agent_end": {
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
-        if (event.reason !== "error") return [];
+        const duration = styleText(
+          `worked for ${formatDuration(Date.now() - this.runStartedAt)}`,
+          { dim: true },
+          this.ctx.depth,
+        );
+        if (event.reason !== "error") {
+          const lines = [MARGIN + duration, ""];
+          this.appendTranscript(lines);
+          return lines;
+        }
         // Show *why* it failed. "run ended with an error" tells the user
         // nothing and hides actionable messages like a missing API key.
         const detail = this.lastError ?? "the provider returned an error";
         this.lastError = undefined;
-        const lines = [...errorCell(detail, this.ctx), ""];
+        const lines = [...errorCell(detail, this.ctx), MARGIN + duration, ""];
         this.appendTranscript(lines);
         return lines;
       }
@@ -885,6 +906,12 @@ export class App {
       }
     }
 
+    // Closes the box opened above: the composer/overlay content sits between
+    // the two rules, and the running-hint row below is footer-adjacent status
+    // (it feeds the same idle `hint` slot the footer renders when not
+    // running), not part of the input itself.
+    lines.push(composerRule(width, depth));
+
     const toolHint = "ctrl+o";
     if (this.running) {
       const compactStage =
@@ -893,11 +920,12 @@ export class App {
           : this.compactionStage === "installing"
             ? "installing checkpoint"
             : "summarizing earlier context";
+      const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
           this.compacting
-            ? ` compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-            : ` enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+            ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
+            : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
@@ -910,7 +938,6 @@ export class App {
         : this.isShellMode
           ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
           : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
-    lines.push(composerRule(width, depth));
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }

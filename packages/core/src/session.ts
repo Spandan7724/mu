@@ -1,5 +1,5 @@
 import { compactionSummaryMessage } from "./compaction.ts";
-import type { AgentMessage } from "./messages.ts";
+import type { AgentMessage, Usage } from "./messages.ts";
 
 export const SESSION_VERSION = 1;
 
@@ -36,6 +36,10 @@ export type SessionEntry =
       strategy?: "summary-tail";
       keptTokens?: number;
       toolResultsCleared?: number;
+      // The compactor's own LLM call cost — distinct from contextTokensBefore/
+      // After, which describe the conversation it summarized. Absent on
+      // sessions written before this field existed.
+      usage?: Usage;
     }
   | {
       type: "microcompaction";

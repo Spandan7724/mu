@@ -178,12 +178,74 @@ describe("fake-agent session", () => {
     const { app } = harness();
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("esc to interrupt");
     app.handleEvent({ type: "agent_start" });
-    const runningHint = app.renderBottom().map(stripAnsi).join("\n");
+    const runningHint = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
     expect(runningHint).toContain("enter steer");
     expect(runningHint).toContain("tab follow-up");
     expect(runningHint).toContain("esc/ctrl+c interrupt");
     app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("enter steer");
+  });
+
+  test("the running row shows elapsed time, ticking without a new event", () => {
+    const { app } = harness();
+    const now = Date.now();
+    const spy = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      app.handleEvent({ type: "agent_start" });
+      const started = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
+      expect(started).toContain("0ms");
+
+      // No new event — a repaint alone (e.g. the spinner's tick timer) must
+      // still reflect real elapsed time, since nothing else drives this row.
+      spy.mockReturnValue(now + 14_000);
+      const later = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
+      expect(later).toContain("14s");
+
+      app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+      spy.mockReturnValue(now + 20_000);
+      // agent_start on the next turn resets the clock, not carries it over.
+      app.handleEvent({ type: "agent_start" });
+      const nextTurn = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
+      expect(nextTurn).toContain("0ms");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a completed run leaves a permanent 'worked for' transcript line", () => {
+    const { app } = harness();
+    const now = Date.now();
+    const spy = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      app.handleEvent({ type: "agent_start" });
+      spy.mockReturnValue(now + 191_000); // 3m 11s
+      const returned = app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+      expect(stripAnsi(returned[0] ?? "")).toBe("  worked for 3m 11s");
+      expect(returned[1]).toBe("");
+
+      // Retained: still present in scrollback after later renders, and after
+      // a second run — turns stack up rather than the caption being replaced.
+      const screen = app.renderScreen().map(stripAnsi).join("\n");
+      expect(screen).toContain("worked for 3m 11s");
+
+      app.handleEvent({ type: "agent_start" });
+      spy.mockReturnValue(now + 191_000 + 15_000);
+      app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+      const laterScreen = app.renderScreen().map(stripAnsi).join("\n");
+      expect(laterScreen).toContain("worked for 3m 11s");
+      expect(laterScreen).toContain("worked for 15s");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("an error still reports elapsed time, after the error detail", () => {
+    const { app } = harness();
+    const lines = app.handleEvent({ type: "agent_end", messages: [], reason: "error" });
+    const text = lines.map(stripAnsi).join("\n");
+    expect(text).toContain("✗");
+    expect(text).toContain("worked for");
+    expect(text.indexOf("✗")).toBeLessThan(text.indexOf("worked for"));
   });
 
   test("compaction is shown as a visible boundary", () => {

@@ -78,6 +78,7 @@ async function main(): Promise<number> {
             currentVersion: VERSION,
             packageName: cliPackage.name,
             entryPath: process.argv[1],
+            execPath: process.execPath,
           },
           io,
         );

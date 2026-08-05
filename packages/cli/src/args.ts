@@ -114,7 +114,7 @@ Usage:
   mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
-  mu self update           update a global npm or Bun installation
+  mu self update           update a global npm, Bun, or GitHub-release install
 
 Options:
   -p, --print <prompt>     headless one-shot mode

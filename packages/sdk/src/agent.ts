@@ -332,7 +332,18 @@ export class Agent {
     }
     this.tree = candidate;
     this._sessionId = header.id;
-    this.totals = zeroUsage();
+    // Rebuild cumulative usage from the resumed branch rather than starting
+    // over at zero — every assistant turn and past compaction call on this
+    // path was real spend, whether or not the current process saw it happen.
+    let restoredTotals = zeroUsage();
+    for (const entry of candidate.activePath()) {
+      if (entry.type === "message" && entry.message.role === "assistant") {
+        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+      } else if (entry.type === "compaction" && entry.usage) {
+        restoredTotals = addUsage(restoredTotals, entry.usage);
+      }
+    }
+    this.totals = restoredTotals;
     this.lastContextUsage = undefined;
     this.compactRequested = false;
     this.compactRequestedFocus = undefined;
@@ -695,6 +706,7 @@ export class Agent {
         strategy: "summary-tail",
         keptTokens: estimateTokens(result.keptMessages),
         toolResultsCleared: replacements.length,
+        usage: result.usage,
       });
 
       for (const message of refreshed) candidateTree.appendMessage(message);
@@ -1628,6 +1640,7 @@ export class Agent {
                 this.tree.activePath().filter((entry) => entry.type === "compaction").length + 1,
               strategy: "summary-tail",
               keptTokens: estimateTokens(result.keptMessages),
+              usage: result.usage,
             });
             summaryEntryId = boundary.id;
           }

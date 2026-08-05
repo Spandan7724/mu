@@ -134,6 +134,29 @@ describe("SessionTree", () => {
     expect(messages[0]?.role).toBe("custom");
   });
 
+  test("a compaction entry's compactor usage survives a JSONL round-trip", () => {
+    const tree = newTree();
+    tree.appendMessage(userMessage("old-1"));
+    const kept = tree.appendMessage(userMessage("kept"));
+    const usage = {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 0.01,
+    };
+    tree.append({
+      type: "compaction",
+      summary: "Earlier discussion summarized.",
+      firstKeptEntryId: kept.id,
+      usage,
+    });
+
+    const reloaded = SessionTree.fromJsonl(tree.toJsonl());
+    const entry = reloaded.activePath().find((e) => e.type === "compaction");
+    expect(entry?.type === "compaction" && entry.usage).toEqual(usage);
+  });
+
   test("a malformed compaction anchor preserves the original transcript", () => {
     const tree = newTree();
     tree.appendMessage(userMessage("old-1"));

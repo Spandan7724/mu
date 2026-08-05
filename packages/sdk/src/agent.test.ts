@@ -894,7 +894,7 @@ describe("runtime model and thinking changes", () => {
     expect(texts).toContain("original question");
   });
 
-  test("resume resets session-scoped usage, context, flags, and queued messages", async () => {
+  test("resume rebuilds usage from the resumed branch's own history, discarding this process's own prior spend", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "old answer" }] },
       { content: [{ type: "text", text: "new answer" }] },
@@ -915,6 +915,14 @@ describe("runtime model and thinking changes", () => {
       environment: {},
     });
     target.appendMessage(userMessage("target history"));
+    target.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "target answer" }],
+      model: "fake/fake-1",
+      usage: { inputTokens: 500, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "end",
+      timestamp: 1,
+    });
     target.append({
       type: "settings-change",
       model: "openai/gpt-5.1",
@@ -925,9 +933,10 @@ describe("runtime model and thinking changes", () => {
     expect(agent.sessionId).toBe("target-session");
     expect(agent.modelRef).toBe("openai/gpt-5.1");
     expect(agent.thinking).toBe("high");
-    expect(agent.usage.inputTokens).toBe(0);
-    // Cost is this process's spend, but context belongs to the restored
-    // transcript and must be accounted for before the next request.
+    // Neither zero (the old bug) nor this process's own pre-resume spend —
+    // exactly the resumed branch's own assistant usage.
+    expect(agent.usage.inputTokens).toBe(500);
+    expect(agent.usage.outputTokens).toBe(50);
     expect(agent.contextTokens).toBeGreaterThan(0);
     expect(agent.contextPercent).toBeGreaterThan(0);
     await agent.run("next prompt");
@@ -940,6 +949,42 @@ describe("runtime model and thinking changes", () => {
     expect(request).not.toContain("stale follow-up");
     expect(provider.callCount).toBe(2);
     expect(JSON.stringify(target.messagesAt())).not.toContain("new answer");
+  });
+
+  test("resume also folds in a past compaction's own usage, and starts at zero with no history", () => {
+    const withCompaction = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const compactedTarget = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "compacted-target",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    const kept = compactedTarget.appendMessage(userMessage("kept"));
+    compactedTarget.append({
+      type: "compaction",
+      summary: "earlier turns summarized",
+      firstKeptEntryId: kept.id,
+      usage: { inputTokens: 80, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    withCompaction.resume(compactedTarget);
+    expect(withCompaction.usage.inputTokens).toBe(80);
+    expect(withCompaction.usage.outputTokens).toBe(20);
+
+    const fresh = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const freshTarget = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "fresh-target",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    freshTarget.appendMessage(userMessage("no reply yet"));
+    fresh.resume(freshTarget);
+    expect(fresh.usage.inputTokens).toBe(0);
+    expect(fresh.usage.outputTokens).toBe(0);
   });
 
   test("resume publishes the restored context to idle subscribers", async () => {

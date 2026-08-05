@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   compareSemver,
+  installByRenamingAside,
   npmPrefixFromInstallPath,
   packageManagerFromInstallPaths,
   runSelfUpdate,
@@ -196,5 +201,262 @@ describe("package manager detection", () => {
         `${packageName}@0.0.2`,
       ],
     ]);
+  });
+});
+
+describe("native GitHub-release installs", () => {
+  const execPath = "/home/user/.mu/bin/mu";
+  const receipt = JSON.stringify({ method: "github-release", target: "linux-x64" });
+
+  function githubFetch(options: {
+    tag: string;
+    assetBytes: Uint8Array;
+    sums: string;
+  }): typeof fetch {
+    return (async (url: string) => {
+      if (url.endsWith("/releases/latest")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url: url.replace(/\/latest$/, `/tag/${options.tag}`),
+        } as unknown as Response;
+      }
+      if (url.endsWith("/SHA256SUMS")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          arrayBuffer: async () => new TextEncoder().encode(options.sums).buffer,
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        arrayBuffer: async () => options.assetBytes.buffer,
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+  }
+
+  function sha256Hex(bytes: Uint8Array): string {
+    return createHash("sha256").update(bytes).digest("hex");
+  }
+
+  test("downloads, verifies, and installs over the running binary", async () => {
+    const assetBytes = new TextEncoder().encode("fake binary contents");
+    const sums = `${sha256Hex(assetBytes)}  mu-linux-x64\n`;
+    const installed: { execPath: string; bytes: Uint8Array }[] = [];
+    const sink = output();
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => receipt,
+        fetch: githubFetch({ tag: "v0.1.0", assetBytes, sums }),
+        installNative: async (path, bytes) => {
+          installed.push({ execPath: path, bytes });
+        },
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(installed).toEqual([{ execPath, bytes: assetBytes }]);
+    expect(sink.stdout.join("")).toContain("Updated mu to 0.1.0");
+  });
+
+  test("refuses to install when the downloaded asset fails its checksum", async () => {
+    const assetBytes = new TextEncoder().encode("fake binary contents");
+    const sums = "0000000000000000000000000000000000000000000000000000000000000000  mu-linux-x64\n";
+    let installCalled = false;
+    const sink = output();
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => receipt,
+        fetch: githubFetch({ tag: "v0.1.0", assetBytes, sums }),
+        installNative: async () => {
+          installCalled = true;
+        },
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(installCalled).toBe(false);
+    expect(sink.stderr.join("")).toContain("SHA-256 check");
+  });
+
+  test("refuses to install when SHA256SUMS has no entry for the asset", async () => {
+    const assetBytes = new TextEncoder().encode("fake binary contents");
+    const sums = `${sha256Hex(assetBytes)}  some-other-asset\n`;
+    const sink = output();
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => receipt,
+        fetch: githubFetch({ tag: "v0.1.0", assetBytes, sums }),
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(sink.stderr.join("")).toContain("did not list a digest");
+  });
+
+  test("does not download anything when already up to date", async () => {
+    const assetBytes = new TextEncoder().encode("fake binary contents");
+    const sink = output();
+    let assetRequested = false;
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.1.0",
+        packageName,
+        execPath,
+        readReceipt: async () => receipt,
+        fetch: (async (url: string) => {
+          if (url.endsWith("/releases/latest")) {
+            return {
+              ok: true,
+              url: url.replace(/\/latest$/, "/tag/v0.1.0"),
+            } as unknown as Response;
+          }
+          assetRequested = true;
+          return { ok: true, arrayBuffer: async () => assetBytes.buffer } as unknown as Response;
+        }) as unknown as typeof fetch,
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(assetRequested).toBe(false);
+    expect(sink.stdout.join("")).toContain("up to date");
+  });
+
+  test("falls back to failing closed when no receipt is present", async () => {
+    const sink = output();
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => undefined,
+        fetch: (() => {
+          throw new Error("should not fetch");
+        }) as unknown as typeof fetch,
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(sink.stderr.join("")).toContain("not a global npm or Bun package");
+  });
+
+  test("ignores a receipt with an unrecognized shape", async () => {
+    const sink = output();
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => JSON.stringify({ method: "something-else" }),
+        fetch: (() => {
+          throw new Error("should not fetch");
+        }) as unknown as typeof fetch,
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+  });
+
+  test("recognizes a windows-x64 receipt and fetches the .exe asset", async () => {
+    const assetBytes = new TextEncoder().encode("fake exe contents");
+    const sums = `${sha256Hex(assetBytes)}  mu-windows-x64.exe\n`;
+    const installed: { execPath: string; bytes: Uint8Array }[] = [];
+    const sink = output();
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath: "C:\\Users\\me\\.mu\\bin\\mu.exe",
+        readReceipt: async () =>
+          JSON.stringify({ method: "github-release", target: "windows-x64" }),
+        fetch: githubFetch({ tag: "v0.1.0", assetBytes, sums }),
+        installNative: async (path, bytes) => {
+          installed.push({ execPath: path, bytes });
+        },
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(installed).toEqual([{ execPath: "C:\\Users\\me\\.mu\\bin\\mu.exe", bytes: assetBytes }]);
+  });
+});
+
+describe("installByRenamingAside", () => {
+  async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "mu-rename-aside-"));
+    try {
+      return await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("renames the running binary aside and installs the new one in its place", async () => {
+    await withTempDir(async (dir) => {
+      const execPath = join(dir, "mu.exe");
+      const tempPath = join(dir, "mu.exe.new");
+      await writeFile(execPath, "old contents");
+      await writeFile(tempPath, "new contents");
+
+      await installByRenamingAside(execPath, tempPath);
+
+      expect(await readFile(execPath, "utf8")).toBe("new contents");
+      await expect(readFile(`${execPath}.old`, "utf8")).rejects.toThrow();
+      await expect(readFile(tempPath, "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("restores the original binary if placing the new one fails", async () => {
+    await withTempDir(async (dir) => {
+      const execPath = join(dir, "mu.exe");
+      const missingTempPath = join(dir, "does-not-exist.exe");
+      await writeFile(execPath, "old contents");
+
+      await expect(installByRenamingAside(execPath, missingTempPath)).rejects.toThrow();
+
+      // The rollback must leave a working binary at execPath with its
+      // original content — a failed update must never delete the old exe.
+      expect(await readFile(execPath, "utf8")).toBe("old contents");
+      await expect(readFile(`${execPath}.old`, "utf8")).rejects.toThrow();
+    });
+  });
+
+  test("cleans up a stale .old file left by a previous failed update", async () => {
+    await withTempDir(async (dir) => {
+      const execPath = join(dir, "mu.exe");
+      const tempPath = join(dir, "mu.exe.new");
+      await writeFile(execPath, "current contents");
+      await writeFile(`${execPath}.old`, "stale leftover");
+      await writeFile(tempPath, "new contents");
+
+      await installByRenamingAside(execPath, tempPath);
+
+      expect(await readFile(execPath, "utf8")).toBe("new contents");
+    });
   });
 });

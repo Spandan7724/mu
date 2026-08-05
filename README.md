@@ -15,13 +15,19 @@ Three surfaces, one kernel, one event stream:
 ## Install
 
 ```sh
+# Linux / macOS, — installs to ~/.mu/bin
+curl -fsSL https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.sh | bash
+
+# Windows, — installs to %USERPROFILE%\.mu\bin
+irm https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.ps1 | iex
+
 # With npm (requires Bun)
 npm install -g @mu-agent/mu
 
 # Or with Bun
 bun install -g @mu-agent/mu
 
-# Update an existing global npm or Bun installation
+# Update an existing install — npm, Bun, or either script above
 mu self update
 
 # Or download the packaged native release — no runtime needed.
@@ -40,8 +46,8 @@ Expand-Archive .\mu-windows-x64.zip
 
 Native packages and npm installs include a pinned, checksum-verified ripgrep sidecar for
 fast search. npm uses an OS/CPU-specific optional package, with no postinstall download.
-The bare single-file binaries remain available and use `rg` from `PATH` or mu's built-in
-fallback.
+The bare single-file binaries — including the `install.sh` download — use `rg` from
+`PATH` or mu's built-in fallback instead.
 
 Install the same package locally to use the TypeScript SDK:
 
