@@ -140,7 +140,7 @@ export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
 
 const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
   restrictive: { link: true },
-  permissive: { green: true },
+  permissive: { permissive: true },
   unrestricted: { red: true },
 };
 

@@ -42,7 +42,7 @@ describe("permission mode notice", () => {
     // Loosening reads green, opening fully reads red, restricting reads blue,
     // and the baseline keeps mu's own accent.
     expect(formatPermissionMode(modeFor("accept-edits"), "truecolor")).toContain(
-      "[1;32maccept edits",
+      "74;222;128maccept edits",
     );
     expect(formatPermissionMode(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
     expect(formatPermissionMode(modeFor("plan-readonly"), "truecolor")).toContain(

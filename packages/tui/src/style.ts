@@ -38,6 +38,8 @@ const CODE_ACCENT_RGB = [205, 214, 244] as const;
 const CODE_ACCENT_256 = 189;
 const RESUME_HINT_RGB = [102, 102, 102] as const;
 const RESUME_HINT_256 = 241;
+const PERMISSIVE_RGB = [74, 222, 128] as const;
+const PERMISSIVE_256 = 114;
 
 export type SyntaxRole =
   | "comment"
@@ -75,6 +77,7 @@ export interface Style {
   code?: boolean;
   codeAccent?: boolean;
   resumeHint?: boolean;
+  permissive?: boolean;
   syntax?: SyntaxRole;
 }
 
@@ -119,6 +122,12 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
       codes.push(`38;2;${RESUME_HINT_RGB[0]};${RESUME_HINT_RGB[1]};${RESUME_HINT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${RESUME_HINT_256}`);
     else codes.push("2");
+  }
+  if (style.permissive) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${PERMISSIVE_RGB[0]};${PERMISSIVE_RGB[1]};${PERMISSIVE_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${PERMISSIVE_256}`);
+    else codes.push("32");
   }
   if (style.syntax) {
     const color = SYNTAX_COLORS[style.syntax];
