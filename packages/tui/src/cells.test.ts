@@ -24,7 +24,7 @@ import {
   SelectList,
   Spinner,
 } from "./components.ts";
-import { stripAnsi } from "./style.ts";
+import { diffLineStyle, RESET, stripAnsi } from "./style.ts";
 import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
@@ -281,6 +281,23 @@ describe("diff rendering", () => {
     const lines = diffCell(file, { width: 60, depth: "ansi16" });
     expect(lines[3]).toContain("[32m");
     expect(lines[3]).not.toContain("48;2;");
+  });
+
+  test("the tint opens before the line number and survives the nested styles", () => {
+    const [, , removed = "", added = ""] = diffCell(file, colored);
+    for (const [line, tint] of [
+      [removed, diffLineStyle("del", "truecolor")],
+      [added, diffLineStyle("add", "truecolor")],
+    ] as const) {
+      expect(line.lastIndexOf(tint, line.indexOf("4"))).toBeGreaterThan(-1);
+      // Each nested style resets in full, so within the tinted region every
+      // reset but the closing one has to reopen the tint.
+      const resumed = line.slice(line.indexOf(tint)).split(RESET).slice(1);
+      expect(resumed.at(-1)).toBe("");
+      for (const segment of resumed.slice(0, -1)) expect(segment.startsWith(tint)).toBe(true);
+    }
+    // A context line is not a change, so it stays untinted.
+    expect(diffCell(file, colored)[1]).not.toContain(diffLineStyle("add", "truecolor"));
   });
 
   test("tabs become four spaces and long lines wrap", () => {

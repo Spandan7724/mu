@@ -103,6 +103,25 @@ function editArgs(args: unknown): { oldString: string; newString: string }[] {
   return [];
 }
 
+// Positions come from the tool's result, read structurally so the TUI still does
+// not import the profile. Absent while the call is running or after it failed —
+// there is no position to report for a replacement that never happened.
+function editHunks(
+  result: ToolResultMessage | undefined,
+): { edit: number; oldLine: number; newLine: number }[] | undefined {
+  const hunks = (result?.details as { hunks?: unknown } | undefined)?.hunks;
+  if (!Array.isArray(hunks)) return undefined;
+  const parsed = hunks.filter(
+    (hunk): hunk is { edit: number; oldLine: number; newLine: number } =>
+      typeof hunk === "object" &&
+      hunk !== null &&
+      typeof (hunk as Record<string, unknown>).edit === "number" &&
+      typeof (hunk as Record<string, unknown>).oldLine === "number" &&
+      typeof (hunk as Record<string, unknown>).newLine === "number",
+  );
+  return parsed.length === hunks.length ? parsed : undefined;
+}
+
 function booleanArg(args: unknown, key: string): boolean {
   return (
     typeof args === "object" && args !== null && (args as Record<string, unknown>)[key] === true
@@ -162,15 +181,37 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     );
   }
 
+  const edits = editArgs(info.args);
+  const hunks = editHunks(info.result);
+  // With positions the diff reads in file order, like the file itself; without
+  // them it keeps the model's order and goes unnumbered rather than guessed at.
+  const blocks: { oldString: string; newString: string; oldLine?: number; newLine?: number }[] =
+    hunks?.flatMap((hunk) => {
+      const edit = edits[hunk.edit];
+      return edit ? [{ ...edit, oldLine: hunk.oldLine, newLine: hunk.newLine }] : [];
+    }) ?? edits;
+
   const lines: DiffLine[] = [];
   let added = 0;
   let removed = 0;
-  for (const edit of editArgs(info.args)) {
-    const oldLines = edit.oldString ? edit.oldString.split("\n") : [];
-    const newLines = edit.newString ? edit.newString.split("\n") : [];
+  for (const block of blocks) {
+    const oldLines = block.oldString ? block.oldString.split("\n") : [];
+    const newLines = block.newString ? block.newString.split("\n") : [];
     lines.push(
-      ...oldLines.map((text): DiffLine => ({ kind: "del", text })),
-      ...newLines.map((text): DiffLine => ({ kind: "add", text })),
+      ...oldLines.map(
+        (text, index): DiffLine => ({
+          kind: "del",
+          ...(block.oldLine === undefined ? {} : { lineNumber: block.oldLine + index }),
+          text,
+        }),
+      ),
+      ...newLines.map(
+        (text, index): DiffLine => ({
+          kind: "add",
+          ...(block.newLine === undefined ? {} : { lineNumber: block.newLine + index }),
+          text,
+        }),
+      ),
     );
     removed += oldLines.length;
     added += newLines.length;

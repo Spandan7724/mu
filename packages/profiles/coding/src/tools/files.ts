@@ -213,9 +213,20 @@ interface EditRange {
   index: number;
 }
 
+// Where one replacement landed, in both versions of the file. Only the tool can
+// say this — the arguments alone carry no position — and a renderer that wants
+// to number the diff has no other source for it.
+interface EditHunk {
+  edit: number;
+  oldLine: number;
+  newLine: number;
+}
+
 type ApplyResult =
-  | { ok: true; updated: string; replacements: number }
+  | { ok: true; updated: string; replacements: number; hunks: EditHunk[] }
   | { ok: false; message: string };
+
+const lineCount = (text: string) => text.split("\n").length - 1;
 
 // A UTF-8 read keeps the BOM as the first character, where it is invisible in tool
 // output and so never appears in an oldString anchored at the start of the file.
@@ -311,12 +322,22 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
 
   let updated = "";
   let cursor = 0;
+  let oldLine = 1;
+  let newLine = 1;
+  const hunks: EditHunk[] = [];
   for (const range of ranges) {
-    updated += content.slice(cursor, range.start) + range.newString;
+    const between = content.slice(cursor, range.start);
+    const skipped = lineCount(between);
+    oldLine += skipped;
+    newLine += skipped;
+    hunks.push({ edit: range.index, oldLine, newLine });
+    updated += between + range.newString;
+    oldLine += lineCount(content.slice(range.start, range.end));
+    newLine += lineCount(range.newString);
     cursor = range.end;
   }
   updated += content.slice(cursor);
-  return { ok: true, updated, replacements: ranges.length };
+  return { ok: true, updated, replacements: ranges.length, hunks };
 }
 
 // Models trained on single-replacement editors routinely send one flat edit, and some
@@ -419,7 +440,7 @@ export function editTool(deps: ToolDeps) {
       const applied = applyEdits(text, edits, display(deps.root, absolute));
       if (!applied.ok) return errorResult(applied.message);
 
-      const { updated, replacements: occurrences } = applied;
+      const { updated, replacements: occurrences, hunks } = applied;
       await writeFile(absolute, bom + updated, "utf8");
       deps.state.markWritten(absolute);
 
@@ -430,7 +451,7 @@ export function editTool(deps: ToolDeps) {
             text: `Edited ${display(deps.root, absolute)} (${occurrences} replacement${occurrences === 1 ? "" : "s"})`,
           },
         ],
-        details: { path: absolute, occurrences, edits: edits.length },
+        details: { path: absolute, occurrences, edits: edits.length, hunks },
       };
     },
   });

@@ -863,6 +863,65 @@ describe("renderer registry", () => {
     expect(stripAnsi(lines[1] ?? "")).toBe("  │ /tmp");
   });
 
+  test("a completed edit numbers its diff with the file's own lines", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const args = {
+      path: "code.ts",
+      edits: [
+        { oldString: "const c = 3;", newString: "const c = 30;" },
+        { oldString: "const a = 1;", newString: "const a = 10;\nconst extra = 0;" },
+      ],
+    };
+    const result = {
+      role: "toolResult" as const,
+      toolCallId: "e",
+      toolName: "edit",
+      content: [{ type: "text" as const, text: "Edited code.ts (2 replacements)" }],
+      details: {
+        occurrences: 2,
+        hunks: [
+          { edit: 1, oldLine: 1, newLine: 1 },
+          { edit: 0, oldLine: 3, newLine: 4 },
+        ],
+      },
+      isError: false,
+      timestamp: 1,
+    };
+
+    const lines = registry
+      .render({ toolName: "edit", args, result }, { width: 60, depth: "none" })
+      .map(stripAnsi);
+
+    // File order, not the order the model sent, and the added line shifts the
+    // later hunk's new-side number past its old-side one.
+    expect(lines.slice(1)).toEqual([
+      "  │ code.ts · +3 −2",
+      "  │     1 − const a = 1;",
+      "  │     1 + const a = 10;",
+      "  │     2 + const extra = 0;",
+      "  │     3 − const c = 3;",
+      "  │     4 + const c = 30;",
+    ]);
+  });
+
+  test("an edit still running renders its diff without invented line numbers", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry
+      .render(
+        {
+          toolName: "edit",
+          args: { path: "code.ts", oldString: "a", newString: "b" },
+          running: true,
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.slice(1)).toEqual(["  │ code.ts · +1 −1", "  │       − a", "  │       + b"]);
+  });
+
   test("an edit whose arguments are still streaming renders no partial diff", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);

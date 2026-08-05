@@ -314,6 +314,38 @@ describe("edit", () => {
     );
   });
 
+  test("reports where each replacement landed, in file order and in both versions", async () => {
+    // The second edit grows by a line, so later old and new numbers diverge.
+    const { root, state } = await prepared("one\ntwo\nthree\nfour\nfive\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "four", newString: "FOUR" },
+        { oldString: "two", newString: "TWO\nEXTRA" },
+      ],
+    });
+    expect(result.isError).toBeFalsy();
+    expect((result.details as { hunks: unknown }).hunks).toEqual([
+      { edit: 1, oldLine: 2, newLine: 2 },
+      { edit: 0, oldLine: 4, newLine: 5 },
+    ]);
+  });
+
+  test("replaceAll reports a position per occurrence, not per edit", async () => {
+    const { root, state } = await prepared("x();\nkeep\nx();\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "x();",
+      newString: "y();",
+      replaceAll: true,
+    });
+    expect(result.isError).toBeFalsy();
+    expect((result.details as { hunks: unknown }).hunks).toEqual([
+      { edit: 0, oldLine: 1, newLine: 1 },
+      { edit: 0, oldLine: 3, newLine: 3 },
+    ]);
+  });
+
   test("matches every edit against the original file, not against earlier edits", async () => {
     // Applied incrementally, the first edit would make "b" ambiguous for the second.
     const { root, state } = await prepared("a\nb\n");

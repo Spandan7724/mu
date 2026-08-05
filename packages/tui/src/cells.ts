@@ -11,6 +11,7 @@ import {
   RESET,
   type Style,
   styleText,
+  styleWithin,
 } from "./style.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { wrapText } from "./wrap.ts";
@@ -351,24 +352,33 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
   const gutterWidth = 5;
   for (const line of file.lines) {
     const number = line.lineNumber === undefined ? "" : String(line.lineNumber);
-    const numberCell = dim(number.padStart(gutterWidth), ctx.depth);
     const sign = line.kind === "add" ? "+" : line.kind === "del" ? "−" : " ";
     // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.
     const available = ctx.width - MARGIN.length - 2 - gutterWidth - 3;
     const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
+    // The tint opens at the gutter and closes at end of line, so a changed row
+    // reads as one band rather than a coloured fragment beside a plain number.
+    const tint = diffLineStyle(line.kind, ctx.depth);
 
     for (const [i, chunk] of wrapText(text, available).entries()) {
-      const tint = diffLineStyle(line.kind, ctx.depth);
-      const content = tint === "" ? chunk : `${tint}${chunk}${RESET}`;
+      const numberCell = styleWithin(
+        i === 0 ? number.padStart(gutterWidth) : " ".repeat(gutterWidth),
+        { dim: true },
+        tint,
+        ctx.depth,
+      );
       const gutter = i === 0 ? sign : " ";
       const signStyled =
-        line.kind === "add"
-          ? styleText(gutter, { green: true }, ctx.depth)
-          : line.kind === "del"
-            ? styleText(gutter, { red: true }, ctx.depth)
-            : gutter;
+        line.kind === "context"
+          ? gutter
+          : styleWithin(
+              gutter,
+              line.kind === "add" ? { green: true } : { red: true },
+              tint,
+              ctx.depth,
+            );
       out.push(
-        `${MARGIN}${rule}${i === 0 ? numberCell : " ".repeat(gutterWidth)} ${signStyled} ${content}`,
+        `${MARGIN}${rule}${tint}${numberCell} ${signStyled} ${chunk}${tint === "" ? "" : RESET}`,
       );
     }
   }
