@@ -862,6 +862,23 @@ describe("renderer registry", () => {
     expect(stripAnsi(lines[0] ?? "")).toBe("  │ $ pwd · ✓ 10ms");
     expect(stripAnsi(lines[1] ?? "")).toBe("  │ /tmp");
   });
+
+  test("an edit whose arguments are still streaming renders no partial diff", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    // A deletion whose replacement has not arrived yet: the worst frame to show.
+    const args = { path: "a.ts", oldString: "const limit = 3;", newString: "const li" };
+
+    const streaming = registry.render(
+      { toolName: "edit", args, argsStreaming: true },
+      { width: 60, depth: "none" },
+    );
+    expect(streaming.map(stripAnsi)).toEqual(["  │ edit a.ts"]);
+
+    const complete = registry.render({ toolName: "edit", args }, { width: 60, depth: "none" });
+    expect(complete.length).toBeGreaterThan(1);
+    expect(complete.map(stripAnsi).join("\n")).toContain("const limit = 3;");
+  });
 });
 
 describe("tool output toggle", () => {
@@ -1998,9 +2015,9 @@ describe("live streaming region", () => {
     expect(rendered).not.toContain("line 0\n");
   });
 
-  test("streaming tool-call arguments preview a write before execution starts", () => {
+  test("a streaming tool call names its target but withholds the diff until arguments complete", () => {
     const { app } = harness();
-    app.handleEvent({
+    const streamed = (content: string, done: boolean): AgentEvent => ({
       type: "message_update",
       message: {
         role: "assistant",
@@ -2009,7 +2026,7 @@ describe("live streaming region", () => {
             type: "toolCall",
             id: "write-1",
             name: "write",
-            arguments: { path: "demo.py", content: "print('hello')\nprint('world')" },
+            arguments: { path: "demo.py", content },
           },
         ],
         model: "fake/fake-1",
@@ -2022,12 +2039,21 @@ describe("live streaming region", () => {
         stopReason: "toolUse",
         timestamp: 1,
       },
-      delta: { kind: "toolcall_delta", contentIndex: 0, argsFragment: "world" },
+      delta: done
+        ? { kind: "toolcall_end", contentIndex: 0, toolCallId: "write-1" }
+        : { kind: "toolcall_delta", contentIndex: 0, argsFragment: "world" },
     });
 
-    const preview = app.renderBottom().map(stripAnsi).join("\n");
-    expect(preview).toContain("write demo.py");
-    expect(preview).toContain("+ print('hello')");
+    app.handleEvent(streamed("print('hello')\nprint('wor", false));
+    const partial = app.renderBottom().map(stripAnsi).join("\n");
+    // The user learns which file is coming without watching a half-written one.
+    expect(partial).toContain("write demo.py");
+    expect(partial).not.toContain("+ print('hello')");
+
+    app.handleEvent(streamed("print('hello')\nprint('world')", true));
+    const complete = app.renderBottom().map(stripAnsi).join("\n");
+    expect(complete).toContain("+ print('hello')");
+    expect(complete).toContain("+ print('world')");
 
     app.handleEvent({
       type: "tool_execution_start",
@@ -2037,6 +2063,7 @@ describe("live streaming region", () => {
     });
     const running = app.renderBottom().map(stripAnsi).join("\n");
     expect(running.match(/write demo\.py/g)?.length).toBe(1);
+    expect(running).toContain("+ print('world')");
   });
 });
 

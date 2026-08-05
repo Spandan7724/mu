@@ -18,6 +18,9 @@ export interface ToolRenderInfo {
   result?: ToolResultMessage;
   running?: boolean;
   expanded?: boolean;
+  // Arguments are still arriving from the model, so anything rendered from them
+  // is a fragment of itself.
+  argsStreaming?: boolean;
 }
 
 export type ToolRendererFn = (info: ToolRenderInfo, ctx: RenderContext) => string[];
@@ -132,7 +135,12 @@ function displayedDiffLines(
   return bounded.map((line) => ({ ...line, text: truncateToWidth(line.text, width) }));
 }
 
+// A diff is only meaningful whole. Rendered per token it shows deletions with
+// no replacement yet, half-typed lines, and counts that climb — a change the
+// user cannot read and that never existed on disk. The path is enough to say
+// what is coming; the diff lands in one piece once the arguments are complete.
 function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  if (info.argsStreaming) return [];
   const path = stringArg(info.args, "path");
   if (!path) return [];
 

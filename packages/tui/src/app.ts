@@ -424,6 +424,7 @@ export class App {
             this.pendingTools.set(block.id, {
               toolName: block.name,
               args: block.arguments,
+              argsStreaming: event.delta.kind !== "toolcall_end",
               running: existing?.running ?? false,
               output: existing?.output ?? new LiveToolOutput(),
             });
@@ -796,6 +797,7 @@ export class App {
             toolName: pending.toolName,
             args: pending.args,
             running: pending.running === true,
+            argsStreaming: pending.argsStreaming === true,
             expanded: this.toolOutputExpanded,
           },
           this.ctx,
