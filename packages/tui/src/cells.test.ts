@@ -24,7 +24,7 @@ import {
   SelectList,
   Spinner,
 } from "./components.ts";
-import { diffLineStyle, RESET, stripAnsi } from "./style.ts";
+import { diffLineStyle, RESET, stripAnsi, styleText } from "./style.ts";
 import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
@@ -298,6 +298,16 @@ describe("diff rendering", () => {
     }
     // A context line is not a change, so it stays untinted.
     expect(diffCell(file, colored)[1]).not.toContain(diffLineStyle("add", "truecolor"));
+  });
+
+  test("a changed row fills the width and its number takes the row's colour", () => {
+    const [, context = "", removed = "", added = ""] = diffCell(file, colored);
+    expect(stringWidth(removed)).toBe(colored.width);
+    expect(stringWidth(added)).toBe(colored.width);
+    // Context is not a change: no band, so nothing to pad out either.
+    expect(stringWidth(context)).toBeLessThan(colored.width);
+    expect(removed).toContain(styleText("   42", { red: true, dim: true }, "truecolor"));
+    expect(added).toContain(styleText("   42", { green: true, dim: true }, "truecolor"));
   });
 
   test("tabs become four spaces and long lines wrap", () => {

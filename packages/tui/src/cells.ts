@@ -356,29 +356,26 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
     // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.
     const available = ctx.width - MARGIN.length - 2 - gutterWidth - 3;
     const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
-    // The tint opens at the gutter and closes at end of line, so a changed row
-    // reads as one band rather than a coloured fragment beside a plain number.
+    // The tint opens at the gutter and runs to the terminal edge, so a changed
+    // row reads as one band rather than a coloured fragment beside a plain
+    // number. The number takes the row's own colour, dimmed under the sign.
     const tint = diffLineStyle(line.kind, ctx.depth);
+    const accentStyle: Style =
+      line.kind === "add" ? { green: true } : line.kind === "del" ? { red: true } : {};
 
     for (const [i, chunk] of wrapText(text, available).entries()) {
       const numberCell = styleWithin(
         i === 0 ? number.padStart(gutterWidth) : " ".repeat(gutterWidth),
-        { dim: true },
+        { ...accentStyle, dim: true },
         tint,
         ctx.depth,
       );
       const gutter = i === 0 ? sign : " ";
       const signStyled =
-        line.kind === "context"
-          ? gutter
-          : styleWithin(
-              gutter,
-              line.kind === "add" ? { green: true } : { red: true },
-              tint,
-              ctx.depth,
-            );
+        line.kind === "context" ? gutter : styleWithin(gutter, accentStyle, tint, ctx.depth);
+      const pad = tint === "" ? "" : " ".repeat(Math.max(0, available - stringWidth(chunk)));
       out.push(
-        `${MARGIN}${rule}${tint}${numberCell} ${signStyled} ${chunk}${tint === "" ? "" : RESET}`,
+        `${MARGIN}${rule}${tint}${numberCell} ${signStyled} ${chunk}${pad}${tint === "" ? "" : RESET}`,
       );
     }
   }
