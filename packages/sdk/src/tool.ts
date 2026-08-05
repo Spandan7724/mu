@@ -8,6 +8,10 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   name: string;
   description: string;
   inputSchema: Schema;
+  // Normalizes raw provider arguments before validation, for input shapes models
+  // emit that the schema deliberately does not advertise. Never rejects: anything
+  // it does not recognize is passed through for the schema to judge.
+  coerceInput?: (raw: unknown) => unknown;
   isConcurrencySafe?: (args: z.infer<Schema>) => boolean;
   executionMode?: "sequential";
   changesState?: boolean | ((args: z.infer<Schema>) => boolean);
@@ -36,6 +40,18 @@ export function tool<Schema extends z.ZodType>(
     unknown
   >;
 
+  const parseArgs = (rawArgs: unknown) => {
+    let input = rawArgs;
+    if (definition.coerceInput) {
+      try {
+        input = definition.coerceInput(rawArgs);
+      } catch {
+        input = rawArgs;
+      }
+    }
+    return definition.inputSchema.safeParse(input);
+  };
+
   return {
     name: definition.name,
     description: definition.description,
@@ -46,7 +62,7 @@ export function tool<Schema extends z.ZodType>(
     ...(definition.permissionScope
       ? {
           permissionScope: (rawArgs) => {
-            const parsed = definition.inputSchema.safeParse(rawArgs);
+            const parsed = parseArgs(rawArgs);
             return parsed.success
               ? (definition.permissionScope?.(parsed.data) ?? definition.name)
               : definition.name;
@@ -56,7 +72,7 @@ export function tool<Schema extends z.ZodType>(
     ...(definition.permissionPattern
       ? {
           permissionPattern: (rawArgs) => {
-            const parsed = definition.inputSchema.safeParse(rawArgs);
+            const parsed = parseArgs(rawArgs);
             return parsed.success
               ? (definition.permissionPattern?.(parsed.data) ?? JSON.stringify(rawArgs))
               : JSON.stringify(rawArgs);
@@ -66,13 +82,13 @@ export function tool<Schema extends z.ZodType>(
     ...(definition.permissionDetails
       ? {
           permissionDetails: async (rawArgs) => {
-            const parsed = definition.inputSchema.safeParse(rawArgs);
+            const parsed = parseArgs(rawArgs);
             return parsed.success ? definition.permissionDetails?.(parsed.data) : undefined;
           },
         }
       : {}),
     execute: async (toolCallId, rawArgs, signal, onUpdate) => {
-      const parsed = definition.inputSchema.safeParse(rawArgs);
+      const parsed = parseArgs(rawArgs);
       if (!parsed.success) {
         const issues = parsed.error.issues
           .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)

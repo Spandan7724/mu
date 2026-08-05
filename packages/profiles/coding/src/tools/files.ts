@@ -198,19 +198,135 @@ export function writeTool(deps: ToolDeps) {
   });
 }
 
+const editItemSchema = z.object({
+  oldString: z.string().describe("Exact text to replace, including indentation"),
+  newString: z.string().describe("Replacement text"),
+  replaceAll: z.boolean().optional().describe("Replace every occurrence of this oldString"),
+});
+
+type EditItem = z.infer<typeof editItemSchema>;
+
+interface EditRange {
+  start: number;
+  end: number;
+  newString: string;
+  index: number;
+}
+
+type ApplyResult =
+  | { ok: true; updated: string; replacements: number }
+  | { ok: false; message: string };
+
+// Every edit is matched against the file as it was read, never against the result of an
+// earlier edit in the same call, so the model can describe all of them from one read.
+// Splicing by offset rather than String.replace is also what keeps $&, $`, $', $$ and $n
+// in newString literal — those are expanded even when the search argument is a plain string.
+function applyEdits(content: string, edits: EditItem[], label: string): ApplyResult {
+  const at = (index: number) => (edits.length > 1 ? `edits[${index}]: ` : "");
+  const ranges: EditRange[] = [];
+
+  for (const [index, edit] of edits.entries()) {
+    const { oldString, newString, replaceAll } = edit;
+    if (oldString === "") {
+      return { ok: false, message: `${at(index)}oldString is empty — nothing to match.` };
+    }
+    if (oldString === newString) {
+      return {
+        ok: false,
+        message: `${at(index)}oldString and newString are identical — nothing to do.`,
+      };
+    }
+
+    const occurrences = content.split(oldString).length - 1;
+    if (occurrences === 0) {
+      return {
+        ok: false,
+        message: `${at(index)}oldString was not found in ${label}. The text must match exactly, including whitespace and indentation.`,
+      };
+    }
+    if (occurrences > 1 && !replaceAll) {
+      return {
+        ok: false,
+        message: `${at(index)}oldString appears ${occurrences} times in ${label}. Include more surrounding context to make it unique, or set replaceAll.`,
+      };
+    }
+
+    let from = 0;
+    for (;;) {
+      const start = content.indexOf(oldString, from);
+      if (start === -1) break;
+      ranges.push({ start, end: start + oldString.length, newString, index });
+      if (!replaceAll) break;
+      from = start + oldString.length;
+    }
+  }
+
+  ranges.sort((a, b) => a.start - b.start);
+  let previous: EditRange | undefined;
+  for (const range of ranges) {
+    if (previous && previous.end > range.start) {
+      return {
+        ok: false,
+        message: `edits[${previous.index}] and edits[${range.index}] overlap in ${label}. Merge them into one edit, or target text that does not overlap.`,
+      };
+    }
+    previous = range;
+  }
+
+  let updated = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    updated += content.slice(cursor, range.start) + range.newString;
+    cursor = range.end;
+  }
+  updated += content.slice(cursor);
+  return { ok: true, updated, replacements: ranges.length };
+}
+
+// Models trained on single-replacement editors routinely send one flat edit, and some
+// send `edits` as a JSON string. Both are unambiguous, so accept them rather than spend
+// a turn on a validation error the model can only fix by guessing.
+export function coerceEditInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const args = { ...(raw as Record<string, unknown>) };
+
+  if (typeof args.edits === "string") {
+    try {
+      const parsed = JSON.parse(args.edits);
+      if (Array.isArray(parsed)) args.edits = parsed;
+    } catch {
+      // Leave it for the schema to reject.
+    }
+  }
+
+  if (!Array.isArray(args.edits) && ("oldString" in args || "newString" in args)) {
+    const { oldString, newString, replaceAll, ...rest } = args;
+    return {
+      ...rest,
+      edits: [{ oldString, newString, ...(replaceAll === undefined ? {} : { replaceAll }) }],
+    };
+  }
+
+  return args;
+}
+
 export function editTool(deps: ToolDeps) {
   return tool({
     name: "edit",
     changesState: true,
     description:
-      "Replace an exact string in a file. The old string must appear exactly once unless replaceAll is set. Read the file first.",
+      "Replace exact strings in a file. Each oldString must appear exactly once unless that edit sets replaceAll. Pass several edits to change one file in a single call. Read the file first.",
     inputSchema: z.object({
       path: z.string().describe("Path to the file"),
-      oldString: z.string().describe("Exact text to replace, including indentation"),
-      newString: z.string().describe("Replacement text"),
-      replaceAll: z.boolean().optional().describe("Replace every occurrence"),
+      edits: z
+        .array(editItemSchema)
+        .min(1)
+        .describe(
+          "One or more replacements applied in a single write. Each is matched against the file as you read it, not against the result of earlier edits in this call, and they must not overlap — merge changes that touch the same text into one edit.",
+        ),
     }),
-    permissionDetails: async ({ path, oldString, newString, replaceAll }) => {
+    coerceInput: coerceEditInput,
+    permissionDetails: async ({ path, edits }) => {
       const absolute = resolveInRoot(deps.root, path);
       const relativePath = display(deps.root, absolute);
       let content: string;
@@ -219,27 +335,23 @@ export function editTool(deps: ToolDeps) {
       } catch {
         return { description: `Edit ${relativePath}` };
       }
-      const updated = replaceAll
-        ? content.split(oldString).join(newString)
-        : content.replace(oldString, newString);
+      const applied = applyEdits(content, edits, relativePath);
+      if (!applied.ok) return { description: `Edit ${relativePath}` };
       return {
         description: `Edit ${relativePath}`,
         preview: {
           kind: "diff",
-          file: filePermissionDiff(relativePath, content, updated),
+          file: filePermissionDiff(relativePath, content, applied.updated),
         },
       };
     },
-    execute: async ({ path, oldString, newString, replaceAll }): Promise<ToolResult | string> => {
+    execute: async ({ path, edits }): Promise<ToolResult | string> => {
       const absolute = resolveInRoot(deps.root, path);
 
       if (!deps.state.hasRead(absolute)) {
         return errorResult(
           `Read ${display(deps.root, absolute)} before editing it, so you can see what you are changing.`,
         );
-      }
-      if (oldString === newString) {
-        return errorResult("oldString and newString are identical — nothing to do.");
       }
 
       let content: string;
@@ -258,21 +370,10 @@ export function editTool(deps: ToolDeps) {
         );
       }
 
-      const occurrences = content.split(oldString).length - 1;
-      if (occurrences === 0) {
-        return errorResult(
-          `oldString was not found in ${display(deps.root, absolute)}. The text must match exactly, including whitespace and indentation.`,
-        );
-      }
-      if (occurrences > 1 && !replaceAll) {
-        return errorResult(
-          `oldString appears ${occurrences} times in ${display(deps.root, absolute)}. Include more surrounding context to make it unique, or set replaceAll.`,
-        );
-      }
+      const applied = applyEdits(content, edits, display(deps.root, absolute));
+      if (!applied.ok) return errorResult(applied.message);
 
-      const updated = replaceAll
-        ? content.split(oldString).join(newString)
-        : content.replace(oldString, newString);
+      const { updated, replacements: occurrences } = applied;
       await writeFile(absolute, updated, "utf8");
       deps.state.markWritten(absolute);
 
@@ -283,7 +384,7 @@ export function editTool(deps: ToolDeps) {
             text: `Edited ${display(deps.root, absolute)} (${occurrences} replacement${occurrences === 1 ? "" : "s"})`,
           },
         ],
-        details: { path: absolute, occurrences, oldString, newString },
+        details: { path: absolute, occurrences, edits: edits.length },
       };
     },
   });

@@ -212,6 +212,44 @@ describe("edit", () => {
     expect(await readFile(join(root, "code.ts"), "utf8")).toBe("y();\ny();\n");
   });
 
+  test("writes $-sequences in newString literally instead of expanding them", async () => {
+    const { root, state } = await prepared("const price = compute();\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "compute()",
+      newString: "compute($&, $`, $', $$, $1)",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe(
+      "const price = compute($&, $`, $', $$, $1);\n",
+    );
+  });
+
+  test("permission preview keeps $-sequences literal too", async () => {
+    const { root, state } = await prepared("const price = compute();\n");
+    const details = await permissionDetails(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "compute()",
+      newString: "compute($&)",
+    });
+    expect(details?.preview?.kind).toBe("diff");
+    if (details?.preview?.kind === "diff") {
+      expect(details.preview.file.hunks).toContain("+const price = compute($&);");
+    }
+  });
+
+  test("replaceAll keeps $-sequences literal in every occurrence", async () => {
+    const { root, state } = await prepared("a();\na();\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "a()",
+      newString: "b($&)",
+      replaceAll: true,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("b($&);\nb($&);\n");
+  });
+
   test("a missing oldString explains the exact-match requirement", async () => {
     const { root, state } = await prepared("const a = 1;\n");
     const result = await run(editTool({ root, state }), {
@@ -258,6 +296,115 @@ describe("edit", () => {
     });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("changed on disk");
+  });
+
+  test("applies several edits in one call", async () => {
+    const { root, state } = await prepared("const a = 1;\nconst b = 2;\nconst c = 3;\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "const a = 1;", newString: "const a = 10;" },
+        { oldString: "const c = 3;", newString: "const c = 30;" },
+      ],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain("2 replacements");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe(
+      "const a = 10;\nconst b = 2;\nconst c = 30;\n",
+    );
+  });
+
+  test("matches every edit against the original file, not against earlier edits", async () => {
+    // Applied incrementally, the first edit would make "b" ambiguous for the second.
+    const { root, state } = await prepared("a\nb\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "a", newString: "b" },
+        { oldString: "b", newString: "c" },
+      ],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("b\nc\n");
+  });
+
+  test("rejects overlapping edits and names both", async () => {
+    const { root, state } = await prepared("hello world\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "hello world", newString: "x" },
+        { oldString: "world", newString: "y" },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("edits[0] and edits[1] overlap");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("hello world\n");
+  });
+
+  test("one failing edit aborts the whole call and names the index", async () => {
+    const { root, state } = await prepared("a\nb\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "a", newString: "z" },
+        { oldString: "not present", newString: "y" },
+      ],
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("edits[1]");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("a\nb\n");
+  });
+
+  test("replaceAll applies per edit", async () => {
+    const { root, state } = await prepared("x();\nx();\nkeep\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "x()", newString: "y()", replaceAll: true },
+        { oldString: "keep", newString: "kept" },
+      ],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain("3 replacements");
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("y();\ny();\nkept\n");
+  });
+
+  test("the preview shows every edit in one diff", async () => {
+    const { root, state } = await prepared("const a = 1;\nconst b = 2;\n");
+    const details = await permissionDetails(editTool({ root, state }), {
+      path: "code.ts",
+      edits: [
+        { oldString: "const a = 1;", newString: "const a = 10;" },
+        { oldString: "const b = 2;", newString: "const b = 20;" },
+      ],
+    });
+    expect(details?.preview?.kind).toBe("diff");
+    if (details?.preview?.kind === "diff") {
+      expect(details.preview.file.hunks).toContain("+const a = 10;");
+      expect(details.preview.file.hunks).toContain("+const b = 20;");
+    }
+  });
+
+  test("accepts a single flat edit, the shape most models reach for", async () => {
+    const { root, state } = await prepared("const a = 1;\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      oldString: "const a = 1;",
+      newString: "const a = 2;",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("const a = 2;\n");
+  });
+
+  test("accepts edits sent as a JSON string", async () => {
+    const { root, state } = await prepared("const a = 1;\n");
+    const result = await run(editTool({ root, state }), {
+      path: "code.ts",
+      edits: JSON.stringify([{ oldString: "const a = 1;", newString: "const a = 3;" }]),
+    });
+    expect(result.isError).toBeFalsy();
+    expect(await readFile(join(root, "code.ts"), "utf8")).toBe("const a = 3;\n");
   });
 });
 

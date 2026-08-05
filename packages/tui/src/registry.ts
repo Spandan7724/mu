@@ -75,6 +75,31 @@ function stringArg(args: unknown, key: string): string {
   return firstString(args, [key]) ?? "";
 }
 
+// Arguments arrive raw from the model and stream in partially, so both the edits array
+// and the flat single-edit shape the coding profile accepts have to render here.
+function editArgs(args: unknown): { oldString: string; newString: string }[] {
+  if (typeof args !== "object" || args === null) return [];
+  const { edits, oldString, newString } = args as Record<string, unknown>;
+  if (Array.isArray(edits)) {
+    return edits
+      .filter((edit): edit is Record<string, unknown> => typeof edit === "object" && edit !== null)
+      .map((edit) => ({
+        oldString: typeof edit.oldString === "string" ? edit.oldString : "",
+        newString: typeof edit.newString === "string" ? edit.newString : "",
+      }))
+      .filter((edit) => edit.oldString !== "" || edit.newString !== "");
+  }
+  if (typeof oldString === "string" || typeof newString === "string") {
+    return [
+      {
+        oldString: typeof oldString === "string" ? oldString : "",
+        newString: typeof newString === "string" ? newString : "",
+      },
+    ];
+  }
+  return [];
+}
+
 function booleanArg(args: unknown, key: string): boolean {
   return (
     typeof args === "object" && args !== null && (args as Record<string, unknown>)[key] === true
@@ -129,24 +154,21 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     );
   }
 
-  const oldString = stringArg(info.args, "oldString");
-  const newString = stringArg(info.args, "newString");
-  if (!oldString && !newString) return [];
-  const oldLines = oldString.split("\n");
-  const newLines = newString.split("\n");
-  const lines: DiffLine[] = [
-    ...oldLines.map((text): DiffLine => ({ kind: "del", text })),
-    ...newLines.map((text): DiffLine => ({ kind: "add", text })),
-  ];
-  return diffCell(
-    {
-      path,
-      added: newLines.length,
-      removed: oldLines.length,
-      lines: displayedDiffLines(lines, info, ctx),
-    },
-    ctx,
-  );
+  const lines: DiffLine[] = [];
+  let added = 0;
+  let removed = 0;
+  for (const edit of editArgs(info.args)) {
+    const oldLines = edit.oldString ? edit.oldString.split("\n") : [];
+    const newLines = edit.newString ? edit.newString.split("\n") : [];
+    lines.push(
+      ...oldLines.map((text): DiffLine => ({ kind: "del", text })),
+      ...newLines.map((text): DiffLine => ({ kind: "add", text })),
+    );
+    removed += oldLines.length;
+    added += newLines.length;
+  }
+  if (lines.length === 0) return [];
+  return diffCell({ path, added, removed, lines: displayedDiffLines(lines, info, ctx) }, ctx);
 }
 
 // The generic fallback: name, primary argument, truncated result. This is what
