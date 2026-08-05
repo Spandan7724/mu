@@ -358,7 +358,7 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
     const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
     // The tint opens at the gutter and runs to the terminal edge, so a changed
     // row reads as one band rather than a coloured fragment beside a plain
-    // number. The number takes the row's own colour, dimmed under the sign.
+    // number. The number itself stays dim — the sign carries the colour.
     const tint = diffLineStyle(line.kind, ctx.depth);
     const accentStyle: Style =
       line.kind === "add" ? { green: true } : line.kind === "del" ? { red: true } : {};
@@ -366,7 +366,7 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
     for (const [i, chunk] of wrapText(text, available).entries()) {
       const numberCell = styleWithin(
         i === 0 ? number.padStart(gutterWidth) : " ".repeat(gutterWidth),
-        { ...accentStyle, dim: true },
+        { dim: true },
         tint,
         ctx.depth,
       );

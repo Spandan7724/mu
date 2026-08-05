@@ -300,14 +300,20 @@ describe("diff rendering", () => {
     expect(diffCell(file, colored)[1]).not.toContain(diffLineStyle("add", "truecolor"));
   });
 
-  test("a changed row fills the width and its number takes the row's colour", () => {
+  test("a changed row fills the width and keeps its number dim", () => {
     const [, context = "", removed = "", added = ""] = diffCell(file, colored);
     expect(stringWidth(removed)).toBe(colored.width);
     expect(stringWidth(added)).toBe(colored.width);
     // Context is not a change: no band, so nothing to pad out either.
     expect(stringWidth(context)).toBeLessThan(colored.width);
-    expect(removed).toContain(styleText("   42", { red: true, dim: true }, "truecolor"));
-    expect(added).toContain(styleText("   42", { green: true, dim: true }, "truecolor"));
+    // Only the sign is coloured; the number reads the same on every row.
+    for (const [line, number] of [
+      [context, "   41"],
+      [removed, "   42"],
+      [added, "   42"],
+    ] as const) {
+      expect(line).toContain(styleText(number, { dim: true }, "truecolor"));
+    }
   });
 
   test("tabs become four spaces and long lines wrap", () => {
