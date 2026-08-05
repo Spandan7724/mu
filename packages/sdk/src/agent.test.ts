@@ -894,7 +894,7 @@ describe("runtime model and thinking changes", () => {
     expect(texts).toContain("original question");
   });
 
-  test("resume rebuilds usage from the resumed branch's own history, discarding this process's own prior spend", async () => {
+  test("resume rebuilds usage from the resumed session's history, discarding this process's own prior spend", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "old answer" }] },
       { content: [{ type: "text", text: "new answer" }] },
@@ -934,7 +934,7 @@ describe("runtime model and thinking changes", () => {
     expect(agent.modelRef).toBe("openai/gpt-5.1");
     expect(agent.thinking).toBe("high");
     // Neither zero (the old bug) nor this process's own pre-resume spend —
-    // exactly the resumed branch's own assistant usage.
+    // exactly the resumed session's own assistant usage.
     expect(agent.usage.inputTokens).toBe(500);
     expect(agent.usage.outputTokens).toBe(50);
     expect(agent.contextTokens).toBeGreaterThan(0);
@@ -985,6 +985,43 @@ describe("runtime model and thinking changes", () => {
     fresh.resume(freshTarget);
     expect(fresh.usage.inputTokens).toBe(0);
     expect(fresh.usage.outputTokens).toBe(0);
+  });
+
+  test("resume sums usage across every branch in the tree, not just the one resumed into", () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const target = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "forked-target",
+      createdAt: new Date(0).toISOString(),
+      profile: "default",
+      environment: {},
+    });
+    const root = target.appendMessage(userMessage("shared root"));
+    target.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "abandoned answer" }],
+      model: "fake/fake-1",
+      usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "end",
+      timestamp: 1,
+    });
+    // Fork back to the root and grow a second, active branch. The first
+    // branch is now abandoned but its usage still represents real spend.
+    target.fork(root.id);
+    target.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "active answer" }],
+      model: "fake/fake-1",
+      usage: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "end",
+      timestamp: 2,
+    });
+
+    agent.resume(target);
+
+    expect(agent.usage.inputTokens).toBe(300);
+    expect(agent.usage.outputTokens).toBe(30);
   });
 
   test("resume publishes the restored context to idle subscribers", async () => {

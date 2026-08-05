@@ -2,14 +2,23 @@ export type ColorDepth = "truecolor" | "ansi256" | "ansi16" | "none";
 
 export function detectColorDepth(
   env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): ColorDepth {
   if (env.NO_COLOR !== undefined && env.NO_COLOR !== "") return "none";
   if (env.MU_FORCE_COLOR) return env.MU_FORCE_COLOR as ColorDepth;
   const colorterm = env.COLORTERM ?? "";
   if (/truecolor|24bit/i.test(colorterm)) return "truecolor";
+  // Windows Terminal never sets COLORTERM but is always truecolor-capable.
+  if (env.WT_SESSION !== undefined) return "truecolor";
   const term = env.TERM ?? "";
   if (/-256(color)?$/.test(term)) return "ansi256";
-  if (term === "dumb" || term === "") return "none";
+  if (term === "dumb") return "none";
+  if (term === "") {
+    // Unix shells always set TERM; an empty TERM there means no terminal
+    // capability. Windows consoles (cmd.exe, PowerShell) never set TERM at
+    // all, yet still support ANSI VT sequences since Windows 10.
+    return platform === "win32" ? "ansi16" : "none";
+  }
   return "ansi16";
 }
 

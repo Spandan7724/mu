@@ -332,11 +332,13 @@ export class Agent {
     }
     this.tree = candidate;
     this._sessionId = header.id;
-    // Rebuild cumulative usage from the resumed branch rather than starting
-    // over at zero — every assistant turn and past compaction call on this
-    // path was real spend, whether or not the current process saw it happen.
+    // Rebuild cumulative usage from the whole tree rather than starting over
+    // at zero — every assistant turn and past compaction call, on any branch
+    // (including abandoned forks), was real spend whether or not the current
+    // process saw it happen. Entries are stored once and shared by reference
+    // across branches, so summing all() can't double-count a shared ancestor.
     let restoredTotals = zeroUsage();
-    for (const entry of candidate.activePath()) {
+    for (const entry of candidate.all()) {
       if (entry.type === "message" && entry.message.role === "assistant") {
         restoredTotals = addUsage(restoredTotals, entry.message.usage);
       } else if (entry.type === "compaction" && entry.usage) {

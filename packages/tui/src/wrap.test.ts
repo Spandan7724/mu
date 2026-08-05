@@ -147,6 +147,18 @@ describe("colour depth", () => {
     expect(detectColorDepth({ TERM: "xterm-256color" })).toBe("ansi256");
   });
 
+  test("an empty TERM means no color on Unix", () => {
+    expect(detectColorDepth({ TERM: "" }, "linux")).toBe("none");
+  });
+
+  test("Windows consoles lack TERM entirely but still support ANSI16", () => {
+    expect(detectColorDepth({}, "win32")).toBe("ansi16");
+  });
+
+  test("Windows Terminal sessions are truecolor regardless of TERM", () => {
+    expect(detectColorDepth({ WT_SESSION: "abc" }, "win32")).toBe("truecolor");
+  });
+
   test("the accent degrades to plain cyan at 16 colours", () => {
     expect(styleText("mu", { accent: true }, "ansi16")).toContain("[36m");
     expect(styleText("mu", { accent: true }, "truecolor")).toContain("38;2;45;212;191");
