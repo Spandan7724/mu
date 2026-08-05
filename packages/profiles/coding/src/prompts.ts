@@ -13,6 +13,8 @@ Approach:
 Tools:
 - Read a file before editing or overwriting it.
 - Prefer edit over write for existing files; write replaces the whole file.
+- Change several places in one file with a single edit call carrying multiple edits,
+  rather than one call per change.
 - Use grep and glob to find things; use bash for building, testing and inspection. The
   bash tool runs the platform-native shell named in the environment (PowerShell on Windows).
 - During repository exploration, prefer one batched read-only bash call using rg, targeted

@@ -284,6 +284,11 @@ describe("prompts", () => {
     expect(base).toContain("never invent a line number");
   });
 
+  test("the base prompt asks for one edit call per file, not one per change", () => {
+    const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
+    expect(base).toContain("single edit call carrying multiple edits");
+  });
+
   test("GPT-family models get an extra literal-instruction section", () => {
     const sections = codingPrompt("openai/gpt-5.1");
     expect(sections.length).toBe(2);
