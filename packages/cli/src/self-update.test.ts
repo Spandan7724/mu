@@ -8,6 +8,7 @@ import {
   installByRenamingAside,
   npmPrefixFromInstallPath,
   packageManagerFromInstallPaths,
+  runSelfUninstall,
   runSelfUpdate,
   type SelfUpdateIo,
   type UpdatePackageManager,
@@ -403,6 +404,220 @@ describe("native GitHub-release installs", () => {
 
     expect(exitCode).toBe(0);
     expect(installed).toEqual([{ execPath: "C:\\Users\\me\\.mu\\bin\\mu.exe", bytes: assetBytes }]);
+  });
+});
+
+describe("self uninstall", () => {
+  test("uninstalls a global npm package", async () => {
+    const commands: string[][] = [];
+    const sink = output();
+    const exitCode = await runSelfUninstall(
+      {
+        packageName,
+        packageManager: "npm",
+        runCommand: async (command) => {
+          commands.push(command);
+          return 0;
+        },
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([["npm", "uninstall", "--global", packageName]]);
+    expect(sink.stdout.join("")).toContain("Removed mu.");
+    expect(sink.stdout.join("")).toContain("Run 'mu self uninstall --purge'");
+  });
+
+  test("uninstalls a global Bun package and preserves a custom npm prefix", async () => {
+    const bunCommands: string[][] = [];
+    const bunResult = await runSelfUninstall(
+      {
+        packageName,
+        packageManager: "bun",
+        runCommand: async (command) => {
+          bunCommands.push(command);
+          return 0;
+        },
+      },
+      output().io,
+    );
+    expect(bunResult).toBe(0);
+    expect(bunCommands).toEqual([["bun", "remove", "--global", packageName]]);
+
+    const resolved = "/opt/custom/lib/node_modules/@mu-agent/mu/dist/mu.js";
+    const npmCommands: string[][] = [];
+    const prefixResult = await runSelfUninstall(
+      {
+        packageName,
+        entryPath: "/opt/custom/bin/mu",
+        resolvePath: async () => resolved,
+        runCommand: async (command) => {
+          npmCommands.push(command);
+          return 0;
+        },
+      },
+      output().io,
+    );
+    expect(prefixResult).toBe(0);
+    expect(npmCommands).toEqual([
+      ["npm", "--prefix", "/opt/custom", "uninstall", "--global", packageName],
+    ]);
+  });
+
+  test("refuses installations that are not identifiable as global packages", async () => {
+    const sink = output();
+    const exitCode = await runSelfUninstall(
+      {
+        packageName,
+        entryPath: "/workspace/mu/packages/cli/src/main.ts",
+        resolvePath: async (path) => path,
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(sink.stderr.join("")).toContain("not a global npm or Bun package");
+  });
+
+  test("reports a package-manager failure", async () => {
+    const sink = output();
+    const exitCode = await runSelfUninstall(
+      { packageName, packageManager: "npm", runCommand: async () => 7 },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(sink.stderr.join("")).toContain("status 7");
+  });
+
+  describe("native GitHub-release installs", () => {
+    const execPath = "/home/user/.mu/bin/mu";
+    const receipt = JSON.stringify({ method: "github-release", target: "linux-x64" });
+
+    test("removes the binary and receipt, and leaves ~/.mu in place by default", async () => {
+      const removed: string[] = [];
+      const dataDirRemovals: string[] = [];
+      const sink = output();
+
+      const exitCode = await runSelfUninstall(
+        {
+          packageName,
+          execPath,
+          home: "/home/user",
+          readReceipt: async () => receipt,
+          removeNativeInstall: async (path) => {
+            removed.push(path);
+          },
+          removeDataDir: async (home) => {
+            dataDirRemovals.push(home);
+          },
+        },
+        sink.io,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(removed).toEqual([execPath]);
+      expect(dataDirRemovals).toEqual([]);
+      expect(sink.stdout.join("")).toContain("Left /home/user/.mu in place");
+    });
+
+    test("--purge also deletes the data directory", async () => {
+      const dataDirRemovals: string[] = [];
+      const sink = output();
+
+      const exitCode = await runSelfUninstall(
+        {
+          packageName,
+          execPath,
+          home: "/home/user",
+          purgeData: true,
+          readReceipt: async () => receipt,
+          removeNativeInstall: async () => {},
+          removeDataDir: async (home) => {
+            dataDirRemovals.push(home);
+          },
+        },
+        sink.io,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(dataDirRemovals).toEqual(["/home/user"]);
+      expect(sink.stdout.join("")).toContain("Deleted /home/user/.mu");
+    });
+
+    test("cleans up the Windows PATH entry for a windows-x64 install", async () => {
+      // node:path picks POSIX or win32 semantics from the real process.platform,
+      // not from the `platform` option above (which only gates whether cleanup
+      // runs) — so this uses forward slashes, which dirname() resolves the same
+      // way under both dialects, to stay host-OS-independent.
+      const pathRemovals: string[] = [];
+      const sink = output();
+
+      const exitCode = await runSelfUninstall(
+        {
+          packageName,
+          execPath: "C:/Users/me/.mu/bin/mu.exe",
+          home: "C:/Users/me",
+          platform: "win32",
+          readReceipt: async () =>
+            JSON.stringify({ method: "github-release", target: "windows-x64" }),
+          removeNativeInstall: async () => {},
+          removeWindowsPathEntry: async (dir) => {
+            pathRemovals.push(dir);
+          },
+        },
+        sink.io,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(pathRemovals).toEqual(["C:/Users/me/.mu/bin"]);
+    });
+
+    test("a failed Windows PATH cleanup warns but does not fail the uninstall", async () => {
+      const sink = output();
+
+      const exitCode = await runSelfUninstall(
+        {
+          packageName,
+          execPath: "C:\\Users\\me\\.mu\\bin\\mu.exe",
+          home: "C:\\Users\\me",
+          platform: "win32",
+          readReceipt: async () =>
+            JSON.stringify({ method: "github-release", target: "windows-x64" }),
+          removeNativeInstall: async () => {},
+          removeWindowsPathEntry: async () => {
+            throw new Error("powershell exited with status 1");
+          },
+        },
+        sink.io,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(sink.stderr.join("")).toContain("could not remove");
+      expect(sink.stdout.join("")).toContain("Removed mu.");
+    });
+
+    test("does not touch the Windows PATH on non-Windows platforms", async () => {
+      const pathRemovals: string[] = [];
+      const exitCode = await runSelfUninstall(
+        {
+          packageName,
+          execPath,
+          home: "/home/user",
+          platform: "linux",
+          readReceipt: async () => receipt,
+          removeNativeInstall: async () => {},
+          removeWindowsPathEntry: async (dir) => {
+            pathRemovals.push(dir);
+          },
+        },
+        output().io,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(pathRemovals).toEqual([]);
+    });
   });
 });
 

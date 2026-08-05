@@ -1,5 +1,5 @@
 export interface ParsedArgs {
-  mode: "tui" | "headless" | "rpc" | "help" | "version" | "self-update";
+  mode: "tui" | "headless" | "rpc" | "help" | "version" | "self-update" | "self-uninstall";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -10,6 +10,7 @@ export interface ParsedArgs {
   permissionMode?: string | undefined;
   allowAll: boolean;
   noInstructions: boolean;
+  purgeData: boolean;
   errors: string[];
 }
 
@@ -32,6 +33,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     json: false,
     allowAll: false,
     noInstructions: false,
+    purgeData: false,
     errors: [],
   };
 
@@ -55,13 +57,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--rpc":
         parsed.mode = "rpc";
         break;
-      case "self":
-        if (argv[i + 1] !== "update") {
-          parsed.errors.push('self expects the "update" command');
-          break;
-        }
-        parsed.mode = "self-update";
-        i++;
+      case "self": {
+        const sub = argv[++i];
+        if (sub === "update") parsed.mode = "self-update";
+        else if (sub === "uninstall") parsed.mode = "self-uninstall";
+        else parsed.errors.push('self expects "update" or "uninstall"');
+        break;
+      }
+      case "--purge":
+        parsed.purgeData = true;
         break;
       case "--json":
         parsed.json = true;
@@ -115,6 +119,7 @@ Usage:
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
   mu self update           update a global npm, Bun, or GitHub-release install
+  mu self uninstall        remove a global npm, Bun, or GitHub-release install
 
 Options:
   -p, --print <prompt>     headless one-shot mode
@@ -128,6 +133,7 @@ Options:
                            default | accept-edits | plan-readonly | yolo
       --allow-all          alias for --permission-mode yolo
       --no-instructions    disable global and project instruction loading
+      --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)
   -h, --help               show this help
   -v, --version            show the version
 `;

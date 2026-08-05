@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { chmod, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
@@ -25,8 +26,9 @@ export interface SelfUpdateIo {
   stderr: (chunk: string) => void;
 }
 
-export interface SelfUpdateOptions {
-  currentVersion: string;
+// Fields detectInstallationMethod needs, shared by self-update and
+// self-uninstall so neither has to fabricate the other's required options.
+interface InstallationDetectionOptions {
   packageName: string;
   entryPath?: string | undefined;
   // The real running executable's path (process.execPath). Compiled
@@ -34,12 +36,16 @@ export interface SelfUpdateOptions {
   // detection needs this separately from entryPath, which npm/Bun use.
   execPath?: string | undefined;
   packageManager?: UpdatePackageManager | undefined;
+  resolvePath?: ((path: string) => Promise<string>) | undefined;
+  readReceipt?: ((execPath: string) => Promise<string | undefined>) | undefined;
+}
+
+export interface SelfUpdateOptions extends InstallationDetectionOptions {
+  currentVersion: string;
   registry?: string | undefined;
   repo?: string | undefined;
   fetch?: typeof fetch | undefined;
   runCommand?: ((command: string[]) => Promise<number>) | undefined;
-  resolvePath?: ((path: string) => Promise<string>) | undefined;
-  readReceipt?: ((execPath: string) => Promise<string | undefined>) | undefined;
   installNative?: ((execPath: string, bytes: Uint8Array) => Promise<void>) | undefined;
 }
 
@@ -193,7 +199,7 @@ async function detectNativeInstall(
 }
 
 async function detectInstallationMethod(
-  options: SelfUpdateOptions,
+  options: InstallationDetectionOptions,
 ): Promise<UpdateInstallation | undefined> {
   const readReceipt = options.readReceipt ?? defaultReadReceipt;
   if (options.packageManager) {
@@ -423,6 +429,118 @@ export async function runSelfUpdate(options: SelfUpdateOptions, io: SelfUpdateIo
     return 0;
   } catch (error) {
     io.stderr(`mu: self-update failed: ${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+export interface SelfUninstallOptions extends InstallationDetectionOptions {
+  // Also delete ~/.mu (config, credentials, session/checkpoint state), not
+  // just the binary. Off by default: it's the one part of this operation
+  // that can't be undone by reinstalling.
+  purgeData?: boolean | undefined;
+  home?: string | undefined;
+  platform?: NodeJS.Platform | undefined;
+  runCommand?: ((command: string[]) => Promise<number>) | undefined;
+  removeNativeInstall?: ((execPath: string) => Promise<void>) | undefined;
+  removeWindowsPathEntry?: ((installDir: string) => Promise<void>) | undefined;
+  removeDataDir?: ((home: string) => Promise<void>) | undefined;
+}
+
+async function defaultRemoveNativeInstall(execPath: string): Promise<void> {
+  await rm(execPath, { force: true });
+  await rm(join(dirname(execPath), NATIVE_RECEIPT_FILENAME), { force: true });
+}
+
+// install.ps1 adds the install dir to the user's PATH by editing the
+// registry-backed User PATH env var directly; only PowerShell can undo that
+// the same way. Best-effort: a failure here leaves a harmless stale PATH
+// entry pointing at a now-empty directory, not a broken install.
+async function defaultRemoveWindowsPathEntry(installDir: string): Promise<void> {
+  const escaped = installDir.replace(/'/g, "''");
+  const script = [
+    `$dir = '${escaped}'.TrimEnd('\\')`,
+    "$userPath = [Environment]::GetEnvironmentVariable('PATH','User')",
+    "if ($userPath) {",
+    "  $parts = $userPath -split ';' | Where-Object { $_ -and $_.TrimEnd('\\') -ne $dir }",
+    "  [Environment]::SetEnvironmentVariable('PATH', ($parts -join ';'), 'User')",
+    "}",
+  ].join("\n");
+  const child = Bun.spawn(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const code = await child.exited;
+  if (code !== 0) throw new Error(`powershell exited with status ${code}`);
+}
+
+async function defaultRemoveDataDir(home: string): Promise<void> {
+  await rm(join(home, ".mu"), { recursive: true, force: true });
+}
+
+function uninstallCommand(
+  manager: "npm" | "bun",
+  packageName: string,
+  npmPrefix?: string,
+): string[] {
+  return manager === "bun"
+    ? ["bun", "remove", "--global", packageName]
+    : ["npm", ...(npmPrefix ? ["--prefix", npmPrefix] : []), "uninstall", "--global", packageName];
+}
+
+export async function runSelfUninstall(
+  options: SelfUninstallOptions,
+  io: SelfUpdateIo,
+): Promise<number> {
+  try {
+    const installation = await detectInstallationMethod(options);
+    if (!installation) {
+      throw new Error(
+        "this installation is not a global npm or Bun package, or a github-release native " +
+          "install; remove it using the same method you installed it with",
+      );
+    }
+
+    if (installation.manager === "native") {
+      const { execPath } = installation;
+      io.stdout(`Removing ${execPath}...\n`);
+      await (options.removeNativeInstall ?? defaultRemoveNativeInstall)(execPath);
+      if ((options.platform ?? process.platform) === "win32") {
+        try {
+          await (options.removeWindowsPathEntry ?? defaultRemoveWindowsPathEntry)(
+            dirname(execPath),
+          );
+        } catch (error) {
+          io.stderr(
+            `mu: could not remove ${dirname(execPath)} from your PATH automatically: ` +
+              `${errorMessage(error)}\n`,
+          );
+        }
+      }
+    } else {
+      const manager = installation.manager;
+      const command = uninstallCommand(
+        manager,
+        options.packageName,
+        manager === "npm" ? installation.npmPrefix : undefined,
+      );
+      io.stdout(`Removing ${options.packageName} with ${manager}...\n`);
+      const exitCode = await (options.runCommand ?? runUpdateCommand)(command);
+      if (exitCode !== 0) throw new Error(`${manager} exited with status ${exitCode}`);
+    }
+    io.stdout("Removed mu.\n");
+
+    const home = options.home ?? homedir();
+    const dataDir = join(home, ".mu");
+    if (options.purgeData) {
+      await (options.removeDataDir ?? defaultRemoveDataDir)(home);
+      io.stdout(`Deleted ${dataDir} (config, credentials, sessions, checkpoints).\n`);
+    } else {
+      io.stdout(`Left ${dataDir} in place. Run 'mu self uninstall --purge' to remove it too.\n`);
+    }
+    return 0;
+  } catch (error) {
+    io.stderr(`mu: uninstall failed: ${errorMessage(error)}\n`);
     return 1;
   }
 }

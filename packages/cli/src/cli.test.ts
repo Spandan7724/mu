@@ -84,8 +84,24 @@ describe("parseArgs", () => {
       mode: "self-update",
       errors: [],
     });
-    expect(parseArgs(["self"]).errors[0]).toContain('expects the "update" command');
+    expect(parseArgs(["self"]).errors[0]).toContain('expects "update" or "uninstall"');
     expect(HELP_TEXT).toContain("mu self update");
+  });
+
+  test("self uninstall selects the uninstaller, and --purge opts into deleting ~/.mu", () => {
+    expect(parseArgs(["self", "uninstall"])).toMatchObject({
+      mode: "self-uninstall",
+      purgeData: false,
+      errors: [],
+    });
+    expect(parseArgs(["self", "uninstall", "--purge"])).toMatchObject({
+      mode: "self-uninstall",
+      purgeData: true,
+      errors: [],
+    });
+    expect(parseArgs(["self", "remove"]).errors[0]).toContain('expects "update" or "uninstall"');
+    expect(HELP_TEXT).toContain("mu self uninstall");
+    expect(HELP_TEXT).toContain("--purge");
   });
 });
 
@@ -214,6 +230,7 @@ describe("runHeadless", () => {
         json: false,
         allowAll: false,
         noInstructions: false,
+        purgeData: false,
         errors: [],
       },
       base(provider),

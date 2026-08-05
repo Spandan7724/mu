@@ -28,7 +28,7 @@ import {
   sessionStoreForProfile,
 } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
-import { runSelfUpdate } from "./self-update.ts";
+import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
 
 const VERSION = cliPackage.version;
 
@@ -79,6 +79,16 @@ async function main(): Promise<number> {
             packageName: cliPackage.name,
             entryPath: process.argv[1],
             execPath: process.execPath,
+          },
+          io,
+        );
+      case "self-uninstall":
+        return runSelfUninstall(
+          {
+            packageName: cliPackage.name,
+            entryPath: process.argv[1],
+            execPath: process.execPath,
+            purgeData: args.purgeData,
           },
           io,
         );
