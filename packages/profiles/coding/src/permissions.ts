@@ -26,6 +26,7 @@ export const CODING_PERMISSION_MODES: PermissionMode[] = [
     id: "accept-edits",
     label: "accept edits",
     description: "Read and edit files freely; ask before commands.",
+    tone: "permissive",
     rules: [
       { permission: "write", pattern: "*", action: "allow" },
       { permission: "edit", pattern: "*", action: "allow" },
@@ -35,6 +36,7 @@ export const CODING_PERMISSION_MODES: PermissionMode[] = [
     id: "plan-readonly",
     label: "plan (read-only)",
     description: "Allow inspection and planning; deny file, command, and task mutations.",
+    tone: "restrictive",
     rules: [
       { permission: "write", pattern: "*", action: "deny" },
       { permission: "edit", pattern: "*", action: "deny" },
@@ -49,6 +51,7 @@ export const CODING_PERMISSION_MODES: PermissionMode[] = [
     id: "yolo",
     label: "full access",
     description: "Allow every tool call without asking.",
+    tone: "unrestricted",
     rules: [{ permission: "*", pattern: "*", action: "allow" }],
   },
 ];

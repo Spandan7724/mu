@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { CODING_PERMISSION_MODES } from "@mu/profile-coding";
 import { App, RendererRegistry, stripAnsi, wrapText } from "@mu/tui";
 import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo, userMessage } from "mu";
 import {
   availableModels,
   formatAuthUrl,
+  formatPermissionMode,
   formatResumeHint,
   formatTerminalTitle,
   initializeInteractiveSession,
@@ -27,6 +29,37 @@ test("session close hint is a directly runnable resume command", () => {
   const colored = formatResumeHint("session-id", "truecolor");
   expect(colored).toContain("38;2;102;102;102mTo resume this session:");
   expect(colored).toContain("\u001b[0m mu --resume session-id");
+});
+
+describe("permission mode notice", () => {
+  const modeFor = (id: string) => {
+    const mode = CODING_PERMISSION_MODES.find((candidate) => candidate.id === id);
+    if (!mode) throw new Error(`no such mode: ${id}`);
+    return mode;
+  };
+
+  test("each mode is coloured by how it moves the gate", () => {
+    // Loosening reads green, opening fully reads red, restricting reads blue,
+    // and the baseline keeps mu's own accent.
+    expect(formatPermissionMode(modeFor("accept-edits"), "truecolor")).toContain(
+      "[1;32maccept edits",
+    );
+    expect(formatPermissionMode(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
+    expect(formatPermissionMode(modeFor("plan-readonly"), "truecolor")).toContain(
+      "96;165;250mplan (read-only)",
+    );
+    expect(formatPermissionMode(modeFor("default"), "truecolor")).toContain("45;212;191mdefault");
+  });
+
+  test("the mode stays legible without colour", () => {
+    // Bold carries the distinction when hue cannot, and NO_COLOR keeps the text.
+    for (const mode of CODING_PERMISSION_MODES) {
+      expect(formatPermissionMode(mode, "truecolor")).toContain("[1;");
+      expect(formatPermissionMode(mode, "none")).toBe(
+        `  permissions set to ${mode.label} \u00b7 this session`,
+      );
+    }
+  });
 });
 
 describe("account login url", () => {

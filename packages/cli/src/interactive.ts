@@ -16,6 +16,7 @@ import {
   hyperlink,
   InputDecoder,
   RendererRegistry,
+  type Style,
   styleText,
   Terminal,
   type ToolRendererFn,
@@ -35,6 +36,7 @@ import {
   type ModelInfo,
   optionsFromProfile,
   type PermissionMode,
+  type PermissionModeTone,
   type PermissionRequest,
   type PermissionRule,
   type Profile,
@@ -134,6 +136,23 @@ export function formatAuthUrl(
 export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
   const label = styleText("To resume this session:", { resumeHint: true }, depth);
   return `  ${label} mu --resume ${sessionId}`;
+}
+
+const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
+  restrictive: { link: true },
+  permissive: { green: true },
+  unrestricted: { red: true },
+};
+
+export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): string {
+  // Bold as well as coloured: the four modes have to stay apart under NO_COLOR
+  // and for anyone who does not separate them by hue.
+  const style = {
+    ...(mode.tone ? PERMISSION_TONE_STYLES[mode.tone] : { accent: true }),
+    bold: true,
+  };
+  const suffix = styleText(" · this session", { dim: true }, depth);
+  return `  permissions set to ${styleText(mode.label, style, depth)}${suffix}`;
 }
 
 export async function initializeInteractiveSession(
@@ -774,7 +793,7 @@ export async function runInteractive(
   function applyPermissionMode(mode: PermissionMode): void {
     agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
     activePermissionMode = mode;
-    commitLines([`  permissions set to ${mode.label} · this session`]);
+    commitLines([formatPermissionMode(mode, depth)]);
     paint();
   }
 

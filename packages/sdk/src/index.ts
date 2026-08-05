@@ -38,6 +38,7 @@ export type {
   LifecycleEvent,
   LifecycleNotification,
   PermissionMode,
+  PermissionModeTone,
   PermissionRequest,
   PermissionRule,
   ProfileRuntime,

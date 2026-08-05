@@ -7,10 +7,15 @@ import type { AgentMessage } from "./messages.ts";
 import type { PermissionRule } from "./permission.ts";
 import type { AnyTool } from "./tools.ts";
 
+// Which way a mode moves the gate relative to the profile's defaults. A profile
+// classifies its own modes; presentation layers decide what that looks like.
+export type PermissionModeTone = "restrictive" | "permissive" | "unrestricted";
+
 export interface PermissionMode {
   id: string;
   label: string;
   description: string;
+  tone?: PermissionModeTone;
   // Applied after the profile/user/project layers, so a mode is a preset of
   // final overrides rather than a replacement for configured rules.
   rules: PermissionRule[];
