@@ -60,17 +60,22 @@ export type SyntaxRole =
   | "number"
   | "type";
 
+// Hues are spread so no two roles land within 20° of each other, and so none
+// collides with the roles a fenced block shares its message with (link, heading,
+// fence label). Comment and variable are deliberately desaturated: one has to
+// recede, and the other is on nearly every token — colouring it would turn the
+// block into a rainbow. `ansi16` is omitted where no ANSI colour is honest.
 const SYNTAX_COLORS: Record<
   SyntaxRole,
-  { rgb: readonly [number, number, number]; ansi256: number; ansi16: number }
+  { rgb: readonly [number, number, number]; ansi256: number; ansi16?: number }
 > = {
-  comment: { rgb: [106, 153, 85], ansi256: 65, ansi16: 32 },
-  keyword: { rgb: [86, 156, 214], ansi256: 75, ansi16: 94 },
-  function: { rgb: [220, 220, 170], ansi256: 187, ansi16: 93 },
-  variable: { rgb: [156, 220, 254], ansi256: 117, ansi16: 96 },
-  string: { rgb: [206, 145, 120], ansi256: 173, ansi16: 91 },
-  number: { rgb: [181, 206, 168], ansi256: 151, ansi16: 92 },
-  type: { rgb: [78, 201, 176], ansi256: 79, ansi16: 96 },
+  comment: { rgb: [133, 139, 153], ansi256: 245, ansi16: 2 },
+  keyword: { rgb: [216, 164, 234], ansi256: 182, ansi16: 95 },
+  function: { rgb: [216, 227, 160], ansi256: 187, ansi16: 93 },
+  variable: { rgb: [201, 209, 217], ansi256: 252 },
+  string: { rgb: [167, 221, 157], ansi256: 151, ansi16: 92 },
+  number: { rgb: [232, 187, 156], ansi256: 181, ansi16: 91 },
+  type: { rgb: [148, 224, 224], ansi256: 116, ansi16: 96 },
 };
 
 export interface Style {
@@ -171,7 +176,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     const color = SYNTAX_COLORS[style.syntax];
     if (depth === "truecolor") codes.push(`38;2;${color.rgb[0]};${color.rgb[1]};${color.rgb[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${color.ansi256}`);
-    else codes.push(String(color.ansi16));
+    else if (color.ansi16 !== undefined) codes.push(String(color.ansi16));
   }
   if (codes.length === 0) return text;
   return `${ESC}${codes.join(";")}m${text}${RESET}`;

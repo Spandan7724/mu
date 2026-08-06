@@ -523,20 +523,20 @@ describe("components", () => {
       "│ const answer: number = 42;",
       `│ function hello(name: string) { return \`hi \${name}\`; }`,
     ]);
-    expect(rendered).toContain("38;2;106;153;85m// greeting");
-    expect(rendered).toContain("38;2;86;156;214mconst");
-    expect(rendered).toContain("38;2;156;220;254manswer");
-    expect(rendered).toContain("38;2;78;201;176mnumber");
-    expect(rendered).toContain("38;2;181;206;168m42");
-    expect(rendered).toContain("38;2;220;220;170mhello");
-    expect(rendered).toContain(`38;2;206;145;120m\`hi \${name}\``);
+    expect(rendered).toContain("38;2;133;139;153m// greeting");
+    expect(rendered).toContain("38;2;216;164;234mconst");
+    expect(rendered).toContain("38;2;201;209;217manswer");
+    expect(rendered).toContain("38;2;148;224;224mnumber");
+    expect(rendered).toContain("38;2;232;187;156m42");
+    expect(rendered).toContain("38;2;216;227;160mhello");
+    expect(rendered).toContain(`38;2;167;221;157m\`hi \${name}\``);
   });
 
   test("multiline syntax scopes reopen their color on every terminal row", () => {
     const rendered = renderMarkdown("```ts\n/* first\nsecond */\n```", 80, "truecolor");
     expect(visible(rendered)).toEqual(["ts", "│ /* first", "│ second */"]);
-    expect(rendered[1]).toContain("38;2;106;153;85m/* first");
-    expect(rendered[2]).toContain("38;2;106;153;85msecond */");
+    expect(rendered[1]).toContain("38;2;133;139;153m/* first");
+    expect(rendered[2]).toContain("38;2;133;139;153msecond */");
   });
 
   test("unknown and language-less fences stay plain instead of being auto-detected", () => {
@@ -547,8 +547,8 @@ describe("components", () => {
     expect(visible(languageLess)).toEqual(["│ const value = 1;"]);
     expect(unknown.join("\n")).toContain("38;2;212;212;212mconst value = 1;");
     expect(languageLess.join("\n")).toContain("38;2;212;212;212mconst value = 1;");
-    expect(unknown.join("\n")).not.toContain("38;2;86;156;214mconst");
-    expect(languageLess.join("\n")).not.toContain("38;2;86;156;214mconst");
+    expect(unknown.join("\n")).not.toContain("38;2;216;164;234mconst");
+    expect(languageLess.join("\n")).not.toContain("38;2;216;164;234mconst");
   });
 
   test("syntax highlighting degrades by color depth and preserves source text", () => {
@@ -557,10 +557,17 @@ describe("components", () => {
     const ansi16 = renderMarkdown("```ts\nconst value = 1;\n```", 80, "ansi16").join("\n");
     const noColor = renderMarkdown(source, 80, "none");
 
-    expect(ansi256).toContain("38;5;75mconst");
-    expect(ansi16).toContain("[94mconst");
+    expect(ansi256).toContain("38;5;182mconst");
+    expect(ansi16).toContain("[95mconst");
     expect(noColor.join("\n")).not.toContain("\u001b");
     expect(noColor).toEqual(["html", '│ <div title="a&b">text</div>']);
+
+    // `variable` is near-neutral by design, so no ANSI-16 colour is honest for
+    // it — the identifier falls back to the terminal's own foreground.
+    const identifiers = renderMarkdown("```ts\nconst value = 1;\n```", 80, "ansi16").join("\n");
+    expect(identifiers).toContain("[95mconst");
+    expect(identifiers).toContain("value");
+    expect(identifiers).not.toContain("[96mvalue");
   });
 
   test("highlighted fences strip model-authored terminal controls", () => {
