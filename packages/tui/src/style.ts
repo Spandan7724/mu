@@ -28,8 +28,12 @@ export const RESET = "\u001b[0m";
 // mu's accent: mint at truecolor, bright cyan below it.
 const ACCENT_RGB = [177, 249, 223] as const;
 const ACCENT_256 = 158;
-const HEADING_RGB = [250, 204, 21] as const;
-const HEADING_256 = 220;
+// Headings are mu's own colour rather than a hue of their own: a heading in mu's
+// prose is mu speaking, and with eleven roles placed there is no slot left on the
+// wheel that clears its neighbours. Aliased rather than copied so the two cannot
+// drift apart silently.
+const HEADING_RGB = ACCENT_RGB;
+const HEADING_256 = ACCENT_256;
 const LINK_RGB = [96, 165, 250] as const;
 const LINK_256 = 75;
 const CODE_RGB = [212, 212, 212] as const;
@@ -120,7 +124,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
-    else codes.push("93");
+    else codes.push("96");
   }
   if (style.link) {
     if (depth === "truecolor") codes.push(`38;2;${LINK_RGB[0]};${LINK_RGB[1]};${LINK_RGB[2]}`);

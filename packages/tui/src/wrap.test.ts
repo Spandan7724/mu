@@ -166,7 +166,12 @@ describe("colour depth", () => {
   });
 
   test("the Markdown palette degrades by terminal colour depth", () => {
-    expect(styleText("heading", { heading: true }, "truecolor")).toContain("38;2;250;204;21");
+    // Headings render in the accent — the role is separate, the colour is not.
+    for (const depth of ["truecolor", "ansi256", "ansi16"] as const) {
+      expect(styleText("x", { heading: true }, depth)).toBe(
+        styleText("x", { accent: true }, depth),
+      );
+    }
     expect(styleText("link", { link: true }, "ansi256")).toContain("38;5;75");
     expect(styleText("code", { code: true }, "truecolor")).toContain("38;2;212;212;212");
     expect(styleText("code", { code: true }, "ansi256")).toContain("38;5;188");

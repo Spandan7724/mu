@@ -484,7 +484,7 @@ describe("components", () => {
       80,
       "truecolor",
     ).join("\n");
-    expect(rendered).toContain("38;2;250;204;21");
+    expect(rendered).toContain(ACCENT.slice(2));
     expect(rendered).toContain("38;2;96;165;250");
     expect(rendered).toContain("38;2;212;212;212");
     expect(rendered).toContain("38;2;205;214;244");
@@ -495,7 +495,7 @@ describe("components", () => {
     expect(stripAnsi(rendered)).toContain("const value = 1;");
     expect(
       renderMarkdown("| name |\n| --- |\n| value |\n\n- [x] shipped", 80, "truecolor").join("\n"),
-    ).toContain("38;2;250;204;21");
+    ).toContain(ACCENT.slice(2));
     expect(renderMarkdown("- [x] shipped", 80, "ansi16").join("\n")).toContain("[32m");
 
     const agent = agentCell("## Result\n\n- **done**", colored);
@@ -693,13 +693,14 @@ describe("style conformance", () => {
   ].join("\n");
 
   test("Markdown-only roles stay inside assistant Markdown", () => {
-    for (const color of ["38;2;250;204;21", "38;2;96;165;250", "38;2;205;214;244"]) {
+    // Headings are excluded: they render in the accent, which chrome uses too.
+    for (const color of ["38;2;96;165;250", "38;2;205;214;244"]) {
       expect(everything).not.toContain(color);
     }
     const markdown = agentCell("# heading\n\n[link](https://example.com) and `code`", colored).join(
       "\n",
     );
-    expect(markdown).toContain("38;2;250;204;21");
+    expect(markdown).toContain(ACCENT.slice(2));
     expect(markdown).toContain("38;2;96;165;250");
     expect(markdown).toContain("38;2;212;212;212");
   });
