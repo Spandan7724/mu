@@ -9,18 +9,21 @@ describe("auth callback page", () => {
     expect(page).toContain("background: #000");
   });
 
-  test("draws the wordmark as grey crisp-edged pixels", () => {
+  test("draws the wordmark in the accent as crisp-edged pixels", () => {
     const page = authSuccessPage("OpenAI");
     expect(page).toContain('aria-label="mu"');
     expect(page).toContain("shape-rendering: crispEdges");
-    expect(page).toContain("fill: #8a8a8a");
+    expect(page).toContain("fill: #B1F9DF");
+    // The detail copy stays muted — only the mark took the accent.
+    expect(page).toContain("color: #8a8a8a");
   });
 
   test("marks failures in the heading, not the wordmark", () => {
     const page = authErrorPage("OpenAI", "Return to mu and try again.");
     expect(page).toContain("Authentication failed");
     expect(page).toContain("color: #f87171");
-    expect(page).toContain("fill: #8a8a8a");
+    // Identity does not change with the outcome.
+    expect(page).toContain("fill: #B1F9DF");
   });
 
   test("escapes provider-supplied copy", () => {

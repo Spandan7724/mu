@@ -11,6 +11,9 @@ export interface AuthPageOptions {
 
 const MUTED = "#8a8a8a";
 const ERROR = "#f87171";
+// mu's accent, mirroring the TUI's `mu` label. Inlined rather than imported:
+// @mu/tui deals in ANSI escapes, and this file is the one HTML surface.
+const ACCENT = "#B1F9DF";
 
 // "mu" on a 10x5 pixel grid, drawn as runs rather than per-pixel rects. A bitmap keeps the
 // mark self-contained: the callback is served off localhost, so no font can be fetched.
@@ -72,7 +75,7 @@ export function renderAuthPage(options: AuthPageOptions): string {
     width: 90px;
     height: 45px;
     margin: 0 auto;
-    fill: ${MUTED};
+    fill: ${ACCENT};
     shape-rendering: crispEdges;
   }
   h1 {
