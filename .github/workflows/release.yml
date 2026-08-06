@@ -76,6 +76,7 @@ jobs:
             dist/${{ matrix.artifact }}
             dist/${{ matrix.archive }}
           if-no-files-found: error
+          retention-days: 1
 
   github-release:
     needs: binaries
