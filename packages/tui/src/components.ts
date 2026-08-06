@@ -468,12 +468,12 @@ function styleFooterText(text: string, depth: ColorDepth): string {
 }
 
 // The context window is a budget, and the footer is the only place it is ever
-// shown. Below half there is nothing to warn about, so it stays as quiet as the
-// rest of the row.
+// shown. Below half there is nothing to warn about, so it reads as ordinary mu
+// chrome and only escalates once the budget is actually going.
 function contextPressure(percent: number): Style {
   if (percent >= 0.8) return { red: true };
   if (percent >= 0.5) return { toolMutate: true };
-  return { permissive: true };
+  return { accent: true };
 }
 
 // A dim cwd row followed by model, context window, cumulative I/O and cost.

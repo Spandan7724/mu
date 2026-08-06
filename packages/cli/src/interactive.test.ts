@@ -48,7 +48,7 @@ describe("permission mode notice", () => {
     expect(formatPermissionMode(modeFor("plan-readonly"), "truecolor")).toContain(
       "96;165;250mplan (read-only)",
     );
-    expect(formatPermissionMode(modeFor("default"), "truecolor")).toContain("45;212;191mdefault");
+    expect(formatPermissionMode(modeFor("default"), "truecolor")).toContain("177;249;223mdefault");
   });
 
   test("the mode stays legible without colour", () => {

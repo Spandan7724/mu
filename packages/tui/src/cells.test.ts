@@ -29,7 +29,7 @@ import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
 // separately so a colour change does not churn every snapshot.
-const ACCENT = "\u001b[38;2;45;212;191m";
+const ACCENT = "\u001b[38;2;177;249;223m";
 const plain: RenderContext = { width: 60, depth: "none" };
 const colored: RenderContext = { width: 60, depth: "truecolor" };
 const footerData = {
@@ -365,9 +365,9 @@ describe("components", () => {
 
   test("footer token arrows use the accent without coloring their values", () => {
     const line = footer(footerData, 60, "truecolor").at(-1) ?? "";
-    expect(line).toContain("\u001b[38;2;45;212;191m↑\u001b[0m");
-    expect(line).toContain("\u001b[38;2;45;212;191m↓\u001b[0m");
-    expect(line).not.toContain("\u001b[38;2;45;212;191m1.1k");
+    expect(line).toContain("\u001b[38;2;177;249;223m↑\u001b[0m");
+    expect(line).toContain("\u001b[38;2;177;249;223m↓\u001b[0m");
+    expect(line).not.toContain("\u001b[38;2;177;249;223m1.1k");
   });
 
   test("footer helpers match compact values and home paths", () => {
@@ -716,8 +716,8 @@ describe("style conformance", () => {
     const wrote = toolCell({ name: "edited", tone: "mutate" }, colored)[0] ?? "";
     const ran = toolCell({ name: "ran", tone: "exec" }, colored)[0] ?? "";
     expect(read).toContain("38;2;129;140;248");
-    expect(wrote).toContain("38;2;251;146;60");
-    expect(ran).toContain("38;2;192;132;252");
+    expect(wrote).toContain("38;2;249;179;197");
+    expect(ran).toContain("38;2;177;185;249");
     expect(new Set([read, wrote, ran]).size).toBe(3);
     for (const line of [read, wrote, ran]) expect(line).toContain("1;38;2;");
     expect(toolCell({ name: "read", tone: "read" }, plain)[0]).toBe("  │ read");
@@ -743,8 +743,8 @@ describe("style conformance", () => {
   test("the context percentage escalates as the window fills", () => {
     const at = (contextPercent: number) =>
       footer({ ...footerData, contextPercent }, 80, "truecolor")[1] ?? "";
-    expect(at(0.12)).toContain("38;2;74;222;128");
-    expect(at(0.61)).toContain("38;2;251;146;60");
+    expect(at(0.12)).toContain(ACCENT);
+    expect(at(0.61)).toContain("38;2;249;179;197");
     expect(at(0.92)).toContain("\u001b[31m");
     // Too narrow to style per part: the row degrades to quiet rather than lying.
     expect(footer({ ...footerData, contextPercent: 0.92 }, 24, "truecolor")[1]).not.toContain(
@@ -763,7 +763,7 @@ describe("style conformance", () => {
     const shell = new Editor();
     shell.setText("!rg --files @src");
     const line = shell.render(60, "truecolor")[0] ?? "";
-    expect(line).toContain("38;2;192;132;252m!");
+    expect(line).toContain("38;2;177;185;249m!");
     expect(line).toContain("38;2;148;163;184m@src");
     // Highlighting must not disturb what the user actually typed.
     expect(stripAnsi(line).trimEnd()).toBe("  ▸ !rg --files @src");

@@ -25,9 +25,9 @@ export function detectColorDepth(
 const ESC = "\u001b[";
 export const RESET = "\u001b[0m";
 
-// mu's accent: teal at truecolor, plain cyan below it.
-const ACCENT_RGB = [45, 212, 191] as const;
-const ACCENT_256 = 43;
+// mu's accent: mint at truecolor, bright cyan below it.
+const ACCENT_RGB = [177, 249, 223] as const;
+const ACCENT_256 = 158;
 const HEADING_RGB = [250, 204, 21] as const;
 const HEADING_256 = 220;
 const LINK_RGB = [96, 165, 250] as const;
@@ -44,10 +44,10 @@ const PERMISSIVE_256 = 114;
 // it carries the hue and the rest of the row stays quiet.
 const TOOL_READ_RGB = [129, 140, 248] as const;
 const TOOL_READ_256 = 105;
-const TOOL_MUTATE_RGB = [251, 146, 60] as const;
-const TOOL_MUTATE_256 = 209;
-const TOOL_EXEC_RGB = [192, 132, 252] as const;
-const TOOL_EXEC_256 = 141;
+const TOOL_MUTATE_RGB = [249, 179, 197] as const;
+const TOOL_MUTATE_256 = 218;
+const TOOL_EXEC_RGB = [177, 185, 249] as const;
+const TOOL_EXEC_256 = 147;
 const PATH_RGB = [148, 163, 184] as const;
 const PATH_256 = 109;
 
@@ -107,7 +107,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${ACCENT_RGB[0]};${ACCENT_RGB[1]};${ACCENT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${ACCENT_256}`);
-    else codes.push("36");
+    else codes.push("96");
   }
   if (style.green) codes.push("32");
   if (style.red) codes.push("31");
@@ -153,13 +153,13 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${TOOL_MUTATE_RGB[0]};${TOOL_MUTATE_RGB[1]};${TOOL_MUTATE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_MUTATE_256}`);
-    else codes.push("93");
+    else codes.push("95");
   }
   if (style.toolExec) {
     if (depth === "truecolor")
       codes.push(`38;2;${TOOL_EXEC_RGB[0]};${TOOL_EXEC_RGB[1]};${TOOL_EXEC_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_EXEC_256}`);
-    else codes.push("35");
+    else codes.push("94");
   }
   // No ANSI-16 gray exists that is not `dim`, which paths are not; they fall
   // back to the terminal's own foreground rather than borrowing another role.
