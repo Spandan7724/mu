@@ -2191,6 +2191,36 @@ describe("command popup filtering", () => {
     expect(rendered).toContain("model");
     expect(rendered).toContain("undo");
   });
+
+  test("tab completes the highlighted command into the composer instead of running it", () => {
+    const commands: string[] = [];
+    const h = harness({ onCommand: (text) => commands.push(text) });
+    h.app.setCommands([{ label: "model" }, { label: "compact" }]);
+    feed(h.app, "/m");
+    h.app.handleInput({ type: "key", key: { name: "tab", ctrl: false, alt: false, shift: false } });
+
+    expect(commands).toEqual([]);
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("/model ");
+    // The popup is gone — its filter is a prefix match the trailing space empties.
+    expect(rendered).not.toContain("compact");
+
+    // Arguments typed after the completion reach the command intact.
+    feed(h.app, "anthropic");
+    h.app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(commands).toEqual(["/model anthropic"]);
+  });
+
+  test("tab on an empty command list leaves the popup alone", () => {
+    const h = harness();
+    h.app.setCommands([{ label: "model" }]);
+    feed(h.app, "/zz");
+    h.app.handleInput({ type: "key", key: { name: "tab", ctrl: false, alt: false, shift: false } });
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("/zz");
+  });
 });
 
 describe("thinking toggle", () => {

@@ -1340,6 +1340,7 @@ export class App {
   }
 
   // The `@` popup completes a path into the composer rather than submitting.
+  // The `/` popup does the same on tab; see handleSelectKey.
   private handleMentionKey(key: Key): void {
     if (key.name === "up" || key.name === "down") {
       this.commandList.move(key.name);
@@ -1402,6 +1403,17 @@ export class App {
       return;
     }
     if (key.name === "escape") {
+      this.mode = "composing";
+      return;
+    }
+    // Tab completes into the composer rather than running, so a command that
+    // takes arguments has somewhere to type them. The popup closes because its
+    // filter is a prefix match on the whole line, which the trailing space and
+    // any argument would immediately empty. Mirrors the `@` popup.
+    if (key.name === "tab") {
+      const selected = this.commandList.selected;
+      if (!selected) return;
+      this.editor.setText(`/${selected.label} `);
       this.mode = "composing";
       return;
     }

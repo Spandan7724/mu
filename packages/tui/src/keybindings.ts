@@ -40,7 +40,11 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
         description: "insert a newline, on terminals that report the modifier",
       },
       { keys: "\\ then enter", description: "insert a newline — works on every terminal" },
-      { keys: "tab", description: "queue a follow-up message, while the agent is running" },
+      {
+        keys: "tab",
+        description:
+          "complete the highlighted command or file; queues a follow-up while the agent is running",
+      },
       { keys: "alt+up", description: "edit the most recently queued steer/follow-up message" },
       { keys: "escape", description: "abort a running turn, or clear a started !shell line" },
       { keys: "/ at the start of an empty line", description: "open the command menu" },
