@@ -897,7 +897,7 @@ export class App {
         if (this.isShellMode) {
           lines.push(
             MARGIN +
-              styleText("shell mode", { accent: true, bold: true }, depth) +
+              styleText("shell mode", { toolExec: true, bold: true }, depth) +
               styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
           );
         }

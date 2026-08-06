@@ -10,9 +10,11 @@ export type {
   CheckpointCellOptions,
   DiffFile,
   DiffLine,
+  PrimaryRole,
   RenderContext,
   TaskCellOptions,
   ToolCellOptions,
+  ToolTone,
 } from "./cells.ts";
 export {
   agentCell,

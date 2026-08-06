@@ -339,11 +339,13 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         renderedMarker = task[1]?.toLowerCase() === "x" ? GLYPHS.ok : "○";
         content = task[2] ?? "";
       }
+      // A list marker is structure, not mu speaking; the accent is reserved for
+      // the latter now that other roles carry their own colour.
       const markerStyle: Style = task
         ? task[1]?.toLowerCase() === "x"
           ? { green: true }
           : { dim: true }
-        : { accent: true };
+        : { dim: true };
       const prefix = `${indent}${styleText(renderedMarker, markerStyle, depth)} `;
       const continuation = " ".repeat(stringWidth(prefix));
       const wrapped = wrapLine(prefix + renderInline(content, depth), width, continuation);

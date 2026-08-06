@@ -24,6 +24,21 @@ export interface RenderContext {
 const dim = (text: string, depth: ColorDepth) => styleText(text, { dim: true }, depth);
 const accent = (text: string, depth: ColorDepth) => styleText(text, { accent: true }, depth);
 
+// What a tool did, not which tool it was: an unknown tool that reads still reads.
+export type ToolTone = "read" | "mutate" | "exec";
+const TOOL_TONES: Record<ToolTone, Style> = {
+  read: { toolRead: true },
+  mutate: { toolMutate: true },
+  exec: { toolExec: true },
+};
+// A path is a location and a command is code; neither is mu speaking, which is
+// what the accent means everywhere else.
+export type PrimaryRole = "path" | "code";
+const PRIMARY_ROLES: Record<PrimaryRole, Style> = {
+  path: { path: true },
+  code: { code: true },
+};
+
 function body(ctx: RenderContext): number {
   return Math.max(20, ctx.width - MARGIN.length);
 }
@@ -59,9 +74,12 @@ export function thinkingCell(text: string, ctx: RenderContext, expanded = false)
 
 export interface ToolCellOptions {
   name: string;
+  tone?: ToolTone;
   primaryArg?: string;
-  primaryAccent?: boolean;
+  primaryRole?: PrimaryRole;
   summary?: string; // right-hand metadata, e.g. "142 lines"
+  // A failure detail is the opposite of metadata — it is the reason to look.
+  summaryError?: boolean;
   isSuccess?: boolean;
   isError?: boolean;
   nested?: boolean;
@@ -99,15 +117,25 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     stringWidth(status) -
     (status ? 1 : 0);
   const summary = summaryBudget >= 2 ? truncateToWidth(rawSummary, summaryBudget) : "";
-  const metadata = [status, summary ? dim(summary, ctx.depth) : ""].filter(Boolean).join(" ");
+  const summaryStyle: Style = options.summaryError ? { red: true } : { dim: true };
+  const metadata = [status, summary ? styleText(summary, summaryStyle, ctx.depth) : ""]
+    .filter(Boolean)
+    .join(" ");
   const primaryBudget =
     available -
     stringWidth(name) -
     (firstPrimary ? 1 : 0) -
     (metadata ? stringWidth(separator) + stringWidth(metadata) : 0);
   const primary = firstPrimary ? truncateToWidth(firstPrimary, Math.max(1, primaryBudget)) : "";
-  const styledPrimary = options.primaryAccent ? accent(primary, ctx.depth) : primary;
-  const action = styleText(name, { bold: true }, ctx.depth);
+  const primaryStyle = options.primaryRole ? PRIMARY_ROLES[options.primaryRole] : undefined;
+  const styledPrimary =
+    primaryStyle && primary ? styleText(primary, primaryStyle, ctx.depth) : primary;
+  // Bold as well as coloured, so the verb still leads the row under NO_COLOR.
+  const action = styleText(
+    name,
+    { bold: true, ...(options.tone ? TOOL_TONES[options.tone] : {}) },
+    ctx.depth,
+  );
   const head =
     MARGIN +
     rule +
@@ -119,7 +147,9 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   for (const line of primaryLines.slice(1)) {
     const continuation = truncateToWidth(line, Math.max(1, available));
     lines.push(
-      MARGIN + rule + (options.primaryAccent ? accent(continuation, ctx.depth) : continuation),
+      MARGIN +
+        rule +
+        (primaryStyle ? styleText(continuation, primaryStyle, ctx.depth) : continuation),
     );
   }
   for (const line of options.tail ?? []) {
@@ -171,7 +201,11 @@ export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[]
       text: GLYPHS.error,
       rendered: styleText(GLYPHS.error, { red: true }, ctx.depth),
     });
-    metadata.push({ text: "killed", rendered: dim("killed", ctx.depth), optional: true });
+    metadata.push({
+      text: "killed",
+      rendered: styleText("killed", { red: true }, ctx.depth),
+      optional: true,
+    });
   } else if (options.status === "exited") {
     if (options.exitCode === 0) {
       metadata.push({
@@ -184,7 +218,11 @@ export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[]
         rendered: styleText(GLYPHS.error, { red: true }, ctx.depth),
       });
       const detail = `exit ${options.exitCode ?? "?"}`;
-      metadata.push({ text: detail, rendered: dim(detail, ctx.depth), optional: true });
+      metadata.push({
+        text: detail,
+        rendered: styleText(detail, { red: true }, ctx.depth),
+        optional: true,
+      });
     }
   }
   if (options.durationMs !== undefined) {
@@ -207,7 +245,7 @@ export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[]
   }
   const parts = [
     dim(taskId, ctx.depth),
-    truncateToWidth(command, Math.max(1, commandBudget())),
+    styleText(truncateToWidth(command, Math.max(1, commandBudget())), { code: true }, ctx.depth),
     ...metadata.map((item) => item.rendered),
   ];
   const lines = [MARGIN + rule + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth))];
@@ -257,7 +295,8 @@ export function compactionCell(
     details.status === "noop"
       ? ""
       : `${counts}${details.contextTokensBefore !== undefined ? ` ${GLYPHS.separator} ${extras.join(` ${GLYPHS.separator} `)}` : ""}`;
-  const glyph = accent(GLYPHS.bullet, ctx.depth);
+  // Compaction rewrites history, so the boundary wears the mutation colour.
+  const glyph = styleText(GLYPHS.bullet, { toolMutate: true }, ctx.depth);
   const text = detail ? `${headline} ${GLYPHS.separator} ${detail}` : headline;
   return wrapText(text, body(ctx) - 2, "  ").map((line, index) => {
     if (index > 0) return MARGIN + dim(line, ctx.depth);
@@ -278,7 +317,7 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
   const fileCount = options.files.length;
   const messageLabel = `${options.messageCount} message${options.messageCount === 1 ? "" : "s"}`;
   const fileLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
-  const action = styleText(options.action, { accent: true, bold: true }, ctx.depth);
+  const action = styleText(options.action, { toolMutate: true, bold: true }, ctx.depth);
   const status =
     options.action === "undo"
       ? `${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
@@ -286,7 +325,11 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
   const lines = [MARGIN + rule + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
 
   for (const file of options.files) {
-    const path = truncateToWidth(sanitizeUntrusted(file.path), Math.max(1, body(ctx) - 18));
+    const path = styleText(
+      truncateToWidth(sanitizeUntrusted(file.path), Math.max(1, body(ctx) - 18)),
+      { path: true },
+      ctx.depth,
+    );
     const added =
       file.added > 0 ? styleText(`+${file.added}`, { green: true }, ctx.depth) : undefined;
     const removed =
@@ -346,8 +389,13 @@ export function diffLinesFromHunks(hunks: string[]): DiffLine[] {
 
 export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
-  const header = `${sanitizeUntrusted(file.path)} ${GLYPHS.separator} +${file.added} −${file.removed}`;
-  const out = [MARGIN + rule + dim(header, ctx.depth)];
+  const header =
+    styleText(sanitizeUntrusted(file.path), { path: true }, ctx.depth) +
+    dim(` ${GLYPHS.separator} `, ctx.depth) +
+    styleText(`+${file.added}`, { green: true }, ctx.depth) +
+    " " +
+    styleText(`−${file.removed}`, { red: true }, ctx.depth);
+  const out = [MARGIN + rule + header];
 
   const gutterWidth = 5;
   for (const line of file.lines) {

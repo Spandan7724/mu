@@ -2,6 +2,7 @@ import type { ToolResultMessage } from "@mu/core";
 import {
   type DiffLine,
   diffCell,
+  type PrimaryRole,
   type RenderContext,
   type ToolCellOptions,
   toolCell,
@@ -222,14 +223,26 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
 
 // The generic fallback: name, primary argument, truncated result. This is what
 // makes the TUI domain-swappable — an unknown tool still renders sensibly.
+// An unknown tool declares no action class, but the shape of its primary
+// argument still says whether it is a location or something machine-readable.
+const PRIMARY_KEY_ROLES: [key: string, role: PrimaryRole][] = [
+  ["path", "path"],
+  ["command", "code"],
+  ["pattern", "code"],
+  ["query", "code"],
+  ["url", "path"],
+  ["name", "path"],
+];
+
 export const genericRenderer: ToolRendererFn = (info, ctx) => {
-  const primary = firstString(info.args, ["path", "command", "pattern", "query", "url", "name"]);
+  const match = PRIMARY_KEY_ROLES.find(([key]) => firstString(info.args, [key]) !== undefined);
+  const primary = match ? firstString(info.args, [match[0]]) : undefined;
   const text = resultText(info.result);
   const firstLine = text.split("\n")[0] ?? "";
 
   const options: ToolCellOptions = {
     name: info.toolName,
-    ...(primary ? { primaryArg: primary } : {}),
+    ...(primary && match ? { primaryArg: primary, primaryRole: match[1] } : {}),
     ...(info.result?.isError ? { isError: true } : {}),
     ...(info.running
       ? { summary: "running" }
@@ -279,8 +292,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       ...toolCell(
         {
           name: "read",
+          tone: "read",
           ...(firstString(info.args, ["path"])
-            ? { primaryArg: firstString(info.args, ["path"]) as string }
+            ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
             : {}),
           ...(info.result?.isError ? { isError: true } : {}),
           ...(details?.lines ? { summary: `${details.lines} lines` } : {}),
@@ -301,7 +315,10 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
                 ? "created"
                 : "updated"
               : "write",
-          ...(stringArg(info.args, "path") ? { primaryArg: stringArg(info.args, "path") } : {}),
+          tone: "mutate",
+          ...(stringArg(info.args, "path")
+            ? { primaryArg: stringArg(info.args, "path"), primaryRole: "path" }
+            : {}),
           ...(info.result?.isError ? { isError: true } : {}),
         },
         ctx,
@@ -316,8 +333,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       ...toolCell(
         {
           name: info.result && !info.result.isError ? "edited" : "edit",
+          tone: "mutate",
           ...(firstString(info.args, ["path"])
-            ? { primaryArg: firstString(info.args, ["path"]) as string }
+            ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
             : {}),
           ...(info.result?.isError ? { isError: true } : {}),
           ...(details?.occurrences
@@ -348,10 +366,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       ...toolCell(
         {
           name: userShell ? "$" : info.running ? "running" : info.result ? "ran" : "bash",
+          tone: "exec",
           ...(firstString(info.args, ["command"])
             ? {
                 primaryArg: firstString(info.args, ["command"]) as string,
-                primaryAccent: true,
+                primaryRole: "code",
               }
             : {}),
           ...(info.result?.isError ? { isError: true } : {}),
@@ -364,6 +383,7 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
                     summary: [`exit ${details?.exitCode ?? "?"}`, duration]
                       .filter(Boolean)
                       .join(" · "),
+                    summaryError: true,
                   }
             : {}),
         },
@@ -376,8 +396,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ...toolCell(
       {
         name: "ls",
+        tone: "read",
         ...(firstString(info.args, ["path"])
-          ? { primaryArg: firstString(info.args, ["path"]) as string }
+          ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
           : {}),
         ...(info.result?.isError ? { isError: true } : {}),
       },
@@ -389,8 +410,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ...toolCell(
       {
         name: "glob",
+        tone: "read",
         ...(firstString(info.args, ["pattern"])
-          ? { primaryArg: firstString(info.args, ["pattern"]) as string }
+          ? { primaryArg: firstString(info.args, ["pattern"]) as string, primaryRole: "code" }
           : {}),
         ...(info.result?.isError ? { isError: true } : {}),
       },
@@ -402,8 +424,9 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ...toolCell(
       {
         name: "grep",
+        tone: "read",
         ...(firstString(info.args, ["pattern"])
-          ? { primaryArg: firstString(info.args, ["pattern"]) as string }
+          ? { primaryArg: firstString(info.args, ["pattern"]) as string, primaryRole: "code" }
           : {}),
         ...(info.result?.isError ? { isError: true } : {}),
       },

@@ -40,6 +40,16 @@ const RESUME_HINT_RGB = [102, 102, 102] as const;
 const RESUME_HINT_256 = 241;
 const PERMISSIVE_RGB = [74, 222, 128] as const;
 const PERMISSIVE_256 = 114;
+// Action classes. A tool cell's verb is the one word that says what happened, so
+// it carries the hue and the rest of the row stays quiet.
+const TOOL_READ_RGB = [129, 140, 248] as const;
+const TOOL_READ_256 = 105;
+const TOOL_MUTATE_RGB = [251, 146, 60] as const;
+const TOOL_MUTATE_256 = 209;
+const TOOL_EXEC_RGB = [192, 132, 252] as const;
+const TOOL_EXEC_256 = 141;
+const PATH_RGB = [148, 163, 184] as const;
+const PATH_256 = 109;
 
 export type SyntaxRole =
   | "comment"
@@ -78,6 +88,10 @@ export interface Style {
   codeAccent?: boolean;
   resumeHint?: boolean;
   permissive?: boolean;
+  toolRead?: boolean;
+  toolMutate?: boolean;
+  toolExec?: boolean;
+  path?: boolean;
   syntax?: SyntaxRole;
 }
 
@@ -128,6 +142,30 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
       codes.push(`38;2;${PERMISSIVE_RGB[0]};${PERMISSIVE_RGB[1]};${PERMISSIVE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${PERMISSIVE_256}`);
     else codes.push("32");
+  }
+  if (style.toolRead) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${TOOL_READ_RGB[0]};${TOOL_READ_RGB[1]};${TOOL_READ_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${TOOL_READ_256}`);
+    else codes.push("94");
+  }
+  if (style.toolMutate) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${TOOL_MUTATE_RGB[0]};${TOOL_MUTATE_RGB[1]};${TOOL_MUTATE_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${TOOL_MUTATE_256}`);
+    else codes.push("93");
+  }
+  if (style.toolExec) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${TOOL_EXEC_RGB[0]};${TOOL_EXEC_RGB[1]};${TOOL_EXEC_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${TOOL_EXEC_256}`);
+    else codes.push("35");
+  }
+  // No ANSI-16 gray exists that is not `dim`, which paths are not; they fall
+  // back to the terminal's own foreground rather than borrowing another role.
+  if (style.path) {
+    if (depth === "truecolor") codes.push(`38;2;${PATH_RGB[0]};${PATH_RGB[1]};${PATH_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${PATH_256}`);
   }
   if (style.syntax) {
     const color = SYNTAX_COLORS[style.syntax];

@@ -4,14 +4,61 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { type DiffFile, diffCell } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, MARGIN, type Style, styleText } from "./style.ts";
 import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
 import { wrapText } from "./wrap.ts";
 
 const accent = (t: string, d: ColorDepth) => styleText(t, { accent: true }, d);
 const dim = (t: string, d: ColorDepth) => styleText(t, { dim: true }, d);
+const userMarker = (d: ColorDepth) => accent(GLYPHS.userMarker, d);
 const BLOCK_CURSOR_ON = "\u001b[7m";
 const BLOCK_CURSOR_OFF = "\u001b[0m";
+
+const COMMAND_TOKEN = /^\/[A-Za-z][\w:-]*/;
+const MENTION_TOKEN = /(?:^|\s)(@\S+)/g;
+
+// One style per character, so a mention inside a shell line paints over the
+// shell run without either token needing to know about the other.
+function inputStyles(line: string, isFirst: boolean): (Style | undefined)[] {
+  const styles: (Style | undefined)[] = new Array(line.length).fill(undefined);
+  const paint = (start: number, end: number, style: Style) => {
+    for (let i = start; i < Math.min(end, line.length); i++) styles[i] = style;
+  };
+  if (isFirst) {
+    const command = COMMAND_TOKEN.exec(line);
+    if (command) paint(0, command[0].length, { accent: true });
+    else if (line.startsWith("!")) {
+      paint(1, line.length, { code: true });
+      paint(0, 1, { toolExec: true });
+    }
+  }
+  for (const match of line.matchAll(MENTION_TOKEN)) {
+    const token = match[1] as string;
+    const start = (match.index ?? 0) + match[0].length - token.length;
+    paint(start, start + token.length, { path: true });
+  }
+  return styles;
+}
+
+function paintRange(
+  line: string,
+  styles: (Style | undefined)[],
+  from: number,
+  to: number,
+  depth: ColorDepth,
+): string {
+  let out = "";
+  let i = from;
+  while (i < to) {
+    const style = styles[i];
+    let end = i + 1;
+    while (end < to && styles[end] === style) end++;
+    const text = line.slice(i, end);
+    out += style ? styleText(text, style, depth) : text;
+    i = end;
+  }
+  return out;
+}
 
 // Multi-line editor with history. Paste never submits — that is the decoder's
 // job, but the editor must accept embedded newlines without treating them as
@@ -191,21 +238,23 @@ export class Editor {
   }
 
   render(width: number, depth: ColorDepth): string[] {
-    const marker = `${accent(GLYPHS.userMarker, depth)} `;
+    const marker = `${userMarker(depth)} `;
     const available = width - MARGIN.length - 2;
     const out: string[] = [];
     for (const [index, line] of this.lines.entries()) {
-      let display = line.length === 0 ? " " : line;
+      const styles = inputStyles(line, index === 0);
+      let display = line.length === 0 ? " " : paintRange(line, styles, 0, line.length, depth);
       if (index === this.row) {
-        const before = line.slice(0, this.col);
         const after = line.slice(this.col);
+        const atEnd = after.length === 0;
         const cluster = graphemes(after)[0] ?? " ";
+        const cursorEnd = atEnd ? this.col : this.col + cluster.length;
         display =
-          before +
+          paintRange(line, styles, 0, this.col, depth) +
           BLOCK_CURSOR_ON +
-          cluster +
+          (atEnd ? " " : paintRange(line, styles, this.col, cursorEnd, depth)) +
           BLOCK_CURSOR_OFF +
-          after.slice(cluster === " " && after.length === 0 ? 0 : cluster.length);
+          paintRange(line, styles, cursorEnd, line.length, depth);
       }
       const wrapped = wrapText(display, available);
       for (const [i, chunk] of wrapped.entries()) {
@@ -218,7 +267,7 @@ export class Editor {
   // Secret prompts keep the real value in the editor for normal cursor and
   // deletion behavior, but never render it (or add it to command history).
   renderMasked(width: number, depth: ColorDepth): string[] {
-    const marker = `${accent(GLYPHS.userMarker, depth)} `;
+    const marker = `${userMarker(depth)} `;
     const available = width - MARGIN.length - 2;
     const flat = this.text.replace(/\n/g, "");
     const beforeCount = graphemes(flat.slice(0, this.offset)).length;
@@ -351,14 +400,14 @@ export function queuedInputPreview(
   if (available < 4) {
     const maxWidth = Math.max(1, width - MARGIN.length);
     const headerLabel = truncateToWidth(kind, Math.max(1, maxWidth - 2));
-    const header = `${MARGIN}${accent(GLYPHS.userMarker, depth)}${dim(` ${headerLabel}`, depth)}`;
+    const header = `${MARGIN}${userMarker(depth)}${dim(` ${headerLabel}`, depth)}`;
     const bodyWidth = Math.max(1, maxWidth - 2);
     const indent = `${MARGIN}  `;
     const lines = [header, ...wrapText(content, bodyWidth).map((line) => `${indent}${line}`)];
     return boundQueuedInput(lines, indent, width, depth);
   }
 
-  const prefix = `${accent(GLYPHS.userMarker, depth)} ${dim(label, depth)}`;
+  const prefix = `${userMarker(depth)} ${dim(label, depth)}`;
   const indent = `${MARGIN}${" ".repeat(prefixWidth)}`;
   const lines = wrapText(content, available).map((line, index) =>
     index === 0 ? `${MARGIN}${prefix}${line}` : `${MARGIN}${" ".repeat(prefixWidth)}${line}`,
@@ -401,11 +450,30 @@ export function formatCwdForFooter(cwd: string, home?: string): string {
   return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
 }
 
-function styleFooterText(text: string, depth: ColorDepth): string {
+function styleFooterPart(text: string, style: Style, depth: ColorDepth): string {
   return text
     .split(/([↑↓])/)
-    .map((part) => (part === "↑" || part === "↓" ? accent(part, depth) : dim(part, depth)))
+    .map((part) =>
+      part === "↑" || part === "↓"
+        ? accent(part, depth)
+        : part.length > 0
+          ? styleText(part, style, depth)
+          : "",
+    )
     .join("");
+}
+
+function styleFooterText(text: string, depth: ColorDepth): string {
+  return styleFooterPart(text, { dim: true }, depth);
+}
+
+// The context window is a budget, and the footer is the only place it is ever
+// shown. Below half there is nothing to warn about, so it stays as quiet as the
+// rest of the row.
+function contextPressure(percent: number): Style {
+  if (percent >= 0.8) return { red: true };
+  if (percent >= 0.5) return { toolMutate: true };
+  return { permissive: true };
 }
 
 // A dim cwd row followed by model, context window, cumulative I/O and cost.
@@ -413,18 +481,33 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   const tokenParts: string[] = [];
   if (data.inputTokens > 0) tokenParts.push(`↑${formatTokens(data.inputTokens)}`);
   if (data.outputTokens > 0) tokenParts.push(`↓${formatTokens(data.outputTokens)}`);
-  const parts = [
-    data.model,
-    `${(Math.max(0, data.contextPercent) * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,
-    ...(tokenParts.length > 0 ? [tokenParts.join(" ")] : []),
-    `$${data.costUsd.toFixed(2)}`,
+  const percent = Math.max(0, data.contextPercent);
+  const quiet: Style = { dim: true };
+  const parts: { text: string; style: Style }[] = [
+    { text: data.model, style: quiet },
+    {
+      text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,
+      style: contextPressure(percent),
+    },
+    ...(tokenParts.length > 0 ? [{ text: tokenParts.join(" "), style: quiet }] : []),
+    { text: `$${data.costUsd.toFixed(2)}`, style: quiet },
   ];
-  if (data.backgroundTasks && data.backgroundTasks > 0) parts.push(`${data.backgroundTasks} bg`);
-  if (data.hint) parts.push(data.hint);
+  if (data.backgroundTasks && data.backgroundTasks > 0) {
+    parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
+  }
+  if (data.hint) parts.push({ text: data.hint, style: quiet });
   const maxWidth = width - MARGIN.length;
   const cwd = truncateToWidth(sanitizeUntrusted(data.cwd), maxWidth);
-  const stats = truncateToWidth(parts.join(` ${GLYPHS.separator} `), maxWidth);
-  return [MARGIN + dim(cwd, depth), MARGIN + styleFooterText(stats, depth)];
+  const plain = parts.map((part) => part.text).join(` ${GLYPHS.separator} `);
+  // Per-part styling cannot survive truncation of the joined string, so a row
+  // too narrow to hold the stats falls back to the uniformly quiet rendering.
+  const stats =
+    stringWidth(plain) <= maxWidth
+      ? parts
+          .map((part) => styleFooterPart(part.text, part.style, depth))
+          .join(dim(` ${GLYPHS.separator} `, depth))
+      : styleFooterText(truncateToWidth(plain, maxWidth), depth);
+  return [MARGIN + dim(cwd, depth), MARGIN + stats];
 }
 
 // Brackets the composer: once above it, once below (before the footer).
@@ -447,9 +530,16 @@ export function approvalOverlay(data: ApprovalData, width: number, depth: ColorD
   const out: string[] = [MARGIN + styleText(sanitizeUntrusted(data.title), { bold: true }, depth)];
   const preview = data.diff
     ? diffCell(data.diff, { width, depth })
-    : (data.preview ?? []).map(
+    : // The command being approved is the whole question; it must not be the
+      // dimmest thing on the screen.
+      (data.preview ?? []).map(
         (line) =>
-          MARGIN + dim(truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length), depth),
+          MARGIN +
+          styleText(
+            truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length),
+            { code: true },
+            depth,
+          ),
       );
   const bounded = boundPreview(preview, data.maxPreviewRows);
   for (const line of bounded) {

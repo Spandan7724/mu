@@ -29,6 +29,7 @@ import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
 // separately so a colour change does not churn every snapshot.
+const ACCENT = "\u001b[38;2;45;212;191m";
 const plain: RenderContext = { width: 60, depth: "none" };
 const colored: RenderContext = { width: 60, depth: "truecolor" };
 const footerData = {
@@ -82,7 +83,7 @@ describe("transcript cells (golden lines)", () => {
       {
         name: "running",
         primaryArg: "a very long command with more arguments",
-        primaryAccent: true,
+        primaryRole: "code",
         isError: true,
         summary: "exit 123456",
       },
@@ -110,7 +111,7 @@ describe("transcript cells (golden lines)", () => {
         {
           name: "running",
           primaryArg: "set -e\nPORT=18080 cargo run &\npid=$!",
-          primaryAccent: true,
+          primaryRole: "code",
         },
         plain,
       ),
@@ -684,13 +685,8 @@ describe("style conformance", () => {
     ...footer({ ...footerData, model: "m", contextPercent: 0.5, costUsd: 1 }, 60, "truecolor"),
   ].join("\n");
 
-  test("the extended palette stays scoped to assistant Markdown", () => {
-    for (const color of [
-      "38;2;250;204;21",
-      "38;2;96;165;250",
-      "38;2;212;212;212",
-      "38;2;205;214;244",
-    ]) {
+  test("Markdown-only roles stay inside assistant Markdown", () => {
+    for (const color of ["38;2;250;204;21", "38;2;96;165;250", "38;2;205;214;244"]) {
       expect(everything).not.toContain(color);
     }
     const markdown = agentCell("# heading\n\n[link](https://example.com) and `code`", colored).join(
@@ -699,6 +695,88 @@ describe("style conformance", () => {
     expect(markdown).toContain("38;2;250;204;21");
     expect(markdown).toContain("38;2;96;165;250");
     expect(markdown).toContain("38;2;212;212;212");
+  });
+
+  test("the accent marks the speakers, not everything they print", () => {
+    // Cyan is mu, the user, and the live interaction — machine activity is not
+    // any of those, so none of it carries the accent.
+    const machineActivity = [
+      ...toolCell({ name: "read", primaryArg: "a.ts", primaryRole: "path" }, colored),
+      ...compactionCell(10, colored, { status: "completed" }),
+      ...renderMarkdown("- one\n- two", 40, "truecolor"),
+    ].join("\n");
+    expect(machineActivity).not.toContain(ACCENT);
+    for (const speaker of [agentCell("hello", colored), userCell("hi", colored)]) {
+      expect(speaker.join("\n")).toContain(ACCENT);
+    }
+  });
+
+  test("a tool verb is coloured by what it did and stays bold without colour", () => {
+    const read = toolCell({ name: "read", tone: "read" }, colored)[0] ?? "";
+    const wrote = toolCell({ name: "edited", tone: "mutate" }, colored)[0] ?? "";
+    const ran = toolCell({ name: "ran", tone: "exec" }, colored)[0] ?? "";
+    expect(read).toContain("38;2;129;140;248");
+    expect(wrote).toContain("38;2;251;146;60");
+    expect(ran).toContain("38;2;192;132;252");
+    expect(new Set([read, wrote, ran]).size).toBe(3);
+    for (const line of [read, wrote, ran]) expect(line).toContain("1;38;2;");
+    expect(toolCell({ name: "read", tone: "read" }, plain)[0]).toBe("  │ read");
+  });
+
+  test("a primary argument is a path or code, never the accent", () => {
+    const path = toolCell({ name: "read", primaryArg: "a.ts", primaryRole: "path" }, colored)[0];
+    const code = toolCell({ name: "ran", primaryArg: "bun test", primaryRole: "code" }, colored)[0];
+    expect(path).toContain("38;2;148;163;184");
+    expect(code).toContain("38;2;212;212;212");
+    expect(path).not.toContain(ACCENT);
+    expect(code).not.toContain(ACCENT);
+  });
+
+  test("a failure detail is red where an ordinary summary is dim", () => {
+    const failed =
+      toolCell({ name: "ran", summary: "exit 2", summaryError: true }, colored)[0] ?? "";
+    const ok = toolCell({ name: "ran", summary: "340ms" }, colored)[0] ?? "";
+    expect(failed).toContain("\u001b[31mexit 2");
+    expect(ok).toContain("\u001b[2m340ms");
+  });
+
+  test("the context percentage escalates as the window fills", () => {
+    const at = (contextPercent: number) =>
+      footer({ ...footerData, contextPercent }, 80, "truecolor")[1] ?? "";
+    expect(at(0.12)).toContain("38;2;74;222;128");
+    expect(at(0.61)).toContain("38;2;251;146;60");
+    expect(at(0.92)).toContain("\u001b[31m");
+    // Too narrow to style per part: the row degrades to quiet rather than lying.
+    expect(footer({ ...footerData, contextPercent: 0.92 }, 24, "truecolor")[1]).not.toContain(
+      "\u001b[31m",
+    );
+  });
+
+  test("the composer marks the user, and marks up commands, mentions and shell", () => {
+    const editor = new Editor();
+    editor.setText("/model @src/a.ts");
+    const first = editor.render(60, "truecolor")[0] ?? "";
+    expect(first).toContain(`${ACCENT}▸`);
+    expect(first).toContain(`${ACCENT}/model`);
+    expect(first).toContain("38;2;148;163;184m@src/a.ts");
+
+    const shell = new Editor();
+    shell.setText("!rg --files @src");
+    const line = shell.render(60, "truecolor")[0] ?? "";
+    expect(line).toContain("38;2;192;132;252m!");
+    expect(line).toContain("38;2;148;163;184m@src");
+    // Highlighting must not disturb what the user actually typed.
+    expect(stripAnsi(line).trimEnd()).toBe("  ▸ !rg --files @src");
+  });
+
+  test("highlighting survives the cursor and only applies to the first line", () => {
+    const editor = new Editor();
+    editor.setText("/model x\n/notacommand");
+    editor.setOffset(3);
+    const lines = editor.render(60, "truecolor");
+    expect(stripAnsi(lines.join("\n"))).toBe("  ▸ /model x\n    /notacommand");
+    expect(lines[0]).toContain("\u001b[7m");
+    expect(lines[1]).not.toContain(ACCENT);
   });
 
   test("no borders or box drawing in the transcript", () => {
