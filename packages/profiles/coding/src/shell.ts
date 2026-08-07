@@ -1,3 +1,6 @@
+import { delimiter, dirname } from "node:path";
+import { resolveRipgrepExecutable } from "./tools/search.ts";
+
 export interface ShellCommandOptions {
   platform?: NodeJS.Platform;
   interactive?: boolean;
@@ -28,6 +31,35 @@ export function shellCommand(command: string, options: ShellCommandOptions = {})
 
 export function windowsTaskkillCommand(pid: number): string[] {
   return ["taskkill.exe", "/PID", String(pid), "/T", "/F"];
+}
+
+let bundledToolDir: string | null | undefined;
+
+// Only the directory mu ships, never one already on PATH: `which` is stubbed
+// out so a system rg cannot make this reorder the user's own PATH.
+function defaultToolDir(): string | undefined {
+  if (bundledToolDir === undefined) {
+    const ripgrep = resolveRipgrepExecutable(undefined, undefined, () => null);
+    bundledToolDir = ripgrep ? dirname(ripgrep) : null;
+  }
+  return bundledToolDir ?? undefined;
+}
+
+// The prompt and the bash tool description both tell the model to reach for
+// rg, but mu's copy lives beside the binary rather than on PATH, so without
+// this every child shell would report "rg: command not found".
+export function shellEnv(
+  overrides: Record<string, string> = {},
+  toolDir: () => string | undefined = defaultToolDir,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env, ...overrides };
+  const dir = toolDir();
+  if (!dir) return env;
+  // Windows spells it Path; spreading process.env loses its case-insensitivity.
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  const current = env[key];
+  env[key] = current ? `${dir}${delimiter}${current}` : dir;
+  return env;
 }
 
 function fallbackKill(process: ProcessTreeTarget, signal: NodeJS.Signals): void {

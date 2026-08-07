@@ -1,7 +1,7 @@
 import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
-import { shellCommand, terminateProcessTree } from "../shell.ts";
+import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
 import { isInspectionShellCommand } from "../shell-inspection.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
@@ -72,6 +72,7 @@ async function defaultSpawn(
     // terminateProcessTree. Windows taskkill can walk descendants directly,
     // and this foreground command never needs to outlive mu.
     detached: process.platform !== "win32",
+    env: shellEnv(),
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",

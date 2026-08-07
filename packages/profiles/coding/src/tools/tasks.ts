@@ -9,7 +9,7 @@ import {
 } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
-import { shellCommand, terminateProcessTree } from "../shell.ts";
+import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
@@ -24,7 +24,7 @@ export function shellSpawner(root: string): Spawner {
         // walks descendants from the shell PID. Detached PowerShell processes
         // do not reliably retain their redirected stdio on Bun 1.3.14.
         detached: false,
-        env: process.env,
+        env: shellEnv(),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -86,7 +86,7 @@ export function shellSpawner(root: string): Spawner {
     const proc = Bun.spawn(shellCommand(command, { interactive: true }), {
       cwd: root,
       detached: true,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: shellEnv({ TERM: "xterm-256color" }),
       terminal: {
         cols,
         rows,
