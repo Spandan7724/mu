@@ -1,7 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join, relative } from "node:path";
 import { bashTool } from "@mu/profile-coding";
-import type { Origin } from "@mu/protocol";
+import { type Origin, PROTOCOL_VERSION } from "@mu/protocol";
 import { SessionHost } from "@mu/server";
 import {
   App,
@@ -49,6 +50,7 @@ import {
   type ToolRenderer,
   toCommand,
 } from "mu";
+import cliPackage from "../package.json";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel, saveDefaultModel } from "./config.ts";
@@ -70,11 +72,13 @@ import {
   sessionStoreForProfile,
 } from "./profiles.ts";
 import { resumePickerItems } from "./session-picker.ts";
+import { startSharing } from "./share.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 import { workspaceFromEnvironment } from "./workspace.ts";
 
 const SPINNER_INTERVAL_MS = 120;
+const MU_VERSION = cliPackage.version;
 
 // This terminal is the local surface; nothing it does is narrowed.
 const LOCAL: Origin = { kind: "local" };
@@ -1145,6 +1149,30 @@ export async function runInteractive(
   });
   agent.resize(terminal.columns, terminal.rows);
 
+  // Sharing is opt-in per instance: without the flag mu binds nothing and
+  // advertises nothing (ARCHITECTURE.md §8).
+  let sharing: Awaited<ReturnType<typeof startSharing>> | undefined;
+  if (args.share) {
+    try {
+      sharing = await startSharing(
+        {
+          host,
+          hostName: hostname(),
+          version: MU_VERSION,
+          protocol: PROTOCOL_VERSION,
+          ...(args.shareInterface ? { bindAddress: args.shareInterface } : {}),
+        },
+        {
+          stdout: (chunk) => commitLines(chunk.split("\n").filter((line) => line.length > 0)),
+          stderr: (chunk) => commitLines(chunk.split("\n").filter((line) => line.length > 0)),
+        },
+      );
+    } catch (error) {
+      commitLines([`  could not share: ${error instanceof Error ? error.message : String(error)}`]);
+    }
+    paint();
+  }
+
   const spinnerTimer = setInterval(() => {
     if (app.isRunning) {
       app.tickSpinner();
@@ -1193,6 +1221,7 @@ export async function runInteractive(
     if (escapeTimer) clearTimeout(escapeTimer);
     if (ctrlCHintTimer) clearTimeout(ctrlCHintTimer);
     shutdown();
+    await sharing?.stop().catch(() => {});
     // Let the aborted run unwind before the terminal is handed back, so it
     // cannot repaint over a restored screen.
     await Promise.all([activeRun?.catch(() => {}), activeShell?.catch(() => {})]);

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { watch } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { equal, fromBase64Url, generateKeyPair, random, toBase64Url } from "./noise/primitives.ts";
 
 export interface EnrolledDevice {
@@ -148,6 +149,48 @@ export class DeviceStore {
   // the connection path does.
   async flush(): Promise<void> {
     await this.pending;
+  }
+
+  // `mu devices revoke` runs in its own process; the socket lives in the mu
+  // instance serving the session. Watching the file is what makes revocation
+  // immediate rather than merely future-facing.
+  watch(onRevoked: (deviceIds: string[]) => void): () => void {
+    let watcher: ReturnType<typeof watch> | undefined;
+    let reloading = false;
+    const reload = async () => {
+      if (reloading) return;
+      reloading = true;
+      try {
+        await this.pending;
+        const before = new Set(this.require().devices.map((device) => device.id));
+        const raw = await readFile(this.path, "utf8");
+        const parsed = JSON.parse(raw) as DeviceFile;
+        if (parsed.version !== 1 || !parsed.hostPrivateKey) return;
+        this.file = { ...parsed, devices: parsed.devices ?? [] };
+        const after = new Set(this.file.devices.map((device) => device.id));
+        const gone = [...before].filter((id) => !after.has(id));
+        if (gone.length > 0) onRevoked(gone);
+      } catch {
+        // A torn read during another process's atomic rename is transient; the
+        // next event re-reads it. Never drop connections on a failed read.
+      } finally {
+        reloading = false;
+      }
+    };
+    try {
+      // The directory, not the file: every write here is an atomic rename, and
+      // a path watch follows the inode it started on, so it goes deaf after the
+      // first one.
+      const directory = join(this.path, "..");
+      const name = basename(this.path);
+      watcher = watch(directory, (_event, changed) => {
+        if (changed === null || changed === undefined || changed === name) void reload();
+      });
+    } catch {
+      // No watch available (or the directory vanished): revocation still
+      // applies to future connections, which is the pre-existing behaviour.
+    }
+    return () => watcher?.close();
   }
 
   async revoke(deviceId: string): Promise<EnrolledDevice | undefined> {

@@ -3,6 +3,27 @@ export type { ConnectionOptions } from "./connection.ts";
 export { Connection } from "./connection.ts";
 export type { DeviceStoreOptions, EnrolledDevice } from "./devices.ts";
 export { DeviceStore, PAIRING_TOKEN_TTL_MS } from "./devices.ts";
+export type { Endpoint, LadderInput } from "./ladder.ts";
+export { connectionLadder } from "./ladder.ts";
+export type {
+  Advertisement,
+  Advertiser,
+  Browser,
+  DiscoveredInstance,
+  MdnsOptions,
+} from "./mdns/service.ts";
+export {
+  advertise,
+  advertisementRecords,
+  browse,
+  instanceFrom,
+  MDNS_ADDRESS,
+  MDNS_PORT,
+  primaryAddress,
+  queryMessage,
+  responseMessage,
+  SERVICE_TYPE,
+} from "./mdns/service.ts";
 export { NoiseInitiator, NoiseResponder, PROTOCOL_NAME } from "./noise/handshake.ts";
 export type { KeyPair } from "./noise/primitives.ts";
 export {
@@ -28,6 +49,13 @@ export {
 } from "./permissions.ts";
 export type { PowerAssertionOptions, PowerAssertionSpawn } from "./power.ts";
 export { PowerAssertion, powerAssertionCommand } from "./power.ts";
+export type { RateLimitOptions } from "./rate-limit.ts";
+export {
+  DEFAULT_PER_SOURCE,
+  DEFAULT_PER_TOKEN,
+  DEFAULT_WINDOW_MS,
+  PreAuthLimiter,
+} from "./rate-limit.ts";
 export type { SeqEvent } from "./ring.ts";
 export { DEFAULT_RING_BYTES, DEFAULT_RING_ENTRIES, EventRing } from "./ring.ts";
 export type { PairingPayload, SealedChannelOptions } from "./sealed-channel.ts";

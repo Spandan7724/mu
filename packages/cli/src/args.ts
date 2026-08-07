@@ -1,5 +1,13 @@
 export interface ParsedArgs {
-  mode: "tui" | "headless" | "rpc" | "help" | "version" | "self-update" | "self-uninstall";
+  mode:
+    | "tui"
+    | "headless"
+    | "rpc"
+    | "help"
+    | "version"
+    | "self-update"
+    | "self-uninstall"
+    | "devices";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -11,6 +19,10 @@ export interface ParsedArgs {
   allowAll: boolean;
   noInstructions: boolean;
   purgeData: boolean;
+  share?: boolean;
+  shareInterface?: string | undefined;
+  devicesAction?: "list" | "revoke" | undefined;
+  deviceId?: string | undefined;
   errors: string[];
 }
 
@@ -32,6 +44,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     mode: "tui",
     json: false,
     allowAll: false,
+    share: false,
     noInstructions: false,
     purgeData: false,
     errors: [],
@@ -57,6 +70,32 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--rpc":
         parsed.mode = "rpc";
         break;
+      case "share":
+        parsed.share = true;
+        break;
+      case "--share":
+        parsed.share = true;
+        break;
+      case "--interface":
+        parsed.shareInterface = argv[++i];
+        if (!parsed.shareInterface) parsed.errors.push("--interface requires an address");
+        break;
+      case "devices": {
+        parsed.mode = "devices";
+        const sub = argv[i + 1];
+        if (sub === undefined || sub.startsWith("-")) {
+          parsed.devicesAction = "list";
+          break;
+        }
+        i++;
+        if (sub === "list") parsed.devicesAction = "list";
+        else if (sub === "revoke") {
+          parsed.devicesAction = "revoke";
+          parsed.deviceId = argv[++i];
+          if (!parsed.deviceId) parsed.errors.push("devices revoke requires a device id");
+        } else parsed.errors.push('devices expects "list" or "revoke <id>"');
+        break;
+      }
       case "self": {
         const sub = argv[++i];
         if (sub === "update") parsed.mode = "self-update";
@@ -118,6 +157,9 @@ Usage:
   mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
+  mu share                 share this session with a paired phone, printing a code
+  mu devices               list the phones paired with this machine
+  mu devices revoke <id>   remove one, dropping any connection it holds
   mu self update           update a global npm, Bun, or GitHub-release install
   mu self uninstall        remove a global npm, Bun, or GitHub-release install
 
@@ -132,6 +174,8 @@ Options:
       --permission-mode <mode>
                            default | accept-edits | plan-readonly | yolo
       --allow-all          alias for --permission-mode yolo
+      --share              share the session over the local network on startup
+      --interface <addr>   bind sharing to this address instead of the primary one
       --no-instructions    disable global and project instruction loading
       --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)
   -h, --help               show this help

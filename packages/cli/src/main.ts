@@ -14,6 +14,7 @@ import cliPackage from "../package.json";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { loadUserConfig, resolveCliModel } from "./config.ts";
+import { runDevices } from "./devices.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
@@ -95,6 +96,8 @@ async function main(): Promise<number> {
           },
           io,
         );
+      case "devices":
+        return runDevices(args, io);
       case "headless":
         return runHeadless(args, {}, io);
       case "rpc": {
