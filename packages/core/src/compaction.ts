@@ -7,6 +7,10 @@ import { isContextTooLongResult } from "./recovery.ts";
 // (over- rather than under-reporting) so the trigger fires before a hard fail.
 const CHARS_PER_TOKEN = 3.5;
 
+export function estimateTextTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
 export function estimateTokens(messages: AgentMessage[]): number {
   let chars = 0;
   for (const message of messages) {

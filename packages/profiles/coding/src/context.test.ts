@@ -383,4 +383,29 @@ describe("coding profile instruction integration", () => {
     expect(result && "message" in result ? result.message : "").toContain("instructions reloaded");
     expect(profile.instructions.snapshot.sources[0]?.content).toBe("two");
   });
+
+  test("status reports estimated tokens against the byte budget", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "AGENTS.md"), "x".repeat(3_500));
+    const loader = new InstructionLoader({ root, home: await scratch(), managedPaths: [] });
+    await loader.reload();
+    const status = loader.formatStatus();
+    expect(status).toContain("~1.0k tokens · 3.4 KiB/32.0 KiB budget");
+    expect(status).toContain("AGENTS.md · ~1.0k tokens");
+  });
+
+  test("a truncated snapshot points at the budget setting", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "AGENTS.md"), "x".repeat(3_500));
+    const loader = new InstructionLoader({
+      root,
+      home: await scratch(),
+      managedPaths: [],
+      maxBytes: 1_024,
+    });
+    await loader.reload();
+    const status = loader.formatStatus();
+    expect(status).toContain("· truncated");
+    expect(status).toContain("instructions.maxBytes");
+  });
 });

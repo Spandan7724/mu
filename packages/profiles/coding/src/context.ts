@@ -3,7 +3,7 @@ import { type Dirent, realpathSync } from "node:fs";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { type AgentMessage, customMessage } from "@mu/core";
+import { type AgentMessage, customMessage, estimateTextTokens } from "@mu/core";
 
 export const DEFAULT_INSTRUCTION_MAX_BYTES = 32 * 1024;
 export const DEFAULT_PROJECT_ROOT_MARKERS = [".git"];
@@ -355,6 +355,10 @@ function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KiB`;
 }
 
+function formatTokens(tokens: number): string {
+  return tokens < 1_000 ? `~${tokens} tokens` : `~${(tokens / 1_000).toFixed(1)}k tokens`;
+}
+
 export class InstructionLoader {
   readonly root: string;
   readonly home: string;
@@ -565,16 +569,22 @@ export class InstructionLoader {
         (sum, source) => sum + Buffer.byteLength(source.content),
         0,
       );
+    const tokens = sources.reduce((sum, source) => sum + estimateTextTokens(source.content), 0);
     const lines = [
-      `${prefix} · ${sources.length} file${sources.length === 1 ? "" : "s"} · ${formatBytes(
-        bytes,
-      )}/${formatBytes(this.current.maxBytes)}${truncated ? " · truncated" : ""}`,
+      `${prefix} · ${sources.length} file${sources.length === 1 ? "" : "s"} · ${formatTokens(
+        tokens,
+      )} · ${formatBytes(bytes)}/${formatBytes(this.current.maxBytes)} budget${
+        truncated ? " · truncated" : ""
+      }`,
       ...sources.map((source) => {
         const suffix = source.truncated ? " · truncated" : "";
-        return `  ${source.scope.padEnd(7)} ${renderSourcePath(source, this.current.projectRoot)}${suffix}`;
+        return `  ${source.scope.padEnd(7)} ${renderSourcePath(source, this.current.projectRoot)} · ${formatTokens(estimateTextTokens(source.content))}${suffix}`;
       }),
     ];
     if (sources.length === 0) lines.push("  no instruction files found");
+    if (truncated) {
+      lines.push("raise the budget with instructions.maxBytes in .mu/config.json");
+    }
     if (this.current.diagnostics.length > 0) {
       lines.push(
         "warnings:",
