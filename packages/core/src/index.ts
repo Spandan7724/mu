@@ -21,6 +21,7 @@ export {
   compactionSummaryMessage,
   contextState,
   DEFAULT_KEEP_RECENT_TOKENS,
+  estimateTextTokens,
   estimateTokens,
   formatCarryover,
   planCompaction,

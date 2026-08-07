@@ -197,6 +197,24 @@ describe("InstructionLoader imports and rules", () => {
     expect(loader.formatStatus()).toContain("packages/app/AGENTS.md");
   });
 
+  test("loads lazy instructions after eager content exceeds the former aggregate budget", async () => {
+    const root = await scratch();
+    const nested = join(root, "src");
+    const target = join(nested, "app.ts");
+    await mkdir(join(root, ".git"));
+    await mkdir(nested);
+    await writeFile(join(root, "AGENTS.md"), "x".repeat(20 * 1024));
+    const nestedContent = "y".repeat(20 * 1024);
+    await writeFile(join(nested, "AGENTS.md"), nestedContent);
+    await writeFile(target, "");
+
+    const loader = new InstructionLoader({ root, home: await scratch() });
+    expect((await loader.reload()).bytes).toBe(20 * 1024);
+    const loaded = await loader.instructionsForPath(target);
+    expect(loaded.text).toContain(nestedContent);
+    expect(loader.formatStatus()).toContain("40.0 KiB");
+  });
+
   test("serializes parallel nested discovery so one source is never attached twice", async () => {
     const root = await scratch();
     const nested = join(root, "src");
@@ -232,7 +250,7 @@ describe("InstructionLoader imports and rules", () => {
   });
 });
 
-describe("InstructionLoader refresh and limits", () => {
+describe("InstructionLoader refresh and settings", () => {
   test("does not duplicate unchanged snapshots and supersedes changed or deleted instructions", async () => {
     const root = await scratch();
     const path = join(root, "AGENTS.md");
@@ -254,20 +272,15 @@ describe("InstructionLoader refresh and limits", () => {
     expect(await textOf(deleted)).toContain("No instruction files are currently active");
   });
 
-  test("enforces a UTF-8 byte budget and reports truncation", async () => {
+  test("loads instruction files larger than the former byte budget in full", async () => {
     const root = await scratch();
     await mkdir(join(root, ".git"));
-    await writeFile(join(root, "AGENTS.md"), "abcdefghij");
-    const loader = new InstructionLoader({
-      root,
-      home: await scratch(),
-      maxBytes: 5,
-    });
+    const content = "x".repeat(40 * 1024);
+    await writeFile(join(root, "AGENTS.md"), content);
+    const loader = new InstructionLoader({ root, home: await scratch() });
     const snapshot = await loader.reload();
-    expect(snapshot.bytes).toBe(5);
-    expect(snapshot.sources[0]?.content).toBe("abcde");
-    expect(snapshot.truncated).toBe(true);
-    expect(loader.formatStatus()).toContain("truncated");
+    expect(snapshot.bytes).toBe(40 * 1024);
+    expect(snapshot.sources[0]?.content).toBe(content);
   });
 
   test("can be disabled completely", async () => {
@@ -291,12 +304,10 @@ describe("InstructionLoader refresh and limits", () => {
       home: await scratch(),
       enabled: "yes" as unknown as boolean,
       fallbackFilenames: ["/unsafe"] as string[],
-      maxBytes: -1,
     });
     const snapshot = await loader.reload();
     expect(snapshot.sources[0]?.content).toBe("active");
-    expect(snapshot.maxBytes).toBe(32 * 1024);
-    expect(snapshot.diagnostics.length).toBeGreaterThanOrEqual(3);
+    expect(snapshot.diagnostics.length).toBeGreaterThanOrEqual(2);
   });
 
   test("reports unreadable files instead of silently discarding them", async () => {
@@ -322,24 +333,30 @@ describe("coding profile instruction integration", () => {
     const home = await scratch();
     await mkdir(join(root, ".mu"), { recursive: true });
     await mkdir(join(home, ".mu"), { recursive: true });
-    await writeFile(join(root, "AGENTS.md"), "rules");
+    await writeFile(join(root, "AGENTS.md"), "@./shared.md\nrules");
+    await writeFile(join(root, "shared.md"), "shared");
     await writeFile(
       join(home, ".mu", "config.json"),
-      JSON.stringify({ instructions: { enabled: false, maxBytes: 3 } }),
+      JSON.stringify({ instructions: { enabled: false, imports: true } }),
     );
     await writeFile(
       join(root, ".mu", "config.json"),
-      JSON.stringify({ instructions: { enabled: true, maxBytes: 4 } }),
+      JSON.stringify({ instructions: { enabled: true, imports: false } }),
     );
 
     const configured = await codingProfile({ root, home });
-    expect(configured.instructions.snapshot.sources[0]?.content).toBe("rule");
+    expect(configured.instructions.snapshot.sources.map((source) => source.content)).toEqual([
+      "@./shared.md\nrules",
+    ]);
     const overridden = await codingProfile({
       root,
       home,
-      instructions: { maxBytes: 5 },
+      instructions: { imports: true },
     });
-    expect(overridden.instructions.snapshot.sources[0]?.content).toBe("rules");
+    expect(overridden.instructions.snapshot.sources.map((source) => source.content)).toEqual([
+      "shared",
+      "@./shared.md\nrules",
+    ]);
   });
 
   test("read attaches deeper instructions to model-visible output", async () => {
@@ -382,5 +399,17 @@ describe("coding profile instruction integration", () => {
     });
     expect(result && "message" in result ? result.message : "").toContain("instructions reloaded");
     expect(profile.instructions.snapshot.sources[0]?.content).toBe("two");
+  });
+
+  test("status reports estimated tokens and loaded bytes", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "AGENTS.md"), "x".repeat(3_500));
+    const loader = new InstructionLoader({ root, home: await scratch(), managedPaths: [] });
+    await loader.reload();
+    const status = loader.formatStatus();
+    // The total exceeds the per-file figure: it counts the snapshot framing too.
+    expect(status).toContain("~1.1k tokens · 3.4 KiB");
+    expect(status).toContain("AGENTS.md · ~1.0k tokens");
+    expect(status).not.toContain("budget");
   });
 });

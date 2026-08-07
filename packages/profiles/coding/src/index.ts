@@ -200,7 +200,6 @@ export {
   codingEnvironment,
   contextMessages,
   DEFAULT_INSTRUCTION_FALLBACKS,
-  DEFAULT_INSTRUCTION_MAX_BYTES,
   DEFAULT_PROJECT_ROOT_MARKERS,
   discoverContextFiles,
   environmentMessage,
