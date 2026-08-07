@@ -390,7 +390,8 @@ describe("coding profile instruction integration", () => {
     const loader = new InstructionLoader({ root, home: await scratch(), managedPaths: [] });
     await loader.reload();
     const status = loader.formatStatus();
-    expect(status).toContain("~1.0k tokens · 3.4 KiB/32.0 KiB budget");
+    // The total exceeds the per-file figure: it counts the snapshot framing too.
+    expect(status).toContain("~1.1k tokens · 3.4 KiB/32.0 KiB budget");
     expect(status).toContain("AGENTS.md · ~1.0k tokens");
   });
 

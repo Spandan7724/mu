@@ -3,7 +3,7 @@ import { type Dirent, realpathSync } from "node:fs";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { type AgentMessage, customMessage, estimateTextTokens } from "@mu/core";
+import { type AgentMessage, customMessage, estimateTextTokens, estimateTokens } from "@mu/core";
 
 export const DEFAULT_INSTRUCTION_MAX_BYTES = 32 * 1024;
 export const DEFAULT_PROJECT_ROOT_MARKERS = [".git"];
@@ -569,7 +569,14 @@ export class InstructionLoader {
         (sum, source) => sum + Buffer.byteLength(source.content),
         0,
       );
-    const tokens = sources.reduce((sum, source) => sum + estimateTextTokens(source.content), 0);
+    // The snapshot's real cost includes the preamble and per-source headers that
+    // wrap the file contents on the way into the transcript.
+    const tokens =
+      estimateTokens([snapshotMessage(this.current, false)]) +
+      [...this.nestedSources.values()].reduce(
+        (sum, source) => sum + estimateTextTokens(source.content),
+        0,
+      );
     const lines = [
       `${prefix} · ${sources.length} file${sources.length === 1 ? "" : "s"} · ${formatTokens(
         tokens,
