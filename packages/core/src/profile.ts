@@ -5,6 +5,7 @@ import type { AgentEvent } from "./events.ts";
 import type { ToolRenderer } from "./extensions.ts";
 import type { AgentMessage } from "./messages.ts";
 import type { PermissionRule } from "./permission.ts";
+import type { TaskInfo } from "./process.ts";
 import type { AnyTool } from "./tools.ts";
 
 // Which way a mode moves the gate relative to the profile's defaults. A profile
@@ -30,6 +31,9 @@ export interface ProfileRuntimeHost {
 // and owns their lifecycle without knowing which domain produced them.
 export interface ProfileRuntime {
   attach: (host: ProfileRuntimeHost) => void;
+  // Background work this runtime owns, enumerable without replaying events. A
+  // surface that attaches mid-session has no other way to learn it exists.
+  list?: () => TaskInfo[];
   resize?: (cols: number, rows: number) => void;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;

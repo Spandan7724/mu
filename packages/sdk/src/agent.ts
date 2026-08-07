@@ -39,6 +39,7 @@ import {
   MemorySessionStore,
   MICROCOMPACT_THRESHOLD,
   microcompact,
+  type PermissionMode,
   type PermissionRequest,
   type PermissionRule,
   type ProfileRuntime,
@@ -47,6 +48,7 @@ import {
   type SessionStore,
   SessionTree,
   shouldCompact,
+  type TaskInfo,
   type TurnInfo,
   type UserContent,
   userMessage,
@@ -104,6 +106,13 @@ export interface AgentOptions {
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
+  // Written into the session header. Neither is reconstructable once a session
+  // has been recorded without them, so profiles supply both up front.
+  profileName?: string;
+  environment?: Record<string, string>;
+  // Modes the surface may select between. The Agent records which one is
+  // active; applying a mode's rules stays with whoever owns mode selection.
+  permissionModes?: PermissionMode[];
 }
 
 export interface RunResult {
@@ -142,6 +151,40 @@ export interface AgentRunOptions<T = unknown> {
   output?: z.ZodType<T>;
   model?: string | ModelInfo;
   allowedTools?: string[];
+  // Recorded on the prompt message as UserMessage.source.
+  source?: string;
+}
+
+export interface QueuedInput {
+  kind: "steer" | "follow-up";
+  text: string;
+}
+
+// Everything a surface needs to render a session from cold, composed from the
+// accessors that already exist. A surface attaching mid-run has no other way to
+// learn what is pending.
+export interface AgentState {
+  sessionId: string;
+  profile: string;
+  environment: Record<string, string>;
+
+  model: string;
+  thinkingLevel: ThinkingLevel;
+  thinkingLevels: ThinkingLevel[];
+  permissionMode?: PermissionMode;
+  permissionModes: PermissionMode[];
+
+  running: boolean;
+  compacting: boolean;
+
+  usage: Usage;
+  contextTokens: number;
+  contextPercent: number;
+
+  messages: AgentMessage[];
+  pendingPermissions: PermissionRequest[];
+  queuedInputs: QueuedInput[];
+  tasks: TaskInfo[];
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -172,6 +215,14 @@ function lastText(messages: AgentMessage[]): string {
 
 function createSessionId(): string {
   return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
+function queuedText(message: AgentMessage): string {
+  if (message.role !== "user") return "";
+  return message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
 }
 
 export class Agent {
@@ -209,6 +260,8 @@ export class Agent {
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
   private permissionRules: PermissionRule[];
+  private activePermissionMode: PermissionMode | undefined;
+  private readonly pending = new Map<string, PermissionRequest>();
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -223,8 +276,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: this._sessionId,
       createdAt: new Date().toISOString(),
-      profile: "default",
-      environment: {},
+      profile: options.profileName ?? "default",
+      environment: options.environment ?? {},
     });
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
@@ -282,6 +335,65 @@ export class Agent {
 
   addPermissionRule(rule: PermissionRule): void {
     this.permissionRules.push(rule);
+  }
+
+  get permissionModes(): PermissionMode[] {
+    return [...(this.options.permissionModes ?? [])];
+  }
+
+  // Which mode the surface has selected. The Agent records it rather than
+  // interpreting it: modes are profile-defined presets of rules, and whoever
+  // owns mode selection owns layering them onto the base ruleset.
+  get permissionMode(): PermissionMode | undefined {
+    return this.activePermissionMode;
+  }
+
+  setPermissionMode(mode: PermissionMode | undefined): void {
+    this.activePermissionMode = mode;
+  }
+
+  // Asks still waiting on an answer. Held here rather than in a surface so a
+  // client that attaches mid-ask can still see and answer it.
+  get pendingPermissions(): PermissionRequest[] {
+    return [...this.pending.values()];
+  }
+
+  // Text waiting in an agent queue, oldest first. Steering is delivered before
+  // the next model call; follow-ups wake a run that would otherwise stop.
+  get queuedInputs(): QueuedInput[] {
+    return [
+      ...this.steering.map((message) => ({ kind: "steer" as const, text: queuedText(message) })),
+      ...this.followUps.map((message) => ({
+        kind: "follow-up" as const,
+        text: queuedText(message),
+      })),
+    ];
+  }
+
+  get tasks(): TaskInfo[] {
+    return this.options.runtime?.list?.() ?? [];
+  }
+
+  state(): AgentState {
+    return {
+      sessionId: this._sessionId,
+      profile: this.tree.header?.profile ?? this.options.profileName ?? "default",
+      environment: this.tree.header?.environment ?? {},
+      model: this.modelRef,
+      thinkingLevel: this.currentThinking,
+      thinkingLevels: this.thinkingLevels,
+      ...(this.activePermissionMode ? { permissionMode: this.activePermissionMode } : {}),
+      permissionModes: this.permissionModes,
+      running: this.running,
+      compacting: this.compacting,
+      usage: this.totals,
+      contextTokens: this.contextTokens,
+      contextPercent: this.contextPercent,
+      messages: this.tree.messagesAt(),
+      pendingPermissions: this.pendingPermissions,
+      queuedInputs: this.queuedInputs,
+      tasks: this.tasks,
+    };
   }
 
   // Switching model also switches provider — they travel together.
@@ -393,8 +505,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: sessionId,
       createdAt: new Date().toISOString(),
-      profile: "default",
-      environment: {},
+      profile: this.options.profileName ?? "default",
+      environment: this.options.environment ?? {},
     });
     this.tree.append({
       type: "settings-change",
@@ -421,14 +533,14 @@ export class Agent {
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
-  send(message: string): void {
-    this.steering.push(userMessage(message));
+  send(message: string, source?: string): void {
+    this.steering.push(userMessage(message, source));
   }
 
   // Wake a run that would otherwise stop (also how background work resumes it).
-  followUp(message: string): void {
+  followUp(message: string, source?: string): void {
     if (this.stopping) return;
-    this.followUps.push(userMessage(message));
+    this.followUps.push(userMessage(message, source));
     if (!this.running) this.scheduleAutonomousRun();
   }
 
@@ -1330,8 +1442,13 @@ export class Agent {
 
     const promptMessage: AgentMessage =
       typeof effectivePrompt === "string"
-        ? userMessage(effectivePrompt)
-        : { role: "user", content: effectivePrompt, timestamp: Date.now() };
+        ? userMessage(effectivePrompt, opts?.source)
+        : {
+            role: "user",
+            content: effectivePrompt,
+            timestamp: Date.now(),
+            ...(opts?.source ? { source: opts.source } : {}),
+          };
 
     let captured: T | undefined;
     let tools: AnyTool[] = [
@@ -1497,11 +1614,15 @@ export class Agent {
           description: details?.description ?? `Run ${info.toolCall.name}`,
           ...(details?.preview ? { preview: details.preview } : {}),
         };
+        this.pending.set(request.id, request);
         emit({ type: "permission_asked", request });
         // Default DENY: never hang an unattended process on an unanswered ask.
-        const outcome = this.options.onPermission
-          ? await this.options.onPermission(request)
-          : "deny";
+        let outcome: "allow" | "deny";
+        try {
+          outcome = this.options.onPermission ? await this.options.onPermission(request) : "deny";
+        } finally {
+          this.pending.delete(request.id);
+        }
         emit({ type: "permission_resolved", requestId: request.id, outcome });
         if (outcome === "allow") {
           return rewritten;

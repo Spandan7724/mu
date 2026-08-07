@@ -351,6 +351,7 @@ export async function runInteractive(
         pendingPermissions.set(request.id, { request, resolve }),
       ),
   });
+  agent.setPermissionMode(activePermissionMode);
   let sessionResumable = false;
   try {
     sessionResumable = await initializeInteractiveSession(agent, args.resumeSessionId);
@@ -448,6 +449,7 @@ export async function runInteractive(
         return true;
       },
       onEditQueued: (kind, text) => agent.removeQueuedMessage(kind, text),
+      onQueuedInputs: () => agent.queuedInputs,
       onShell: (command) => beginUserShell(command),
       onAbort: () => {
         if (shellController) shellController.abort();
@@ -792,6 +794,7 @@ export async function runInteractive(
 
   function applyPermissionMode(mode: PermissionMode): void {
     agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
+    agent.setPermissionMode(mode);
     activePermissionMode = mode;
     commitLines([formatPermissionMode(mode, depth)]);
     paint();

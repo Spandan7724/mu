@@ -11,10 +11,16 @@ export async function optionsFromProfile(
   overrides: AgentOptions = {},
 ): Promise<AgentOptions> {
   const contextMessages: AgentMessage[] = (await profile.contextMessages?.()) ?? [];
+  // Resolved here rather than inside the Agent: it lands in the session header
+  // at construction, and a session written without it can never gain it.
+  const environment = overrides.environment ?? (await profile.environment?.()) ?? {};
 
   return {
     ...overrides,
     model: overrides.model ?? modelRef,
+    profileName: overrides.profileName ?? profile.name,
+    environment,
+    ...(profile.permissionModes ? { permissionModes: profile.permissionModes } : {}),
     systemPrompt: overrides.systemPrompt ?? profile.promptFor(modelRef),
     tools: [...profile.toolset, ...(overrides.tools ?? [])],
     // Profile defaults come first so per-run rules override them (last match wins).

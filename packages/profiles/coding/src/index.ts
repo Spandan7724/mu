@@ -126,6 +126,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
         },
       });
     },
+    list: () => processes.list(),
     resize: (cols, rows) => processes.resizeAll(cols, rows),
     stop: () => processes.stopAll(),
     shutdown: () => processes.killAll(),

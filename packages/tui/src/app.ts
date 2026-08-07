@@ -54,6 +54,9 @@ export interface AppCallbacks {
   onSteer?: (text: string) => boolean;
   onFollowUp?: (text: string) => boolean;
   onEditQueued?: (kind: QueuedInputKind, text: string) => boolean;
+  // Reads back the queue the surface owns. Without it the App mirrors what it
+  // submitted, which is invisible to anything else driving the same session.
+  onQueuedInputs?: () => PendingInput[];
   // Explicit user shell escape. The leading `!` stays in editor history, but
   // only the command text is passed to the surface.
   onShell?: (command: string) => void;
@@ -89,7 +92,7 @@ interface LiveTask {
   partial: string;
 }
 
-interface PendingInput {
+export interface PendingInput {
   kind: QueuedInputKind;
   text: string;
 }
@@ -450,6 +453,10 @@ export class App {
             .map((block) => block.text)
             .join("");
           if (!text) return [];
+          if (this.options.callbacks.onQueuedInputs) {
+            this.pushTranscript({ kind: "user", text });
+            return [...userCell(text, this.ctx), ""];
+          }
           const pendingIndex = this.pendingInputs.findIndex(
             (pending) => pending.kind === "steer" && pending.text === text,
           );
@@ -669,6 +676,11 @@ export class App {
     this.spinner.tick();
   }
 
+  // The queue as the owner sees it, falling back to the local mirror.
+  private get queuedInputs(): PendingInput[] {
+    return this.options.callbacks.onQueuedInputs?.() ?? this.pendingInputs;
+  }
+
   appendTranscript(lines: string[]): void {
     if (lines.length > 0) this.pushTranscript({ kind: "lines", lines: [...lines] });
   }
@@ -825,8 +837,9 @@ export class App {
 
     lines.push(composerRule(width, depth));
 
-    const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
-    const hiddenPending = this.pendingInputs.length - visiblePending.length;
+    const queued = this.queuedInputs;
+    const visiblePending = queued.slice(-PENDING_INPUT_ROWS);
+    const hiddenPending = queued.length - visiblePending.length;
     if (hiddenPending > 0) {
       lines.push(
         MARGIN +
@@ -1145,7 +1158,7 @@ export class App {
             : this.running && this.options.callbacks.onSteer
               ? this.options.callbacks.onSteer(text)
               : this.options.callbacks.onSubmit(text);
-          if (this.running && accepted !== false) {
+          if (this.running && accepted !== false && !this.options.callbacks.onQueuedInputs) {
             this.pendingInputs.push({ kind: queueDuringCompaction ? "follow-up" : "steer", text });
           }
         }
@@ -1155,14 +1168,17 @@ export class App {
         if (!this.running || !this.options.callbacks.onFollowUp) return;
         const text = this.editor.submit();
         if (text.trim().length === 0) return;
-        if (this.options.callbacks.onFollowUp(text) !== false) {
+        if (
+          this.options.callbacks.onFollowUp(text) !== false &&
+          !this.options.callbacks.onQueuedInputs
+        ) {
           this.pendingInputs.push({ kind: "follow-up", text });
         }
         return;
       }
       case "up": {
         if (key.alt) {
-          const pending = this.pendingInputs.at(-1);
+          const pending = this.queuedInputs.at(-1);
           if (
             !pending ||
             !this.options.callbacks.onEditQueued ||
@@ -1170,7 +1186,7 @@ export class App {
           ) {
             return;
           }
-          this.pendingInputs.pop();
+          if (!this.options.callbacks.onQueuedInputs) this.pendingInputs.pop();
           const draft = this.editor.text;
           this.editor.setText(
             [pending.text, draft].filter((part) => part.trim().length > 0).join("\n\n"),

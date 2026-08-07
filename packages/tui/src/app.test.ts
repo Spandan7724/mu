@@ -490,6 +490,41 @@ describe("input handling", () => {
     );
   });
 
+  test("a host-owned queue is displayed and edited in place of the local mirror", () => {
+    const owned: { kind: "steer" | "follow-up"; text: string }[] = [];
+    const h = harness({
+      onQueuedInputs: () => owned,
+      onSteer: (text) => {
+        owned.push({ kind: "steer", text });
+        return true;
+      },
+      onEditQueued: (kind, text) => {
+        const index = owned.findIndex((item) => item.kind === kind && item.text === text);
+        if (index === -1) return false;
+        owned.splice(index, 1);
+        return true;
+      },
+    });
+    h.app.handleEvent({ type: "agent_start" });
+    feed(h.app, "queued elsewhere\r");
+
+    expect(owned).toEqual([{ kind: "steer", text: "queued elsewhere" }]);
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("▸ steer · queued elsewhere");
+
+    // Another client withdraws it; the row goes with no event from the agent.
+    owned.length = 0;
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("queued elsewhere");
+
+    // And input queued by another client shows up here unprompted.
+    owned.push({ kind: "follow-up", text: "from the phone" });
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain(
+      "▸ follow-up · from the phone · alt+up edit",
+    );
+    feed(h.app, `${ESC}[1;3A`);
+    expect(owned).toEqual([]);
+    expect(h.app.editor.text).toBe("from the phone");
+  });
+
   test("rejected follow-ups are not displayed as queued", () => {
     const h = harness({ onFollowUp: () => false });
     h.app.handleEvent({ type: "agent_start" });

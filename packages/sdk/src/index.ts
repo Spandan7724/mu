@@ -62,10 +62,12 @@ export {
 export type {
   AgentOptions,
   AgentRunOptions,
+  AgentState,
   CheckpointActionData,
   CheckpointActionResult,
   HaltReason,
   ManualCompactionResult,
+  QueuedInput,
   RunResult,
 } from "./agent.ts";
 export { Agent } from "./agent.ts";

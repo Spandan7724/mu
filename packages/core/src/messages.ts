@@ -1,10 +1,10 @@
 import type {
   AiMessage,
+  UserMessage as AiUserMessage,
   AssistantMessage,
   ImageContent,
   TextContent,
   ToolResultMessage,
-  UserMessage,
 } from "@mu/ai";
 
 export type {
@@ -19,8 +19,15 @@ export type {
   ToolResultMessage,
   Usage,
   UserContent,
-  UserMessage,
 } from "@mu/ai";
+
+// Provenance travels in the transcript, not to the provider: `source` names the
+// surface that produced the message when it was not the one running the loop.
+// Absent means the local surface. It is written into session storage, so it can
+// never be reconstructed for a message recorded without it.
+export interface UserMessage extends AiUserMessage {
+  source?: string;
+}
 
 // Typed injected context. Per-turn dynamic information enters the transcript as
 // one of these — NEVER as a system-prompt edit (prompt-cache hygiene).
@@ -59,8 +66,13 @@ export function toAiMessages(messages: AgentMessage[]): AiMessage[] {
   );
 }
 
-export function userMessage(text: string): UserMessage {
-  return { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
+export function userMessage(text: string, source?: string): UserMessage {
+  return {
+    role: "user",
+    content: [{ type: "text", text }],
+    timestamp: Date.now(),
+    ...(source ? { source } : {}),
+  };
 }
 
 export function customMessage(customType: string, text: string, display = false): CustomMessage {
