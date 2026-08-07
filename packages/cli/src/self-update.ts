@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmod, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -15,11 +15,24 @@ export type UpdatePackageManager = "npm" | "bun" | "native";
 // replace in place.
 export type NativeReleaseTarget = "linux-x64" | "darwin-arm64" | "windows-x64";
 
+// The release archive, not the bare binary: ~2.6x fewer bytes over the wire
+// (GitHub serves release assets uncompressed) and it keeps the pinned ripgrep
+// sidecar in step with the binary it shipped with.
 const NATIVE_ASSET_NAME: Record<NativeReleaseTarget, string> = {
-  "linux-x64": "mu-linux-x64",
-  "darwin-arm64": "mu-darwin-arm64",
-  "windows-x64": "mu-windows-x64.exe",
+  "linux-x64": "mu-linux-x64.tar.gz",
+  "darwin-arm64": "mu-darwin-arm64.tar.gz",
+  "windows-x64": "mu-windows-x64.zip",
 };
+
+const NATIVE_BINARY_NAME: Record<NativeReleaseTarget, string> = {
+  "linux-x64": "mu",
+  "darwin-arm64": "mu",
+  "windows-x64": "mu.exe",
+};
+
+// Archive members under mu-<target>/ that install.sh and install.ps1 unpack
+// alongside the executable. Everything else in ~/.mu is user state.
+const OWNED_ENTRIES = ["mu-path", "licenses", "mu-package.json"];
 
 export interface SelfUpdateIo {
   stdout: (chunk: string) => void;
@@ -46,7 +59,9 @@ export interface SelfUpdateOptions extends InstallationDetectionOptions {
   repo?: string | undefined;
   fetch?: typeof fetch | undefined;
   runCommand?: ((command: string[]) => Promise<number>) | undefined;
-  installNative?: ((execPath: string, bytes: Uint8Array) => Promise<void>) | undefined;
+  installNative?:
+    | ((execPath: string, bytes: Uint8Array, target: NativeReleaseTarget) => Promise<void>)
+    | undefined;
 }
 
 interface ParsedSemver {
@@ -288,22 +303,77 @@ export async function installByRenamingAside(execPath: string, tempPath: string)
   await rm(oldPath, { force: true }).catch(() => {});
 }
 
-// Same-directory temp file, then either an atomic rename directly over the
-// executing binary (POSIX permits unlinking/renaming an open file; the
-// running process keeps its old inode until it exits) or, on Windows, the
-// rename-aside dance above.
-async function defaultInstallNative(execPath: string, bytes: Uint8Array): Promise<void> {
-  const tempPath = join(dirname(execPath), `.mu-update-${process.pid}.tmp`);
+// tar handles both formats mu publishes: GNU tar reads the .tar.gz, and the
+// bsdtar shipped in Windows since 10 1803 reads the .zip. Extraction is a
+// subprocess rather than an in-process reader because neither Bun nor Node
+// exposes a tar/zip decoder.
+async function extractArchive(archivePath: string, destination: string): Promise<void> {
+  const child = Bun.spawn(["tar", "-xf", archivePath, "-C", destination], {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+  if (code !== 0) {
+    const detail = stderr.trim() || `tar exited with status ${code}`;
+    throw new Error(`could not extract the release archive: ${detail}`);
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
   try {
-    await writeFile(tempPath, bytes, { mode: 0o755 });
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Unpacks the archive beside the install, then swaps the pieces into place:
+// sidecars first, so a failure part-way leaves the previous — still working —
+// executable running, and the binary last via either an atomic rename over
+// the executing file (POSIX permits renaming an open file; the running
+// process keeps its old inode until it exits) or the Windows rename-aside
+// dance above.
+export async function installNativeArchive(
+  execPath: string,
+  bytes: Uint8Array,
+  target: NativeReleaseTarget,
+): Promise<void> {
+  // install.sh / install.ps1 lay out <root>/bin/mu next to <root>/mu-path/rg.
+  const root = dirname(dirname(execPath));
+  const staging = join(root, `.mu-update-${process.pid}`);
+  const archivePath = join(staging, NATIVE_ASSET_NAME[target]);
+  const extractDir = join(staging, "extract");
+  try {
+    await mkdir(extractDir, { recursive: true });
+    await writeFile(archivePath, bytes);
+    await extractArchive(archivePath, extractDir);
+
+    const staged = join(extractDir, `mu-${target}`);
+    const stagedBinary = join(staged, "bin", NATIVE_BINARY_NAME[target]);
+    if (!(await pathExists(stagedBinary))) {
+      throw new Error(
+        `${NATIVE_ASSET_NAME[target]} did not contain bin/${NATIVE_BINARY_NAME[target]}`,
+      );
+    }
+
+    for (const entry of OWNED_ENTRIES) {
+      const source = join(staged, entry);
+      if (!(await pathExists(source))) continue;
+      const destination = join(root, entry);
+      await rm(destination, { recursive: true, force: true });
+      await rename(source, destination);
+    }
+
     if (process.platform === "win32") {
-      await installByRenamingAside(execPath, tempPath);
+      await installByRenamingAside(execPath, stagedBinary);
     } else {
-      await chmod(tempPath, 0o755);
-      await rename(tempPath, execPath);
+      await chmod(stagedBinary, 0o755);
+      await rename(stagedBinary, execPath);
     }
   } finally {
-    await rm(tempPath, { force: true });
+    await rm(staging, { recursive: true, force: true });
   }
 }
 
@@ -409,7 +479,7 @@ export async function runSelfUpdate(options: SelfUpdateOptions, io: SelfUpdateIo
       if (actual !== expected) {
         throw new Error(`downloaded ${assetName} failed its published SHA-256 check`);
       }
-      await (options.installNative ?? defaultInstallNative)(execPath, bytes);
+      await (options.installNative ?? installNativeArchive)(execPath, bytes, target);
       io.stdout(`Updated mu to ${latest}. Restart mu to use the new version.\n`);
       return 0;
     }
@@ -449,6 +519,12 @@ export interface SelfUninstallOptions extends InstallationDetectionOptions {
 async function defaultRemoveNativeInstall(execPath: string): Promise<void> {
   await rm(execPath, { force: true });
   await rm(join(dirname(execPath), NATIVE_RECEIPT_FILENAME), { force: true });
+  // The rest of what the release archive unpacked; user state under ~/.mu is
+  // left for the caller's --purge handling.
+  const root = dirname(dirname(execPath));
+  for (const entry of OWNED_ENTRIES) {
+    await rm(join(root, entry), { recursive: true, force: true });
+  }
 }
 
 // install.ps1 adds the install dir to the user's PATH by editing the

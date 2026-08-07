@@ -44,10 +44,11 @@ Expand-Archive .\mu-windows-x64.zip
 .\mu-windows-x64\bin\mu.exe --help
 ```
 
-Native packages and npm installs include a pinned, checksum-verified ripgrep sidecar for
-fast search. npm uses an OS/CPU-specific optional package, with no postinstall download.
-The bare single-file binaries — including the `install.sh` download — use `rg` from
-`PATH` or mu's built-in fallback instead.
+Every install route above includes a pinned, checksum-verified ripgrep sidecar for fast
+search: the scripts and the packaged native releases unpack it next to the binary, and
+npm uses an OS/CPU-specific optional package with no postinstall download. Only the bare
+single-file binaries from the releases page lack it, falling back to `rg` from `PATH` or
+mu's built-in search.
 
 Install the same package locally to use the TypeScript SDK:
 

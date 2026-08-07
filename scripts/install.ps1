@@ -1,16 +1,25 @@
 # Installs mu directly from GitHub Releases -- no npm, no Bun. Downloads
-# mu-windows-x64.exe, verifies it against the release's published SHA256SUMS,
-# and installs it to $env:USERPROFILE\.mu\bin\mu.exe.
+# mu-windows-x64.zip, verifies it against the release's published SHA256SUMS,
+# and unpacks it into $env:USERPROFILE\.mu (executable at .mu\bin\mu.exe).
+#
+# The archive rather than the bare .exe: it is ~2.6x smaller over the wire
+# (GitHub serves release assets uncompressed) and it carries the pinned
+# ripgrep sidecar mu looks for at ..\mu-path\rg.exe relative to its own path.
 #
 # Usage: irm https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
 $Repo = "Spandan7724/mu"
-$InstallDir = Join-Path $env:USERPROFILE ".mu\bin"
+$MuRoot = Join-Path $env:USERPROFILE ".mu"
+$InstallDir = Join-Path $MuRoot "bin"
 $BinName = "mu.exe"
 $ReceiptName = ".mu-install.json"
-$Asset = "mu-windows-x64.exe"
+$Target = "windows-x64"
+$Asset = "mu-windows-x64.zip"
+# Paths inside .mu that the archive owns and may replace wholesale. Anything
+# else there is user state (config, credentials, sessions) and is left alone.
+$OwnedEntries = @("mu-path", "licenses", "mu-package.json")
 
 function Die($Message) {
     # Not `exit` -- when this script runs via the documented `irm | iex`
@@ -51,11 +60,16 @@ if ($null -eq $finalUri) {
 $tag = $finalUri.Segments[-1].TrimEnd("/")
 $version = $tag -replace "^v", ""
 
-Write-Host "Installing mu $version (windows-x64)..."
+Write-Host "Installing mu $version ($Target)..."
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-$tempSums = Join-Path $InstallDir "SHA256SUMS.$PID.tmp"
-$tempExe = Join-Path $InstallDir "$BinName.$PID.tmp"
+
+# Staged inside .mu so the final moves are same-volume renames.
+$staging = Join-Path $MuRoot ".install.$PID"
+New-Item -ItemType Directory -Force -Path $staging | Out-Null
+$tempSums = Join-Path $staging "SHA256SUMS"
+$archivePath = Join-Path $staging $Asset
+$extractDir = Join-Path $staging "extract"
 
 try {
     try {
@@ -71,24 +85,46 @@ try {
     $expected = ($sumsLine.Line -split "\s+")[0].ToLowerInvariant()
 
     try {
-        Invoke-WebRequest -Uri "https://github.com/$Repo/releases/download/$tag/$Asset" -OutFile $tempExe -UseBasicParsing
+        Invoke-WebRequest -Uri "https://github.com/$Repo/releases/download/$tag/$Asset" -OutFile $archivePath -UseBasicParsing
     } catch {
         Die "could not download $Asset"
     }
 
-    $actual = (Get-FileHash -Path $tempExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
         Die "checksum mismatch for ${Asset}: expected $expected, got $actual"
     }
 
-    $destination = Join-Path $InstallDir $BinName
-    Move-Item -Path $tempExe -Destination $destination -Force
+    # ZipFile rather than Expand-Archive: same result, markedly faster on a
+    # ~38 MB archive, and present on both Windows PowerShell 5.1 and 7.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
+    } catch {
+        Die "could not extract ${Asset}: $($_.Exception.Message)"
+    }
+
+    $staged = Join-Path $extractDir "mu-$Target"
+    $stagedBinary = Join-Path $staged "bin\$BinName"
+    if (-not (Test-Path -Path $stagedBinary -PathType Leaf)) {
+        Die "$Asset did not contain mu-$Target\bin\$BinName"
+    }
+
+    foreach ($entry in $OwnedEntries) {
+        $source = Join-Path $staged $entry
+        if (Test-Path -Path $source) {
+            $destination = Join-Path $MuRoot $entry
+            Remove-Item -Path $destination -Recurse -Force -ErrorAction SilentlyContinue
+            Move-Item -Path $source -Destination $destination -Force
+        }
+    }
+
+    Move-Item -Path $stagedBinary -Destination (Join-Path $InstallDir $BinName) -Force
 
     $receiptPath = Join-Path $InstallDir $ReceiptName
-    [System.IO.File]::WriteAllText($receiptPath, '{"method":"github-release","target":"windows-x64"}')
+    [System.IO.File]::WriteAllText($receiptPath, "{`"method`":`"github-release`",`"target`":`"$Target`"}")
 } finally {
-    Remove-Item -Path $tempSums -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path $tempExe -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $staging -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host "Installed mu $version to $(Join-Path $InstallDir $BinName)"

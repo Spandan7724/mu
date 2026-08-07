@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   compareSemver,
   installByRenamingAside,
+  installNativeArchive,
   npmPrefixFromInstallPath,
   packageManagerFromInstallPaths,
   runSelfUninstall,
@@ -246,7 +248,7 @@ describe("native GitHub-release installs", () => {
 
   test("downloads, verifies, and installs over the running binary", async () => {
     const assetBytes = new TextEncoder().encode("fake binary contents");
-    const sums = `${sha256Hex(assetBytes)}  mu-linux-x64\n`;
+    const sums = `${sha256Hex(assetBytes)}  mu-linux-x64.tar.gz\n`;
     const installed: { execPath: string; bytes: Uint8Array }[] = [];
     const sink = output();
 
@@ -271,7 +273,8 @@ describe("native GitHub-release installs", () => {
 
   test("refuses to install when the downloaded asset fails its checksum", async () => {
     const assetBytes = new TextEncoder().encode("fake binary contents");
-    const sums = "0000000000000000000000000000000000000000000000000000000000000000  mu-linux-x64\n";
+    const sums =
+      "0000000000000000000000000000000000000000000000000000000000000000  mu-linux-x64.tar.gz\n";
     let installCalled = false;
     const sink = output();
 
@@ -381,9 +384,9 @@ describe("native GitHub-release installs", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("recognizes a windows-x64 receipt and fetches the .exe asset", async () => {
-    const assetBytes = new TextEncoder().encode("fake exe contents");
-    const sums = `${sha256Hex(assetBytes)}  mu-windows-x64.exe\n`;
+  test("recognizes a windows-x64 receipt and fetches the .zip asset", async () => {
+    const assetBytes = new TextEncoder().encode("fake zip contents");
+    const sums = `${sha256Hex(assetBytes)}  mu-windows-x64.zip\n`;
     const installed: { execPath: string; bytes: Uint8Array }[] = [];
     const sink = output();
 
@@ -672,6 +675,118 @@ describe("installByRenamingAside", () => {
       await installByRenamingAside(execPath, tempPath);
 
       expect(await readFile(execPath, "utf8")).toBe("new contents");
+    });
+  });
+});
+
+// The .zip half of this runs only on Windows (bsdtar), which CI does not run
+// `bun test` on; the layout logic either path drives is the same.
+describe.if(process.platform !== "win32")("installNativeArchive", () => {
+  async function withInstall<T>(run: (root: string, execPath: string) => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "mu-archive-install-"));
+    const root = join(dir, ".mu");
+    await mkdir(join(root, "bin"), { recursive: true });
+    try {
+      return await run(root, join(root, "bin", "mu"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  // A stand-in for mu-<target>.tar.gz with the layout packageRelease produces.
+  async function releaseArchive(target: string, binary: string): Promise<Uint8Array> {
+    const dir = await mkdtemp(join(tmpdir(), "mu-archive-build-"));
+    const packageDir = join(dir, `mu-${target}`);
+    try {
+      await mkdir(join(packageDir, "bin"), { recursive: true });
+      await mkdir(join(packageDir, "mu-path"), { recursive: true });
+      await mkdir(join(packageDir, "licenses", "ripgrep"), { recursive: true });
+      await writeFile(join(packageDir, "bin", "mu"), binary);
+      await writeFile(join(packageDir, "mu-path", "rg"), "new rg", { mode: 0o755 });
+      await writeFile(join(packageDir, "licenses", "ripgrep", "UNLICENSE"), "unlicense");
+      await writeFile(join(packageDir, "mu-package.json"), '{"layoutVersion":1}');
+      const archive = join(dir, "release.tar.gz");
+      const child = Bun.spawn(["tar", "-czf", archive, "-C", dir, `mu-${target}`], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      if ((await child.exited) !== 0) throw new Error("could not build the test archive");
+      return new Uint8Array(await readFile(archive));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("replaces the binary and its sidecars, leaving user state alone", async () => {
+    await withInstall(async (root, execPath) => {
+      await writeFile(execPath, "old binary");
+      await mkdir(join(root, "mu-path"), { recursive: true });
+      await writeFile(join(root, "mu-path", "rg"), "old rg");
+      await writeFile(join(root, "mu-path", "dropped-in-a-past-release"), "stale");
+      await writeFile(join(root, "config.json"), '{"model":"opus"}');
+      await mkdir(join(root, "sessions"), { recursive: true });
+      await writeFile(join(root, "sessions", "s1.jsonl"), "session data");
+
+      await installNativeArchive(
+        execPath,
+        await releaseArchive("linux-x64", "new binary"),
+        "linux-x64",
+      );
+
+      expect(await readFile(execPath, "utf8")).toBe("new binary");
+      expect(await readFile(join(root, "mu-path", "rg"), "utf8")).toBe("new rg");
+      // mu-path is replaced wholesale, so files a past release left are gone.
+      await expect(
+        readFile(join(root, "mu-path", "dropped-in-a-past-release"), "utf8"),
+      ).rejects.toThrow();
+      expect(await readFile(join(root, "mu-package.json"), "utf8")).toBe('{"layoutVersion":1}');
+      expect(await readFile(join(root, "config.json"), "utf8")).toBe('{"model":"opus"}');
+      expect(await readFile(join(root, "sessions", "s1.jsonl"), "utf8")).toBe("session data");
+    });
+  });
+
+  test("leaves the installed binary executable", async () => {
+    await withInstall(async (_root, execPath) => {
+      await writeFile(execPath, "old binary");
+      await installNativeArchive(
+        execPath,
+        await releaseArchive("linux-x64", "new binary"),
+        "linux-x64",
+      );
+      await access(execPath, constants.X_OK);
+    });
+  });
+
+  test("removes its staging directory on success and on failure", async () => {
+    await withInstall(async (root, execPath) => {
+      await writeFile(execPath, "old binary");
+      await installNativeArchive(
+        execPath,
+        await releaseArchive("linux-x64", "new binary"),
+        "linux-x64",
+      );
+      expect((await readdir(root)).filter((n) => n.startsWith(".mu-update-"))).toEqual([]);
+
+      await expect(
+        installNativeArchive(execPath, new TextEncoder().encode("not an archive"), "linux-x64"),
+      ).rejects.toThrow();
+      expect((await readdir(root)).filter((n) => n.startsWith(".mu-update-"))).toEqual([]);
+      // A failed extraction must not disturb the working install.
+      expect(await readFile(execPath, "utf8")).toBe("new binary");
+    });
+  });
+
+  test("refuses an archive whose payload directory is missing the binary", async () => {
+    await withInstall(async (_root, execPath) => {
+      await writeFile(execPath, "old binary");
+      await expect(
+        installNativeArchive(
+          execPath,
+          await releaseArchive("darwin-arm64", "wrong target"),
+          "linux-x64",
+        ),
+      ).rejects.toThrow("did not contain bin/mu");
+      expect(await readFile(execPath, "utf8")).toBe("old binary");
     });
   });
 });
