@@ -477,7 +477,6 @@ const DEFAULT_MODEL_IDS: Readonly<Record<string, string>> = {
   google: "gemini-2.5-pro",
   "github-copilot": "gpt-5.3-codex",
   "kimi-coding": "kimi-for-coding",
-  openrouter: "auto",
   xai: "grok-4.3",
 };
 

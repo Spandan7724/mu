@@ -366,7 +366,6 @@ describe("interactive model catalog", () => {
       "openai-codex": "gpt-5.6-sol",
       "github-copilot": "gpt-5.3-codex",
       "kimi-coding": "kimi-for-coding",
-      openrouter: "auto",
       xai: "grok-4.3",
     };
     // Each provider lists a decoy first, so returning catalog order fails.
