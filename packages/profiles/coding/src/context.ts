@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import { type Dirent, realpathSync } from "node:fs";
-import { open, readdir, realpath, stat } from "node:fs/promises";
+import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { type AgentMessage, customMessage, estimateTextTokens, estimateTokens } from "@mu/core";
 
-export const DEFAULT_INSTRUCTION_MAX_BYTES = 32 * 1024;
 export const DEFAULT_PROJECT_ROOT_MARKERS = [".git"];
 export const DEFAULT_INSTRUCTION_FALLBACKS = [
   ".mu/AGENTS.md",
@@ -18,6 +17,7 @@ export const INSTRUCTION_PRIMARY_NAMES = ["AGENTS.override.md", "AGENTS.md", "AG
 
 const SNAPSHOT_TYPE_PREFIX = "project-instructions-";
 const MAX_IMPORT_DEPTH = 5;
+const RULE_FRONTMATTER_SCAN_BYTES = 8 * 1024;
 const TEXT_EXTENSIONS = new Set([
   "",
   ".md",
@@ -87,7 +87,6 @@ const TEXT_EXTENSIONS = new Set([
 
 export interface InstructionSettings {
   enabled?: boolean;
-  maxBytes?: number;
   fallbackFilenames?: string[];
   projectRootMarkers?: string[];
   imports?: boolean;
@@ -107,7 +106,6 @@ export interface InstructionSource {
   content: string;
   scope: InstructionScope;
   parent?: string;
-  truncated?: boolean;
 }
 
 export interface InstructionDiagnostic {
@@ -122,8 +120,6 @@ export interface InstructionSnapshot {
   sources: InstructionSource[];
   diagnostics: InstructionDiagnostic[];
   bytes: number;
-  maxBytes: number;
-  truncated: boolean;
   signature: string;
 }
 
@@ -133,13 +129,7 @@ interface RuleCandidate {
   patterns?: string[];
 }
 
-interface LoadBudget {
-  remaining: number;
-  truncated: boolean;
-}
-
 interface LoadPass {
-  budget: LoadBudget;
   processed: Set<string>;
   diagnostics: InstructionDiagnostic[];
   sources: InstructionSource[];
@@ -185,10 +175,12 @@ function snapshotSignature(sources: InstructionSource[], enabled: boolean): stri
   return hash.digest("hex").slice(0, 16);
 }
 
-async function readUtf8Prefix(path: string, maxBytes: number): Promise<string> {
+// Discovery only needs a rule file's `paths` frontmatter, which sits at the top.
+// The body is read later, and only if the rule actually applies.
+async function readFrontmatter(path: string): Promise<string> {
   const file = await open(path, "r");
   try {
-    const buffer = Buffer.alloc(Math.max(0, maxBytes) + 1);
+    const buffer = Buffer.alloc(RULE_FRONTMATTER_SCAN_BYTES);
     const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
     return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
@@ -401,17 +393,8 @@ export class InstructionLoader {
       }
       return valid;
     };
-    const validMaxBytes = Number.isSafeInteger(options.maxBytes) && (options.maxBytes ?? 0) >= 0;
-    const maxBytes = validMaxBytes ? (options.maxBytes as number) : DEFAULT_INSTRUCTION_MAX_BYTES;
-    if (options.maxBytes !== undefined && !validMaxBytes) {
-      settingDiagnostics.push({
-        level: "warning",
-        message: `instructions.maxBytes must be a non-negative safe integer; using ${DEFAULT_INSTRUCTION_MAX_BYTES}`,
-      });
-    }
     this.settings = {
       enabled: booleanSetting(options.enabled, true, "enabled"),
-      maxBytes,
       fallbackFilenames: filenameSetting(
         options.fallbackFilenames,
         DEFAULT_INSTRUCTION_FALLBACKS,
@@ -439,8 +422,6 @@ export class InstructionLoader {
       sources: [],
       diagnostics: [],
       bytes: 0,
-      maxBytes: this.settings.maxBytes,
-      truncated: false,
       signature: snapshotSignature([], this.settings.enabled),
     };
   }
@@ -459,22 +440,19 @@ export class InstructionLoader {
       ...item,
     }));
     const projectRoot = await this.findProjectRoot(diagnostics);
-    if (!this.settings.enabled || this.settings.maxBytes === 0) {
+    if (!this.settings.enabled) {
       this.current = {
         enabled: false,
         projectRoot,
         sources: [],
         diagnostics,
         bytes: 0,
-        maxBytes: this.settings.maxBytes,
-        truncated: false,
         signature: snapshotSignature([], false),
       };
       return this.snapshot;
     }
 
     const pass: LoadPass = {
-      budget: { remaining: this.settings.maxBytes, truncated: false },
       processed: new Set(),
       diagnostics,
       sources: [],
@@ -510,15 +488,13 @@ export class InstructionLoader {
       }
     }
 
-    const bytes = this.settings.maxBytes - pass.budget.remaining;
+    const bytes = pass.sources.reduce((sum, source) => sum + Buffer.byteLength(source.content), 0);
     this.current = {
       enabled: true,
       projectRoot,
       sources: pass.sources,
       diagnostics,
       bytes,
-      maxBytes: this.settings.maxBytes,
-      truncated: pass.budget.truncated,
       signature: snapshotSignature(pass.sources, true),
     };
     return this.snapshot;
@@ -562,7 +538,6 @@ export class InstructionLoader {
       return `${prefix} disabled\n  Use project/user config or remove --no-instructions to enable loading.`;
     }
     const sources = [...this.current.sources, ...this.nestedSources.values()];
-    const truncated = this.current.truncated || sources.some((source) => source.truncated);
     const bytes =
       this.current.bytes +
       [...this.nestedSources.values()].reduce(
@@ -580,18 +555,13 @@ export class InstructionLoader {
     const lines = [
       `${prefix} · ${sources.length} file${sources.length === 1 ? "" : "s"} · ${formatTokens(
         tokens,
-      )} · ${formatBytes(bytes)}/${formatBytes(this.current.maxBytes)} budget${
-        truncated ? " · truncated" : ""
-      }`,
-      ...sources.map((source) => {
-        const suffix = source.truncated ? " · truncated" : "";
-        return `  ${source.scope.padEnd(7)} ${renderSourcePath(source, this.current.projectRoot)} · ${formatTokens(estimateTextTokens(source.content))}${suffix}`;
-      }),
+      )} · ${formatBytes(bytes)}`,
+      ...sources.map(
+        (source) =>
+          `  ${source.scope.padEnd(7)} ${renderSourcePath(source, this.current.projectRoot)} · ${formatTokens(estimateTextTokens(source.content))}`,
+      ),
     ];
     if (sources.length === 0) lines.push("  no instruction files found");
-    if (truncated) {
-      lines.push("raise the budget with instructions.maxBytes in .mu/config.json");
-    }
     if (this.current.diagnostics.length > 0) {
       lines.push(
         "warnings:",
@@ -771,9 +741,7 @@ export class InstructionLoader {
     for (const root of roots) {
       for (const path of await this.ruleFiles(root, diagnostics)) {
         try {
-          const parsed = stripFrontmatter(
-            await readUtf8Prefix(path, DEFAULT_INSTRUCTION_MAX_BYTES),
-          );
+          const parsed = stripFrontmatter(await readFrontmatter(path));
           rules.push({
             path,
             base: dir,
@@ -801,10 +769,6 @@ export class InstructionLoader {
     allowedRoot: string,
     depth: number,
   ): Promise<void> {
-    if (pass.budget.remaining <= 0) {
-      pass.budget.truncated = true;
-      return;
-    }
     if (depth > MAX_IMPORT_DEPTH) {
       pass.diagnostics.push({
         level: "warning",
@@ -853,7 +817,7 @@ export class InstructionLoader {
 
     let raw: string;
     try {
-      raw = await readUtf8Prefix(canonical, pass.budget.remaining);
+      raw = await readFile(canonical, "utf8");
     } catch (error) {
       pass.diagnostics.push({
         level: "warning",
@@ -870,34 +834,14 @@ export class InstructionLoader {
     }
     const parsed = stripFrontmatter(raw);
     const trimmed = parsed.content.trim();
-    let source: InstructionSource | undefined;
-    if (trimmed && pass.budget.remaining > 0) {
-      const data = Buffer.from(trimmed);
-      const taken = Math.min(data.byteLength, pass.budget.remaining);
-      const content = data
-        .subarray(0, taken)
-        .toString("utf8")
-        .replace(/\uFFFD$/, "");
-      const truncated = taken < data.byteLength;
-      source = {
-        path: canonical,
-        content,
-        scope,
-        ...(parent ? { parent } : {}),
-        ...(truncated ? { truncated: true } : {}),
-      };
-      pass.budget.remaining -= taken;
-      if (truncated) {
-        pass.budget.truncated = true;
-        pass.diagnostics.push({
-          level: "warning",
+    const source: InstructionSource | undefined = trimmed
+      ? {
           path: canonical,
-          message: `instruction content was truncated at the ${formatBytes(
-            this.settings.maxBytes,
-          )} total budget`,
-        });
-      }
-    }
+          content: trimmed,
+          scope,
+          ...(parent ? { parent } : {}),
+        }
+      : undefined;
 
     if (this.settings.imports) {
       for (const imported of extractImports(parsed.content)) {
@@ -946,40 +890,11 @@ export class InstructionLoader {
       }
     }
 
-    const remaining =
-      this.settings.maxBytes -
-      this.current.bytes -
-      [...this.nestedSources.values()].reduce(
-        (sum, source) => sum + Buffer.byteLength(source.content),
-        0,
-      );
     const known = new Set([
       ...this.current.sources.map((source) => canonicalExisting(source.path)),
       ...this.nestedSources.keys(),
     ]);
-    const firstUnseen = candidates.find(
-      (candidate) => !known.has(canonicalExisting(candidate.path)),
-    );
-    if (remaining <= 0 && firstUnseen) {
-      this.current.truncated = true;
-      if (
-        !diagnostics.some(
-          (item) =>
-            item.path === firstUnseen.path &&
-            item.message ===
-              "nested instruction omitted because the total byte budget is exhausted",
-        )
-      ) {
-        diagnostics.push({
-          level: "warning",
-          path: firstUnseen.path,
-          message: "nested instruction omitted because the total byte budget is exhausted",
-        });
-      }
-      return { text: "", sources: [] };
-    }
     const pass: LoadPass = {
-      budget: { remaining: Math.max(0, remaining), truncated: false },
       processed: known,
       diagnostics,
       sources: [],

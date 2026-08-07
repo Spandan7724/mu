@@ -71,7 +71,6 @@ override user values:
 {
   "instructions": {
     "enabled": true,
-    "maxBytes": 32768,
     "fallbackFilenames": [".mu/AGENTS.md", "CLAUDE.md"],
     "projectRootMarkers": [".git"],
     "imports": true,
