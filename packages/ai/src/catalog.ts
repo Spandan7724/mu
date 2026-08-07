@@ -466,12 +466,24 @@ export function providerHasCredentials(provider: string, env = process.env): boo
   return variables.length === 0 || variables.some((variable) => Boolean(env[variable]));
 }
 
+// The model each provider resolves to when nothing more specific is chosen.
+// Startup resolution and post-login selection both read this, so a provider
+// cannot pick one model on launch and a different one right after logging in.
+// Providers absent here fall back to catalog order, which models.dev controls.
 const DEFAULT_MODEL_IDS: Readonly<Record<string, string>> = {
   "openai-codex": "gpt-5.6-sol",
   openai: "gpt-5.6-sol",
   anthropic: "claude-opus-5",
   google: "gemini-2.5-pro",
+  "github-copilot": "gpt-5.3-codex",
+  "kimi-coding": "kimi-for-coding",
+  openrouter: "auto",
+  xai: "grok-4.3",
 };
+
+export function defaultModelId(provider: string): string | undefined {
+  return DEFAULT_MODEL_IDS[provider];
+}
 
 function preferredModel(providers: Iterable<string>): ModelInfo | undefined {
   for (const provider of providers) {

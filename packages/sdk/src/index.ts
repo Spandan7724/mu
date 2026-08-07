@@ -9,6 +9,7 @@ export type {
 } from "@mu/ai";
 export {
   builtinProviderConfigs,
+  defaultModelId,
   defaultModelRef,
   defaultThinkingLevel,
   discoverModels,

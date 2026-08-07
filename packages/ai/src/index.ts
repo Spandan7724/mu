@@ -1,6 +1,7 @@
 export { resolveCredential } from "./auth.ts";
 export type { ModelDiscoveryOptions } from "./catalog.ts";
 export {
+  defaultModelId,
   defaultModelRef,
   discoverModels,
   findModel,

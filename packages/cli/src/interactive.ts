@@ -29,6 +29,7 @@ import {
   type Command,
   customMessage,
   type DiffCommandData,
+  defaultModelId,
   ExtensionHost,
   listModels,
   loadMarkdownCommands,
@@ -225,20 +226,15 @@ export function modelPickerDescription(
   return model.name ? `${model.name} · ${authentication}` : authentication;
 }
 
-const PREFERRED_ACCOUNT_MODELS: Readonly<Record<string, string>> = {
-  "openai-codex": "gpt-5.6-sol",
-  "github-copilot": "gpt-5.3-codex",
-  "kimi-coding": "kimi-for-coding",
-  openrouter: "auto",
-  xai: "grok-4.3",
-};
-
+// Post-login selection resolves the same default as startup. Keeping a second
+// table here let the two drift: providers listed only in the catalog's table
+// were picked by refreshed-catalog order after login, which models.dev owns.
 export function preferredProviderModel(
   provider: string,
   models: readonly ModelInfo[],
 ): ModelInfo | undefined {
   const providerModels = models.filter((model) => model.provider === provider);
-  const preferred = PREFERRED_ACCOUNT_MODELS[provider];
+  const preferred = defaultModelId(provider);
   return (
     (preferred ? providerModels.find((model) => model.id === preferred) : undefined) ??
     providerModels[0]

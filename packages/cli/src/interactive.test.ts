@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { CODING_PERMISSION_MODES } from "@mu/profile-coding";
 import { App, RendererRegistry, stripAnsi, wrapText } from "@mu/tui";
-import { Agent, ExtensionHost, MemorySessionStore, type ModelInfo, userMessage } from "mu";
+import {
+  Agent,
+  defaultModelId,
+  ExtensionHost,
+  MemorySessionStore,
+  type ModelInfo,
+  userMessage,
+} from "mu";
 import {
   availableModels,
   formatAuthUrl,
@@ -345,5 +352,55 @@ describe("interactive model catalog", () => {
 
     expect(preferredProviderModel("github-copilot", models)?.id).toBe("gpt-5.3-codex");
     expect(preferredProviderModel("openai-codex", models)?.id).toBe("gpt-5.6-sol");
+  });
+
+  // Regression: these three had a default in the catalog's table but none in
+  // the login table, so logging in saved whatever the refreshed models.dev
+  // catalog happened to list first (openai got gpt-5.2-pro, google a
+  // computer-use preview) instead of the configured default.
+  test("login honours the configured default for every provider that has one", () => {
+    const expected: Record<string, string> = {
+      openai: "gpt-5.6-sol",
+      anthropic: "claude-opus-5",
+      google: "gemini-2.5-pro",
+      "openai-codex": "gpt-5.6-sol",
+      "github-copilot": "gpt-5.3-codex",
+      "kimi-coding": "kimi-for-coding",
+      openrouter: "auto",
+      xai: "grok-4.3",
+    };
+    // Each provider lists a decoy first, so returning catalog order fails.
+    const models = Object.entries(expected).flatMap(([provider, id]) =>
+      [`decoy-${provider}`, id].map(
+        (modelId): ModelInfo => ({
+          provider,
+          id: modelId,
+          contextWindow: 400_000,
+          maxOutput: 128_000,
+          modalities: ["text"],
+          pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+      ),
+    );
+
+    for (const [provider, id] of Object.entries(expected)) {
+      expect(preferredProviderModel(provider, models)?.id).toBe(id);
+      expect(defaultModelId(provider)).toBe(id);
+    }
+  });
+
+  test("falls back to catalog order only for providers with no configured default", () => {
+    const models: ModelInfo[] = [
+      {
+        provider: "groq",
+        id: "first-listed",
+        contextWindow: 128_000,
+        maxOutput: 32_000,
+        modalities: ["text"],
+        pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+    ];
+    expect(defaultModelId("groq")).toBeUndefined();
+    expect(preferredProviderModel("groq", models)?.id).toBe("first-listed");
   });
 });
