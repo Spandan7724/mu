@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  defaultModelId,
   defaultModelRef,
   discoverModels,
   findModel,
@@ -202,6 +203,15 @@ describe("credential-aware default model", () => {
   test("uses GPT-5.6 Sol for a ChatGPT plan and as the unauthenticated fallback", () => {
     expect(defaultModelRef({}, ["openai-codex"])).toBe("openai-codex/gpt-5.6-sol");
     expect(defaultModelRef({})).toBe("openai-codex/gpt-5.6-sol");
+  });
+
+  // The last-resort fallback used to grab models[0], i.e. whatever models.dev
+  // happened to list first. It now walks the providers that have a configured
+  // default, so the choice cannot move when the upstream catalog is reordered.
+  test("falls back to a provider with a configured default, not catalog order", () => {
+    const ref = defaultModelRef({}, ["a-provider-with-no-models"]);
+    const separator = ref.indexOf("/");
+    expect(defaultModelId(ref.slice(0, separator))).toBe(ref.slice(separator + 1));
   });
 
   test("reports per-provider credential availability", () => {

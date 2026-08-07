@@ -82,6 +82,57 @@ describe("user model configuration", () => {
     expect(await resolveCliModel(undefined, file, authFile, {})).not.toBe("gone/no-longer-listed");
   });
 
+  // A catalog refresh replaces a provider's whole model list, so a saved
+  // choice can vanish. Falling back is right; doing it silently left the
+  // config claiming one model while mu ran another on every launch.
+  test("warns when the saved model is gone from the catalog", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-stale-warn-"));
+    const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
+    await writeFile(file, JSON.stringify({ model: "gone/no-longer-listed" }));
+    const warnings: string[] = [];
+
+    const resolved = await resolveCliModel(undefined, file, authFile, {}, (message) =>
+      warnings.push(message),
+    );
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("gone/no-longer-listed");
+    expect(warnings[0]).toContain("no longer in the model catalog");
+    expect(warnings[0]).toContain(resolved);
+  });
+
+  test("warns when the saved model needs credentials the user lacks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-uncredentialed-"));
+    const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
+    await writeFile(file, JSON.stringify({ model: "anthropic/claude-opus-5" }));
+    await saveApiKey("openai", "sk-test", { authFile });
+    const warnings: string[] = [];
+
+    const resolved = await resolveCliModel(undefined, file, authFile, {}, (message) =>
+      warnings.push(message),
+    );
+
+    expect(resolved).not.toBe("anthropic/claude-opus-5");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("needs credentials");
+  });
+
+  test("stays quiet when the saved model resolves", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-quiet-"));
+    const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
+    await writeFile(file, JSON.stringify({ model: "openai/gpt-5.6-sol" }));
+    await saveApiKey("openai", "sk-test", { authFile });
+    const warnings: string[] = [];
+
+    expect(await resolveCliModel(undefined, file, authFile, {}, (m) => warnings.push(m))).toBe(
+      "openai/gpt-5.6-sol",
+    );
+    expect(warnings).toEqual([]);
+  });
+
   test("a non-string model value is ignored", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-invalid-model-"));
     const file = join(root, "config.json");

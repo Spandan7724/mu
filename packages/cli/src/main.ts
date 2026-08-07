@@ -106,7 +106,10 @@ async function main(): Promise<number> {
           io.stderr(`mu: instruction warning: ${diagnostic}\n`);
         }
         let resolved = withStoredCredentials(
-          await optionsFromProfile(profile, await resolveCliModel(args.model)),
+          await optionsFromProfile(
+            profile,
+            await resolveCliModel(args.model, undefined, undefined, undefined, io.stderr),
+          ),
         );
         if (!resolved.session) {
           resolved = { ...resolved, session: await sessionStoreForProfile(profile) };

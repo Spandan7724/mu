@@ -508,9 +508,11 @@ export function defaultModelRef(
     : [...new Set(models.map((model) => model.provider))].filter((provider) =>
         providerHasCredentials(provider, env),
       );
+  // Every provider with a configured default is tried before falling back to
+  // catalog order, which models.dev owns and can reorder at any time.
   const model =
     preferredModel(providers) ??
-    findModel("openai-codex/gpt-5.6-sol") ??
+    preferredModel(Object.keys(DEFAULT_MODEL_IDS)) ??
     models[0] ??
     bundledModels[0];
   if (!model) throw new Error("No models are available");

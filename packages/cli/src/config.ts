@@ -44,6 +44,7 @@ export async function resolveCliModel(
   file = userConfigPath(),
   authFile = defaultAuthFile(),
   env = process.env,
+  onWarning: (message: string) => void = (message) => void process.stderr.write(message),
 ): Promise<string> {
   if (explicit) return explicit;
   const auth = await readAuthFile({ authFile }).catch(() => undefined);
@@ -55,22 +56,30 @@ export async function resolveCliModel(
         ...Object.keys(auth.providers).filter((provider) => provider !== auth.activeProvider),
       ]
     : [];
+  const fallback = () =>
+    defaultModelRef(env, authenticatedProviders.length > 0 ? authenticatedProviders : undefined);
   const configured = (await loadUserConfig(file)).model;
-  if (typeof configured === "string") {
-    const model = findModel(configured);
-    if (
-      model &&
-      (authenticatedProviders.length > 0
-        ? authenticatedProviders.includes(model.provider)
-        : providerHasCredentials(model.provider, env))
-    ) {
-      return configured;
-    }
+  if (typeof configured !== "string") return fallback();
+
+  const model = findModel(configured);
+  if (
+    model &&
+    (authenticatedProviders.length > 0
+      ? authenticatedProviders.includes(model.provider)
+      : providerHasCredentials(model.provider, env))
+  ) {
+    return configured;
   }
-  return defaultModelRef(
-    env,
-    authenticatedProviders.length > 0 ? authenticatedProviders : undefined,
+  // A refresh can drop the configured model entirely — models.dev replaces a
+  // provider's whole list. Silently resolving something else leaves the config
+  // saying one thing while mu runs another, on every launch.
+  const resolved = fallback();
+  onWarning(
+    model
+      ? `mu: ${configured} needs credentials you are not signed in with — using ${resolved}\n`
+      : `mu: ${configured} is no longer in the model catalog — using ${resolved}\n`,
   );
+  return resolved;
 }
 
 export async function saveDefaultModel(model: string, file = userConfigPath()): Promise<void> {
