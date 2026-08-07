@@ -20,6 +20,12 @@ const declarationPackages = [
     source: join(repositoryRoot, "packages", "profiles", "coding", "dist"),
     destination: "profile-coding",
   },
+  // The wire contract. Shipped so the remote app takes it as a type-only
+  // dependency rather than maintaining a translation (RD13).
+  {
+    source: join(repositoryRoot, "packages", "protocol", "dist"),
+    destination: "protocol",
+  },
 ] as const;
 
 function modulePath(fromFile: string, targetFile: string): string {
@@ -32,6 +38,7 @@ function rewriteModules(declaration: string, destination: string): string {
     "@mu/ai": modulePath(destination, join(outputRoot, "ai", "index.js")),
     "@mu/core": modulePath(destination, join(outputRoot, "core", "index.js")),
     "@mu/profile-coding": modulePath(destination, join(outputRoot, "profile-coding", "index.js")),
+    "@mu/protocol": modulePath(destination, join(outputRoot, "protocol", "index.js")),
     mu: modulePath(destination, join(outputRoot, "sdk", "index.js")),
   };
 
