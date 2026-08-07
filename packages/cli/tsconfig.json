@@ -18,6 +18,12 @@
     },
     {
       "path": "../profiles/coding"
+    },
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../server"
     }
   ]
 }

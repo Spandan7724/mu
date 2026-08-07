@@ -1,22 +1,15 @@
-// RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
-// AgentEvent union every other surface consumes.
-import type { Agent, AgentEvent, AgentRunOptions, CommandResult, MarkdownCommandRun } from "mu";
-
-export type RpcOp =
-  | { type: "input"; text: string }
-  | { type: "steer"; text: string }
-  | { type: "follow_up"; text: string }
-  | { type: "permission_reply"; requestId: string; outcome: "allow" | "deny" }
-  | { type: "command"; text: string }
-  | { type: "abort" }
-  | { type: "shutdown" };
-
-export type RpcOut =
-  | { type: "event"; event: AgentEvent }
-  | { type: "error"; message: string }
-  | { type: "ready" }
-  | { type: "command_result"; message?: string; data?: unknown }
-  | { type: "shutdown" };
+// RPC mode: newline-delimited JSON over stdio, carrying the same frames the
+// WebSocket transport does. Events out, ops in — one contract, one envelope.
+import {
+  type ClientFrame,
+  decodeClientFrame,
+  encodeFrame,
+  FULL_FIDELITY,
+  type Origin,
+  PROTOCOL_VERSION,
+  type ServerFrame,
+} from "@mu/protocol";
+import type { SessionHost } from "@mu/server";
 
 export interface RpcIo {
   write: (line: string) => void;
@@ -24,143 +17,94 @@ export interface RpcIo {
 }
 
 export interface RpcDeps {
-  // Created per input op so each prompt is its own run.
-  agent: Agent;
-  // Resolves a pending permission ask; returns false when the id is unknown.
-  resolvePermission?: (requestId: string, outcome: "allow" | "deny") => boolean;
-  runCommand?: (text: string) => Promise<CommandResult>;
+  host: SessionHost;
+  version?: string;
+  name?: string;
 }
 
-export function parseOp(line: string): RpcOp | { type: "parse_error"; message: string } {
-  try {
-    const parsed = JSON.parse(line) as RpcOp;
-    if (typeof parsed !== "object" || parsed === null || typeof parsed.type !== "string") {
-      return { type: "parse_error", message: "op must be an object with a type" };
-    }
-    return parsed;
-  } catch (error) {
-    return {
-      type: "parse_error",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
+// Stdio is the local surface: the process on the other end already has the
+// user's terminal, so nothing is narrowed and nothing is budgeted away.
+const LOCAL: Origin = { kind: "local" };
+
+export function parseFrame(line: string): ClientFrame | { t: "parse_error"; message: string } {
+  const parsed = decodeClientFrame(line);
+  return parsed.ok ? parsed.value : { t: "parse_error", message: parsed.message };
 }
 
 export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
-  const send = (out: RpcOut) => io.write(`${JSON.stringify(out)}\n`);
-  const unsubscribe = deps.agent.subscribe((event) => send({ type: "event", event }));
-  send({ type: "ready" });
+  const { host } = deps;
+  const send = (frame: ServerFrame) => io.write(`${encodeFrame(frame)}\n`);
+  const session = host.agent.sessionId;
 
-  let active: Promise<void> | undefined;
+  const subscription = host.subscribe(
+    FULL_FIDELITY,
+    {
+      event: ({ seq, event }) => send({ t: "event", session: host.agent.sessionId, seq, event }),
+      gap: (from, to) => send({ t: "gap", session: host.agent.sessionId, from, to }),
+    },
+    undefined,
+  );
 
-  const launch = (text: string, options?: AgentRunOptions): boolean => {
-    if (active || deps.agent.isRunning) {
-      send({ type: "error", message: "a run is already active; use steer or wait for it" });
-      return false;
-    }
-    const task = (async () => {
-      await deps.agent.run(text, options).catch((error: unknown) => {
-        send({
-          type: "error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-    })();
-    active = task;
-    void task.finally(() => {
-      if (active === task) active = undefined;
-    });
-    return true;
-  };
+  send({
+    t: "hello",
+    protocol: PROTOCOL_VERSION,
+    host: {
+      hostId: host.id,
+      instanceId: host.instanceId,
+      name: deps.name ?? "local",
+      version: deps.version ?? "0.0.0",
+      workspace: host.workspace,
+    },
+  });
+  send({ t: "state", session, seq: host.seq, state: host.state() });
 
   try {
     for await (const line of io.lines) {
       if (line.trim().length === 0) continue;
-      const op = parseOp(line);
+      const frame = parseFrame(line);
 
-      switch (op.type) {
-        case "parse_error":
-          send({ type: "error", message: `invalid op: ${op.message}` });
-          break;
-
-        case "input": {
-          launch(op.text);
-          break;
-        }
-
-        case "steer":
-          deps.agent.send(op.text);
-          break;
-
-        case "follow_up":
-          deps.agent.followUp(op.text);
-          break;
-
-        case "permission_reply": {
-          const ok = deps.resolvePermission?.(op.requestId, op.outcome) ?? false;
-          if (!ok) send({ type: "error", message: `unknown permission request: ${op.requestId}` });
-          break;
-        }
-
-        case "command": {
-          try {
-            const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
-            if (isMarkdownCommandRun(result.data)) {
-              launch(result.data.prompt, {
-                ...(result.data.model ? { model: result.data.model } : {}),
-                ...(result.data.allowedTools ? { allowedTools: result.data.allowedTools } : {}),
-              });
-              send({
-                type: "command_result",
-                ...(result.message ? { message: result.message } : {}),
-              });
-            } else {
-              send({
-                type: "command_result",
-                ...(result.message ? { message: result.message } : {}),
-                ...(result.data !== undefined ? { data: result.data } : {}),
-              });
-            }
-          } catch (error) {
-            send({
-              type: "error",
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }
-          break;
-        }
-
-        case "abort":
-          deps.agent.abort();
-          break;
-
-        case "shutdown":
-          // Graceful: let an in-flight run finish. Callers wanting to cut it
-          // short send `abort` first — that is what that op is for.
-          await active;
-          await deps.agent.waitForIdle();
-          send({ type: "shutdown" });
-          return;
-
-        default:
-          send({ type: "error", message: `unknown op type: ${(op as { type: string }).type}` });
+      if (frame.t === "parse_error") {
+        send({
+          t: "reply",
+          id: "",
+          ok: false,
+          error: { code: "unsupported", message: `invalid frame: ${frame.message}` },
+        });
+        continue;
       }
+
+      if (frame.t === "attach") {
+        send({
+          t: "state",
+          session: host.agent.sessionId,
+          seq: host.seq,
+          state: host.state(),
+        });
+        continue;
+      }
+
+      if (frame.t === "detach") continue;
+
+      const result = await host.apply(frame.op, LOCAL);
+      send(
+        result.ok
+          ? {
+              t: "reply",
+              id: frame.id,
+              ok: true,
+              ...(result.data !== undefined ? { data: result.data } : {}),
+            }
+          : { t: "reply", id: frame.id, ok: false, error: result.error },
+      );
     }
 
-    await active;
-    await deps.agent.waitForIdle();
+    // Stdin closing is how this transport ends. A run already in flight is
+    // allowed to finish; a caller wanting it cut short sends `abort` first.
+    await host.idle();
   } finally {
-    unsubscribe();
+    subscription.close();
+    send({ t: "bye", reason: "shutdown" });
   }
-}
-
-function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { kind?: unknown }).kind === "markdown-command" &&
-    typeof (data as { prompt?: unknown }).prompt === "string"
-  );
 }
 
 export async function* linesFrom(stream: NodeJS.ReadableStream): AsyncGenerator<string> {

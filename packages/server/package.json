@@ -1,0 +1,13 @@
+{
+  "name": "@mu/server",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mu/core": "workspace:*",
+    "@mu/protocol": "workspace:*",
+    "mu": "workspace:*"
+  }
+}

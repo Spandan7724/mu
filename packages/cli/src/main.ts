@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { hostname } from "node:os";
+import { SessionHost } from "@mu/server";
 import {
   Agent,
   createCredentialResolver,
@@ -29,6 +31,7 @@ import {
 } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
+import { workspaceFromEnvironment } from "./workspace.ts";
 
 const VERSION = cliPackage.version;
 
@@ -97,7 +100,6 @@ async function main(): Promise<number> {
       case "rpc": {
         // Permission asks are forwarded to the embedder, which answers with a
         // permission_reply op; nothing is auto-denied in RPC mode.
-        const pending = new Map<string, (outcome: "allow" | "deny") => void>();
         const profile = await resolveProfile(
           args.profile ?? DEFAULT_PROFILE,
           profileOptionsFromArgs(args),
@@ -130,11 +132,12 @@ async function main(): Promise<number> {
         }
         const builtIns = await loadBuiltInExtensions(process.cwd(), resolved.extensions);
         for (const warning of builtIns.warnings) io.stderr(`mu: ${warning}\n`);
+        let host: SessionHost | undefined;
         const agent = new Agent({
           ...resolved,
           extensions: builtIns.host,
           onPermission: (request) =>
-            new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
+            host ? host.onPermission(request) : Promise.resolve<"allow" | "deny">("deny"),
         });
         const commands = registryWithCoreCommands({
           requestCompaction: (focus) => agent.compactNow(focus),
@@ -154,34 +157,21 @@ async function main(): Promise<number> {
           commands.register(toCommand(markdown));
         }
 
+        host = new SessionHost({
+          agent,
+          workspace: workspaceFromEnvironment(resolved.environment ?? {}, process.cwd()),
+          basePermissions: resolved.permissions ?? [],
+          commands,
+          ...(profile.rememberPermission ? { rememberPermission: profile.rememberPermission } : {}),
+        });
+
         try {
           await runRpc(
             { write: io.stdout, lines: linesFrom(process.stdin) },
-            {
-              agent,
-              runCommand: async (text) => {
-                const result = await commands.execute(text, {
-                  inject: () => {},
-                  print: () => {},
-                  getModel: () => agent.modelRef,
-                  setModel: (ref) => agent.setModel(ref),
-                });
-                return result;
-              },
-              resolvePermission: (requestId, outcome) => {
-                const resolve = pending.get(requestId);
-                if (!resolve) return false;
-                pending.delete(requestId);
-                resolve(outcome);
-                return true;
-              },
-            },
+            { host, version: VERSION, name: hostname() },
           );
         } finally {
-          for (const [id, resolve] of pending) {
-            resolve("deny");
-            pending.delete(id);
-          }
+          await host.close();
           await agent.shutdown();
         }
         return 0;

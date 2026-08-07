@@ -374,6 +374,10 @@ export class Agent {
     return this.options.runtime?.list?.() ?? [];
   }
 
+  killTask(taskId: string): boolean {
+    return this.options.runtime?.kill?.(taskId) ?? false;
+  }
+
   state(): AgentState {
     return {
       sessionId: this._sessionId,

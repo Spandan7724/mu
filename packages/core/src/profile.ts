@@ -34,6 +34,9 @@ export interface ProfileRuntime {
   // Background work this runtime owns, enumerable without replaying events. A
   // surface that attaches mid-session has no other way to learn it exists.
   list?: () => TaskInfo[];
+  // Stops one of them. Enumerable work a surface cannot act on is half a
+  // capability; see RD18.
+  kill?: (taskId: string) => boolean;
   resize?: (cols: number, rows: number) => void;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;

@@ -52,6 +52,15 @@
         "zod": "4.4.3",
       },
     },
+    "packages/protocol": {
+      "name": "@mu/protocol",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/core": "workspace:*",
+        "mu": "workspace:*",
+        "zod": "4.4.3",
+      },
+    },
     "packages/ripgrep-darwin-arm64": {
       "name": "@mu-agent/ripgrep-darwin-arm64",
       "version": "0.0.1",
@@ -72,6 +81,15 @@
         "@mu/ai": "workspace:*",
         "@mu/core": "workspace:*",
         "zod": "4.4.3",
+      },
+    },
+    "packages/server": {
+      "name": "@mu/server",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/core": "workspace:*",
+        "@mu/protocol": "workspace:*",
+        "mu": "workspace:*",
       },
     },
     "packages/tui": {
@@ -120,6 +138,10 @@
     "@mu/core": ["@mu/core@workspace:packages/core"],
 
     "@mu/profile-coding": ["@mu/profile-coding@workspace:packages/profiles/coding"],
+
+    "@mu/protocol": ["@mu/protocol@workspace:packages/protocol"],
+
+    "@mu/server": ["@mu/server@workspace:packages/server"],
 
     "@mu/tui": ["@mu/tui@workspace:packages/tui"],
 
