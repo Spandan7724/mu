@@ -271,6 +271,64 @@ describe("native GitHub-release installs", () => {
     expect(sink.stdout.join("")).toContain("Updated mu to 0.1.0");
   });
 
+  test("reassembles a chunked response body before verifying it", async () => {
+    const assetBytes = new Uint8Array(300_000).map((_, i) => i % 251);
+    const sums = `${sha256Hex(assetBytes)}  mu-linux-x64.tar.gz\n`;
+    const installed: Uint8Array[] = [];
+    const sink = output();
+
+    // A body delivered in many small chunks, as a real download arrives.
+    const streamingFetch = (async (url: string) => {
+      if (url.endsWith("/releases/latest")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url: url.replace(/\/latest$/, "/tag/v0.1.0"),
+        } as unknown as Response;
+      }
+      if (url.endsWith("/SHA256SUMS")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          arrayBuffer: async () => new TextEncoder().encode(sums).buffer,
+        } as unknown as Response;
+      }
+      let offset = 0;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (offset >= assetBytes.length) return controller.close();
+            controller.enqueue(assetBytes.slice(offset, offset + 4096));
+            offset += 4096;
+          },
+        }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const exitCode = await runSelfUpdate(
+      {
+        currentVersion: "0.0.1",
+        packageName,
+        execPath,
+        readReceipt: async () => receipt,
+        fetch: streamingFetch,
+        installNative: async (_path, bytes) => {
+          installed.push(bytes);
+        },
+      },
+      sink.io,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(installed).toHaveLength(1);
+    expect(installed[0]).toEqual(assetBytes);
+  });
+
   test("refuses to install when the downloaded asset fails its checksum", async () => {
     const assetBytes = new TextEncoder().encode("fake binary contents");
     const sums =

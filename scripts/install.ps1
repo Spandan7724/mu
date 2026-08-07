@@ -1,10 +1,6 @@
-# Installs mu directly from GitHub Releases -- no npm, no Bun. Downloads
-# mu-windows-x64.zip, verifies it against the release's published SHA256SUMS,
-# and unpacks it into $env:USERPROFILE\.mu (executable at .mu\bin\mu.exe).
-#
-# The archive rather than the bare .exe: it is ~2.6x smaller over the wire
-# (GitHub serves release assets uncompressed) and it carries the pinned
-# ripgrep sidecar mu looks for at ..\mu-path\rg.exe relative to its own path.
+# Installs mu from GitHub Releases -- no npm, no Bun. Downloads
+# mu-windows-x64.zip, verifies it against the published SHA256SUMS, and unpacks
+# it into $env:USERPROFILE\.mu (executable at .mu\bin\mu.exe).
 #
 # Usage: irm https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.ps1 | iex
 
@@ -17,8 +13,7 @@ $BinName = "mu.exe"
 $ReceiptName = ".mu-install.json"
 $Target = "windows-x64"
 $Asset = "mu-windows-x64.zip"
-# Paths inside .mu that the archive owns and may replace wholesale. Anything
-# else there is user state (config, credentials, sessions) and is left alone.
+# Replaced wholesale on install; everything else in .mu is user state.
 $OwnedEntries = @("mu-path", "licenses", "mu-package.json")
 
 function Die($Message) {
@@ -95,8 +90,7 @@ try {
         Die "checksum mismatch for ${Asset}: expected $expected, got $actual"
     }
 
-    # ZipFile rather than Expand-Archive: same result, markedly faster on a
-    # ~38 MB archive, and present on both Windows PowerShell 5.1 and 7.
+    # ZipFile rather than Expand-Archive: markedly faster on a ~38 MB archive.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     try {
         [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)

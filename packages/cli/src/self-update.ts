@@ -6,7 +6,10 @@ import { dirname, join } from "node:path";
 const DEFAULT_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_GITHUB_REPO = "Spandan7724/mu";
 const UPDATE_TIMEOUT_MS = 15_000;
-const DOWNLOAD_TIMEOUT_MS = 180_000;
+// Not a whole-transfer deadline: that fails a slow but healthy link outright
+// (this archive needs >180s below ~211 KB/s). Only a body that stops
+// delivering bytes counts as dead.
+const DOWNLOAD_STALL_MS = 60_000;
 const NATIVE_RECEIPT_FILENAME = ".mu-install.json";
 
 export type UpdatePackageManager = "npm" | "bun" | "native";
@@ -266,22 +269,70 @@ function digestForAsset(sums: string, assetName: string): string | undefined {
   return undefined;
 }
 
+async function readWithStallTimeout(
+  body: ReadableStream<Uint8Array>,
+  assetName: string,
+  abort: () => void,
+): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          abort();
+          reject(
+            new Error(
+              `download of ${assetName} stalled for ${DOWNLOAD_STALL_MS / 1000}s with ` +
+                `${total} bytes received`,
+            ),
+          );
+        }, DOWNLOAD_STALL_MS);
+      });
+      const chunk = await Promise.race([reader.read(), stalled]).finally(() => clearTimeout(timer));
+      if (chunk.done) break;
+      chunks.push(chunk.value);
+      total += chunk.value.length;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
 async function downloadReleaseAsset(
   repo: string,
   tag: string,
   assetName: string,
   fetcher: typeof fetch,
 ): Promise<Uint8Array> {
-  const response = await fetcher(
-    `https://github.com/${repo}/releases/download/${tag}/${assetName}`,
-    { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) },
-  );
+  const controller = new AbortController();
+  const connectTimer = setTimeout(() => controller.abort(), UPDATE_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetcher(`https://github.com/${repo}/releases/download/${tag}/${assetName}`, {
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(connectTimer);
+  }
   if (!response.ok) {
     throw new Error(
       `could not download ${assetName}: HTTP ${response.status} ${response.statusText}`.trim(),
     );
   }
-  return new Uint8Array(await response.arrayBuffer());
+  return response.body
+    ? await readWithStallTimeout(response.body, assetName, () => controller.abort())
+    : new Uint8Array(await response.arrayBuffer());
 }
 
 // Windows won't let a running .exe's *contents* be overwritten or deleted,

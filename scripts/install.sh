@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Installs mu directly from GitHub Releases — no npm, no Bun. Downloads the
-# platform's release archive, verifies it against the release's published
-# SHA256SUMS, and unpacks it into ~/.mu (executable at ~/.mu/bin/mu).
-#
-# The archive rather than the bare binary: it is ~2.6x smaller over the wire
-# (GitHub serves release assets uncompressed) and it carries the pinned
-# ripgrep sidecar mu looks for at ../mu-path/rg relative to its own path.
+# Installs mu from GitHub Releases — no npm, no Bun. Downloads the platform's
+# release archive, verifies it against the published SHA256SUMS, and unpacks it
+# into ~/.mu (executable at ~/.mu/bin/mu).
 #
 # Usage: curl -fsSL https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.sh | bash
 
@@ -16,8 +12,7 @@ MU_ROOT="${HOME}/.mu"
 INSTALL_DIR="${MU_ROOT}/bin"
 BIN_NAME="mu"
 RECEIPT_NAME=".mu-install.json"
-# Paths inside ~/.mu that the archive owns and may replace wholesale. Anything
-# else there is user state (config, credentials, sessions) and is left alone.
+# Replaced wholesale on install; everything else in ~/.mu is user state.
 OWNED_ENTRIES="mu-path licenses mu-package.json"
 
 die() {
@@ -88,7 +83,8 @@ curl -fsSL --retry 3 --connect-timeout 10 \
 expected=$(awk -v f="$asset" '{name=$2; sub(/^\*/, "", name); if (name == f) print $1}' "$tmp_sums")
 [ -n "$expected" ] || die "SHA256SUMS does not list a digest for ${asset}"
 
-curl -fsSL --retry 3 --connect-timeout 10 --max-time 600 \
+# A wall-clock cap would fail a slow but healthy link; abort only on a stall.
+curl -fsSL --retry 3 --connect-timeout 10 --speed-limit 1024 --speed-time 60 -C - \
   "https://github.com/${REPO}/releases/download/${tag}/${asset}" \
   -o "$archive_path" || die "could not download ${asset}"
 
