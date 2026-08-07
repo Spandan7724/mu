@@ -22,6 +22,7 @@ import {
 import type { Agent } from "mu";
 import { BlobStore } from "./blobs.ts";
 import { canSelectMode, rulesForOrigin } from "./permissions.ts";
+import { PowerAssertion } from "./power.ts";
 import { EventRing, type SeqEvent } from "./ring.ts";
 import { Shaper } from "./shaping.ts";
 
@@ -51,6 +52,8 @@ export interface SessionHostOptions {
   rememberPermission?: (permission: string, pattern: string) => void | Promise<void>;
   ringEntries?: number;
   ringBytes?: number;
+  // Injected in tests so no real caffeinate/systemd-inhibit is ever spawned.
+  power?: PowerAssertion;
 }
 
 function errorResult(code: ErrorCode, message: string): OpResult {
@@ -87,8 +90,11 @@ export class SessionHost {
   private basePermissions: PermissionRule[];
   private active: Promise<unknown> | undefined;
   private closed = false;
+  private restoreRules: PermissionRule[] | undefined;
+  private readonly power: PowerAssertion;
 
   constructor(private readonly options: SessionHostOptions) {
+    this.power = options.power ?? new PowerAssertion();
     this.agent = options.agent;
     this.workspace = options.workspace;
     this.id = options.hostId ?? `h_${randomUUID().slice(0, 8)}`;
@@ -182,6 +188,7 @@ export class SessionHost {
     }
     for (const entry of this.subscribers) entry.shaper.close();
     this.subscribers.clear();
+    this.power.release();
     this.unsubscribe();
   }
 
@@ -193,6 +200,10 @@ export class SessionHost {
   }
 
   private publish(event: AgentEvent): void {
+    // Driven off the event stream rather than off `apply`, so a run the local
+    // surface started holds the assertion too.
+    if (event.type === "agent_start") this.power.acquire();
+    if (event.type === "agent_end") this.power.release();
     const frame = this.ring.push(event);
     for (const { shaper } of this.subscribers) shaper.push(frame.event);
   }
@@ -314,11 +325,17 @@ export class SessionHost {
   // Only one run is ever in flight, so this cannot race another origin's.
   private applyOriginPermissions(origin: Origin): () => void {
     if (origin.kind === "local") return () => {};
-    const previous = this.agent.permissions;
+    // Held as state, not captured: an "always allow" answered during the run
+    // has to survive the restore, or approving from a phone would silently
+    // forget itself the moment the turn ended.
+    this.restoreRules = this.agent.permissions;
     this.agent.setPermissions(
       rulesForOrigin(origin, this.agent.permissions, this.options.remoteOverlay),
     );
-    return () => this.agent.setPermissions(previous);
+    return () => {
+      if (this.restoreRules) this.agent.setPermissions(this.restoreRules);
+      this.restoreRules = undefined;
+    };
   }
 
   private replyToPermission(
@@ -339,6 +356,7 @@ export class SessionHost {
         action: "allow",
       };
       this.basePermissions.push(rule);
+      this.restoreRules?.push(rule);
       this.agent.addPermissionRule(rule);
       void Promise.resolve(this.options.rememberPermission?.(rule.permission, rule.pattern)).catch(
         () => {},

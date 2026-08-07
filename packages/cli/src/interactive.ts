@@ -1,6 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { bashTool } from "@mu/profile-coding";
+import type { Origin } from "@mu/protocol";
+import { SessionHost } from "@mu/server";
 import {
   App,
   type ColorDepth,
@@ -37,7 +39,6 @@ import {
   optionsFromProfile,
   type PermissionMode,
   type PermissionModeTone,
-  type PermissionRequest,
   type PermissionRule,
   type Profile,
   readAuthFile,
@@ -71,8 +72,12 @@ import {
 import { resumePickerItems } from "./session-picker.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
+import { workspaceFromEnvironment } from "./workspace.ts";
 
 const SPINNER_INTERVAL_MS = 120;
+
+// This terminal is the local surface; nothing it does is narrowed.
+const LOCAL: Origin = { kind: "local" };
 
 export function formatTerminalTitle(cwd: string): string {
   return `mu - ${basename(cwd) || cwd}`;
@@ -335,21 +340,15 @@ export async function runInteractive(
     : { host: resolved.extensions ?? new ExtensionHost(), warnings: [] };
   const extensions = builtIns.host;
 
-  const pendingPermissions = new Map<
-    string,
-    {
-      request: PermissionRequest;
-      resolve: (outcome: "allow" | "deny") => void;
-    }
-  >();
+  // The host owns pending asks, so an ask raised here is answerable by anything
+  // else attached to the same session rather than only by this terminal.
+  let host: SessionHost | undefined;
   const agent = new Agent({
     ...resolved,
     extensions,
     model: modelRef,
     onPermission: (request) =>
-      new Promise<"allow" | "deny">((resolve) =>
-        pendingPermissions.set(request.id, { request, resolve }),
-      ),
+      host ? host.onPermission(request) : Promise.resolve<"allow" | "deny">("deny"),
   });
   agent.setPermissionMode(activePermissionMode);
   let sessionResumable = false;
@@ -404,10 +403,7 @@ export async function runInteractive(
     shellController?.abort();
     modelCatalog?.stop();
     agent.stop();
-    for (const [id, pending] of pendingPermissions) {
-      pending.resolve("deny");
-      pendingPermissions.delete(id);
-    }
+    void host?.close();
   };
 
   app = new App({
@@ -471,29 +467,7 @@ export async function runInteractive(
       onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
       onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember) => {
-        const pending = pendingPermissions.get(id);
-        if (!pending) return;
-        if (outcome === "allow" && remember) {
-          const rule: PermissionRule = {
-            permission: pending.request.permission,
-            pattern: pending.request.pattern,
-            action: "allow",
-          };
-          basePermissions.push(rule);
-          agent.addPermissionRule(rule);
-          void Promise.resolve(profile?.rememberPermission?.(rule.permission, rule.pattern)).catch(
-            (error) => {
-              commitLines([
-                `  could not remember permission: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ]);
-              paint();
-            },
-          );
-        }
-        pending.resolve(outcome);
-        pendingPermissions.delete(id);
+        void host?.apply({ k: "permission_reply", requestId: id, outcome, remember }, LOCAL);
       },
     },
   });
@@ -759,6 +733,26 @@ export async function runInteractive(
     paint();
   });
 
+  host = new SessionHost({
+    agent,
+    workspace: workspaceFromEnvironment(resolved.environment ?? {}, process.cwd()),
+    basePermissions,
+    // Wrapped rather than passed straight through so a failed write is
+    // reported here instead of disappearing.
+    rememberPermission: async (permission, pattern) => {
+      try {
+        await profile?.rememberPermission?.(permission, pattern);
+      } catch (error) {
+        commitLines([
+          `  could not remember permission: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ]);
+        paint();
+      }
+    },
+  });
+
   // Shallow file listing for the `@` popup — bounded so a huge tree cannot
   // stall a keystroke.
   const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
@@ -793,8 +787,7 @@ export async function runInteractive(
   }
 
   function applyPermissionMode(mode: PermissionMode): void {
-    agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
-    agent.setPermissionMode(mode);
+    void host?.apply({ k: "set_permission_mode", modeId: mode.id }, LOCAL);
     activePermissionMode = mode;
     commitLines([formatPermissionMode(mode, depth)]);
     paint();
