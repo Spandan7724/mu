@@ -96,7 +96,15 @@ export function serve(options: ServeOptions): RunningServer {
           if (channel.origin) attach(ws, channel.origin);
           return;
         }
-        const line = channel ? channel.open(toBytes(message)) : String(message);
+        let line: string;
+        try {
+          line = channel ? channel.open(toBytes(message)) : String(message);
+        } catch {
+          // A frame that will not open under this session's keys did not come
+          // from the peer that established it. There is nothing to reply to.
+          ws.close(1008, "frame");
+          return;
+        }
         void state.connection?.receive(line);
       },
       close(ws) {
@@ -136,11 +144,15 @@ export function serve(options: ServeOptions): RunningServer {
       }
     },
     stop: async () => {
-      // Say goodbye, then let the listener close every socket. Closing them
-      // here first is what makes Bun's forced stop never resolve.
+      // Say goodbye, then let the listener close every socket.
       for (const entry of live.values()) entry.state.connection?.bye("shutdown");
       live.clear();
-      await server.stop(true);
+      // Deliberately not awaited: once any socket has been closed from this
+      // side — which a refused handshake and a revocation both do — Bun's
+      // stop() never settles, and awaiting it wedges the caller's event loop.
+      // The listener does shut down; only the promise is unreliable.
+      void server.stop(true);
+      await Promise.resolve();
     },
   };
 }
