@@ -74,6 +74,7 @@ export interface AppOptions {
   height?: number;
   depth: ColorDepth;
   model: string;
+  version?: string;
   cwd?: string;
   contextWindow?: number;
   thinkingLevels?: readonly string[];
@@ -648,6 +649,9 @@ export class App {
   banner(): string[] {
     const { depth, width } = this.ctx;
     const shell = this.options.callbacks.onShell ? ` ${GLYPHS.separator} ! for shell` : "";
+    const version = this.options.version
+      ? ` ${styleText(`v${this.options.version}`, { dim: true }, depth)}`
+      : "";
     const affordances = styleText(
       `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
       { dim: true },
@@ -655,7 +659,7 @@ export class App {
     );
     return [
       "",
-      `${MARGIN}${styleText(AGENT_LABEL, { accent: true, bold: true }, depth)}  ${styleText(
+      `${MARGIN}${styleText(AGENT_LABEL, { accent: true, bold: true }, depth)}${version}  ${styleText(
         "a general-purpose, extensible agent",
         { dim: true },
         depth,

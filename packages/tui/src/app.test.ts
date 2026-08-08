@@ -2,17 +2,20 @@
 // zero network, exactly as the milestone requires.
 import { describe, expect, spyOn, test } from "bun:test";
 import type { AgentEvent, AgentMessage } from "@mu/core";
-import { App, type AppCallbacks, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
+import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { InputDecoder } from "./input.ts";
 import { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
 import { FullScreenRenderer } from "./renderer.ts";
-import { stripAnsi } from "./style.ts";
+import { stripAnsi, styleText } from "./style.ts";
 import { Terminal, type TerminalIo } from "./terminal.ts";
 import { stringWidth } from "./width.ts";
 
 const ESC = "\u001b";
 
-function harness(overrides: Partial<AppCallbacks> = {}) {
+function harness(
+  overrides: Partial<AppCallbacks> = {},
+  options: Partial<Pick<AppOptions, "depth" | "version">> = {},
+) {
   const submitted: string[] = [];
   const steers: string[] = [];
   const followUps: string[] = [];
@@ -31,6 +34,7 @@ function harness(overrides: Partial<AppCallbacks> = {}) {
     cwd: "~/code/mu",
     contextWindow: 272_000,
     registry,
+    ...options,
     callbacks: {
       onSubmit: (text) => submitted.push(text),
       onSteer: (text) => {
@@ -2316,11 +2320,14 @@ describe("permission mode cycling", () => {
 
 describe("startup banner", () => {
   test("identifies mu and lists the key affordances", () => {
-    const h = harness();
+    const h = harness({}, { depth: "truecolor", version: "1.2.3" });
     h.app.setModel("openai/gpt-5.1");
-    const banner = h.app.banner().map(stripAnsi).join("\n");
+    const styledBanner = h.app.banner().join("\n");
+    const banner = stripAnsi(styledBanner);
 
     expect(banner).toContain("mu");
+    expect(banner).toContain("mu v1.2.3  a general-purpose, extensible agent");
+    expect(styledBanner).toContain(styleText("v1.2.3", { dim: true }, "truecolor"));
     expect(banner).toContain("openai/gpt-5.1");
     expect(banner).toContain("/ for commands");
     expect(banner).toContain("ctrl+t");

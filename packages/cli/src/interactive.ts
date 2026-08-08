@@ -49,6 +49,7 @@ import {
   type ToolRenderer,
   toCommand,
 } from "mu";
+import cliPackage from "../package.json";
 import type { ParsedArgs } from "./args.ts";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel, saveDefaultModel } from "./config.ts";
@@ -410,6 +411,7 @@ export async function runInteractive(
     height: terminal.rows,
     depth,
     model: modelRef,
+    version: cliPackage.version,
     cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
     contextWindow: agent.contextWindow,
     thinkingLevels: agent.thinkingLevels,
