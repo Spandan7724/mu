@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type AgentEvent,
+  type AnyTool,
   customMessage,
   type PermissionRequest,
   type ProfileRuntime,
@@ -18,6 +19,33 @@ import { tool } from "./tool.ts";
 function agentWith(provider: FakeProvider, options = {}) {
   return new Agent({ provider, model: fakeModel, ...options });
 }
+
+describe("tool adapter", () => {
+  test("scheduling predicates receive parsed defaults and fail conservatively", () => {
+    const adapted = tool({
+      name: "scheduled",
+      description: "scheduled",
+      inputSchema: z.object({ safe: z.boolean().default(false), value: z.coerce.number() }),
+      isConcurrencySafe: ({ safe, value }) => {
+        if (value === 99) throw new Error("predicate failure");
+        return safe;
+      },
+      changesState: ({ safe }) => !safe,
+      execute: () => "ok",
+    });
+    const wire = adapted as AnyTool;
+    const changesState = wire.changesState;
+
+    expect(wire.isConcurrencySafe?.({ value: "2" })).toBe(false);
+    expect(wire.isConcurrencySafe?.({ safe: true, value: "2" })).toBe(true);
+    expect(wire.isConcurrencySafe?.({ safe: true, value: 99 })).toBe(false);
+    expect(wire.isConcurrencySafe?.({ value: "bad" })).toBe(false);
+    expect(typeof changesState === "function" && changesState({ safe: true, value: "2" })).toBe(
+      false,
+    );
+    expect(typeof changesState === "function" && changesState({ value: "bad" })).toBe(true);
+  });
+});
 
 describe("Agent", () => {
   test("run returns the assistant text and totals usage", async () => {
@@ -126,6 +154,22 @@ describe("Agent", () => {
     }
     await stream.result();
     expect(seen).toEqual(["step 1"]);
+  });
+
+  test("asynchronous subscribers retain publication order", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "answer" }] }]);
+    const agent = agentWith(provider);
+    const seen: string[] = [];
+    agent.subscribe(async (event) => {
+      if (event.type === "agent_start") await Bun.sleep(10);
+      seen.push(event.type);
+    });
+
+    await agent.run("hello");
+    await Bun.sleep(20);
+    expect(seen[0]).toBe("agent_start");
+    expect(seen.at(-1)).toBe("agent_end");
+    expect(seen.indexOf("message_start")).toBeLessThan(seen.indexOf("message_end"));
   });
 });
 
@@ -562,6 +606,35 @@ describe("permissions", () => {
 
     await agent.run("go");
     expect(asked).toBe(1);
+  });
+
+  test("abort releases an onPermission callback that never settles", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "danger", arguments: { x: 1 } }] },
+    ]);
+    let permissionAsked!: () => void;
+    const asked = new Promise<void>((resolve) => {
+      permissionAsked = resolve;
+    });
+    const agent = agentWith(provider, {
+      tools: [dangerTool(() => {})],
+      permissions: [{ permission: "*", pattern: "*", action: "ask" }],
+      onPermission: () => {
+        permissionAsked();
+        return new Promise<"allow" | "deny">(() => {});
+      },
+    });
+
+    const running = agent.run("go");
+    await asked;
+    agent.abort();
+    const result = await Promise.race([
+      running,
+      Bun.sleep(500).then(() => {
+        throw new Error("abort did not release the pending permission");
+      }),
+    ]);
+    expect(result.reason).toBe("aborted");
   });
 });
 
@@ -1050,7 +1123,7 @@ describe("runtime model and thinking changes", () => {
     expect(usage.at(-1)?.contextPercent).toBeGreaterThan(0);
 
     agent.newSession();
-    await Promise.resolve();
+    await Bun.sleep(0);
     expect(usage.at(-1)).toEqual({ contextTokens: 0, contextPercent: 0 });
   });
 

@@ -82,6 +82,29 @@ describe("ExtensionHost registrations", () => {
     host.emit({ type: "message_start", message: userMessage("x") });
     expect(seen).toEqual(["agent_start", "turn_start"]);
   });
+
+  test("observer failures are isolated and logged", async () => {
+    const host = new ExtensionHost();
+    const seen: string[] = [];
+    await host.register({
+      name: "broken-observers",
+      activate(api) {
+        api.on("agent_start", () => {
+          throw new Error("sync observer failed");
+        });
+        api.on("agent_start", async () => {
+          throw new Error("async observer failed");
+        });
+        api.on("agent_start", () => seen.push("later observer ran"));
+      },
+    });
+
+    expect(() => host.emit({ type: "agent_start" })).not.toThrow();
+    await Bun.sleep(0);
+    expect(seen).toEqual(["later observer ran"]);
+    expect(host.logs.some((line) => line.includes("sync observer failed"))).toBe(true);
+    expect(host.logs.some((line) => line.includes("async observer failed"))).toBe(true);
+  });
 });
 
 describe("block/modify points", () => {

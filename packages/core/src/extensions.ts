@@ -136,11 +136,35 @@ export class ExtensionHost {
   }
 
   emit(event: AgentEvent): void {
-    for (const handler of this.eventHandlers.get(event.type) ?? []) handler(event);
+    for (const handler of this.eventHandlers.get(event.type) ?? []) {
+      try {
+        void Promise.resolve(handler(event)).catch((error: unknown) => {
+          this.logs.push(
+            `[extension observer] ${event.type}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      } catch (error) {
+        this.logs.push(
+          `[extension observer] ${event.type}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 
   emitLifecycle(event: LifecycleNotification): void {
-    for (const handler of this.eventHandlers.get(event.type) ?? []) handler(event);
+    for (const handler of this.eventHandlers.get(event.type) ?? []) {
+      try {
+        void Promise.resolve(handler(event)).catch((error: unknown) => {
+          this.logs.push(
+            `[extension observer] ${event.type}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      } catch (error) {
+        this.logs.push(
+          `[extension observer] ${event.type}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
 
   findModel(ref: string): ModelInfo | undefined {

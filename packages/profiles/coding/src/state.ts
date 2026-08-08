@@ -1,19 +1,47 @@
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+
+interface FileSnapshot {
+  exists: boolean;
+  device?: number;
+  inode?: number;
+  size?: number;
+  mtimeMs?: number;
+  ctimeMs?: number;
+  digest?: string;
+}
+
+function digest(content: string | Buffer): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function snapshot(path: string, content?: string): FileSnapshot {
+  try {
+    const info = statSync(path);
+    return {
+      exists: true,
+      device: info.dev,
+      inode: info.ino,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      ctimeMs: info.ctimeMs,
+      digest: digest(content ?? readFileSync(path)),
+    };
+  } catch {
+    return { exists: false };
+  }
+}
 
 // Tracks which files the agent has read, so writes/edits can require a prior
 // read (the read-before-write guard) and detect changes made behind its back.
 export class FileState {
-  private reads = new Map<string, number>(); // absolute path -> mtimeMs at read
+  private reads = new Map<string, FileSnapshot>();
   private modified = new Set<string>();
 
-  markRead(path: string): void {
+  markRead(path: string, content?: string): void {
     const absolute = resolve(path);
-    try {
-      this.reads.set(absolute, statSync(absolute).mtimeMs);
-    } catch {
-      this.reads.set(absolute, 0);
-    }
+    this.reads.set(absolute, snapshot(absolute, content));
   }
 
   markWritten(path: string): void {
@@ -27,15 +55,20 @@ export class FileState {
   }
 
   // Returns true when the file changed on disk since the agent last read it.
-  isStale(path: string): boolean {
+  isStale(path: string, currentContent?: string): boolean {
     const absolute = resolve(path);
     const seen = this.reads.get(absolute);
     if (seen === undefined) return false;
-    try {
-      return statSync(absolute).mtimeMs > seen;
-    } catch {
-      return false;
-    }
+    const current = snapshot(absolute, currentContent);
+    return (
+      current.exists !== seen.exists ||
+      current.device !== seen.device ||
+      current.inode !== seen.inode ||
+      current.size !== seen.size ||
+      current.mtimeMs !== seen.mtimeMs ||
+      current.ctimeMs !== seen.ctimeMs ||
+      current.digest !== seen.digest
+    );
   }
 
   readFiles(): string[] {

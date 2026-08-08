@@ -21,6 +21,7 @@ class MemoryCheckpoints implements CheckpointProvider {
   restored: string[] = [];
   failSnapshot = false;
   failRestore = false;
+  failDiff = false;
 
   async snapshot(): Promise<string | undefined> {
     if (this.failSnapshot) throw new Error("snapshot failed");
@@ -41,6 +42,7 @@ class MemoryCheckpoints implements CheckpointProvider {
   }
 
   async diff(fromRef: string, toRef?: string) {
+    if (this.failDiff) throw new Error("diff failed");
     const target = toRef ? this.snapshots.get(toRef) : this.state;
     return this.snapshots.get(fromRef) === target
       ? []
@@ -400,6 +402,21 @@ describe("undo and redo pair workspace with conversation", () => {
     checkpoints.failRestore = false;
     expect((await agent.undo()).ok).toBe(true);
     expect(checkpoints.state).toBe("v1");
+  });
+
+  test("diff failure leaves undo history, workspace, and conversation untouched", async () => {
+    const { agent, checkpoints } = await sessionWithTwoEdits();
+    const head = agent.session.head;
+    checkpoints.failDiff = true;
+
+    const failed = await agent.undo();
+
+    expect(failed.ok).toBe(false);
+    expect(failed.message).toContain("diff failed");
+    expect(agent.session.head).toBe(head);
+    expect(agent.checkpointHistory.canUndo).toBe(true);
+    expect(agent.checkpointHistory.canRedo).toBe(false);
+    expect(checkpoints.state).toBe("v2");
   });
 
   test("snapshot failure before undo does not consume the transition", async () => {

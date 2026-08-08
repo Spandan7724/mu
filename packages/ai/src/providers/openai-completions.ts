@@ -21,11 +21,11 @@ import { driveStream, postSse, updateCost } from "./shared.ts";
 type Json = Record<string, unknown>;
 
 function textFromResult(message: Extract<AiMessage, { role: "toolResult" }>): string {
-  return message.content
-    .map((block) =>
-      block.type === "text" ? block.text : `data:${block.mimeType};base64,${block.data}`,
-    )
+  const text = message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
     .join("\n");
+  return text || "(image result attached in the following user message)";
 }
 
 function userContent(message: Extract<AiMessage, { role: "user" }>): string | Json[] {
@@ -50,7 +50,25 @@ function convertMessages(messages: AiMessage[], systemPrompt: LlmContext["system
       content: systemPrompt.map((section) => section.text).join("\n\n"),
     });
   }
+  let pendingToolImages: Extract<AiMessage, { role: "toolResult" }>["content"] = [];
+  const flushToolImages = () => {
+    const images = pendingToolImages.filter((block) => block.type === "image");
+    if (images.length > 0) {
+      converted.push({
+        role: "user",
+        content: [
+          { type: "text", text: "Images returned by the preceding tool calls:" },
+          ...images.map((block) => ({
+            type: "image_url",
+            image_url: { url: `data:${block.mimeType};base64,${block.data}` },
+          })),
+        ],
+      });
+    }
+    pendingToolImages = [];
+  };
   for (const message of messages) {
+    if (message.role !== "toolResult") flushToolImages();
     if (message.role === "user") {
       converted.push({ role: "user", content: userContent(message) });
       continue;
@@ -61,6 +79,7 @@ function convertMessages(messages: AiMessage[], systemPrompt: LlmContext["system
         tool_call_id: message.toolCallId,
         content: textFromResult(message),
       });
+      pendingToolImages.push(...message.content);
       continue;
     }
     const text = message.content
@@ -86,6 +105,7 @@ function convertMessages(messages: AiMessage[], systemPrompt: LlmContext["system
       ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
     });
   }
+  flushToolImages();
   return converted;
 }
 

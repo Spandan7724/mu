@@ -205,6 +205,7 @@ export class Agent {
   private activeExecution: Promise<unknown> | undefined;
   private autonomousScheduled = false;
   private readonly subscribers = new Set<EventSink>();
+  private readonly subscriberQueues = new Map<EventSink, Promise<void>>();
   private readonly idleWaiters = new Set<() => void>();
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
@@ -325,7 +326,12 @@ export class Agent {
   // than starting a fresh transcript.
   resume(tree: SessionTree): void {
     if (this.running) throw new Error("Cannot resume a session while a run is active.");
-    const candidate = SessionTree.fromJsonl(tree.toJsonl());
+    let candidate: SessionTree;
+    try {
+      candidate = SessionTree.fromJsonl(tree.toJsonl());
+    } catch (error) {
+      throw new Error("Cannot resume an invalid or unsupported session.", { cause: error });
+    }
     const header = candidate.header;
     if (!header || header.version !== SESSION_VERSION) {
       throw new Error("Cannot resume an invalid or unsupported session.");
@@ -342,6 +348,8 @@ export class Agent {
       if (entry.type === "message" && entry.message.role === "assistant") {
         restoredTotals = addUsage(restoredTotals, entry.message.usage);
       } else if (entry.type === "compaction" && entry.usage) {
+        restoredTotals = addUsage(restoredTotals, entry.usage);
+      } else if (entry.type === "compaction-attempt") {
         restoredTotals = addUsage(restoredTotals, entry.usage);
       }
     }
@@ -461,7 +469,10 @@ export class Agent {
 
   subscribe(listener: EventSink): () => void {
     this.subscribers.add(listener);
-    return () => this.subscribers.delete(listener);
+    return () => {
+      this.subscribers.delete(listener);
+      this.subscriberQueues.delete(listener);
+    };
   }
 
   resize(cols: number, rows: number): void {
@@ -755,6 +766,16 @@ export class Agent {
       const failedUsage =
         compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
       if (failedUsage && !usageRecorded) {
+        this.tree.append({
+          type: "compaction-attempt",
+          status: this.controller.signal.aborted ? "cancelled" : "failed",
+          trigger: "manual",
+          model: this.modelRef,
+          compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
+          timestamp: Date.now(),
+          usage: failedUsage,
+        });
+        await this.store.save(this._sessionId, this.tree).catch(() => {});
         this.totals = addUsage(this.totals, failedUsage);
         emit({
           type: "usage_updated",
@@ -1499,9 +1520,20 @@ export class Agent {
         };
         emit({ type: "permission_asked", request });
         // Default DENY: never hang an unattended process on an unanswered ask.
-        const outcome = this.options.onPermission
-          ? await this.options.onPermission(request)
-          : "deny";
+        let outcome: "allow" | "deny" = "deny";
+        if (this.options.onPermission && !this.controller.signal.aborted) {
+          const signal = this.controller.signal;
+          let onAbort: (() => void) | undefined;
+          const aborted = new Promise<"deny">((resolve) => {
+            onAbort = () => resolve("deny");
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+          try {
+            outcome = await Promise.race([this.options.onPermission(request), aborted]);
+          } finally {
+            if (onAbort) signal.removeEventListener("abort", onAbort);
+          }
+        }
         emit({ type: "permission_resolved", requestId: request.id, outcome });
         if (outcome === "allow") {
           return rewritten;
@@ -1667,7 +1699,18 @@ export class Agent {
         } catch (error) {
           const failedUsage =
             compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
-          if (failedUsage && !usageRecorded) recordUsage(failedUsage, working);
+          if (failedUsage && !usageRecorded) {
+            this.tree.append({
+              type: "compaction-attempt",
+              status: this.controller.signal.aborted ? "cancelled" : "failed",
+              trigger,
+              model: `${runModel.provider}/${runModel.id}`,
+              compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
+              timestamp: Date.now(),
+              usage: failedUsage,
+            });
+            recordUsage(failedUsage, working);
+          }
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
           emit({
@@ -1808,11 +1851,18 @@ export class Agent {
 
   private publishToSubscribers(event: AgentEvent): void {
     for (const listener of this.subscribers) {
-      try {
-        void Promise.resolve(listener(event)).catch(() => {});
-      } catch {
-        // Observers must never be able to break an agent run.
-      }
+      const prior = this.subscriberQueues.get(listener) ?? Promise.resolve();
+      const next = prior
+        .then(() => listener(event))
+        .catch(() => {
+          // Observers must never be able to break an agent run.
+        });
+      this.subscriberQueues.set(listener, next);
+      void next.finally(() => {
+        if (this.subscriberQueues.get(listener) === next && !this.subscribers.has(listener)) {
+          this.subscriberQueues.delete(listener);
+        }
+      });
     }
   }
 

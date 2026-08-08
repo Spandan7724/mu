@@ -8,22 +8,30 @@ import {
   providerHasCredentials,
   readAuthFile,
 } from "mu";
+import { z } from "zod";
 
 export interface UserConfig {
   model?: string;
   [key: string]: unknown;
 }
 
+const userConfigSchema = z.object({ model: z.string().min(1).optional() }).loose();
+
 export function userConfigPath(home = homedir()): string {
   return join(home, ".mu", "config.json");
 }
 
 function parseConfig(raw: string, file: string): UserConfig {
-  const parsed = JSON.parse(raw) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`Invalid user config at ${file}: expected a JSON object`);
+  const parsed: unknown = JSON.parse(raw);
+  const result = userConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`)
+      .join("; ");
+    throw new Error(`Invalid user config at ${file}: ${issues}`);
   }
-  return parsed as UserConfig;
+  const { model, ...rest } = result.data;
+  return { ...rest, ...(model !== undefined ? { model } : {}) };
 }
 
 async function readUserConfig(file: string): Promise<UserConfig> {
@@ -35,8 +43,16 @@ async function readUserConfig(file: string): Promise<UserConfig> {
   }
 }
 
-export async function loadUserConfig(file = userConfigPath()): Promise<UserConfig> {
-  return readUserConfig(file).catch(() => ({}));
+export async function loadUserConfig(
+  file = userConfigPath(),
+  onWarning: (message: string) => void = (message) => void process.stderr.write(`${message}\n`),
+): Promise<UserConfig> {
+  try {
+    return await readUserConfig(file);
+  } catch (error) {
+    onWarning(error instanceof Error ? error.message : String(error));
+    return {};
+  }
 }
 
 export async function resolveCliModel(
@@ -58,7 +74,7 @@ export async function resolveCliModel(
     : [];
   const fallback = () =>
     defaultModelRef(env, authenticatedProviders.length > 0 ? authenticatedProviders : undefined);
-  const configured = (await loadUserConfig(file)).model;
+  const configured = (await loadUserConfig(file, onWarning)).model;
   if (typeof configured !== "string") return fallback();
 
   const model = findModel(configured);

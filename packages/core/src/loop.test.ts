@@ -57,6 +57,31 @@ describe("agent loop", () => {
     expect(events.filter((e) => e.type === "turn_start").length).toBe(2);
   });
 
+  test("awaits asynchronous progress sinks before tool completion", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "chatty", arguments: {} }] },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const chatty: AnyTool = {
+      name: "chatty",
+      description: "chatty",
+      inputSchema: { type: "object" },
+      execute: async (_id, _args, _signal, update) => {
+        update?.([{ type: "text", text: "progress" }]);
+        return textResult("complete");
+      },
+    };
+    const completed: string[] = [];
+    await runLoop([userMessage("go")], ctx([chatty]), baseConfig(provider), async (event) => {
+      if (event.type === "tool_execution_update") await Bun.sleep(10);
+      if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
+        completed.push(event.type);
+      }
+    });
+
+    expect(completed).toEqual(["tool_execution_update", "tool_execution_end"]);
+  });
+
   test("steering messages are injected before the next LLM call", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "a" } }] },

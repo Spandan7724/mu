@@ -249,6 +249,44 @@ describe("streamOpenAI", () => {
     });
   });
 
+  test("preserves tool-result images as Responses image input", async () => {
+    const replay = replayFetch(textCassette);
+    const history: LlmContext = {
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_1", name: "render_image", arguments: {} }],
+          model: "openai/gpt-5.1",
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "toolUse",
+          timestamp: 1,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call_1",
+          toolName: "render_image",
+          content: [
+            { type: "text", text: "screen" },
+            { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+          ],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    };
+
+    await streamOpenAI(model, history, { apiKey: "test", fetch: replay.fetch }).result();
+    const body = JSON.parse(replay.calls[0]?.body ?? "{}");
+    expect(body.input.at(-1)).toEqual({
+      type: "function_call_output",
+      call_id: "call_1",
+      output: [
+        { type: "input_text", text: "screen" },
+        { type: "input_image", image_url: "data:image/png;base64,aW1hZ2U=" },
+      ],
+    });
+  });
+
   test("routes OAuth credentials through the ChatGPT Codex backend", async () => {
     const cassette = {
       interactions: textCassette.interactions.map((interaction) => ({

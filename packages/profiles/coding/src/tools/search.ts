@@ -1,15 +1,34 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, open, readdir } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { errorResult, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { truncateOutput, withNotice } from "../truncate.ts";
-import { resolveInRoot, type ToolDeps } from "./files.ts";
+import { resolveExistingInRoot, type ToolDeps } from "./files.ts";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage", ".venv"]);
 const MAX_MATCHES = 200;
 const MAX_SCANNED_BYTES = 2_000_000;
+
+async function readPrefix(
+  path: string,
+  maxBytes: number,
+): Promise<{ content: string; truncated: boolean }> {
+  const file = await open(path, "r");
+  try {
+    const info = await file.stat();
+    const bytes = Math.min(info.size, maxBytes);
+    const buffer = Buffer.alloc(bytes);
+    const { bytesRead } = await file.read(buffer, 0, bytes, 0);
+    return {
+      content: new TextDecoder().decode(buffer.subarray(0, bytesRead)),
+      truncated: info.size > bytesRead,
+    };
+  } finally {
+    await file.close();
+  }
+}
 
 export interface RipgrepRunResult {
   exitCode: number;
@@ -220,12 +239,13 @@ async function* walk(dir: string, signal: AbortSignal): AsyncGenerator<string> {
     signal.throwIfAborted();
     if (SKIP_DIRS.has(name)) continue;
     const full = resolve(dir, name);
-    let info: Awaited<ReturnType<typeof stat>>;
+    let info: Awaited<ReturnType<typeof lstat>>;
     try {
-      info = await stat(full);
+      info = await lstat(full);
     } catch {
       continue;
     }
+    if (info.isSymbolicLink()) continue;
     if (info.isDirectory()) yield* walk(full, signal);
     else yield full;
   }
@@ -315,7 +335,7 @@ export function globTool(deps: ToolDeps, options: SearchToolOptions = {}) {
     }),
     isConcurrencySafe: () => true,
     execute: async ({ pattern, path }, { signal }): Promise<ToolResult | string> => {
-      const base = resolveInRoot(deps.root, path ?? ".");
+      const base = await resolveExistingInRoot(deps.root, path ?? ".");
       const regex = globToRegExp(pattern);
       const accelerated = await ripgrepFiles(deps.root, base, regex, signal, runner(options));
       const matches: string[] = accelerated ?? [];
@@ -353,7 +373,7 @@ export function grepTool(deps: ToolDeps, options: SearchToolOptions = {}) {
       { pattern, path, include, ignoreCase },
       { signal },
     ): Promise<ToolResult | string> => {
-      const base = resolveInRoot(deps.root, path ?? ".");
+      const base = await resolveExistingInRoot(deps.root, path ?? ".");
       let regex: RegExp;
       try {
         regex = new RegExp(pattern, ignoreCase ? "i" : "");
@@ -384,11 +404,18 @@ export function grepTool(deps: ToolDeps, options: SearchToolOptions = {}) {
 
         let content: string;
         try {
-          content = await readFile(file, "utf8");
+          const remaining = MAX_SCANNED_BYTES - scanned;
+          if (remaining <= 0) {
+            hitLimit = true;
+            break;
+          }
+          const prefix = await readPrefix(file, remaining);
+          content = prefix.content;
+          if (prefix.truncated) hitLimit = true;
         } catch {
           continue;
         }
-        scanned += content.length;
+        scanned += Buffer.byteLength(content);
         if (content.includes("\u0000")) continue;
 
         const lines = content.split("\n");
@@ -402,8 +429,8 @@ export function grepTool(deps: ToolDeps, options: SearchToolOptions = {}) {
             break;
           }
         }
-        if (hitLimit || scanned > MAX_SCANNED_BYTES) {
-          hitLimit = hitLimit || scanned > MAX_SCANNED_BYTES;
+        if (hitLimit || scanned >= MAX_SCANNED_BYTES) {
+          hitLimit = true;
           break;
         }
       }

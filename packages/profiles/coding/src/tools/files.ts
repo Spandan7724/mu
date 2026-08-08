@@ -1,10 +1,12 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import type { FileState } from "../state.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
+
+const MAX_READ_SOURCE_BYTES = 16 * 1024 * 1024;
 
 export interface ToolDeps {
   root: string;
@@ -18,10 +20,53 @@ export interface ToolDeps {
 export function resolveInRoot(root: string, path: string): string {
   const absolute = isAbsolute(path) ? resolve(path) : resolve(root, path);
   const rel = relative(resolve(root), absolute);
-  if (rel.startsWith("..")) {
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Path escapes the session root: ${path}`);
   }
   return absolute;
+}
+
+function assertCanonicalInRoot(root: string, target: string, original: string): void {
+  const rel = relative(root, target);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Path escapes the session root through a symbolic link: ${original}`);
+  }
+}
+
+export async function resolveExistingInRoot(root: string, path: string): Promise<string> {
+  const lexical = resolveInRoot(root, path);
+  const canonicalRoot = await realpath(root);
+  const canonicalTarget = await realpath(lexical);
+  assertCanonicalInRoot(canonicalRoot, canonicalTarget, path);
+  return canonicalTarget;
+}
+
+export async function resolveForWriteInRoot(root: string, path: string): Promise<string> {
+  const lexical = resolveInRoot(root, path);
+  const canonicalRoot = await realpath(root);
+  try {
+    const canonicalTarget = await realpath(lexical);
+    assertCanonicalInRoot(canonicalRoot, canonicalTarget, path);
+    return canonicalTarget;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const missing: string[] = [];
+  let cursor = lexical;
+  for (;;) {
+    try {
+      const canonicalParent = await realpath(cursor);
+      assertCanonicalInRoot(canonicalRoot, canonicalParent, path);
+      return resolve(canonicalParent, ...missing.reverse());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw error;
+      missing.push(relative(parent, cursor));
+      cursor = parent;
+    }
+  }
 }
 
 function display(root: string, path: string): string {
@@ -94,9 +139,16 @@ export function readTool(deps: ToolDeps) {
     }),
     isConcurrencySafe: () => true,
     execute: async ({ path, offset, limit }): Promise<ToolResult | string> => {
-      const absolute = resolveInRoot(deps.root, path);
+      let absolute = resolveInRoot(deps.root, path);
       let content: string;
       try {
+        absolute = await resolveExistingInRoot(deps.root, path);
+        const info = await stat(absolute);
+        if (info.size > MAX_READ_SOURCE_BYTES) {
+          return errorResult(
+            `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${MAX_READ_SOURCE_BYTES.toLocaleString()} bytes. Use grep or a bounded shell command to inspect it.`,
+          );
+        }
         content = await readFile(absolute, "utf8");
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
@@ -108,7 +160,7 @@ export function readTool(deps: ToolDeps) {
         throw error;
       }
 
-      deps.state.markRead(absolute);
+      deps.state.markRead(absolute, content);
       const allLines = content.split("\n");
       const start = (offset ?? 1) - 1;
       const slice = allLines.slice(start, limit ? start + limit : undefined);
@@ -142,7 +194,7 @@ export function writeTool(deps: ToolDeps) {
       content: z.string().describe("The complete file contents"),
     }),
     permissionDetails: async ({ path, content }) => {
-      const absolute = resolveInRoot(deps.root, path);
+      const absolute = await resolveForWriteInRoot(deps.root, path);
       let before: string | undefined;
       try {
         before = await readFile(absolute, "utf8");
@@ -159,12 +211,14 @@ export function writeTool(deps: ToolDeps) {
       };
     },
     execute: async ({ path, content }): Promise<ToolResult | string> => {
-      const absolute = resolveInRoot(deps.root, path);
+      const absolute = await resolveForWriteInRoot(deps.root, path);
       let exists = true;
+      let currentContent: string | undefined;
       try {
-        await stat(absolute);
-      } catch {
-        exists = false;
+        currentContent = await readFile(absolute, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") exists = false;
+        else throw error;
       }
 
       // Read-before-write: overwriting a file the agent has not looked at is
@@ -174,7 +228,7 @@ export function writeTool(deps: ToolDeps) {
           `Refusing to overwrite ${display(deps.root, absolute)} because it has not been read in this session. Read it first, then write.`,
         );
       }
-      if (exists && deps.state.isStale(absolute)) {
+      if (deps.state.hasRead(absolute) && deps.state.isStale(absolute, currentContent)) {
         return errorResult(
           `${display(deps.root, absolute)} changed on disk since you read it. Read it again before writing.`,
         );
@@ -392,7 +446,7 @@ export function editTool(deps: ToolDeps) {
     }),
     coerceInput: coerceEditInput,
     permissionDetails: async ({ path, edits }) => {
-      const absolute = resolveInRoot(deps.root, path);
+      const absolute = await resolveExistingInRoot(deps.root, path);
       const relativePath = display(deps.root, absolute);
       let content: string;
       try {
@@ -412,7 +466,15 @@ export function editTool(deps: ToolDeps) {
       };
     },
     execute: async ({ path, edits }): Promise<ToolResult | string> => {
-      const absolute = resolveInRoot(deps.root, path);
+      let absolute = resolveInRoot(deps.root, path);
+      try {
+        absolute = await resolveExistingInRoot(deps.root, path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return errorResult(`File not found: ${display(deps.root, absolute)}`);
+        }
+        throw error;
+      }
 
       if (!deps.state.hasRead(absolute)) {
         return errorResult(
@@ -430,7 +492,7 @@ export function editTool(deps: ToolDeps) {
         throw error;
       }
 
-      if (deps.state.isStale(absolute)) {
+      if (deps.state.isStale(absolute, content)) {
         return errorResult(
           `${display(deps.root, absolute)} changed on disk since you read it. Read it again before editing.`,
         );
@@ -466,9 +528,11 @@ export function lsTool(deps: ToolDeps) {
     }),
     isConcurrencySafe: () => true,
     execute: async ({ path }): Promise<ToolResult | string> => {
-      const absolute = resolveInRoot(deps.root, path ?? ".");
+      const requested = path ?? ".";
+      let absolute = resolveInRoot(deps.root, requested);
       let entries: string[];
       try {
+        absolute = await resolveExistingInRoot(deps.root, requested);
         entries = await readdir(absolute);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

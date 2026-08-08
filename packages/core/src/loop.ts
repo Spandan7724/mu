@@ -513,14 +513,18 @@ async function runPrepared(
 ): Promise<{ result: ToolResult; isError: boolean }> {
   let result: ToolResult;
   let isError: boolean;
+  let updateChain = Promise.resolve();
   try {
     result = await prepared.tool.execute(prepared.call.id, prepared.args, signal, (partial) => {
-      void emit({
-        type: "tool_execution_update",
-        toolCallId: prepared.call.id,
-        partial,
-      });
+      updateChain = updateChain.then(() =>
+        emit({
+          type: "tool_execution_update",
+          toolCallId: prepared.call.id,
+          partial,
+        }),
+      );
     });
+    await updateChain;
     isError = result.isError === true;
   } catch (error) {
     result = errorResult(error instanceof Error ? error.message : String(error));

@@ -139,7 +139,11 @@ describe("user model configuration", () => {
     const authFile = join(root, "auth.json");
     await writeFile(file, JSON.stringify({ model: 42 }));
 
-    expect(await resolveCliModel(undefined, file, authFile, {})).not.toBe("42");
+    const warnings: string[] = [];
+    expect(
+      await resolveCliModel(undefined, file, authFile, {}, (message) => warnings.push(message)),
+    ).not.toBe("42");
+    expect(warnings[0]).toContain("model");
   });
 
   test("a malformed config is ignored when reading but not overwritten when saving", async () => {
@@ -147,7 +151,9 @@ describe("user model configuration", () => {
     const file = join(root, "config.json");
     await writeFile(file, "{ broken");
 
-    expect(await loadUserConfig(file)).toEqual({});
+    const warnings: string[] = [];
+    expect(await loadUserConfig(file, (message) => warnings.push(message))).toEqual({});
+    expect(warnings).toHaveLength(1);
     await expect(saveDefaultModel("openai/gpt-5.1", file)).rejects.toThrow();
     expect(await readFile(file, "utf8")).toBe("{ broken");
   });

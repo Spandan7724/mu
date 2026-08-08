@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnyTool } from "@mu/core";
@@ -83,6 +93,24 @@ describe("read", () => {
       run(readTool({ root, state: new FileState() }), { path: "../../../etc/passwd" }),
     ).rejects.toThrow("escapes the session root");
   });
+
+  test("canonical paths cannot escape through a symlink", async () => {
+    const root = await scratch();
+    const outside = await scratch();
+    await writeFile(join(outside, "secret.txt"), "outside secret");
+    await symlink(join(outside, "secret.txt"), join(root, "secret.txt"));
+
+    await expect(
+      run(readTool({ root, state: new FileState() }), { path: "secret.txt" }),
+    ).rejects.toThrow("symbolic link");
+  });
+
+  test("an in-root name beginning with two dots remains valid", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "..notes"), "valid");
+    const result = await run(readTool({ root, state: new FileState() }), { path: "..notes" });
+    expect(textOf(result)).toContain("valid");
+  });
 });
 
 describe("write", () => {
@@ -148,6 +176,40 @@ describe("write", () => {
       content: "x",
     });
     expect(await readFile(join(root, "deep/nested/file.txt"), "utf8")).toBe("x");
+  });
+
+  test("refuses a changed file even when its mtime is forced backwards", async () => {
+    const root = await scratch();
+    const path = join(root, "existing.txt");
+    await writeFile(path, "original");
+    const state = new FileState();
+    await run(readTool({ root, state }), { path: "existing.txt" });
+    const before = await stat(path);
+    await writeFile(path, "external");
+    await utimes(path, before.atime, new Date(before.mtimeMs - 60_000));
+
+    const result = await run(writeTool({ root, state }), {
+      path: "existing.txt",
+      content: "agent overwrite",
+    });
+    expect(result.isError).toBe(true);
+    expect(await readFile(path, "utf8")).toBe("external");
+  });
+
+  test("refuses to recreate a file deleted after it was read", async () => {
+    const root = await scratch();
+    const path = join(root, "existing.txt");
+    await writeFile(path, "original");
+    const state = new FileState();
+    await run(readTool({ root, state }), { path: "existing.txt" });
+    await rm(path);
+
+    const result = await run(writeTool({ root, state }), {
+      path: "existing.txt",
+      content: "replacement",
+    });
+    expect(result.isError).toBe(true);
+    await expect(readFile(path, "utf8")).rejects.toThrow();
   });
 });
 
@@ -535,6 +597,25 @@ describe("ls, glob and grep", () => {
     expect(text).toContain("readme.md");
   });
 
+  test("search and listing do not follow directory symlinks outside the root", async () => {
+    const root = await tree();
+    const outside = await scratch();
+    await writeFile(join(outside, "secret.ts"), "export const externalSecret = 1;\n");
+    await symlink(outside, join(root, "linked"));
+
+    await expect(run(lsTool({ root, state: new FileState() }), { path: "linked" })).rejects.toThrow(
+      "symbolic link",
+    );
+    const glob = await run(globTool({ root, state: new FileState() }, { ripgrep: false }), {
+      pattern: "**/*.ts",
+    });
+    const grep = await run(grepTool({ root, state: new FileState() }, { ripgrep: false }), {
+      pattern: "externalSecret",
+    });
+    expect(textOf(glob)).not.toContain("secret.ts");
+    expect(textOf(grep)).toContain("No matches");
+  });
+
   test("glob matches nested files and skips node_modules", async () => {
     const root = await tree();
     const result = await run(globTool({ root, state: new FileState() }), {
@@ -864,6 +945,29 @@ describe("bash", () => {
     const root = await scratch();
     const result = await run(bashTool({ root }), { command: "echo integration && pwd" });
     expect(textOf(result)).toContain("integration");
+  });
+
+  test("bounds foreground output before the process exits", async () => {
+    if (process.platform === "win32") return;
+    const root = await scratch();
+    const result = await run(bashTool({ root }), {
+      command: "printf 'x%.0s' {1..100000}",
+    });
+    expect(textOf(result)).toContain("bytes omitted");
+    expect(textOf(result).length).toBeLessThan(40_000);
+  });
+
+  test("escalates timeout termination when a process ignores SIGTERM", async () => {
+    if (process.platform === "win32") return;
+    const root = await scratch();
+    const started = Date.now();
+    const result = await run(bashTool({ root }), {
+      command: "trap '' TERM; while :; do sleep 1; done",
+      timeoutMs: 50,
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("timed out");
+    expect(Date.now() - started).toBeLessThan(3_000);
   });
 });
 

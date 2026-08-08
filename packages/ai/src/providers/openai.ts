@@ -222,11 +222,17 @@ function convertInput(messages: AiMessage[]): Json[] {
         }
       }
     } else {
-      const text = msg.content
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
-      items.push({ type: "function_call_output", call_id: msg.toolCallId, output: text });
+      const output = msg.content.every((block) => block.type === "text")
+        ? msg.content.map((block) => block.text).join("\n")
+        : msg.content.map((block) =>
+            block.type === "text"
+              ? { type: "input_text", text: block.text }
+              : {
+                  type: "input_image",
+                  image_url: `data:${block.mimeType};base64,${block.data}`,
+                },
+          );
+      items.push({ type: "function_call_output", call_id: msg.toolCallId, output });
     }
   }
   return items;

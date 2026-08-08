@@ -139,6 +139,18 @@ async function main(): Promise<number> {
           onPermission: (request) =>
             new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
         });
+        const cancelPermissions = () => {
+          for (const [id, resolve] of pending) {
+            pending.delete(id);
+            resolve("deny");
+          }
+        };
+        const resumeSession = async (sessionId: string) => {
+          const tree = await agent.sessionStore.load(sessionId);
+          if (!tree) throw new Error(`Session not found: ${sessionId}`);
+          agent.resume(tree);
+        };
+        if (args.resumeSessionId) await resumeSession(args.resumeSessionId);
         const commands = registryWithCoreCommands({
           requestCompaction: (focus) => agent.compactNow(focus),
           usage: () => ({
@@ -178,13 +190,12 @@ async function main(): Promise<number> {
                 resolve(outcome);
                 return true;
               },
+              cancelPermissions,
+              resumeSession,
             },
           );
         } finally {
-          for (const [id, resolve] of pending) {
-            resolve("deny");
-            pending.delete(id);
-          }
+          cancelPermissions();
           await agent.shutdown();
         }
         return 0;

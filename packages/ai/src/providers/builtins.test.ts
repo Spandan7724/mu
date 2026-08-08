@@ -143,6 +143,44 @@ describe("built-in LLM providers", () => {
     });
   });
 
+  test("OpenAI-compatible requests attach tool-result images as multimodal user content", async () => {
+    const model = findModel("zai/glm-5.1") as ModelInfo;
+    const capture: { body?: Record<string, unknown> } = {};
+    const imageContext: LlmContext = {
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "c1", name: "render_image", arguments: {} }],
+          model: "zai/glm-5.1",
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "toolUse",
+          timestamp: 1,
+        },
+        {
+          role: "toolResult",
+          toolCallId: "c1",
+          toolName: "render_image",
+          content: [{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" }],
+          isError: false,
+          timestamp: 2,
+        },
+      ],
+    };
+    await getProvider("zai")
+      .stream(model, imageContext, { apiKey: "plan-key", fetch: completionFetch(capture) })
+      .result();
+
+    const messages = capture.body?.messages as Array<Record<string, unknown>>;
+    expect(messages.at(-2)).toMatchObject({ role: "tool", tool_call_id: "c1" });
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Images returned by the preceding tool calls:" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,aW1hZ2U=" } },
+      ],
+    });
+  });
+
   test("maps Qwen plan thinking to enable_thinking", async () => {
     const model = findModel("qwen-token-plan/qwen3.7-max") as ModelInfo;
     const capture: { body?: Record<string, unknown> } = {};

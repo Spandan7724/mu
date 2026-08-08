@@ -48,6 +48,17 @@ export type SessionEntry =
       replacements: { entryId: string; message: AgentMessage }[];
     }
   | {
+      type: "compaction-attempt";
+      id: string;
+      parentId: string | null;
+      status: "failed" | "cancelled";
+      trigger: "manual" | "threshold" | "overflow" | "model-change";
+      model: string;
+      compactorModel: string;
+      timestamp: number;
+      usage: Usage;
+    }
+  | {
       type: "checkpoint";
       id: string;
       parentId: string | null;
@@ -82,6 +93,188 @@ export type NewTreeEntry = DistributiveOmit<TreeEntry, "id" | "parentId"> & {
   parentId?: string | null;
 };
 
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function string(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function optional(value: unknown, predicate: (candidate: unknown) => boolean): boolean {
+  return value === undefined || predicate(value);
+}
+
+function validUsage(value: unknown): boolean {
+  if (!record(value)) return false;
+  return (
+    finite(value.inputTokens) &&
+    value.inputTokens >= 0 &&
+    finite(value.outputTokens) &&
+    value.outputTokens >= 0 &&
+    finite(value.cacheReadTokens) &&
+    value.cacheReadTokens >= 0 &&
+    finite(value.cacheWriteTokens) &&
+    value.cacheWriteTokens >= 0 &&
+    optional(value.costUsd, (candidate) => finite(candidate) && candidate >= 0)
+  );
+}
+
+function validContent(value: unknown, roles: readonly string[]): boolean {
+  if (!record(value) || !string(value.type) || !roles.includes(value.type)) return false;
+  if (value.type === "text") return string(value.text);
+  if (value.type === "image") {
+    return (
+      string(value.mimeType) &&
+      string(value.data) &&
+      optional(value.evictable, (candidate) => typeof candidate === "boolean")
+    );
+  }
+  if (value.type === "thinking") {
+    return (
+      string(value.thinking) &&
+      optional(value.signature, string) &&
+      optional(value.redacted, (candidate) => typeof candidate === "boolean")
+    );
+  }
+  return (
+    string(value.id) &&
+    string(value.name) &&
+    record(value.arguments) &&
+    optional(value.signature, string)
+  );
+}
+
+function validMessage(value: unknown): boolean {
+  if (!record(value) || !string(value.role) || !Array.isArray(value.content)) return false;
+  if (!finite(value.timestamp)) return false;
+  if (value.role === "user")
+    return value.content.every((block) => validContent(block, ["text", "image"]));
+  if (value.role === "custom") {
+    return (
+      string(value.customType) &&
+      optional(value.display, (candidate) => typeof candidate === "boolean") &&
+      value.content.every((block) => validContent(block, ["text", "image"]))
+    );
+  }
+  if (value.role === "toolResult") {
+    return (
+      string(value.toolCallId) &&
+      string(value.toolName) &&
+      typeof value.isError === "boolean" &&
+      optional(value.evicted, (candidate) => typeof candidate === "boolean") &&
+      value.content.every((block) => validContent(block, ["text", "image"]))
+    );
+  }
+  if (value.role === "assistant") {
+    return (
+      string(value.model) &&
+      validUsage(value.usage) &&
+      ["end", "toolUse", "length", "aborted", "error"].includes(String(value.stopReason)) &&
+      optional(value.errorMessage, string) &&
+      value.content.every((block) => validContent(block, ["text", "thinking", "toolCall"]))
+    );
+  }
+  return false;
+}
+
+function assertSessionEntry(value: unknown): asserts value is SessionEntry {
+  if (!record(value) || !string(value.type))
+    throw new Error("Invalid session entry: expected an object with a type");
+  if (value.type === "session") {
+    if (
+      !finite(value.version) ||
+      !nonEmptyString(value.id) ||
+      !string(value.createdAt) ||
+      !string(value.profile) ||
+      !record(value.environment) ||
+      !Object.values(value.environment).every(string)
+    ) {
+      throw new Error("Invalid session header");
+    }
+    return;
+  }
+  if (!nonEmptyString(value.id) || !(value.parentId === null || nonEmptyString(value.parentId))) {
+    throw new Error(`Invalid ${value.type} session entry identity`);
+  }
+  switch (value.type) {
+    case "message":
+      if (!validMessage(value.message) || !optional(value.checkpointRef, string)) {
+        throw new Error("Invalid message session entry");
+      }
+      return;
+    case "compaction":
+      if (
+        !string(value.summary) ||
+        !(value.firstKeptEntryId === null || string(value.firstKeptEntryId)) ||
+        !optional(value.timestamp, finite) ||
+        !optional(value.contextTokensBefore, finite) ||
+        !optional(value.contextTokensAfter, finite) ||
+        !optional(value.model, string) ||
+        !optional(value.compactorModel, string) ||
+        !optional(value.windowNumber, finite) ||
+        !optional(value.keptTokens, finite) ||
+        !optional(value.toolResultsCleared, finite) ||
+        !optional(value.usage, validUsage)
+      ) {
+        throw new Error("Invalid compaction session entry");
+      }
+      return;
+    case "microcompaction":
+      if (
+        !Array.isArray(value.replacements) ||
+        !value.replacements.every(
+          (item) => record(item) && string(item.entryId) && validMessage(item.message),
+        )
+      ) {
+        throw new Error("Invalid microcompaction session entry");
+      }
+      return;
+    case "compaction-attempt":
+      if (
+        !["failed", "cancelled"].includes(String(value.status)) ||
+        !["manual", "threshold", "overflow", "model-change"].includes(String(value.trigger)) ||
+        !string(value.model) ||
+        !string(value.compactorModel) ||
+        !finite(value.timestamp) ||
+        !validUsage(value.usage)
+      ) {
+        throw new Error("Invalid compaction-attempt session entry");
+      }
+      return;
+    case "checkpoint":
+      if (
+        !(value.beforeEntryId === null || string(value.beforeEntryId)) ||
+        !string(value.checkpointRef) ||
+        !string(value.checkpointAfterRef) ||
+        !optional(value.label, string)
+      ) {
+        throw new Error("Invalid checkpoint session entry");
+      }
+      return;
+    case "settings-change":
+      if (!optional(value.model, string) || !optional(value.thinkingLevel, string)) {
+        throw new Error("Invalid settings-change session entry");
+      }
+      return;
+    case "custom":
+      if (!nonEmptyString(value.customType) || !Object.hasOwn(value, "data")) {
+        throw new Error("Invalid custom session entry");
+      }
+      return;
+    default:
+      throw new Error(`Unknown session entry type: ${value.type}`);
+  }
+}
+
 export function isTreeEntry(entry: SessionEntry): entry is TreeEntry {
   return entry.type !== "session";
 }
@@ -91,7 +284,9 @@ export function serializeEntry(entry: SessionEntry): string {
 }
 
 export function parseEntry(line: string): SessionEntry {
-  return JSON.parse(line) as SessionEntry;
+  const entry: unknown = JSON.parse(line);
+  assertSessionEntry(entry);
+  return entry;
 }
 
 export function serializeSession(entries: SessionEntry[]): string {
@@ -119,12 +314,19 @@ export class SessionTree {
   private headId: string | null = null;
 
   constructor(header?: SessionEntry & { type: "session" }) {
-    if (header) this.entries.push(header);
+    if (header) {
+      assertSessionEntry(header);
+      this.entries.push(header);
+    }
   }
 
   static fromJsonl(jsonl: string): SessionTree {
     const tree = new SessionTree();
-    for (const entry of parseSession(jsonl)) tree.push(entry);
+    const entries = parseSession(jsonl);
+    if (entries.length === 0 || entries[0]?.type !== "session") {
+      throw new Error("Invalid session: line 1 must be the session header");
+    }
+    for (const entry of entries) tree.push(entry);
     return tree;
   }
 
@@ -155,6 +357,20 @@ export class SessionTree {
 
   // Replays an existing entry (used when loading). Advances head to it.
   push(entry: SessionEntry): void {
+    assertSessionEntry(entry);
+    if (entry.type === "session") {
+      if (this.entries.length !== 0)
+        throw new Error("Invalid session: header must appear only on line 1");
+    } else {
+      if (this.entries.length === 0 || this.entries[0]?.type !== "session") {
+        throw new Error("Invalid session: missing header");
+      }
+      if (this.byId.has(entry.id))
+        throw new Error(`Invalid session: duplicate entry id ${entry.id}`);
+      if (entry.parentId !== null && !this.byId.has(entry.parentId)) {
+        throw new Error(`Invalid session: unknown parent ${entry.parentId}`);
+      }
+    }
     this.entries.push(entry);
     if (isTreeEntry(entry)) {
       this.byId.set(entry.id, entry);

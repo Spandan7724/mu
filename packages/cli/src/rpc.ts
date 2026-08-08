@@ -1,12 +1,14 @@
 // RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
 // AgentEvent union every other surface consumes.
 import type { Agent, AgentEvent, AgentRunOptions, CommandResult, MarkdownCommandRun } from "mu";
+import { z } from "zod";
 
 export type RpcOp =
   | { type: "input"; text: string }
   | { type: "steer"; text: string }
   | { type: "follow_up"; text: string }
   | { type: "permission_reply"; requestId: string; outcome: "allow" | "deny" }
+  | { type: "resume"; sessionId: string }
   | { type: "command"; text: string }
   | { type: "abort" }
   | { type: "shutdown" };
@@ -28,16 +30,45 @@ export interface RpcDeps {
   agent: Agent;
   // Resolves a pending permission ask; returns false when the id is unknown.
   resolvePermission?: (requestId: string, outcome: "allow" | "deny") => boolean;
+  cancelPermissions?: () => void;
+  resumeSession?: (sessionId: string) => Promise<void>;
   runCommand?: (text: string) => Promise<CommandResult>;
 }
 
+const text = z.string().max(1_000_000);
+const MAX_RPC_LINE_CHARS = 2_000_000;
+const RPC_LINE_TOO_LONG = "__mu_rpc_line_too_long__";
+const rpcOpSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("input"), text }).strict(),
+  z.object({ type: z.literal("steer"), text }).strict(),
+  z.object({ type: z.literal("follow_up"), text }).strict(),
+  z
+    .object({
+      type: z.literal("permission_reply"),
+      requestId: z.string().min(1).max(256),
+      outcome: z.enum(["allow", "deny"]),
+    })
+    .strict(),
+  z.object({ type: z.literal("resume"), sessionId: z.string().min(1).max(512) }).strict(),
+  z.object({ type: z.literal("command"), text }).strict(),
+  z.object({ type: z.literal("abort") }).strict(),
+  z.object({ type: z.literal("shutdown") }).strict(),
+]);
+
 export function parseOp(line: string): RpcOp | { type: "parse_error"; message: string } {
+  if (line === RPC_LINE_TOO_LONG || line.length > MAX_RPC_LINE_CHARS) {
+    return { type: "parse_error", message: "RPC input line exceeds the 2,000,000 character limit" };
+  }
   try {
-    const parsed = JSON.parse(line) as RpcOp;
-    if (typeof parsed !== "object" || parsed === null || typeof parsed.type !== "string") {
-      return { type: "parse_error", message: "op must be an object with a type" };
-    }
-    return parsed;
+    const parsed: unknown = JSON.parse(line);
+    const result = rpcOpSchema.safeParse(parsed);
+    if (result.success) return result.data;
+    return {
+      type: "parse_error",
+      message: result.error.issues
+        .map((issue) => `${issue.path.join(".") || "op"}: ${issue.message}`)
+        .join("; "),
+    };
   } catch (error) {
     return {
       type: "parse_error",
@@ -102,6 +133,31 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           break;
         }
 
+        case "resume": {
+          if (active || deps.agent.isRunning) {
+            send({ type: "error", message: "cannot resume while a run is active" });
+            break;
+          }
+          if (!deps.resumeSession) {
+            send({ type: "error", message: "session resume is unavailable" });
+            break;
+          }
+          try {
+            await deps.resumeSession(op.sessionId);
+            send({
+              type: "command_result",
+              message: `Resumed session ${op.sessionId}`,
+              data: { sessionId: deps.agent.sessionId },
+            });
+          } catch (error) {
+            send({
+              type: "error",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+          break;
+        }
+
         case "command": {
           try {
             const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
@@ -131,12 +187,14 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         }
 
         case "abort":
+          deps.cancelPermissions?.();
           deps.agent.abort();
           break;
 
         case "shutdown":
           // Graceful: let an in-flight run finish. Callers wanting to cut it
           // short send `abort` first — that is what that op is for.
+          deps.cancelPermissions?.();
           await active;
           await deps.agent.waitForIdle();
           send({ type: "shutdown" });
@@ -147,6 +205,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
       }
     }
 
+    deps.cancelPermissions?.();
     await active;
     await deps.agent.waitForIdle();
   } finally {
@@ -165,14 +224,32 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
 
 export async function* linesFrom(stream: NodeJS.ReadableStream): AsyncGenerator<string> {
   let buffer = "";
+  let droppingOversizedLine = false;
+  const decoder = new TextDecoder();
   for await (const chunk of stream) {
-    buffer += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    if (droppingOversizedLine) {
+      const end = buffer.indexOf("\n");
+      if (end === -1) {
+        buffer = "";
+        continue;
+      }
+      buffer = buffer.slice(end + 1);
+      droppingOversizedLine = false;
+    }
     let index = buffer.indexOf("\n");
     while (index !== -1) {
-      yield buffer.slice(0, index);
+      const line = buffer.slice(0, index);
+      yield line.length > MAX_RPC_LINE_CHARS ? RPC_LINE_TOO_LONG : line;
       buffer = buffer.slice(index + 1);
       index = buffer.indexOf("\n");
     }
+    if (buffer.length > MAX_RPC_LINE_CHARS) {
+      buffer = "";
+      droppingOversizedLine = true;
+      yield RPC_LINE_TOO_LONG;
+    }
   }
-  if (buffer.trim().length > 0) yield buffer;
+  buffer += decoder.decode();
+  if (!droppingOversizedLine && buffer.trim().length > 0) yield buffer;
 }

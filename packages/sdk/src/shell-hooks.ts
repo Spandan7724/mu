@@ -1,4 +1,4 @@
-import type { Extension, ExtensionAPI } from "@mu/core";
+import { type Extension, type ExtensionAPI, OutputBuffer } from "@mu/core";
 
 export type HookEvent = "PreToolUse" | "PostToolUse" | "UserPromptSubmit" | "SessionStart" | "Stop";
 
@@ -17,6 +17,41 @@ export type HookRunner = (
 ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const TERMINATION_GRACE_MS = 1_000;
+
+async function boundedStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  const output = new OutputBuffer();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output.append(decoder.decode(value, { stream: true }));
+  }
+  output.append(decoder.decode());
+  return output.read();
+}
+
+function killHookTree(proc: Bun.Subprocess, signal: NodeJS.Signals): void {
+  if (process.platform === "win32") {
+    try {
+      Bun.spawn(["taskkill.exe", "/PID", String(proc.pid), "/T", "/F"], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+        windowsHide: true,
+      });
+    } catch {
+      proc.kill(signal);
+    }
+    return;
+  }
+  try {
+    process.kill(-proc.pid, signal);
+  } catch {
+    proc.kill(signal);
+  }
+}
 
 async function defaultRunner(
   command: string,
@@ -27,17 +62,23 @@ async function defaultRunner(
     stdin: new TextEncoder().encode(input),
     stdout: "pipe",
     stderr: "pipe",
+    detached: process.platform !== "win32",
   });
-  const timer = setTimeout(() => proc.kill(), timeoutMs);
+  let escalation: ReturnType<typeof setTimeout> | undefined;
+  const timer = setTimeout(() => {
+    killHookTree(proc, "SIGTERM");
+    escalation = setTimeout(() => killHookTree(proc, "SIGKILL"), TERMINATION_GRACE_MS);
+  }, timeoutMs);
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      boundedStream(proc.stdout),
+      boundedStream(proc.stderr),
       proc.exited,
     ]);
     return { exitCode, stdout, stderr };
   } finally {
     clearTimeout(timer);
+    if (escalation) clearTimeout(escalation);
   }
 }
 
@@ -156,6 +197,10 @@ export function shellHooksExtension(
               hook.command,
               JSON.stringify({ event }),
               hook.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+            ).catch((error: unknown) =>
+              api.log(
+                `${event} hook failed: ${error instanceof Error ? error.message : String(error)}`,
+              ),
             );
           }
         });

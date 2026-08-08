@@ -19,6 +19,7 @@ import {
 import {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
+  instructionSettingsSchema,
   layerPermissions,
   loadProjectConfig,
   rememberAllow,
@@ -50,17 +51,42 @@ export interface CodingProfile extends Profile {
   instructions: InstructionLoader;
 }
 
-async function userInstructionSettings(home: string): Promise<InstructionSettings> {
+async function userInstructionSettings(
+  home: string,
+  onWarning: (message: string) => void,
+): Promise<InstructionSettings> {
+  const path = join(home, ".mu", "config.json");
   try {
-    const parsed = JSON.parse(await readFile(join(home, ".mu", "config.json"), "utf8")) as {
-      instructions?: unknown;
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      onWarning(`Invalid user config at ${path}: config must be an object`);
+      return {};
+    }
+    const instructions = (parsed as Record<string, unknown>).instructions;
+    if (instructions === undefined) return {};
+    const result = instructionSettingsSchema.safeParse(instructions);
+    if (!result.success) {
+      onWarning(
+        `Invalid user config at ${path}: ${result.error.issues
+          .map((issue) => `instructions.${issue.path.join(".")}: ${issue.message}`)
+          .join("; ")}`,
+      );
+      return {};
+    }
+    const { enabled, fallbackFilenames, projectRootMarkers, imports, claudeRules } = result.data;
+    return {
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(fallbackFilenames !== undefined ? { fallbackFilenames } : {}),
+      ...(projectRootMarkers !== undefined ? { projectRootMarkers } : {}),
+      ...(imports !== undefined ? { imports } : {}),
+      ...(claudeRules !== undefined ? { claudeRules } : {}),
     };
-    return parsed.instructions &&
-      typeof parsed.instructions === "object" &&
-      !Array.isArray(parsed.instructions)
-      ? (parsed.instructions as InstructionSettings)
-      : {};
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      onWarning(
+        `Invalid user config at ${path}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
     return {};
   }
 }
@@ -70,11 +96,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   const home = resolve(options.home ?? homedir());
   const fileState = new FileState();
   const todos = new TodoStore();
-  const projectConfig = await loadProjectConfig(root);
+  const configDiagnostics: string[] = [];
+  const projectConfig = await loadProjectConfig(root, (message) => configDiagnostics.push(message));
   const instructionLoader = new InstructionLoader({
     root,
     home,
-    ...(await userInstructionSettings(home)),
+    ...(await userInstructionSettings(home, (message) => configDiagnostics.push(message))),
     ...(projectConfig.instructions ?? {}),
     ...(options.instructions ?? {}),
     ...(options.managedInstructionPaths ? { managedPaths: options.managedInstructionPaths } : {}),
@@ -145,9 +172,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ],
     refreshContext: (messages, context) =>
       instructionLoader.refreshedMessages(messages, context.sessionId),
-    diagnostics: instructionLoader.snapshot.diagnostics.map((diagnostic) =>
-      diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
-    ),
+    diagnostics: [
+      ...configDiagnostics,
+      ...instructionLoader.snapshot.diagnostics.map((diagnostic) =>
+        diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
+      ),
+    ],
     commands: [
       {
         name: "instructions",

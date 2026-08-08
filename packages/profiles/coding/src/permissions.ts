@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { PermissionMode, PermissionRule } from "@mu/core";
+import { z } from "zod";
 import type { InstructionSettings } from "./context.ts";
 
 export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
@@ -60,18 +61,75 @@ export interface ProjectConfig {
   permissions?: PermissionRule[];
   model?: string;
   instructions?: InstructionSettings;
+  [key: string]: unknown;
 }
+
+const permissionRuleSchema = z.object({
+  permission: z.string().min(1),
+  pattern: z.string(),
+  action: z.enum(["allow", "ask", "deny"]),
+});
+
+export const instructionSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  fallbackFilenames: z.array(z.string().min(1)).optional(),
+  projectRootMarkers: z.array(z.string().min(1)).optional(),
+  imports: z.boolean().optional(),
+  claudeRules: z.boolean().optional(),
+});
+
+const projectConfigSchema = z
+  .object({
+    permissions: z.array(permissionRuleSchema).optional(),
+    model: z.string().min(1).optional(),
+    instructions: instructionSettingsSchema.optional(),
+  })
+  .loose();
 
 export function configPath(root: string): string {
   return join(root, ".mu", "config.json");
 }
 
-export async function loadProjectConfig(root: string): Promise<ProjectConfig> {
+export async function loadProjectConfig(
+  root: string,
+  onWarning?: (message: string) => void,
+): Promise<ProjectConfig> {
   try {
     const raw = await readFile(configPath(root), "utf8");
-    const parsed = JSON.parse(raw) as ProjectConfig;
-    return typeof parsed === "object" && parsed !== null ? parsed : {};
-  } catch {
+    const parsed: unknown = JSON.parse(raw);
+    const result = projectConfigSchema.safeParse(parsed);
+    if (!result.success) {
+      const issues = result.error.issues
+        .map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`)
+        .join("; ");
+      throw new Error(`Invalid project config at ${configPath(root)}: ${issues}`);
+    }
+    const { permissions, model, instructions, ...rest } = result.data;
+    const normalizedInstructions: InstructionSettings | undefined = instructions
+      ? {
+          ...(instructions.enabled !== undefined ? { enabled: instructions.enabled } : {}),
+          ...(instructions.fallbackFilenames !== undefined
+            ? { fallbackFilenames: instructions.fallbackFilenames }
+            : {}),
+          ...(instructions.projectRootMarkers !== undefined
+            ? { projectRootMarkers: instructions.projectRootMarkers }
+            : {}),
+          ...(instructions.imports !== undefined ? { imports: instructions.imports } : {}),
+          ...(instructions.claudeRules !== undefined
+            ? { claudeRules: instructions.claudeRules }
+            : {}),
+        }
+      : undefined;
+    return {
+      ...rest,
+      ...(permissions !== undefined ? { permissions } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(normalizedInstructions !== undefined ? { instructions: normalizedInstructions } : {}),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if (!onWarning) throw error;
+    onWarning(error instanceof Error ? error.message : String(error));
     return {};
   }
 }

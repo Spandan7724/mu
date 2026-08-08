@@ -20,8 +20,16 @@ function numberFlag(raw: string | undefined, name: string, errors: string[]): nu
     return undefined;
   }
   const value = Number(raw);
-  if (Number.isNaN(value)) {
-    errors.push(`${name} expects a number, got "${raw}"`);
+  if (!Number.isFinite(value)) {
+    errors.push(`${name} expects a number (finite), got "${raw}"`);
+    return undefined;
+  }
+  if (value < 0 || (name === "--max-turns" && (!Number.isSafeInteger(value) || value === 0))) {
+    errors.push(
+      name === "--max-turns"
+        ? `${name} expects a positive integer, got "${raw}"`
+        : `${name} expects a non-negative number, got "${raw}"`,
+    );
     return undefined;
   }
   return value;
@@ -105,9 +113,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  if (parsed.resumeSessionId && parsed.mode !== "tui") {
-    parsed.errors.push("--resume is only available in interactive mode");
-  }
   return parsed;
 }
 
@@ -126,7 +131,7 @@ Options:
       --json               stream events as JSON (headless mode)
       --model <ref>        model to use, e.g. anthropic/claude-opus-5
       --profile <name>     profile to load (default: coding)
-      --resume <session>   resume an earlier interactive session
+      --resume <session>   resume an earlier session (interactive, headless, or RPC)
       --max-turns <n>      stop after n turns
       --max-cost <usd>     stop once the run costs this much
       --permission-mode <mode>

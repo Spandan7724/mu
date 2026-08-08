@@ -1,4 +1,4 @@
-import { errorResult, type ProcessManager, type ToolResult } from "@mu/core";
+import { errorResult, OutputBuffer, type ProcessManager, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
@@ -8,6 +8,7 @@ import { truncateOutput, withNotice } from "../truncate.ts";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const STREAM_UPDATE_INTERVAL_MS = 80;
+const TERMINATION_GRACE_MS = 1_000;
 
 type OutputStream = "stdout" | "stderr";
 type OutputChunk = (text: string, stream: OutputStream) => void;
@@ -40,23 +41,23 @@ async function readProcessStream(
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let output = "";
+  const output = new OutputBuffer();
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     const text = decoder.decode(value, { stream: true });
     if (!text) continue;
-    output += text;
+    output.append(text);
     onOutput?.(text, kind);
   }
 
   const final = decoder.decode();
   if (final) {
-    output += final;
+    output.append(final);
     onOutput?.(final, kind);
   }
-  return output;
+  return output.read();
 }
 
 async function defaultSpawn(
@@ -80,11 +81,16 @@ async function defaultSpawn(
   });
 
   let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | undefined;
+  const terminate = () => {
+    terminateProcessTree(proc, "SIGTERM");
+    escalation ??= setTimeout(() => terminateProcessTree(proc, "SIGKILL"), TERMINATION_GRACE_MS);
+  };
   const timer = setTimeout(() => {
     timedOut = true;
-    terminateProcessTree(proc, "SIGTERM");
+    terminate();
   }, timeoutMs);
-  const onAbort = () => terminateProcessTree(proc, "SIGTERM");
+  const onAbort = terminate;
   signal.addEventListener("abort", onAbort, { once: true });
 
   try {
@@ -96,6 +102,7 @@ async function defaultSpawn(
     return { stdout, stderr, exitCode, timedOut };
   } finally {
     clearTimeout(timer);
+    if (escalation) clearTimeout(escalation);
     signal.removeEventListener("abort", onAbort);
   }
 }

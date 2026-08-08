@@ -107,6 +107,20 @@ export async function runHeadless(
     // Headless is unattended: profile "ask" rules resolve to deny (no callback).
   });
 
+  if (args.resumeSessionId) {
+    try {
+      const tree = await agent.sessionStore.load(args.resumeSessionId);
+      if (!tree) throw new Error(`Session not found: ${args.resumeSessionId}`);
+      agent.resume(tree);
+    } catch (error) {
+      io.stderr(
+        `mu: could not resume session: ${error instanceof Error ? error.message : error}\n`,
+      );
+      await agent.shutdown();
+      return EXIT.usage;
+    }
+  }
+
   const onSigint = () => agent.stop();
   process.on("SIGINT", onSigint);
 

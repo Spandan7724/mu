@@ -170,6 +170,7 @@ describe("/compact on demand", () => {
     });
 
     const result = await agent.compactNow("preserve authentication decisions");
+    await Bun.sleep(0);
 
     expect(result.status).toBe("completed");
     expect(provider.callCount).toBe(2);
@@ -199,8 +200,19 @@ describe("/compact on demand", () => {
     const result = await agent.compactNow();
 
     expect(result.status).toBe("failed");
-    expect(agent.session.toJsonl()).toBe(before);
+    expect(agent.session.toJsonl()).toStartWith(before);
+    expect(agent.session.activePath().at(-1)?.type).toBe("compaction-attempt");
+    expect(agent.session.messagesAt()).toHaveLength(2);
     expect(result.message).toContain("Original conversation preserved");
+
+    const persisted = await agent.sessionStore.load(agent.sessionId);
+    const resumed = new Agent({
+      provider: new FakeProvider([]),
+      model: smallModel,
+      session: agent.sessionStore,
+    });
+    resumed.resume(persisted as SessionTree);
+    expect(resumed.usage).toEqual(agent.usage);
   });
 
   test("compactNow does not install a candidate boundary when persistence fails", async () => {
@@ -227,8 +239,9 @@ describe("/compact on demand", () => {
 
     expect(result.status).toBe("failed");
     expect(result.message).toContain("disk unavailable");
-    expect(agent.session.toJsonl()).toBe(before);
+    expect(agent.session.toJsonl()).toStartWith(before);
     expect(agent.session.activePath().some((entry) => entry.type === "compaction")).toBe(false);
+    expect(agent.session.activePath().at(-1)?.type).toBe("compaction-attempt");
   });
 
   test("manual compaction queues behind an active turn", async () => {

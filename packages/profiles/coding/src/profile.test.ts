@@ -42,9 +42,10 @@ describe("codingProfile", () => {
   test("read-only tools are marked concurrency-safe, mutating ones are not", async () => {
     const profile = await codingProfile({ root: await scratch() });
     const byName = new Map(profile.toolset.map((t) => [t.name, t]));
-    for (const safe of ["read", "ls", "glob", "grep"]) {
-      expect(byName.get(safe)?.isConcurrencySafe?.({})).toBe(true);
-    }
+    expect(byName.get("read")?.isConcurrencySafe?.({ path: "a.txt" })).toBe(true);
+    expect(byName.get("ls")?.isConcurrencySafe?.({})).toBe(true);
+    expect(byName.get("glob")?.isConcurrencySafe?.({ pattern: "**/*" })).toBe(true);
+    expect(byName.get("grep")?.isConcurrencySafe?.({ pattern: "text" })).toBe(true);
     for (const unsafe of ["write", "edit"]) {
       expect(byName.get(unsafe)?.isConcurrencySafe).toBeUndefined();
     }
@@ -163,11 +164,30 @@ describe("permission defaults", () => {
     expect(evaluate(profile.permissionDefaults, "bash", "curl evil.com")).toBe("ask");
   });
 
-  test("a malformed config is ignored rather than fatal", async () => {
+  test("a malformed config is diagnosed and cannot be overwritten silently", async () => {
     const root = await scratch();
     await mkdir(join(root, ".mu"), { recursive: true });
     await writeFile(join(root, ".mu", "config.json"), "{ not json");
-    expect(await loadProjectConfig(root)).toEqual({});
+    await expect(loadProjectConfig(root)).rejects.toThrow();
+    const profile = await codingProfile({ root });
+    expect(profile.diagnostics?.some((message) => message.includes("JSON Parse error"))).toBe(true);
+    await expect(rememberAllow(root, "bash", "ls*")).rejects.toThrow();
+  });
+
+  test("invalid nested permission rules fail closed with a path diagnostic", async () => {
+    const root = await scratch();
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(
+      join(root, ".mu", "config.json"),
+      JSON.stringify({ permissions: [{ permission: "bash", pattern: 42, action: "allow" }] }),
+    );
+
+    await expect(loadProjectConfig(root)).rejects.toThrow("permissions.0.pattern");
+    const profile = await codingProfile({ root });
+    expect(profile.diagnostics?.some((message) => message.includes("permissions.0.pattern"))).toBe(
+      true,
+    );
+    expect(evaluate(profile.permissionDefaults, "bash", "anything")).toBe("ask");
   });
 
   test("always-allow persists to the project config", async () => {

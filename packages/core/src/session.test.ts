@@ -261,6 +261,55 @@ describe("SessionTree", () => {
     expect(tree.messagesAt().length).toBe(2);
     expect(tree.all().some((e) => e.type === "settings-change")).toBe(true);
   });
+
+  test("rejects malformed entries and invalid tree topology", () => {
+    const header = JSON.stringify(newTree().header);
+    const validMessage = JSON.stringify({
+      type: "message",
+      id: "e1",
+      parentId: null,
+      message: userMessage("hello"),
+    });
+    const cases = [
+      validMessage,
+      `${header}\n${JSON.stringify({ type: "message", id: "e1", parentId: null })}`,
+      `${header}\n${validMessage}\n${validMessage}`,
+      `${header}\n${JSON.stringify({
+        type: "message",
+        id: "e2",
+        parentId: "missing",
+        message: userMessage("orphan"),
+      })}`,
+      `${header}\n${header}`,
+      `${header}\n${JSON.stringify({
+        type: "message",
+        id: "",
+        parentId: null,
+        message: userMessage("empty id"),
+      })}`,
+      `${header}\n${JSON.stringify({ type: "custom", id: "e1", parentId: null, customType: "x" })}`,
+    ];
+
+    for (const jsonl of cases) expect(() => SessionTree.fromJsonl(jsonl)).toThrow();
+  });
+
+  test("failed compaction usage round-trips without changing model context", () => {
+    const tree = newTree();
+    tree.appendMessage(userMessage("hello"));
+    tree.append({
+      type: "compaction-attempt",
+      status: "failed",
+      trigger: "manual",
+      model: "fake/fake-1",
+      compactorModel: "fake/fake-1",
+      timestamp: 2,
+      usage: { inputTokens: 4, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+
+    const loaded = SessionTree.fromJsonl(tree.toJsonl());
+    expect(loaded.activePath().at(-1)?.type).toBe("compaction-attempt");
+    expect(loaded.messagesAt()).toEqual(tree.messagesAt());
+  });
 });
 
 describe("jsonl helpers", () => {

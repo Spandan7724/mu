@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { SESSION_VERSION } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
-import { ExtensionHost } from "mu";
+import { ExtensionHost, MemorySessionStore, SessionTree, userMessage } from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 
@@ -19,15 +20,15 @@ describe("parseArgs", () => {
     expect(parseArgs([]).mode).toBe("tui");
   });
 
-  test("--resume selects a saved interactive session", () => {
+  test("--resume selects a saved session on interactive and headless surfaces", () => {
     const args = parseArgs(["--resume", "019fa562-3975-71e6-b7a1-ed63c54f1fac"]);
     expect(args.mode).toBe("tui");
     expect(args.resumeSessionId).toBe("019fa562-3975-71e6-b7a1-ed63c54f1fac");
     expect(args.errors).toEqual([]);
     expect(parseArgs(["--resume"]).errors[0]).toContain("requires a session id");
-    expect(parseArgs(["-p", "hello", "--resume", "session-id"]).errors[0]).toContain(
-      "interactive mode",
-    );
+    const headless = parseArgs(["-p", "hello", "--resume", "session-id"]);
+    expect(headless.errors).toEqual([]);
+    expect(headless.resumeSessionId).toBe("session-id");
   });
 
   test("-p selects headless and captures the prompt", () => {
@@ -73,6 +74,16 @@ describe("parseArgs", () => {
     expect(parseArgs(["-p"]).errors[0]).toContain("requires a prompt");
   });
 
+  test("budget flags reject non-finite and invalid boundary values", () => {
+    for (const value of ["0", "-1", "1.5", "Infinity"]) {
+      expect(parseArgs(["--max-turns", value]).errors).not.toEqual([]);
+    }
+    for (const value of ["-0.01", "Infinity", "-Infinity"]) {
+      expect(parseArgs(["--max-cost", value]).errors).not.toEqual([]);
+    }
+    expect(parseArgs(["--max-cost", "0"]).errors).toEqual([]);
+  });
+
   test("--rpc and --help select their modes", () => {
     expect(parseArgs(["--rpc"]).mode).toBe("rpc");
     expect(parseArgs(["--help"]).mode).toBe("help");
@@ -116,6 +127,32 @@ describe("runHeadless", () => {
     const code = await runHeadless(parseArgs(["-p", "ask"]), base(provider), sink);
     expect(code).toBe(EXIT.done);
     expect(out.join("")).toContain("the answer");
+  });
+
+  test("resumes stored context before injecting the headless prompt", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "continued" }] }]);
+    const store = new MemorySessionStore();
+    const tree = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "resume-me",
+      createdAt: new Date(0).toISOString(),
+      profile: "test",
+      environment: {},
+    });
+    tree.appendMessage(userMessage("earlier context"));
+    await store.save("resume-me", tree);
+    const { io: sink } = io();
+
+    const code = await runHeadless(
+      parseArgs(["-p", "new prompt", "--resume", "resume-me"]),
+      { ...base(provider), session: store },
+      sink,
+    );
+
+    expect(code).toBe(EXIT.done);
+    expect(JSON.stringify(provider.requests[0]?.messages)).toContain("earlier context");
+    expect(JSON.stringify(provider.requests[0]?.messages)).toContain("new prompt");
   });
 
   test("--json emits one serialized event per line", async () => {

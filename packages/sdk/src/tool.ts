@@ -51,14 +51,43 @@ export function tool<Schema extends z.ZodType>(
     }
     return definition.inputSchema.safeParse(input);
   };
+  const concurrencyCheck = definition.isConcurrencySafe;
+  const stateChangeCheck = definition.changesState;
 
   return {
     name: definition.name,
     description: definition.description,
     inputSchema: jsonSchema,
-    ...(definition.isConcurrencySafe ? { isConcurrencySafe: definition.isConcurrencySafe } : {}),
+    ...(concurrencyCheck
+      ? {
+          isConcurrencySafe: (rawArgs: unknown) => {
+            const parsed = parseArgs(rawArgs);
+            if (!parsed.success) return false;
+            try {
+              return concurrencyCheck(parsed.data) === true;
+            } catch {
+              return false;
+            }
+          },
+        }
+      : {}),
     ...(definition.executionMode ? { executionMode: definition.executionMode } : {}),
-    ...(definition.changesState !== undefined ? { changesState: definition.changesState } : {}),
+    ...(stateChangeCheck !== undefined
+      ? {
+          changesState:
+            typeof stateChangeCheck === "function"
+              ? (rawArgs: unknown) => {
+                  const parsed = parseArgs(rawArgs);
+                  if (!parsed.success) return true;
+                  try {
+                    return stateChangeCheck(parsed.data) === true;
+                  } catch {
+                    return true;
+                  }
+                }
+              : stateChangeCheck,
+        }
+      : {}),
     ...(definition.permissionScope
       ? {
           permissionScope: (rawArgs) => {

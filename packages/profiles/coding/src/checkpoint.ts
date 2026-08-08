@@ -4,7 +4,7 @@
 // are involved.
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
@@ -159,7 +159,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
 
   private async ensure(): Promise<void> {
     if (this.initialized) return;
-    await mkdir(this.shadowDir, { recursive: true });
+    await mkdir(this.shadowDir, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") await chmod(this.shadowDir, 0o700);
     const ownerFile = join(this.shadowDir, "mu-worktree");
     let existingStore = false;
     try {
@@ -182,7 +183,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         // Version 1 force-tracked ignored dependency trees. Rebuild only Mu's
         // shadow repository; the user's worktree is outside this directory.
         await rm(this.shadowDir, { recursive: true, force: true });
-        await mkdir(this.shadowDir, { recursive: true });
+        await mkdir(this.shadowDir, { recursive: true, mode: 0o700 });
+        if (process.platform !== "win32") await chmod(this.shadowDir, 0o700);
       }
     }
     await writeFile(ownerFile, `${this.root}\n`, "utf8");
@@ -218,7 +220,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       "--directory",
       "-z",
     );
-    if (ignored.exitCode !== 0) return [];
+    if (ignored.exitCode !== 0) {
+      throw new Error(`Could not enumerate ignored checkpoint paths: ${ignored.stderr.trim()}`);
+    }
 
     const directories = new Set<string>();
     for (const path of ignored.stdout.split("\0")) {
@@ -353,13 +357,17 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         ".",
         ...this.checkpointPathspecs(disposable),
       );
-      if (add.exitCode !== 0) return [];
+      if (add.exitCode !== 0) {
+        throw new Error(`Could not stage workspace for checkpoint diff: ${add.stderr.trim()}`);
+      }
     }
     const args = toRef
       ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
       : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];
     const result = await this.git(...args);
-    if (result.exitCode !== 0) return [];
+    if (result.exitCode !== 0) {
+      throw new Error(`Could not calculate checkpoint diff: ${result.stderr.trim()}`);
+    }
     const files = parseNumstat(result.stdout);
 
     for (const file of files) {
@@ -367,7 +375,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         ? ["diff", "--no-renames", "--unified=3", fromRef, toRef, "--", file.path]
         : ["diff", "--no-renames", "--cached", "--unified=3", fromRef, "--", file.path];
       const patch = await this.git(...patchArgs);
-      if (patch.exitCode === 0) file.hunks = patch.stdout.split("\n");
+      if (patch.exitCode !== 0) {
+        throw new Error(
+          `Could not calculate checkpoint patch for ${file.path}: ${patch.stderr.trim()}`,
+        );
+      }
+      file.hunks = patch.stdout.split("\n");
     }
     return files;
   }

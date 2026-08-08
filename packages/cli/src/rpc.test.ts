@@ -32,6 +32,15 @@ describe("parseOp", () => {
     expect(parseOp("{not json").type).toBe("parse_error");
     expect(parseOp('"a string"').type).toBe("parse_error");
   });
+
+  test("rejects missing, mistyped, and unknown operation fields", () => {
+    expect(parseOp('{"type":"input"}').type).toBe("parse_error");
+    expect(parseOp('{"type":"permission_reply","requestId":"p","outcome":"maybe"}').type).toBe(
+      "parse_error",
+    );
+    expect(parseOp('{"type":"abort","extra":true}').type).toBe("parse_error");
+    expect(parseOp("x".repeat(2_000_001)).type).toBe("parse_error");
+  });
 });
 
 describe("linesFrom", () => {
@@ -45,6 +54,20 @@ describe("linesFrom", () => {
     const lines: string[] = [];
     for await (const line of linesFrom(stream)) lines.push(line);
     expect(lines).toEqual(['{"a":1}', '{"b":2}', "trailing"]);
+  });
+
+  test("preserves UTF-8 code points split across binary chunks", async () => {
+    const encoded = new TextEncoder().encode('{"text":"🙂"}\n');
+    const emojiStart = new TextEncoder().encode('{"text":"').length;
+    const stream = (async function* () {
+      yield encoded.subarray(0, emojiStart + 1);
+      yield encoded.subarray(emojiStart + 1, emojiStart + 3);
+      yield encoded.subarray(emojiStart + 3);
+    })() as unknown as NodeJS.ReadableStream;
+
+    const lines: string[] = [];
+    for await (const line of linesFrom(stream)) lines.push(line);
+    expect(lines).toEqual(['{"text":"🙂"}']);
   });
 });
 
@@ -181,6 +204,24 @@ describe("runRpc", () => {
     ).toBe("/model");
   });
 
+  test("resumes a stored session through the RPC protocol while idle", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({ type: "resume", sessionId: "stored" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    const resumed: string[] = [];
+    await runRpc(io, {
+      agent,
+      resumeSession: async (sessionId) => {
+        resumed.push(sessionId);
+      },
+    });
+
+    expect(resumed).toEqual(["stored"]);
+    expect(parsed(written).some((item) => item.type === "command_result")).toBe(true);
+  });
+
   test("a second input is rejected instead of overlapping the active run", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "only answer" }], delayMs: 40 },
@@ -294,6 +335,51 @@ describe("runRpc", () => {
 });
 
 describe("shutdown semantics", () => {
+  test("shutdown cancels a pending permission before waiting for the run", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "gated", arguments: {} }] },
+      { content: [{ type: "text", text: "permission denied cleanly" }] },
+    ]);
+    let resolvePending: ((outcome: "allow" | "deny") => void) | undefined;
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      permissions: [{ permission: "*", pattern: "*", action: "ask" }],
+      onPermission: () =>
+        new Promise((resolve) => {
+          resolvePending = resolve;
+        }),
+      tools: [
+        {
+          name: "gated",
+          description: "gated",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text", text: "ran" }] }),
+        },
+      ],
+    });
+    const { io, written } = harness(
+      [JSON.stringify({ type: "input", text: "go" }), JSON.stringify({ type: "shutdown" })],
+      10,
+    );
+
+    await Promise.race([
+      runRpc(io, {
+        agent,
+        cancelPermissions: () => {
+          resolvePending?.("deny");
+          resolvePending = undefined;
+        },
+      }),
+      Bun.sleep(500).then(() => {
+        throw new Error("RPC shutdown hung on a permission request");
+      }),
+    ]);
+
+    expect(parsed(written).at(-1)).toEqual({ type: "shutdown" });
+    expect(resolvePending).toBeUndefined();
+  });
+
   test("shutdown lets an in-flight run finish rather than cutting it off", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "completed answer" }], delayMs: 30 },
