@@ -1,23 +1,64 @@
 // RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
 // AgentEvent union every other surface consumes.
-import type { Agent, AgentEvent, AgentRunOptions, CommandResult, MarkdownCommandRun } from "mu";
+import type {
+  Agent,
+  AgentEvent,
+  AgentMessage,
+  AgentRunOptions,
+  CommandResult,
+  MarkdownCommandRun,
+  Usage,
+} from "mu";
 import { z } from "zod";
 
 export type RpcOp =
   | { type: "input"; text: string }
   | { type: "steer"; text: string }
   | { type: "follow_up"; text: string }
-  | { type: "permission_reply"; requestId: string; outcome: "allow" | "deny" }
+  | {
+      type: "permission_reply";
+      requestId: string;
+      outcome: "allow" | "deny";
+      remember?: boolean | undefined;
+    }
   | { type: "resume"; sessionId: string }
   | { type: "command"; text: string }
+  | { type: "shell"; command: string }
+  | { type: "remove_queued"; kind: "steer" | "follow-up"; text: string }
+  | { type: "cycle_permission_mode" }
+  | { type: "permission_mode"; id: string }
+  | { type: "snapshot" }
+  | { type: "resize"; cols: number; rows: number }
+  | { type: "thinking"; level: string }
   | { type: "abort" }
   | { type: "shutdown" };
+
+export interface RpcRuntimeMetadata {
+  sessionId: string;
+  model: string;
+  contextWindow: number;
+  thinking: string;
+  thinkingLevels: string[];
+}
+
+export interface RpcSnapshot extends RpcRuntimeMetadata {
+  messages: AgentMessage[];
+  usage: Usage;
+  contextPercent: number;
+  isRunning: boolean;
+  events?: AgentEvent[];
+  models?: { label: string; description?: string }[];
+  permissionModes?: { id: string; label: string; description: string }[];
+  permissionMode?: string;
+  commands?: { label: string; description?: string }[];
+}
 
 export type RpcOut =
   | { type: "event"; event: AgentEvent }
   | { type: "error"; message: string }
-  | { type: "ready" }
-  | { type: "command_result"; message?: string; data?: unknown }
+  | ({ type: "ready" } & Partial<RpcRuntimeMetadata>)
+  | { type: "snapshot"; snapshot: RpcSnapshot }
+  | { type: "command_result"; message?: string; data?: unknown; runtime?: RpcRuntimeMetadata }
   | { type: "shutdown" };
 
 export interface RpcIo {
@@ -29,10 +70,16 @@ export interface RpcDeps {
   // Created per input op so each prompt is its own run.
   agent: Agent;
   // Resolves a pending permission ask; returns false when the id is unknown.
-  resolvePermission?: (requestId: string, outcome: "allow" | "deny") => boolean;
+  resolvePermission?: (requestId: string, outcome: "allow" | "deny", remember?: boolean) => boolean;
   cancelPermissions?: () => void;
   resumeSession?: (sessionId: string) => Promise<void>;
   runCommand?: (text: string) => Promise<CommandResult>;
+  runShell?: (command: string, emit: (event: AgentEvent) => void) => Promise<void>;
+  abortAuxiliary?: () => void;
+  cyclePermissionMode?: () => string | undefined;
+  setPermissionMode?: (id: string) => string | undefined;
+  ready?: RpcRuntimeMetadata;
+  snapshot?: () => RpcSnapshot;
 }
 
 const text = z.string().max(1_000_000);
@@ -47,10 +94,30 @@ const rpcOpSchema = z.discriminatedUnion("type", [
       type: z.literal("permission_reply"),
       requestId: z.string().min(1).max(256),
       outcome: z.enum(["allow", "deny"]),
+      remember: z.boolean().optional(),
     })
     .strict(),
   z.object({ type: z.literal("resume"), sessionId: z.string().min(1).max(512) }).strict(),
   z.object({ type: z.literal("command"), text }).strict(),
+  z.object({ type: z.literal("shell"), command: text }).strict(),
+  z
+    .object({
+      type: z.literal("remove_queued"),
+      kind: z.enum(["steer", "follow-up"]),
+      text,
+    })
+    .strict(),
+  z.object({ type: z.literal("cycle_permission_mode") }).strict(),
+  z.object({ type: z.literal("permission_mode"), id: z.string().min(1).max(128) }).strict(),
+  z.object({ type: z.literal("snapshot") }).strict(),
+  z
+    .object({
+      type: z.literal("resize"),
+      cols: z.number().int().min(1).max(2_000),
+      rows: z.number().int().min(1).max(2_000),
+    })
+    .strict(),
+  z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
   z.object({ type: z.literal("abort") }).strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
 ]);
@@ -80,9 +147,20 @@ export function parseOp(line: string): RpcOp | { type: "parse_error"; message: s
 export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   const send = (out: RpcOut) => io.write(`${JSON.stringify(out)}\n`);
   const unsubscribe = deps.agent.subscribe((event) => send({ type: "event", event }));
-  send({ type: "ready" });
+  send({ type: "ready", ...(deps.ready ?? {}) });
 
   let active: Promise<void> | undefined;
+  const runtimeMetadata = (): RpcRuntimeMetadata | undefined => {
+    const snapshot = deps.snapshot?.();
+    if (!snapshot) return undefined;
+    return {
+      sessionId: snapshot.sessionId,
+      model: snapshot.model,
+      contextWindow: snapshot.contextWindow,
+      thinking: snapshot.thinking,
+      thinkingLevels: snapshot.thinkingLevels,
+    };
+  };
 
   const launch = (text: string, options?: AgentRunOptions): boolean => {
     if (active || deps.agent.isRunning) {
@@ -128,7 +206,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           break;
 
         case "permission_reply": {
-          const ok = deps.resolvePermission?.(op.requestId, op.outcome) ?? false;
+          const ok = deps.resolvePermission?.(op.requestId, op.outcome, op.remember) ?? false;
           if (!ok) send({ type: "error", message: `unknown permission request: ${op.requestId}` });
           break;
         }
@@ -144,10 +222,12 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           }
           try {
             await deps.resumeSession(op.sessionId);
+            const runtime = runtimeMetadata();
             send({
               type: "command_result",
               message: `Resumed session ${op.sessionId}`,
               data: { sessionId: deps.agent.sessionId },
+              ...(runtime ? { runtime } : {}),
             });
           } catch (error) {
             send({
@@ -161,6 +241,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         case "command": {
           try {
             const result = (await deps.runCommand?.(op.text)) ?? { handled: false };
+            const runtime = runtimeMetadata();
             if (isMarkdownCommandRun(result.data)) {
               launch(result.data.prompt, {
                 ...(result.data.model ? { model: result.data.model } : {}),
@@ -169,12 +250,14 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
               send({
                 type: "command_result",
                 ...(result.message ? { message: result.message } : {}),
+                ...(runtime ? { runtime } : {}),
               });
             } else {
               send({
                 type: "command_result",
                 ...(result.message ? { message: result.message } : {}),
                 ...(result.data !== undefined ? { data: result.data } : {}),
+                ...(runtime ? { runtime } : {}),
               });
             }
           } catch (error) {
@@ -186,8 +269,72 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           break;
         }
 
+        case "shell": {
+          if (!deps.runShell) {
+            send({ type: "error", message: "direct shell execution is unavailable" });
+            break;
+          }
+          if (active || deps.agent.isRunning) {
+            send({ type: "error", message: "a session operation is already active" });
+            break;
+          }
+          const task = deps
+            .runShell(op.command, (event) => send({ type: "event", event }))
+            .catch((error) =>
+              send({
+                type: "error",
+                message: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          active = task;
+          void task.finally(() => {
+            if (active === task) active = undefined;
+          });
+          break;
+        }
+
+        case "remove_queued":
+          if (!deps.agent.removeQueuedMessage(op.kind, op.text)) {
+            send({ type: "error", message: "queued input is no longer available" });
+          }
+          break;
+
+        case "cycle_permission_mode": {
+          const label = deps.cyclePermissionMode?.();
+          const runtime = runtimeMetadata();
+          if (!label) send({ type: "error", message: "permission modes are unavailable" });
+          else
+            send({
+              type: "command_result",
+              message: `Permissions set to ${label}.`,
+              ...(runtime ? { runtime } : {}),
+            });
+          break;
+        }
+
+        case "permission_mode": {
+          const label = deps.setPermissionMode?.(op.id);
+          if (!label) send({ type: "error", message: `unknown permission mode: ${op.id}` });
+          else send({ type: "command_result", message: `Permissions set to ${label}.` });
+          break;
+        }
+
+        case "snapshot":
+          if (!deps.snapshot) send({ type: "error", message: "runtime snapshot is unavailable" });
+          else send({ type: "snapshot", snapshot: deps.snapshot() });
+          break;
+
+        case "resize":
+          deps.agent.resize(op.cols, op.rows);
+          break;
+
+        case "thinking":
+          deps.agent.setThinking(op.level);
+          break;
+
         case "abort":
           deps.cancelPermissions?.();
+          deps.abortAuxiliary?.();
           deps.agent.abort();
           break;
 
@@ -195,6 +342,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           // Graceful: let an in-flight run finish. Callers wanting to cut it
           // short send `abort` first — that is what that op is for.
           deps.cancelPermissions?.();
+          deps.abortAuxiliary?.();
           await active;
           await deps.agent.waitForIdle();
           send({ type: "shutdown" });
@@ -206,6 +354,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
     }
 
     deps.cancelPermissions?.();
+    deps.abortAuxiliary?.();
     await active;
     await deps.agent.waitForIdle();
   } finally {

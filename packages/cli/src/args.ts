@@ -1,5 +1,15 @@
 export interface ParsedArgs {
-  mode: "tui" | "headless" | "rpc" | "help" | "version" | "self-update" | "self-uninstall";
+  mode:
+    | "tui"
+    | "headless"
+    | "rpc"
+    | "agents"
+    | "agents-supervisor"
+    | "agents-worker"
+    | "help"
+    | "version"
+    | "self-update"
+    | "self-uninstall";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -11,6 +21,7 @@ export interface ParsedArgs {
   allowAll: boolean;
   noInstructions: boolean;
   purgeData: boolean;
+  workerSessionId?: string | undefined;
   errors: string[];
 }
 
@@ -64,6 +75,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--rpc":
         parsed.mode = "rpc";
+        break;
+      case "agents":
+        parsed.mode = "agents";
+        break;
+      case "__agents-supervisor":
+        parsed.mode = "agents-supervisor";
+        break;
+      case "__agents-worker":
+        parsed.mode = "agents-worker";
+        break;
+      case "--session-id":
+        parsed.workerSessionId = argv[++i];
+        if (!parsed.workerSessionId) parsed.errors.push("--session-id requires a value");
         break;
       case "self": {
         const sub = argv[++i];
@@ -123,6 +147,7 @@ Usage:
   mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
+  mu agents                manage several ordinary sessions
   mu self update           update a global npm, Bun, or GitHub-release install
   mu self uninstall        remove a global npm, Bun, or GitHub-release install
 

@@ -61,6 +61,9 @@ export interface AppCallbacks {
   onMentionQuery?: (query: string) => { label: string; description?: string }[];
   onAbort: () => void;
   onExit: () => void;
+  // Present only for a conversation attached from agent view. Plain mu omits
+  // it, so Left remains ordinary editor navigation there.
+  onDetach?: () => void;
   onPermissionReply?: (requestId: string, outcome: "allow" | "deny", remember: boolean) => void;
   onCommand?: (text: string) => void;
   onThinkingChange?: (level: string) => void;
@@ -1191,6 +1194,12 @@ export class App {
         if (!this.editor.recallHistory(key.name)) this.editor.move(key.name);
         return;
       case "left":
+        if (this.editor.isEmpty && this.options.callbacks.onDetach) {
+          this.options.callbacks.onDetach();
+          return;
+        }
+        this.editor.move("left");
+        return;
       case "right":
       case "home":
       case "end":

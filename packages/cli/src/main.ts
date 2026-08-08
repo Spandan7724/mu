@@ -1,18 +1,12 @@
 #!/usr/bin/env bun
-import {
-  Agent,
-  createCredentialResolver,
-  findModel,
-  loadMarkdownCommands,
-  optionsFromProfile,
-  registryWithCoreCommands,
-  toCommand,
-} from "mu";
+import { createCredentialResolver, findModel } from "mu";
 import cliPackage from "../package.json";
+import { runAgentSupervisor } from "./agent-supervisor.ts";
+import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
+import { runAgentWorker } from "./agent-worker.ts";
+import { runAgentView } from "./agents-app.ts";
 import { HELP_TEXT, parseArgs } from "./args.ts";
-import { withStoredCredentials } from "./auth.ts";
-import { loadUserConfig, resolveCliModel } from "./config.ts";
-import { loadBuiltInExtensions } from "./extensions.ts";
+import { loadUserConfig } from "./config.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
 import {
@@ -20,15 +14,9 @@ import {
   type ModelCatalog,
   modelCatalogDiagnostics,
 } from "./model-catalog.ts";
-import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import {
-  DEFAULT_PROFILE,
-  profileOptionsFromArgs,
-  resolveProfile,
-  sessionStoreForProfile,
-} from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
+import { createCliSessionRuntime } from "./session-runtime.ts";
 
 const VERSION = cliPackage.version;
 
@@ -45,8 +33,46 @@ async function main(): Promise<number> {
     return EXIT.usage;
   }
 
+  if (
+    args.resumeSessionId &&
+    (args.mode === "tui" || args.mode === "headless" || args.mode === "rpc")
+  ) {
+    const ownership = await readSessionOwnership(agentViewPaths(), args.resumeSessionId).catch(
+      (error) => {
+        io.stderr(
+          `mu: could not validate session ownership: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        return "invalid" as const;
+      },
+    );
+    if (ownership === "invalid") return EXIT.usage;
+    if (ownership) {
+      if (!isProcessAlive(ownership.supervisorPid)) {
+        io.stderr(
+          `mu: session ${args.resumeSessionId} has a stale runtime owner; open "mu agents" to recover it safely\n`,
+        );
+        return EXIT.usage;
+      }
+      if (args.mode === "tui") {
+        return runAgentView(args, {
+          initialSessionId: args.resumeSessionId,
+          exitAfterDetach: true,
+        });
+      }
+      io.stderr(
+        `mu: session ${args.resumeSessionId} is live in agent view; attach interactively with "mu --resume ${args.resumeSessionId}"\n`,
+      );
+      return EXIT.usage;
+    }
+  }
+
   let modelCatalog: ModelCatalog | undefined;
-  if (args.mode === "tui" || args.mode === "headless" || args.mode === "rpc") {
+  if (
+    args.mode === "tui" ||
+    args.mode === "headless" ||
+    args.mode === "rpc" ||
+    args.mode === "agents-worker"
+  ) {
     modelCatalog = await initializeModelCatalog({
       getCredentials: createCredentialResolver(),
       clientVersion: VERSION,
@@ -94,80 +120,32 @@ async function main(): Promise<number> {
         );
       case "headless":
         return runHeadless(args, {}, io);
+      case "agents":
+        return runAgentView(args);
+      case "agents-supervisor":
+        return runAgentSupervisor(args);
+      case "agents-worker":
+        return runAgentWorker(args);
       case "rpc": {
-        // Permission asks are forwarded to the embedder, which answers with a
-        // permission_reply op; nothing is auto-denied in RPC mode.
-        const pending = new Map<string, (outcome: "allow" | "deny") => void>();
-        const profile = await resolveProfile(
-          args.profile ?? DEFAULT_PROFILE,
-          profileOptionsFromArgs(args),
-        );
-        for (const diagnostic of profile.diagnostics ?? []) {
-          io.stderr(`mu: instruction warning: ${diagnostic}\n`);
-        }
-        let resolved = withStoredCredentials(
-          await optionsFromProfile(
-            profile,
-            await resolveCliModel(args.model, undefined, undefined, undefined, io.stderr),
-          ),
-        );
-        if (!resolved.session) {
-          resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
-        }
-        try {
-          const mode = args.allowAll
-            ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
-            : permissionModeFor(profile, args.permissionMode);
-          resolved = {
-            ...resolved,
-            permissions: args.allowAll
-              ? [
-                  ...(resolved.permissions ?? []),
-                  { permission: "*", pattern: "*", action: "allow" },
-                ]
-              : rulesForPermissionMode(resolved.permissions, mode),
-          };
-        } catch (error) {
-          io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
-          return EXIT.usage;
-        }
-        const builtIns = await loadBuiltInExtensions(process.cwd(), resolved.extensions);
-        for (const warning of builtIns.warnings) io.stderr(`mu: ${warning}\n`);
-        const agent = new Agent({
-          ...resolved,
-          extensions: builtIns.host,
-          onPermission: (request) =>
-            new Promise<"allow" | "deny">((resolve) => pending.set(request.id, resolve)),
+        const runtime = await createCliSessionRuntime({
+          cwd: process.cwd(),
+          profile: args.profile,
+          model: args.model,
+          permissionMode: args.permissionMode,
+          allowAll: args.allowAll,
+          noInstructions: args.noInstructions,
+          resumeSessionId: args.resumeSessionId,
+          maxTurns: args.maxTurns,
+          maxCostUsd: args.maxCostUsd,
+          permissions: "forward",
+          onDiagnostic: (message) => io.stderr(`mu: ${message}\n`),
         });
-        const cancelPermissions = () => {
-          for (const [id, resolve] of pending) {
-            pending.delete(id);
-            resolve("deny");
-          }
-        };
+        const { agent } = runtime;
         const resumeSession = async (sessionId: string) => {
           const tree = await agent.sessionStore.load(sessionId);
           if (!tree) throw new Error(`Session not found: ${sessionId}`);
           agent.resume(tree);
         };
-        if (args.resumeSessionId) await resumeSession(args.resumeSessionId);
-        const commands = registryWithCoreCommands({
-          requestCompaction: (focus) => agent.compactNow(focus),
-          usage: () => ({
-            ...agent.usage,
-            contextPercent: agent.contextPercent,
-          }),
-          undo: () => agent.undo(),
-          redo: () => agent.redo(),
-          fork: (entryId) => agent.fork(entryId),
-          forkPoints: () => agent.forkPoints(),
-          diff: () => agent.sessionDiff(),
-        });
-        for (const command of profile.commands ?? []) commands.register(command);
-        for (const command of builtIns.host.commands.list()) commands.register(command);
-        for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
-          commands.register(toCommand(markdown));
-        }
 
         try {
           await runRpc(
@@ -175,7 +153,7 @@ async function main(): Promise<number> {
             {
               agent,
               runCommand: async (text) => {
-                const result = await commands.execute(text, {
+                const result = await runtime.commands.execute(text, {
                   inject: () => {},
                   print: () => {},
                   getModel: () => agent.modelRef,
@@ -183,19 +161,13 @@ async function main(): Promise<number> {
                 });
                 return result;
               },
-              resolvePermission: (requestId, outcome) => {
-                const resolve = pending.get(requestId);
-                if (!resolve) return false;
-                pending.delete(requestId);
-                resolve(outcome);
-                return true;
-              },
-              cancelPermissions,
+              resolvePermission: runtime.resolvePermission,
+              cancelPermissions: runtime.cancelPermissions,
               resumeSession,
             },
           );
         } finally {
-          cancelPermissions();
+          runtime.cancelPermissions();
           await agent.shutdown();
         }
         return 0;
@@ -203,6 +175,9 @@ async function main(): Promise<number> {
       default:
         return runInteractive(args, {}, modelCatalog);
     }
+  } catch (error) {
+    io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+    return EXIT.error;
   } finally {
     modelCatalog?.stop();
   }

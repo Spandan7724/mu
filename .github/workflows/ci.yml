@@ -23,6 +23,8 @@ jobs:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run ci
+      - run: bun run build
+      - run: bun scripts/agent-view-smoke.ts ./dist/mu
       - run: bun run build:npm
       - run: bun packages/cli/dist/mu.js --version
       - run: bun pm pack --dry-run
@@ -39,16 +41,33 @@ jobs:
           no-cache: true
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
-      - run: bun test packages/profiles/coding/src/windows-portability.test.ts
+      - run: bun test packages/profiles/coding/src/windows-portability.test.ts packages/cli/src/agent-view-store.test.ts packages/cli/src/agent-view-protocol.test.ts packages/cli/src/agent-supervisor.test.ts
       - run: bun run build:windows
       - run: ./dist/mu-windows-x64.exe --version
       - run: ./dist/mu-windows-x64.exe --help
+      - run: bun scripts/agent-view-smoke.ts ./dist/mu-windows-x64.exe
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test packages/cli/src/agent-view-store.test.ts packages/cli/src/agent-view-protocol.test.ts packages/cli/src/agent-supervisor.test.ts
+      - run: bun run build:macos
+      - run: ./dist/mu-darwin-arm64 --version
+      - run: ./dist/mu-darwin-arm64 --help
+      - run: bun scripts/agent-view-smoke.ts ./dist/mu-darwin-arm64
 
   publish-platforms:
     name: Publish ${{ matrix.package }}
     needs:
       - test
       - windows
+      - macos
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false

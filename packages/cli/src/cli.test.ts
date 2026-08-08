@@ -90,6 +90,12 @@ describe("parseArgs", () => {
     expect(parseArgs(["-v"]).mode).toBe("version");
   });
 
+  test("agents is an explicit mode and does not change plain mu", () => {
+    expect(parseArgs(["agents"]).mode).toBe("agents");
+    expect(parseArgs([]).mode).toBe("tui");
+    expect(HELP_TEXT).toContain("mu agents");
+  });
+
   test("self update selects the package updater", () => {
     expect(parseArgs(["self", "update"])).toMatchObject({
       mode: "self-update",

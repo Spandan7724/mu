@@ -204,6 +204,39 @@ describe("runRpc", () => {
     ).toBe("/model");
   });
 
+  test("hosted conversation operations cover shell, queued edits, and permission cycling", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    agent.send("queued steer");
+    const calls: string[] = [];
+    const { io, written } = harness([
+      JSON.stringify({ type: "remove_queued", kind: "steer", text: "queued steer" }),
+      JSON.stringify({ type: "cycle_permission_mode" }),
+      JSON.stringify({ type: "shell", command: "pwd" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, {
+      agent,
+      cyclePermissionMode: () => "Accept edits",
+      runShell: async (command, emit) => {
+        calls.push(command);
+        emit({ type: "agent_start" });
+        emit({ type: "agent_end", messages: [], reason: "done" });
+      },
+    });
+
+    expect(agent.removeQueuedMessage("steer", "queued steer")).toBe(false);
+    expect(calls).toEqual(["pwd"]);
+    const out = parsed(written);
+    expect(
+      out.some((item) => item.type === "command_result" && item.message?.includes("Accept edits")),
+    ).toBe(true);
+    expect(
+      out
+        .filter((item) => item.type === "event")
+        .map((item) => item.type === "event" && item.event.type),
+    ).toEqual(["agent_start", "agent_end"]);
+  });
+
   test("resumes a stored session through the RPC protocol while idle", async () => {
     const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
     const { io, written } = harness([
