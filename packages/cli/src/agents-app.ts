@@ -19,6 +19,7 @@ import {
   wrapText,
 } from "@mu/tui";
 import type { CheckpointActionData, DiffCommandData } from "mu";
+import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
 import type { AgentViewResponse } from "./agent-view-protocol.ts";
@@ -407,6 +408,7 @@ export async function runAgentView(
         height: terminal.rows,
         depth,
         model: snapshot.model,
+        version: cliPackage.version,
         cwd: formatCwdForFooter(cwd, process.env.HOME ?? process.env.USERPROFILE),
         contextWindow: snapshot.contextWindow,
         thinkingLevels: snapshot.thinkingLevels,
