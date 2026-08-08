@@ -38,8 +38,7 @@ export function fingerprint(key: Uint8Array): string {
   return (hex.match(/.{1,4}/g) ?? []).join(" ");
 }
 
-const QR_LIGHT = "██";
-const QR_DARK = "  ";
+const QR_HALVES = ["█", "▀", "▄", " "] as const;
 
 // A QR renderer small enough to keep mu dependency-free. Version is chosen from
 // the payload length; only byte mode and error-correction level L are needed,
@@ -48,17 +47,28 @@ export function qrLines(text: string): string[] {
   const matrix = qrMatrix(text);
   const size = matrix.length;
   const quiet = 2;
+  const modules = size + quiet * 2;
   const lines: string[] = [];
-  for (let index = 0; index < quiet; index++) {
-    lines.push(QR_LIGHT.repeat(size + quiet * 2));
-  }
-  for (const row of matrix) {
-    let line = QR_LIGHT.repeat(quiet);
-    for (const cell of row) line += cell ? QR_DARK : QR_LIGHT;
-    lines.push(line + QR_LIGHT.repeat(quiet));
-  }
-  for (let index = 0; index < quiet; index++) {
-    lines.push(QR_LIGHT.repeat(size + quiet * 2));
+
+  // A terminal cell is roughly twice as tall as it is wide. Packing two QR
+  // rows into the upper and lower halves of one glyph keeps each module
+  // square while halving both the printed width and height.
+  const darkAt = (row: number, column: number): boolean => {
+    const y = row - quiet;
+    const x = column - quiet;
+    return y >= 0 && y < size && x >= 0 && x < size
+      ? ((matrix[y] as boolean[])[x] ?? false)
+      : false;
+  };
+
+  for (let row = 0; row < modules; row += 2) {
+    let line = "";
+    for (let column = 0; column < modules; column++) {
+      const top = darkAt(row, column) ? 2 : 0;
+      const bottom = darkAt(row + 1, column) ? 1 : 0;
+      line += QR_HALVES[top + bottom];
+    }
+    lines.push(line);
   }
   return lines;
 }

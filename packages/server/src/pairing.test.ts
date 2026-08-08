@@ -13,15 +13,17 @@ import {
 
 function matrixFrom(lines: string[]): boolean[][] {
   const quiet = 2;
-  const body = lines.slice(quiet, lines.length - quiet);
-  return body.map((line) => {
-    const inner = line.slice(quiet * 2, line.length - quiet * 2);
-    const row: boolean[] = [];
-    for (let index = 0; index < inner.length; index += 2) {
-      row.push(inner.slice(index, index + 2) === "  ");
+  const size = (lines[0]?.length ?? 0) - quiet * 2;
+  const rows = lines.flatMap((line) => {
+    const top: boolean[] = [];
+    const bottom: boolean[] = [];
+    for (const cell of line) {
+      top.push(cell === " " || cell === "▄");
+      bottom.push(cell === " " || cell === "▀");
     }
-    return row;
+    return [top, bottom];
   });
+  return rows.slice(quiet, quiet + size).map((row) => row.slice(quiet, quiet + size));
 }
 
 const ALIGNMENT: Record<number, number[]> = {
@@ -274,7 +276,8 @@ describe("pairing QR", () => {
     const width = lines[0]?.length ?? 0;
     expect(lines.every((line) => line.length === width)).toBe(true);
     expect(lines[0]).toBe("█".repeat(width));
-    expect(lines.length).toBe(25 + 4);
+    expect(width).toBe(25 + 4);
+    expect(lines.length).toBe(Math.ceil((25 + 4) / 2));
   });
 
   test("payloads of many lengths all read back, so version selection is sound", () => {
