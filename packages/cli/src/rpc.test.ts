@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { CommandRegistry } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
-import { Agent, parseMarkdownCommand, toCommand } from "mu";
+import {
+  Agent,
+  ExtensionHost,
+  parseMarkdownCommand,
+  registryWithCoreCommands,
+  toCommand,
+} from "mu";
 import { linesFrom, parseOp, type RpcOut, runRpc } from "./rpc.ts";
 
 // Drives the RPC surface exactly as an external script would: ops in, NDJSON out.
@@ -202,6 +208,54 @@ describe("runRpc", () => {
       results[0]?.type === "command_result" &&
         (results[0].data as { echoed?: string } | undefined)?.echoed,
     ).toBe("/model");
+  });
+
+  test("a model switch returns the managed runtime's updated model metadata", async () => {
+    const extensions = new ExtensionHost();
+    await extensions.register({
+      name: "second-model",
+      activate: (api) => api.registerModels([{ ...fakeModel, id: "fake-2" }]),
+    });
+    const agent = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      extensions,
+    });
+    const commands = registryWithCoreCommands();
+    const { io, written } = harness([
+      JSON.stringify({ type: "command", text: "/model fake/fake-2" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+
+    await runRpc(io, {
+      agent,
+      runCommand: (text) =>
+        commands.execute(text, {
+          inject: () => {},
+          print: () => {},
+          getModel: () => agent.modelRef,
+          setModel: (ref) => agent.setModel(ref),
+        }),
+      snapshot: () => ({
+        sessionId: agent.sessionId,
+        messages: agent.session.messagesAt(),
+        model: agent.modelRef,
+        contextWindow: agent.contextWindow,
+        thinking: agent.thinking,
+        thinkingLevels: [...agent.thinkingLevels],
+        usage: agent.usage,
+        contextPercent: agent.contextPercent,
+        isRunning: agent.isRunning,
+      }),
+    });
+
+    const result = parsed(written).find((out) => out.type === "command_result");
+    expect(result).toMatchObject({
+      type: "command_result",
+      message: "Model set to fake/fake-2",
+      runtime: { model: "fake/fake-2" },
+    });
+    expect(agent.modelRef).toBe("fake/fake-2");
   });
 
   test("hosted conversation operations cover shell, queued edits, and permission cycling", async () => {

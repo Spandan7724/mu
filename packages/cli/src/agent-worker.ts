@@ -1,7 +1,8 @@
 import { bashTool } from "@mu/profile-coding";
-import { type AgentEvent, customMessage, listModels, type MarkdownCommandRun } from "mu";
+import { type AgentEvent, customMessage, type MarkdownCommandRun, readAuthFile } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { transcriptExportCommand } from "./export-command.ts";
+import { modelPickerItems } from "./model-picker.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
@@ -43,6 +44,13 @@ export async function runAgentWorker(args: ParsedArgs): Promise<number> {
     onDiagnostic: (message) => process.stderr.write(`mu: ${message}\n`),
   });
   const { agent } = runtime;
+  const auth = await readAuthFile().catch((error: unknown) => {
+    process.stderr.write(
+      `mu: could not read saved authentication for /model: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return { version: 1 as const, providers: {} };
+  });
+  const selectableModels = modelPickerItems(runtime.extensions, auth.providers);
   runtime.commands.register(
     transcriptExportCommand({
       getSession: () => agent.session,
@@ -103,20 +111,7 @@ export async function runAgentWorker(args: ParsedArgs): Promise<number> {
               ? ([{ type: "task_output", taskId: task.start.taskId, chunk: task.output }] as const)
               : []),
           ]),
-          models: [
-            ...new Map(
-              [
-                ...listModels().map((model) => ({
-                  label: `${model.provider}/${model.id}`,
-                  ...(model.name ? { description: model.name } : {}),
-                })),
-                ...[...runtime.extensions.models].map(([label, model]) => ({
-                  label,
-                  ...(model.name ? { description: model.name } : {}),
-                })),
-              ].map((model) => [model.label, model] as const),
-            ).values(),
-          ],
+          models: selectableModels,
           permissionModes: runtime.permissionModes.map((mode) => ({
             id: mode.id,
             label: mode.label,

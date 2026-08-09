@@ -29,8 +29,6 @@ import {
   customMessage,
   type DiffCommandData,
   defaultModelId,
-  type ExtensionHost,
-  listModels,
   loadMarkdownCommands,
   type MarkdownCommandRun,
   type ModelInfo,
@@ -56,6 +54,7 @@ import {
   logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
+import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { resumePickerItems } from "./session-picker.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -188,32 +187,7 @@ export function startNewInteractiveSession(
   return agent.sessionId;
 }
 
-export function availableModels(
-  extensions: ExtensionHost,
-  authenticatedProviders?: ReadonlySet<string>,
-): ModelInfo[] {
-  const models = new Map<string, ModelInfo>(
-    listModels()
-      .filter((model) => !authenticatedProviders || authenticatedProviders.has(model.provider))
-      .map((model) => [`${model.provider}/${model.id}`, model] as const),
-  );
-  for (const [ref, model] of extensions.models) models.set(ref, model);
-  return [...models.values()];
-}
-
-export function modelPickerDescription(
-  model: ModelInfo,
-  source: "apiKey" | "oauth" | "extension",
-): string {
-  const authentication =
-    source === "oauth"
-      ? (accountLoginProviders.find((provider) => provider.id === model.provider)?.description ??
-        "account")
-      : source === "apiKey"
-        ? "API key"
-        : "extension";
-  return model.name ? `${model.name} · ${authentication}` : authentication;
-}
+export { availableModels, modelPickerDescription } from "./model-picker.ts";
 
 // Post-login selection resolves the same default as startup. Keeping a second
 // table here let the two drift: providers listed only in the catalog's table

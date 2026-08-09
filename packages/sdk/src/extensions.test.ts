@@ -485,9 +485,21 @@ describe("core commands", () => {
     expect(result.message).toContain("claude-opus-5");
   });
 
-  test("/model rejects an unknown model and lists the known ones", async () => {
+  test("/model delegates extension-owned model resolution to the surface", async () => {
     const registry = registryWithCoreCommands();
     const harness = ctx();
+    const result = await registry.execute("/model extension/custom-model", harness.ctx);
+    expect(harness.getModelValue()).toBe("extension/custom-model");
+    expect(result.message).toBe("Model set to extension/custom-model");
+  });
+
+  test("/model reports model-resolution failures from the surface", async () => {
+    const registry = registryWithCoreCommands();
+    const harness = ctx({
+      setModel: () => {
+        throw new Error("Unknown model: nope/nothing");
+      },
+    });
     const result = await registry.execute("/model nope/nothing", harness.ctx);
     expect(result.message).toContain("Unknown model");
     expect(harness.getModelValue()).toBe("fake/fake-1");
