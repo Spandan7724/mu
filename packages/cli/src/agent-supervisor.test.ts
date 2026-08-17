@@ -16,6 +16,7 @@ import {
 
 const roots: string[] = [];
 const fixture = join(import.meta.dir, "../testing/agent-worker-fixture.ts");
+const clientFixture = join(import.meta.dir, "../testing/agent-view-client-fixture.ts");
 const closeFixture = join(import.meta.dir, "../testing/agent-supervisor-close-fixture.ts");
 
 afterEach(async () => {
@@ -560,6 +561,61 @@ describe("agent supervisor", () => {
 
     expect(() => parseWorkerOutput(output, expectedToken)).toThrow("stale ownership generation");
   });
+
+  test("reports stale worker output to a separate client process", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 500,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    try {
+      const child = Bun.spawn([process.execPath, clientFixture, root], {
+        cwd: root,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+      });
+      let timedOut = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const exitCode = await Promise.race([
+        child.exited,
+        new Promise<number>((resolve) => {
+          timeout = setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+            resolve(-1);
+          }, 10_000);
+        }),
+      ]).finally(() => {
+        if (timeout) clearTimeout(timeout);
+      });
+      const stdout = await new Response(child.stdout).text();
+      const stderr = await new Response(child.stderr).text();
+      const result = JSON.parse(stdout.trim()) as {
+        error?: string;
+        state?: string;
+        lastError?: string;
+      };
+
+      expect({ timedOut, exitCode, stderr, result }).toEqual({
+        timedOut: false,
+        exitCode: 0,
+        stderr: "",
+        result: {
+          error: expect.stringContaining("stale ownership generation"),
+          state: "failed",
+          lastError: expect.stringContaining("stale ownership generation"),
+        },
+      });
+    } finally {
+      await supervisor.close();
+    }
+  }, 15_000);
 
   test("coalesces duplicate worker termination and performs one force escalation", async () => {
     const terminations: NodeJS.Signals[] = [];

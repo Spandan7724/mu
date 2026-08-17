@@ -30,7 +30,19 @@ let messages: unknown[] = [];
 let running = false;
 let permissionPrompt: string | undefined;
 
-if (profile !== "hang") {
+if (profile === "stale-output") {
+  process.stdout.write(
+    `${JSON.stringify({
+      type: "ready",
+      ownershipToken: "00000000-0000-4000-8000-000000000000",
+      sessionId,
+      model: "fake/fake-1",
+      contextWindow: 10_000,
+      thinking: "off",
+      thinkingLevels: ["off"],
+    })}\n`,
+  );
+} else if (profile !== "hang") {
   write({
     type: "ready",
     sessionId,
