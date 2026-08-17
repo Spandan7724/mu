@@ -327,6 +327,8 @@ export class AgentSupervisor {
     await Promise.all(runtimes.map((runtime) => runtime.process.exited));
     await Promise.all(runtimes.map((runtime) => runtime.exitHandled));
     await this.saveChain;
+    for (const client of this.clients) client.socket.destroy();
+    this.clients.clear();
     if (this.server.listening) {
       await new Promise<void>((resolve) => this.server.close(() => resolve()));
     }

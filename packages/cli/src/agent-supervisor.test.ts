@@ -47,6 +47,7 @@ describe("agent supervisor", () => {
     const paths = agentViewPaths(root);
     const supervisor = new AgentSupervisor({
       paths,
+      forceStopMs: 500,
       command: (args) => [process.execPath, fixture, ...args],
     });
     await supervisor.start();
@@ -121,6 +122,7 @@ describe("agent supervisor", () => {
     const paths = agentViewPaths(root);
     const first = new AgentSupervisor({
       paths,
+      forceStopMs: 500,
       command: (args) => [process.execPath, fixture, ...args],
     });
     await first.start();
