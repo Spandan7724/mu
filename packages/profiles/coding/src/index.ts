@@ -157,6 +157,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     stop: () => processes.stopAll(),
     shutdown: () => processes.killAll(),
   };
+  let environmentPromise: Promise<Record<string, string>> | undefined;
+  const environment = () => {
+    if (!environmentPromise) environmentPromise = codingEnvironment(root);
+    return environmentPromise;
+  };
 
   return {
     name: "coding",
@@ -166,10 +171,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     permissionModes: CODING_PERMISSION_MODES,
     defaultPermissionMode: "default",
     rememberPermission: (permission, pattern) => rememberAllow(root, permission, pattern),
-    environment: () => codingEnvironment(root),
-    contextMessages: async (): Promise<AgentMessage[]> => [
-      environmentMessage(await codingEnvironment(root)),
-    ],
+    environment,
+    contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
     refreshContext: (messages, context) =>
       instructionLoader.refreshedMessages(messages, context.sessionId),
     diagnostics: [

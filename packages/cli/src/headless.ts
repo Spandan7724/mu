@@ -1,23 +1,6 @@
-import {
-  Agent,
-  type AgentOptions,
-  type Command,
-  type HaltReason,
-  optionsFromProfile,
-  type Profile,
-  registryWithCoreCommands,
-} from "mu";
+import type { AgentOptions, HaltReason } from "mu";
 import type { ParsedArgs } from "./args.ts";
-import { withStoredCredentials } from "./auth.ts";
-import { resolveCliModel } from "./config.ts";
-import { loadBuiltInExtensions } from "./extensions.ts";
-import { permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import {
-  DEFAULT_PROFILE,
-  profileOptionsFromArgs,
-  resolveProfile,
-  sessionStoreForProfile,
-} from "./profiles.ts";
+import { createCliSessionRuntime } from "./session-runtime.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
 // 130 aborted — so callers can branch on how a run ended.
@@ -46,80 +29,27 @@ export async function runHeadless(
     return EXIT.usage;
   }
 
-  const useBuiltIns = !options.tools;
-  let profileCommands: Command[] = [];
-  let profile: Profile | undefined;
-  let resolved: AgentOptions = options;
-  if (!options.tools) {
-    try {
-      profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE, profileOptionsFromArgs(args));
-      for (const diagnostic of profile.diagnostics ?? []) {
-        io.stderr(`mu: instruction warning: ${diagnostic}\n`);
-      }
-      profileCommands = profile.commands ?? [];
-      resolved = await optionsFromProfile(profile, await resolveCliModel(args.model), options);
-      if (!resolved.session) {
-        resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
-      }
-    } catch (error) {
-      io.stderr(`mu: could not load profile: ${error instanceof Error ? error.message : error}\n`);
-      return EXIT.usage;
-    }
-  }
+  let runtime: Awaited<ReturnType<typeof createCliSessionRuntime>>;
   try {
-    if (profile) {
-      const mode = args.allowAll
-        ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
-        : permissionModeFor(profile, args.permissionMode);
-      resolved = {
-        ...resolved,
-        permissions: args.allowAll
-          ? [...(resolved.permissions ?? []), { permission: "*", pattern: "*", action: "allow" }]
-          : rulesForPermissionMode(resolved.permissions, mode),
-      };
-    } else if (args.permissionMode) {
-      throw new Error("--permission-mode requires a profile with permission modes");
-    }
+    runtime = await createCliSessionRuntime({
+      cwd: process.cwd(),
+      profile: args.profile,
+      model: args.model,
+      permissionMode: args.permissionMode,
+      allowAll: args.allowAll,
+      noInstructions: args.noInstructions,
+      resumeSessionId: args.resumeSessionId,
+      maxTurns: args.maxTurns,
+      maxCostUsd: args.maxCostUsd,
+      agentOptions: options,
+      permissions: "deny",
+      onDiagnostic: (message) => io.stderr(`mu: ${message}\n`),
+    });
   } catch (error) {
     io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.usage;
   }
-  resolved = withStoredCredentials(resolved);
-
-  const builtIns = useBuiltIns
-    ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
-    : undefined;
-  const extensions = builtIns?.host ?? resolved.extensions;
-  for (const warning of builtIns?.warnings ?? []) io.stderr(`mu: ${warning}\n`);
-
-  const agent = new Agent({
-    ...resolved,
-    ...(extensions ? { extensions } : {}),
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.maxTurns !== undefined || args.maxCostUsd !== undefined
-      ? {
-          budget: {
-            ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
-            ...(args.maxCostUsd !== undefined ? { maxCostUsd: args.maxCostUsd } : {}),
-          },
-        }
-      : {}),
-    // Headless is unattended: profile "ask" rules resolve to deny (no callback).
-  });
-
-  if (args.resumeSessionId) {
-    try {
-      const tree = await agent.sessionStore.load(args.resumeSessionId);
-      if (!tree) throw new Error(`Session not found: ${args.resumeSessionId}`);
-      agent.resume(tree);
-    } catch (error) {
-      io.stderr(
-        `mu: could not resume session: ${error instanceof Error ? error.message : error}\n`,
-      );
-      await agent.shutdown();
-      return EXIT.usage;
-    }
-  }
+  const { agent } = runtime;
 
   const onSigint = () => agent.stop();
   process.on("SIGINT", onSigint);
@@ -142,23 +72,8 @@ export async function runHeadless(
   });
 
   try {
-    const commands = registryWithCoreCommands({
-      requestCompaction: (focus) => agent.compactNow(focus),
-      usage: () => ({
-        ...agent.usage,
-        contextPercent: agent.contextPercent,
-      }),
-      undo: () => agent.undo(),
-      redo: () => agent.redo(),
-      fork: (entryId) => agent.fork(entryId),
-      forkPoints: () => agent.forkPoints(),
-      diff: () => agent.sessionDiff(),
-    });
-    for (const command of profileCommands) commands.register(command);
-    for (const command of extensions?.commands.list() ?? []) commands.register(command);
-
     const printed: string[] = [];
-    const command = await commands.execute(args.prompt, {
+    const command = await runtime.commands.execute(args.prompt, {
       inject: () => {},
       print: (text) => printed.push(text),
       getModel: () => agent.modelRef,

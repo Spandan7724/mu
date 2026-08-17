@@ -19,6 +19,30 @@ async function scratch(): Promise<string> {
 }
 
 describe("codingProfile", () => {
+  test("shares one environment calculation between metadata and context", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "initial.txt"), "initial\n");
+    const profile = await codingProfile({ root });
+    const first = await profile.environment?.();
+    await writeFile(join(root, "created-after-scan.txt"), "later\n");
+    const second = await profile.environment?.();
+    const context = await profile.contextMessages?.();
+
+    expect(second).toBe(first);
+    expect(first?.topLevelEntries).toContain("initial.txt");
+    expect(first?.topLevelEntries).not.toContain("created-after-scan.txt");
+    expect(
+      context?.some(
+        (message) =>
+          message.role === "custom" &&
+          message.content.some(
+            (content) =>
+              content.type === "text" && content.text.includes(first?.topLevelEntries ?? ""),
+          ),
+      ),
+    ).toBe(true);
+  });
+
   test("ships the documented toolset", async () => {
     const profile = await codingProfile({ root: await scratch() });
     const names = profile.toolset.map((t) => t.name).sort();

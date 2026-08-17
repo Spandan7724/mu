@@ -1,4 +1,4 @@
-import { findModel, listModels, type Usage } from "@mu/ai";
+import type { Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
 import type { CheckpointActionResult, ManualCompactionResult } from "./agent.ts";
 
@@ -60,15 +60,17 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
           ctx.print(`Current model: ${ctx.getModel()}`);
           return { handled: true };
         }
-        const model = findModel(target);
-        if (!model) {
-          const known = listModels()
-            .map((m) => `${m.provider}/${m.id}`)
-            .join(", ");
-          return { handled: true, message: `Unknown model "${target}". Known models: ${known}` };
+        try {
+          // The surface owns model resolution because it may have extension models
+          // that are intentionally absent from the process-wide catalog.
+          ctx.setModel(target);
+        } catch (error) {
+          return {
+            handled: true,
+            message: error instanceof Error ? error.message : String(error),
+          };
         }
-        ctx.setModel(`${model.provider}/${model.id}`);
-        return { handled: true, message: `Model set to ${model.provider}/${model.id}` };
+        return { handled: true, message: `Model set to ${ctx.getModel()}` };
       },
     },
     {

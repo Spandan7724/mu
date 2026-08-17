@@ -11,9 +11,12 @@ export async function optionsFromProfile(
   overrides: AgentOptions = {},
 ): Promise<AgentOptions> {
   const contextMessages: AgentMessage[] = (await profile.contextMessages?.()) ?? [];
+  const environment = (await profile.environment?.()) ?? {};
 
   return {
     ...overrides,
+    sessionProfile: overrides.sessionProfile ?? profile.name,
+    sessionEnvironment: overrides.sessionEnvironment ?? environment,
     model: overrides.model ?? modelRef,
     systemPrompt: overrides.systemPrompt ?? profile.promptFor(modelRef),
     tools: [...profile.toolset, ...(overrides.tools ?? [])],

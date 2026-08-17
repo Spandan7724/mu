@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { CommandRegistry } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
-import { Agent, parseMarkdownCommand, toCommand } from "mu";
+import {
+  Agent,
+  ExtensionHost,
+  parseMarkdownCommand,
+  registryWithCoreCommands,
+  toCommand,
+} from "mu";
 import { linesFrom, parseOp, type RpcOut, runRpc } from "./rpc.ts";
 
 // Drives the RPC surface exactly as an external script would: ops in, NDJSON out.
@@ -26,6 +32,11 @@ function parsed(written: string[]): RpcOut[] {
 describe("parseOp", () => {
   test("parses a valid op", () => {
     expect(parseOp('{"type":"input","text":"hi"}')).toEqual({ type: "input", text: "hi" });
+    expect(parseOp('{"type":"input","text":"hi","operationId":"op-1"}')).toEqual({
+      type: "input",
+      text: "hi",
+      operationId: "op-1",
+    });
   });
 
   test("malformed JSON reports a parse error rather than throwing", () => {
@@ -164,6 +175,31 @@ describe("runRpc", () => {
     expect(errors[0]?.type === "error" && errors[0].message).toContain("unknown permission");
   });
 
+  test("a correlated operation receives one explicit rejection instead of an ambient error", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "x" }] }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({
+        type: "permission_reply",
+        requestId: "nope",
+        outcome: "allow",
+        operationId: "operation-1",
+      }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, { agent, resolvePermission: () => false });
+
+    expect(parsed(written).filter((out) => out.type === "op_result")).toEqual([
+      {
+        type: "op_result",
+        operationId: "operation-1",
+        ok: false,
+        message: "unknown permission request: nope",
+      },
+    ]);
+    expect(parsed(written).some((out) => out.type === "error")).toBe(false);
+  });
+
   test("malformed input lines produce an error but keep the session alive", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "still here" }] }]);
     const agent = new Agent({ provider, model: fakeModel });
@@ -202,6 +238,87 @@ describe("runRpc", () => {
       results[0]?.type === "command_result" &&
         (results[0].data as { echoed?: string } | undefined)?.echoed,
     ).toBe("/model");
+  });
+
+  test("a model switch returns the managed runtime's updated model metadata", async () => {
+    const extensions = new ExtensionHost();
+    await extensions.register({
+      name: "second-model",
+      activate: (api) => api.registerModels([{ ...fakeModel, id: "fake-2" }]),
+    });
+    const agent = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      extensions,
+    });
+    const commands = registryWithCoreCommands();
+    const { io, written } = harness([
+      JSON.stringify({ type: "command", text: "/model fake/fake-2" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+
+    await runRpc(io, {
+      agent,
+      runCommand: (text) =>
+        commands.execute(text, {
+          inject: () => {},
+          print: () => {},
+          getModel: () => agent.modelRef,
+          setModel: (ref) => agent.setModel(ref),
+        }),
+      snapshot: () => ({
+        sessionId: agent.sessionId,
+        messages: agent.session.messagesAt(),
+        model: agent.modelRef,
+        contextWindow: agent.contextWindow,
+        thinking: agent.thinking,
+        thinkingLevels: [...agent.thinkingLevels],
+        usage: agent.usage,
+        contextPercent: agent.contextPercent,
+        isRunning: agent.isRunning,
+      }),
+    });
+
+    const result = parsed(written).find((out) => out.type === "command_result");
+    expect(result).toMatchObject({
+      type: "command_result",
+      message: "Model set to fake/fake-2",
+      runtime: { model: "fake/fake-2" },
+    });
+    expect(agent.modelRef).toBe("fake/fake-2");
+  });
+
+  test("hosted conversation operations cover shell, queued edits, and permission cycling", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    agent.send("queued steer");
+    const calls: string[] = [];
+    const { io, written } = harness([
+      JSON.stringify({ type: "remove_queued", kind: "steer", text: "queued steer" }),
+      JSON.stringify({ type: "cycle_permission_mode" }),
+      JSON.stringify({ type: "shell", command: "pwd" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, {
+      agent,
+      cyclePermissionMode: () => "Accept edits",
+      runShell: async (command, emit) => {
+        calls.push(command);
+        emit({ type: "agent_start" });
+        emit({ type: "agent_end", messages: [], reason: "done" });
+      },
+    });
+
+    expect(agent.removeQueuedMessage("steer", "queued steer")).toBe(false);
+    expect(calls).toEqual(["pwd"]);
+    const out = parsed(written);
+    expect(
+      out.some((item) => item.type === "command_result" && item.message?.includes("Accept edits")),
+    ).toBe(true);
+    expect(
+      out
+        .filter((item) => item.type === "event")
+        .map((item) => item.type === "event" && item.event.type),
+    ).toEqual(["agent_start", "agent_end"]);
   });
 
   test("resumes a stored session through the RPC protocol while idle", async () => {

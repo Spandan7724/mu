@@ -2,11 +2,11 @@
 // we point a separate --git-dir at a directory under ~/.mu and use the session
 // root as the work tree, so no commits, refs, index entries or hooks of theirs
 // are involved.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
 
 export interface ShadowCheckpointOptions {
@@ -93,6 +93,8 @@ const DISPOSABLE_IGNORED_DIRECTORIES = new Set([
   "coverage",
 ]);
 const SHADOW_STORE_VERSION = "2";
+const LOCK_WAIT_MS = 30_000;
+const INCOMPLETE_LOCK_GRACE_MS = 1_000;
 // Mu's own project state. A permission grant ("always allow") or a model
 // choice is written here mid-turn, so snapshotting it would make undo revoke
 // decisions the user made deliberately — state the turn did not author.
@@ -113,6 +115,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly root: string;
   private readonly shadowDir: string;
   private readonly run: GitRunner;
+  private readonly lockDir: string;
   private readonly excludedPathspecs: string[];
   private initialized = false;
 
@@ -120,8 +123,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     this.root = canonicalRoot(options.root);
     const scope = workspaceKey(this.root, options.scope);
     this.shadowDir = options.shadowDir ?? join(homedir(), ".mu", "checkpoints", scope);
+    // The lock deliberately lives beside the repository: an old store may be
+    // removed and rebuilt while locked, and that must not remove the lock too.
+    this.lockDir = `${this.shadowDir}.lock`;
     this.run = options.run ?? defaultRun;
     const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
+    const lockInside = relative(this.root, this.lockDir).replaceAll("\\", "/");
     this.excludedPathspecs = [
       ":(exclude,literal).git",
       ":(exclude,glob).git/**",
@@ -129,6 +136,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       `:(exclude,glob)${STATE_DIRECTORY}/**`,
       ...(inside.length > 0 && !inside.startsWith("..")
         ? [`:(exclude,literal)${inside}`, `:(exclude,glob)${inside}/**`]
+        : []),
+      ...(lockInside.length > 0 && !lockInside.startsWith("..")
+        ? [`:(exclude,literal)${lockInside}`, `:(exclude,glob)${lockInside}/**`]
         : []),
     ];
   }
@@ -155,6 +165,95 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     ...args: string[]
   ): Promise<{ stdout: string; exitCode: number; stderr: string }> {
     return this.run(args, this.env(), this.root);
+  }
+
+  private async acquireLock(): Promise<() => Promise<void>> {
+    await mkdir(dirname(this.lockDir), { recursive: true });
+    const token = randomUUID();
+    const deadline = Date.now() + LOCK_WAIT_MS;
+    while (true) {
+      try {
+        await mkdir(this.lockDir, { mode: 0o700 });
+        const ownerFile = join(this.lockDir, "owner.json");
+        const temporaryOwner = join(this.lockDir, `owner.${token}.tmp`);
+        try {
+          await writeFile(
+            temporaryOwner,
+            `${JSON.stringify({ pid: process.pid, token, createdAt: Date.now() })}\n`,
+            { encoding: "utf8", mode: 0o600, flag: "wx" },
+          );
+          await rename(temporaryOwner, ownerFile);
+        } catch (error) {
+          await rm(this.lockDir, { recursive: true, force: true }).catch(() => {});
+          throw error;
+        }
+        return async () => {
+          const owner = await readFile(ownerFile, "utf8").catch(() => undefined);
+          if (!owner) return;
+          try {
+            if ((JSON.parse(owner) as { token?: unknown }).token === token) {
+              await rm(this.lockDir, { recursive: true, force: true });
+            }
+          } catch {
+            // Never remove a lock whose ownership can no longer be proven.
+          }
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+
+      const ownerFile = join(this.lockDir, "owner.json");
+      const owner = await readFile(ownerFile, "utf8").catch(() => undefined);
+      let stale = false;
+      let observedToken: string | undefined;
+      if (owner) {
+        try {
+          const parsed = JSON.parse(owner) as { pid?: unknown; token?: unknown };
+          observedToken = typeof parsed.token === "string" ? parsed.token : undefined;
+          if (typeof parsed.pid === "number" && Number.isSafeInteger(parsed.pid)) {
+            try {
+              process.kill(parsed.pid, 0);
+            } catch (error) {
+              stale = (error as NodeJS.ErrnoException).code === "ESRCH";
+            }
+          } else stale = true;
+        } catch {
+          stale = true;
+        }
+      } else {
+        const age = await stat(this.lockDir)
+          .then((value) => Date.now() - value.mtimeMs)
+          .catch(() => 0);
+        stale = age >= INCOMPLETE_LOCK_GRACE_MS;
+      }
+
+      if (stale) {
+        const current = await readFile(ownerFile, "utf8").catch(() => undefined);
+        let currentToken: string | undefined;
+        try {
+          currentToken = current
+            ? ((JSON.parse(current) as { token?: string }).token ?? undefined)
+            : undefined;
+        } catch {}
+        if (currentToken === observedToken) {
+          await rm(this.lockDir, { recursive: true, force: true });
+          continue;
+        }
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for checkpoint lock ${this.lockDir}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  private async locked<T>(operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquireLock();
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 
   private async ensure(): Promise<void> {
@@ -201,8 +300,13 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     // `git status`.
     const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
     if (inside.length > 0 && !inside.startsWith("..")) {
+      const lockInside = relative(this.root, this.lockDir).replaceAll("\\", "/");
       await mkdir(join(this.shadowDir, "info"), { recursive: true });
-      await writeFile(join(this.shadowDir, "info", "exclude"), `/${inside}/\n`, "utf8");
+      await writeFile(
+        join(this.shadowDir, "info", "exclude"),
+        `/${inside}/\n${lockInside.length > 0 && !lockInside.startsWith("..") ? `/${lockInside}/\n` : ""}`,
+        "utf8",
+      );
     }
     this.initialized = true;
   }
@@ -241,113 +345,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   }
 
   async snapshot(label?: string): Promise<string | undefined> {
-    await this.ensure();
-    const disposable = await this.ignoredDisposableDirectories();
-    const add = await this.git(
-      "add",
-      "-A",
-      "--force",
-      "--",
-      ".",
-      ...this.checkpointPathspecs(disposable),
-    );
-    if (add.exitCode !== 0) return undefined;
-
-    const commit = await this.git(
-      "commit",
-      "--quiet",
-      "--allow-empty",
-      "--no-verify",
-      "-m",
-      label ?? `checkpoint ${new Date().toISOString()}`,
-    );
-    if (commit.exitCode !== 0) return undefined;
-
-    const head = await this.git("rev-parse", "HEAD");
-    const ref = head.stdout.trim();
-    return ref.length > 0 ? ref : undefined;
-  }
-
-  async restore(ref: string): Promise<void> {
-    await this.ensure();
-
-    const readTree = await this.git("read-tree", "--reset", "-u", ref);
-    if (readTree.exitCode !== 0) {
-      throw new Error(`Could not restore checkpoint ${ref}: ${readTree.stderr.trim()}`);
-    }
-    const disposable = await this.ignoredDisposableDirectories();
-    const clean = await this.git(
-      "clean",
-      "--force",
-      "-d",
-      "-x",
-      "--quiet",
-      "-e",
-      ".git",
-      "-e",
-      cleanExcludePattern(STATE_DIRECTORY),
-      ...(relative(this.root, this.shadowDir).startsWith("..")
-        ? []
-        : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),
-      ...disposable.flatMap((directory) => ["-e", cleanExcludePattern(directory)]),
-    );
-    if (clean.exitCode !== 0) {
-      throw new Error(`Could not clean checkpoint ${ref}: ${clean.stderr.trim()}`);
-    }
-  }
-
-  async restoreResources(ref: string, resources: string[]): Promise<void> {
-    await this.ensure();
-    const paths = [
-      ...new Set(
-        resources.map((resource) => {
-          const absolute = resolve(this.root, resource);
-          const path = relative(this.root, absolute).replaceAll("\\", "/");
-          if (path.length === 0 || path === ".." || path.startsWith("../")) {
-            throw new Error(`Checkpoint resource escapes the workspace: ${resource}`);
-          }
-          return path;
-        }),
-      ),
-    ];
-    if (paths.length === 0) return;
-
-    const pathspecs = paths.map((path) => `:(literal)${path}`);
-    const reset = await this.git("reset", "--quiet", ref, "--", ...pathspecs);
-    if (reset.exitCode !== 0) {
-      throw new Error(`Could not reset checkpoint ${ref}: ${reset.stderr.trim()}`);
-    }
-
-    const existing: string[] = [];
-    const missing: string[] = [];
-    for (const path of paths) {
-      const tree = await this.git("ls-tree", "-z", ref, "--", `:(literal)${path}`);
-      if (tree.exitCode !== 0) {
-        throw new Error(`Could not inspect checkpoint ${ref}: ${tree.stderr.trim()}`);
-      }
-      (tree.stdout.length > 0 ? existing : missing).push(path);
-    }
-
-    if (existing.length > 0) {
-      const checkout = await this.git(
-        "checkout",
-        "--force",
-        ref,
-        "--",
-        ...existing.map((path) => `:(literal)${path}`),
-      );
-      if (checkout.exitCode !== 0) {
-        throw new Error(`Could not restore checkpoint ${ref}: ${checkout.stderr.trim()}`);
-      }
-    }
-    await Promise.all(
-      missing.map((path) => rm(resolve(this.root, path), { recursive: true, force: true })),
-    );
-  }
-
-  async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
-    await this.ensure();
-    if (!toRef) {
+    return this.locked(async () => {
+      await this.ensure();
       const disposable = await this.ignoredDisposableDirectories();
       const add = await this.git(
         "add",
@@ -357,31 +356,147 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         ".",
         ...this.checkpointPathspecs(disposable),
       );
-      if (add.exitCode !== 0) {
-        throw new Error(`Could not stage workspace for checkpoint diff: ${add.stderr.trim()}`);
-      }
-    }
-    const args = toRef
-      ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
-      : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];
-    const result = await this.git(...args);
-    if (result.exitCode !== 0) {
-      throw new Error(`Could not calculate checkpoint diff: ${result.stderr.trim()}`);
-    }
-    const files = parseNumstat(result.stdout);
+      if (add.exitCode !== 0) return undefined;
 
-    for (const file of files) {
-      const patchArgs = toRef
-        ? ["diff", "--no-renames", "--unified=3", fromRef, toRef, "--", file.path]
-        : ["diff", "--no-renames", "--cached", "--unified=3", fromRef, "--", file.path];
-      const patch = await this.git(...patchArgs);
-      if (patch.exitCode !== 0) {
-        throw new Error(
-          `Could not calculate checkpoint patch for ${file.path}: ${patch.stderr.trim()}`,
-        );
+      const commit = await this.git(
+        "commit",
+        "--quiet",
+        "--allow-empty",
+        "--no-verify",
+        "-m",
+        label ?? `checkpoint ${new Date().toISOString()}`,
+      );
+      if (commit.exitCode !== 0) return undefined;
+
+      const head = await this.git("rev-parse", "HEAD");
+      const ref = head.stdout.trim();
+      return ref.length > 0 ? ref : undefined;
+    });
+  }
+
+  async restore(ref: string): Promise<void> {
+    await this.locked(async () => {
+      await this.ensure();
+
+      const readTree = await this.git("read-tree", "--reset", "-u", ref);
+      if (readTree.exitCode !== 0) {
+        throw new Error(`Could not restore checkpoint ${ref}: ${readTree.stderr.trim()}`);
       }
-      file.hunks = patch.stdout.split("\n");
-    }
-    return files;
+      const disposable = await this.ignoredDisposableDirectories();
+      const clean = await this.git(
+        "clean",
+        "--force",
+        "-d",
+        "-x",
+        "--quiet",
+        "-e",
+        ".git",
+        "-e",
+        cleanExcludePattern(STATE_DIRECTORY),
+        ...(relative(this.root, this.shadowDir).startsWith("..")
+          ? []
+          : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),
+        ...(relative(this.root, this.lockDir).startsWith("..")
+          ? []
+          : ["-e", relative(this.root, this.lockDir).replaceAll("\\", "/")]),
+        ...disposable.flatMap((directory) => ["-e", cleanExcludePattern(directory)]),
+      );
+      if (clean.exitCode !== 0) {
+        throw new Error(`Could not clean checkpoint ${ref}: ${clean.stderr.trim()}`);
+      }
+    });
+  }
+
+  async restoreResources(ref: string, resources: string[]): Promise<void> {
+    await this.locked(async () => {
+      await this.ensure();
+      const paths = [
+        ...new Set(
+          resources.map((resource) => {
+            const absolute = resolve(this.root, resource);
+            const path = relative(this.root, absolute).replaceAll("\\", "/");
+            if (path.length === 0 || path === ".." || path.startsWith("../")) {
+              throw new Error(`Checkpoint resource escapes the workspace: ${resource}`);
+            }
+            return path;
+          }),
+        ),
+      ];
+      if (paths.length === 0) return;
+
+      const pathspecs = paths.map((path) => `:(literal)${path}`);
+      const reset = await this.git("reset", "--quiet", ref, "--", ...pathspecs);
+      if (reset.exitCode !== 0) {
+        throw new Error(`Could not reset checkpoint ${ref}: ${reset.stderr.trim()}`);
+      }
+
+      const existing: string[] = [];
+      const missing: string[] = [];
+      for (const path of paths) {
+        const tree = await this.git("ls-tree", "-z", ref, "--", `:(literal)${path}`);
+        if (tree.exitCode !== 0) {
+          throw new Error(`Could not inspect checkpoint ${ref}: ${tree.stderr.trim()}`);
+        }
+        (tree.stdout.length > 0 ? existing : missing).push(path);
+      }
+
+      if (existing.length > 0) {
+        const checkout = await this.git(
+          "checkout",
+          "--force",
+          ref,
+          "--",
+          ...existing.map((path) => `:(literal)${path}`),
+        );
+        if (checkout.exitCode !== 0) {
+          throw new Error(`Could not restore checkpoint ${ref}: ${checkout.stderr.trim()}`);
+        }
+      }
+      await Promise.all(
+        missing.map((path) => rm(resolve(this.root, path), { recursive: true, force: true })),
+      );
+    });
+  }
+
+  async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
+    return this.locked(async () => {
+      await this.ensure();
+      if (!toRef) {
+        const disposable = await this.ignoredDisposableDirectories();
+        const add = await this.git(
+          "add",
+          "-A",
+          "--force",
+          "--",
+          ".",
+          ...this.checkpointPathspecs(disposable),
+        );
+        if (add.exitCode !== 0) {
+          throw new Error(`Could not stage workspace for checkpoint diff: ${add.stderr.trim()}`);
+        }
+      }
+      const args = toRef
+        ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
+        : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];
+      const result = await this.git(...args);
+      if (result.exitCode !== 0) {
+        throw new Error(`Could not calculate checkpoint diff: ${result.stderr.trim()}`);
+      }
+      const files = parseNumstat(result.stdout);
+
+      for (const file of files) {
+        const patchArgs = toRef
+          ? ["diff", "--no-renames", "--unified=3", fromRef, toRef, "--", file.path]
+          : ["diff", "--no-renames", "--cached", "--unified=3", fromRef, "--", file.path];
+        const patch = await this.git(...patchArgs);
+        if (patch.exitCode !== 0) {
+          throw new Error(
+            `Could not calculate checkpoint patch for ${file.path}: ${patch.stderr.trim()}`,
+          );
+        }
+        file.hunks = patch.stdout.split("\n");
+      }
+      return files;
+    });
   }
 }

@@ -22,27 +22,19 @@ import {
   type ToolRendererFn,
 } from "@mu/tui";
 import {
-  Agent,
+  type Agent,
   type AgentOptions,
   type AgentRunOptions,
   type CheckpointActionData,
-  type Command,
   customMessage,
   type DiffCommandData,
   defaultModelId,
-  ExtensionHost,
-  listModels,
   loadMarkdownCommands,
   type MarkdownCommandRun,
   type ModelInfo,
-  optionsFromProfile,
   type PermissionMode,
   type PermissionModeTone,
-  type PermissionRequest,
-  type PermissionRule,
-  type Profile,
   readAuthFile,
-  registryWithCoreCommands,
   removeStoredCredential,
   saveApiKey,
   type ThinkingLevel,
@@ -50,11 +42,10 @@ import {
   toCommand,
 } from "mu";
 import cliPackage from "../package.json";
+import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
-import { withStoredCredentials } from "./auth.ts";
-import { resolveCliModel, saveDefaultModel } from "./config.ts";
+import { saveDefaultModel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
-import { loadBuiltInExtensions } from "./extensions.ts";
 import {
   type AccountLoginProvider,
   accountLoginProviders,
@@ -63,14 +54,10 @@ import {
   logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
-import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import {
-  DEFAULT_PROFILE,
-  profileOptionsFromArgs,
-  resolveProfile,
-  sessionStoreForProfile,
-} from "./profiles.ts";
+import { availableModels, modelPickerDescription } from "./model-picker.ts";
+import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { resumePickerItems } from "./session-picker.ts";
+import { createCliSessionRuntime } from "./session-runtime.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
@@ -200,32 +187,7 @@ export function startNewInteractiveSession(
   return agent.sessionId;
 }
 
-export function availableModels(
-  extensions: ExtensionHost,
-  authenticatedProviders?: ReadonlySet<string>,
-): ModelInfo[] {
-  const models = new Map<string, ModelInfo>(
-    listModels()
-      .filter((model) => !authenticatedProviders || authenticatedProviders.has(model.provider))
-      .map((model) => [`${model.provider}/${model.id}`, model] as const),
-  );
-  for (const [ref, model] of extensions.models) models.set(ref, model);
-  return [...models.values()];
-}
-
-export function modelPickerDescription(
-  model: ModelInfo,
-  source: "apiKey" | "oauth" | "extension",
-): string {
-  const authentication =
-    source === "oauth"
-      ? (accountLoginProviders.find((provider) => provider.id === model.provider)?.description ??
-        "account")
-      : source === "apiKey"
-        ? "API key"
-        : "extension";
-  return model.name ? `${model.name} · ${authentication}` : authentication;
-}
+export { availableModels, modelPickerDescription } from "./model-picker.ts";
 
 // Post-login selection resolves the same default as startup. Keeping a second
 // table here let the two drift: providers listed only in the catalog's table
@@ -285,81 +247,32 @@ export async function runInteractive(
     return 2;
   }
 
-  const modelRef = await resolveCliModel(args.model);
-  const useBuiltIns = !options.tools;
-  let profileCommands: Command[] = [];
-  let profileRenderers: Record<string, ToolRenderer> = {};
-  let profile: Profile | undefined;
-  let resolved = options;
-  if (!options.tools) {
-    profile = await resolveProfile(args.profile ?? DEFAULT_PROFILE, profileOptionsFromArgs(args));
-    for (const diagnostic of profile.diagnostics ?? []) {
-      process.stderr.write(`mu: instruction warning: ${diagnostic}\n`);
-    }
-    profileCommands = profile.commands ?? [];
-    profileRenderers = profile.renderers ?? {};
-    resolved = await optionsFromProfile(profile, modelRef, options);
-    if (!resolved.session) {
-      resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
-    }
-  }
-  resolved = withStoredCredentials(resolved);
-
-  const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
-  let activePermissionMode: PermissionMode | undefined;
-  if (profile) {
-    try {
-      activePermissionMode = args.allowAll
-        ? profile.permissionModes?.find((mode) => mode.id === "yolo")
-        : permissionModeFor(profile, args.permissionMode);
-    } catch (error) {
-      process.stderr.write(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
-      return 2;
-    }
-  } else if (args.permissionMode) {
-    process.stderr.write("mu: --permission-mode requires a profile with permission modes\n");
-    return 2;
-  }
-  resolved = {
-    ...resolved,
-    permissions: args.allowAll
-      ? [...basePermissions, { permission: "*", pattern: "*", action: "allow" }]
-      : rulesForPermissionMode(basePermissions, activePermissionMode),
-  };
-
-  const builtIns = useBuiltIns
-    ? await loadBuiltInExtensions(process.cwd(), resolved.extensions)
-    : { host: resolved.extensions ?? new ExtensionHost(), warnings: [] };
-  const extensions = builtIns.host;
-
-  const pendingPermissions = new Map<
-    string,
-    {
-      request: PermissionRequest;
-      resolve: (outcome: "allow" | "deny") => void;
-    }
-  >();
-  const agent = new Agent({
-    ...resolved,
-    extensions,
-    model: modelRef,
-    onPermission: (request) =>
-      new Promise<"allow" | "deny">((resolve) =>
-        pendingPermissions.set(request.id, { request, resolve }),
-      ),
-  });
-  let sessionResumable = false;
+  let runtime: Awaited<ReturnType<typeof createCliSessionRuntime>>;
   try {
-    sessionResumable = await initializeInteractiveSession(agent, args.resumeSessionId);
+    runtime = await createCliSessionRuntime({
+      cwd: process.cwd(),
+      profile: args.profile,
+      model: args.model,
+      permissionMode: args.permissionMode,
+      allowAll: args.allowAll,
+      noInstructions: args.noInstructions,
+      resumeSessionId: args.resumeSessionId,
+      agentOptions: options,
+      permissions: "forward",
+      onDiagnostic: (message) => process.stderr.write(`mu: ${message}\n`),
+    });
   } catch (error) {
-    await agent.shutdown();
     process.stderr.write(
-      `mu: could not resume ${args.resumeSessionId}: ${
-        error instanceof Error ? error.message : String(error)
-      }\n`,
+      `mu: could not start interactive session: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 2;
   }
+  const { agent, profile, extensions, commands, basePermissions } = runtime;
+  const modelRef = agent.modelRef;
+  const resolved = runtime.agentOptions;
+  const profileRenderers: Record<string, ToolRenderer> = profile?.renderers ?? {};
+  let activePermissionMode: PermissionMode | undefined = runtime.permissionMode;
+  let sessionResumable = Boolean(args.resumeSessionId);
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
@@ -367,21 +280,6 @@ export async function runInteractive(
   registerDeclaredRenderers(registry, extensions.renderers);
   const depth = detectColorDepth();
   let app: App;
-  const commands = registryWithCoreCommands({
-    requestCompaction: (focus) => agent.compactNow(focus),
-    usage: () => ({
-      ...agent.usage,
-      contextPercent: agent.contextPercent,
-    }),
-    undo: () => agent.undo(),
-    redo: () => agent.redo(),
-    fork: (entryId) => agent.fork(entryId),
-    forkPoints: () => agent.forkPoints(),
-    diff: () => agent.sessionDiff(),
-  });
-  for (const command of profileCommands) commands.register(command);
-  for (const command of extensions.commands.list()) commands.register(command);
-
   const renderer = new FullScreenRenderer(terminal);
   let exiting = false;
   let activeRun: Promise<void> | undefined;
@@ -400,10 +298,7 @@ export async function runInteractive(
     shellController?.abort();
     modelCatalog?.stop();
     agent.stop();
-    for (const [id, pending] of pendingPermissions) {
-      pending.resolve("deny");
-      pendingPermissions.delete(id);
-    }
+    runtime.cancelPermissions();
   };
 
   app = new App({
@@ -467,29 +362,9 @@ export async function runInteractive(
       onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
       onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember) => {
-        const pending = pendingPermissions.get(id);
+        const pending = runtime.pendingPermissions.get(id);
         if (!pending) return;
-        if (outcome === "allow" && remember) {
-          const rule: PermissionRule = {
-            permission: pending.request.permission,
-            pattern: pending.request.pattern,
-            action: "allow",
-          };
-          basePermissions.push(rule);
-          agent.addPermissionRule(rule);
-          void Promise.resolve(profile?.rememberPermission?.(rule.permission, rule.pattern)).catch(
-            (error) => {
-              commitLines([
-                `  could not remember permission: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ]);
-              paint();
-            },
-          );
-        }
-        pending.resolve(outcome);
-        pendingPermissions.delete(id);
+        runtime.resolvePermission(id, outcome, remember);
       },
     },
   });
@@ -668,6 +543,16 @@ export async function runInteractive(
             try {
               if (activeRun || agent.isRunning) {
                 commitLines(["  Cannot resume during a run."]);
+                paint();
+                return;
+              }
+              const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
+              if (ownership) {
+                commitLines([
+                  isProcessAlive(ownership.supervisorPid)
+                    ? `  ${sessionId} is live in agent view · exit and run mu --resume ${sessionId}`
+                    : `  ${sessionId} has a stale runtime owner · open mu agents to recover it safely`,
+                ]);
                 paint();
                 return;
               }
@@ -1137,8 +1022,8 @@ export async function runInteractive(
   } else {
     commitLines(app.banner());
   }
-  if (builtIns.warnings.length > 0) {
-    commitLines(builtIns.warnings.map((warning) => `  ${warning}`));
+  if (runtime.warnings.length > 0) {
+    commitLines(runtime.warnings.map((warning) => `  ${warning}`));
   }
   const stopResize = terminal.onResize(() => {
     app.setSize(terminal.columns, terminal.rows);
