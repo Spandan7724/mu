@@ -333,10 +333,15 @@ export class AgentSupervisor {
   }
 
   async wait(): Promise<void> {
+    if (this.closePromise) {
+      await this.closePromise;
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       this.server.once("close", resolve);
       this.server.once("error", reject);
     });
+    if (this.closePromise) await this.closePromise;
   }
 
   async close(): Promise<void> {
@@ -346,6 +351,9 @@ export class AgentSupervisor {
 
   private async closeInternal(): Promise<void> {
     this.closing = true;
+    const serverClosed = this.server.listening
+      ? new Promise<void>((resolve) => this.server.close(() => resolve()))
+      : Promise.resolve();
     const clients = [...this.clients];
     for (const client of clients) client.socket.destroy();
     await Promise.all(clients.map((client) => this.disconnect(client)));
@@ -355,9 +363,7 @@ export class AgentSupervisor {
       await Promise.all([...this.exitHandlers]);
     }
     await this.saveChain;
-    if (this.server.listening) {
-      await new Promise<void>((resolve) => this.server.close(() => resolve()));
-    }
+    await serverClosed;
     if (process.platform !== "win32") await rm(this.paths.endpoint, { force: true });
     await rm(this.paths.supervisor, { force: true });
     if (this.ownsLock) await rm(this.paths.lock, { force: true });

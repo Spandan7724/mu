@@ -342,7 +342,9 @@ describe("agent supervisor", () => {
       await Bun.sleep(35);
       await client.sessionOp(sessionId, { type: "input", text: "accepted after eviction" });
       await waitFor(
-        () => client.records[0]?.summary.includes("finished accepted after eviction") === true,
+        () =>
+          client.records[0]?.state === "completed" &&
+          client.records[0]?.summary.includes("finished accepted after eviction") === true,
       );
       expect(client.records[0]?.state).toBe("completed");
     } finally {
@@ -460,7 +462,7 @@ describe("agent supervisor", () => {
     const paths = agentViewPaths(root);
     const supervisor = new AgentSupervisor({
       paths,
-      workerStartupMs: 2_000,
+      workerStartupMs: 500,
       forceStopMs: 30,
       command: (args) => [process.execPath, fixture, ...args],
     });
@@ -492,5 +494,5 @@ describe("agent supervisor", () => {
       client.close();
       await supervisor.close();
     }
-  });
+  }, 15_000);
 });
