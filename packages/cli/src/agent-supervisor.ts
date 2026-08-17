@@ -94,6 +94,7 @@ interface SupervisorOptions {
 
 export const DEFAULT_COMPLETED_RUNTIME_IDLE_MS = 10 * 60 * 1_000;
 const WORKER_OPERATION_TIMEOUT_MS = 20_000;
+const SERVER_CLOSE_GRACE_MS = 500;
 
 const workerOutSchema = z.discriminatedUnion("type", [
   z
@@ -351,9 +352,7 @@ export class AgentSupervisor {
 
   private async closeInternal(): Promise<void> {
     this.closing = true;
-    const serverClosed = this.server.listening
-      ? new Promise<void>((resolve) => this.server.close(() => resolve()))
-      : Promise.resolve();
+    const serverClosed = this.closeServer();
     const clients = [...this.clients];
     for (const client of clients) client.socket.destroy();
     await Promise.all(clients.map((client) => this.disconnect(client)));
@@ -368,6 +367,28 @@ export class AgentSupervisor {
     await rm(this.paths.supervisor, { force: true });
     if (this.ownsLock) await rm(this.paths.lock, { force: true });
     this.ownsLock = false;
+  }
+
+  private closeServer(): Promise<void> {
+    if (!this.server.listening) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      timer = setTimeout(finish, SERVER_CLOSE_GRACE_MS);
+      try {
+        this.server.close(finish);
+        this.server.unref();
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
   }
 
   private accept(socket: Socket): void {

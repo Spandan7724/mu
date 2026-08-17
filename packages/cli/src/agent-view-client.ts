@@ -188,8 +188,10 @@ export class AgentViewClient {
   }
 
   close(): void {
-    this.socket?.destroy();
+    const socket = this.socket;
     this.socket = undefined;
+    this.fail(new Error("agent-view client closed"));
+    socket?.destroy();
   }
 
   private request(request: AgentViewRequest): Promise<AgentViewResponse> {

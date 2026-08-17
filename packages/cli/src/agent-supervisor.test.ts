@@ -159,11 +159,15 @@ describe("agent supervisor", () => {
     const client = new AgentViewClient({ paths, scope: "project", cwd: root });
     try {
       await client.connect(false);
-      await expect(
-        client.dispatch({ prompt: "cannot start", cwd: root, profile: "coding" }),
-      ).rejects.toThrow("spawn boom");
+      // This case verifies durable failure state and ownership cleanup. Request
+      // rejection propagation is covered separately below.
+      void client
+        .dispatch({ prompt: "cannot start", cwd: root, profile: "coding" })
+        .catch(() => {});
+      await waitFor(() => client.records[0]?.state === "failed");
       expect(client.records).toHaveLength(1);
       expect(client.records[0]?.state).toBe("failed");
+      expect(client.records[0]?.lastError).toContain("spawn boom");
       expect(await readSessionOwnership(paths, client.records[0]?.sessionId ?? "")).toBeUndefined();
     } finally {
       client.close();
@@ -200,6 +204,23 @@ describe("agent supervisor", () => {
     await supervisor.close();
 
     expect(destroyed).toBe(true);
+  });
+
+  test("close is bounded when the server omits its close callback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const supervisor = new AgentSupervisor({ paths: agentViewPaths(root) });
+    await supervisor.start();
+    const internals = supervisor as unknown as {
+      server: { close(callback?: () => void): unknown };
+    };
+    const closeServer = internals.server.close.bind(internals.server);
+    internals.server.close = () => closeServer();
+    const startedAt = Date.now();
+
+    await supervisor.close();
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 
   test("close waits for exit cleanup after a worker leaves the runtime roster", async () => {
