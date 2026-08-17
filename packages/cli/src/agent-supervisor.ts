@@ -356,8 +356,10 @@ export class AgentSupervisor {
     const clients = [...this.clients];
     for (const client of clients) client.socket.destroy();
     await Promise.all(clients.map((client) => this.disconnect(client)));
-    const runtimes = [...this.runtimes.values()];
-    await Promise.all(runtimes.map((runtime) => this.shutdownRuntime(runtime)));
+    const runtimes = [...this.runtimes.entries()];
+    await Promise.all(
+      runtimes.map(([sessionId, runtime]) => this.shutdownRuntime(sessionId, runtime)),
+    );
     while (this.exitHandlers.size > 0) {
       await Promise.all([...this.exitHandlers]);
     }
@@ -975,10 +977,13 @@ export class AgentSupervisor {
     if (!(await waitForProcessExit(child, this.forceStopMs)) && child.exitCode === null) {
       await terminateProcessTree(child, "SIGKILL");
     }
-    await child.exited;
+    if (await waitForProcessExit(child, Math.max(1_000, this.forceStopMs))) return;
+    if (isProcessAlive(child.pid)) {
+      throw new Error(`worker ${child.pid} did not exit after SIGKILL`);
+    }
   }
 
-  private async shutdownRuntime(runtime: WorkerRuntime): Promise<void> {
+  private async shutdownRuntime(sessionId: string, runtime: WorkerRuntime): Promise<void> {
     runtime.lifecycle = "stopping";
     if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
     delete runtime.stopTimer;
@@ -988,7 +993,16 @@ export class AgentSupervisor {
     const exited = await waitForProcessExit(runtime.process, this.forceStopMs);
     if (!exited && runtime.process.exitCode === null) {
       await this.terminateRuntime(runtime, "SIGKILL");
-      await runtime.process.exited;
+      if (
+        !(await waitForProcessExit(runtime.process, Math.max(1_000, this.forceStopMs))) &&
+        isProcessAlive(runtime.process.pid)
+      ) {
+        throw new Error(`worker ${runtime.process.pid} did not exit after SIGKILL`);
+      }
+    }
+    if (runtime.process.exitCode === null && !isProcessAlive(runtime.process.pid)) {
+      if (runtime.exitHandled) this.exitHandlers.delete(runtime.exitHandled);
+      await this.workerExited(sessionId, runtime, 1);
     }
   }
 

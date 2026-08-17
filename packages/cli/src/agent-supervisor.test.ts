@@ -477,7 +477,59 @@ describe("agent supervisor", () => {
     }
   });
 
-  test("malformed output, worker crashes, and startup timeouts become failed rows", async () => {
+  test("malformed output and worker crashes become failed rows", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 30,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "malformed output", cwd: root, profile: "coding" });
+      await client.dispatch({ prompt: "crash now", cwd: root, profile: "coding" });
+      await waitFor(
+        () => client.records.length === 2 && client.records.every((row) => row.state === "failed"),
+        4_000,
+      );
+      expect(client.records.map((row) => row.lastError ?? "")).toEqual(
+        expect.arrayContaining([expect.stringContaining("exited with code 7")]),
+      );
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  }, 10_000);
+
+  test("stale worker output becomes a failed row", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 30,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await expect(
+        client.dispatch({ prompt: "stale generation", cwd: root, profile: "stale-output" }),
+      ).rejects.toThrow("stale ownership generation");
+      await waitFor(() => client.records[0]?.state === "failed");
+      expect(client.records[0]?.lastError).toContain("stale ownership generation");
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  }, 10_000);
+
+  test("worker startup timeouts become failed rows", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
     const paths = agentViewPaths(root);
@@ -491,29 +543,14 @@ describe("agent supervisor", () => {
     const client = new AgentViewClient({ paths, scope: "project", cwd: root });
     try {
       await client.connect(false);
-      await client.dispatch({ prompt: "malformed output", cwd: root, profile: "coding" });
-      await client.dispatch({ prompt: "crash now", cwd: root, profile: "coding" });
-      await expect(
-        client.dispatch({ prompt: "stale generation", cwd: root, profile: "stale-output" }),
-      ).rejects.toThrow("stale ownership generation");
       await expect(
         client.dispatch({ prompt: "never ready", cwd: root, profile: "hang" }),
       ).rejects.toThrow("did not become ready");
-      await waitFor(
-        () => client.records.length === 4 && client.records.every((row) => row.state === "failed"),
-        4_000,
-      );
-      const errors = client.records.map((row) => row.lastError ?? "");
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          expect.stringContaining("exited with code 7"),
-          expect.stringContaining("stale ownership generation"),
-          expect.stringContaining("did not become ready"),
-        ]),
-      );
+      await waitFor(() => client.records[0]?.state === "failed", 4_000);
+      expect(client.records[0]?.lastError).toContain("did not become ready");
     } finally {
       client.close();
       await supervisor.close();
     }
-  }, 15_000);
+  }, 10_000);
 });

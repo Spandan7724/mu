@@ -1,6 +1,8 @@
 import { delimiter, dirname } from "node:path";
 import { resolveRipgrepExecutable } from "./tools/search.ts";
 
+const WINDOWS_TASKKILL_TIMEOUT_MS = 2_000;
+
 export interface ShellCommandOptions {
   platform?: NodeJS.Platform;
   interactive?: boolean;
@@ -93,7 +95,23 @@ export async function terminateProcessTree(
       stderr: "ignore",
       windowsHide: true,
     });
-    if ((await killer.exited) !== 0 && process.exitCode === null) fallbackKill(process, signal);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const exitCode = await Promise.race([
+      killer.exited,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), WINDOWS_TASKKILL_TIMEOUT_MS);
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+    if (exitCode === undefined) {
+      try {
+        killer.kill("SIGKILL");
+      } catch {}
+      fallbackKill(process, signal);
+    } else if (exitCode !== 0 && process.exitCode === null) {
+      fallbackKill(process, signal);
+    }
   } catch {
     fallbackKill(process, signal);
   }
