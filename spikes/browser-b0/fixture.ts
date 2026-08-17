@@ -33,12 +33,14 @@ const server = Bun.serve({
     const url = new URL(request.url);
     console.log(`${request.method} ${url.pathname}`);
 
+    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+
     if (url.pathname === "/establish-session") {
       return new Response(null, {
         status: 302,
         headers: {
           location: "/",
-          "set-cookie": `${sessionCookie}; HttpOnly; SameSite=Strict; Path=/`,
+          "set-cookie": `${sessionCookie}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`,
         },
       });
     }
@@ -97,7 +99,7 @@ const server = Bun.serve({
           document.querySelector('#result').textContent = 'Draft saved for ' + value;
         });
         document.querySelector('#popup').addEventListener('click', () => {
-          window.open('/popup', 'b0-popup');
+          window.open('/popup', '_blank');
         });
       </script>`,
     );
