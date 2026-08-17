@@ -249,6 +249,46 @@ describe("agent supervisor", () => {
     expect(closed).toBe(true);
   });
 
+  test("close finalizes a dead worker when its exit notification is delayed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const neverExits = new Promise<number>(() => {});
+    let spawned: Bun.Subprocess<"pipe", "pipe", "pipe"> | undefined;
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 30,
+      command: (args) => [process.execPath, fixture, ...args],
+      spawn: ((command, options) => {
+        const child = Bun.spawn(command, options) as Bun.Subprocess<"pipe", "pipe", "pipe">;
+        spawned = child;
+        return new Proxy(child, {
+          get(target, property) {
+            if (property === "exited") return neverExits;
+            return Reflect.get(target, property, target);
+          },
+        });
+      }) as typeof Bun.spawn,
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "ordinary", cwd: root, profile: "coding" });
+      const sessionId = client.records[0]?.sessionId ?? "";
+      client.close();
+
+      await supervisor.close();
+
+      expect(await readSessionOwnership(paths, sessionId)).toBeUndefined();
+    } finally {
+      client.close();
+      await supervisor.close().catch(() => {});
+      if (spawned?.exitCode === null) spawned.kill("SIGKILL");
+      if (spawned) await spawned.exited;
+    }
+  }, 5_000);
+
   test("close tolerates worker stdin closing before its exit is observed", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
@@ -509,10 +549,16 @@ describe("agent supervisor", () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
     const paths = agentViewPaths(root);
+    const terminations: NodeJS.Signals[] = [];
     const supervisor = new AgentSupervisor({
       paths,
       forceStopMs: 30,
       command: (args) => [process.execPath, fixture, ...args],
+      terminateProcess: async (process, signal) => {
+        terminations.push(signal);
+        await Bun.sleep(75);
+        if (signal === "SIGKILL") process.kill(signal);
+      },
     });
     await supervisor.start();
     const client = new AgentViewClient({ paths, scope: "project", cwd: root });
@@ -523,10 +569,12 @@ describe("agent supervisor", () => {
       ).rejects.toThrow("stale ownership generation");
       await waitFor(() => client.records[0]?.state === "failed");
       expect(client.records[0]?.lastError).toContain("stale ownership generation");
+      await Bun.sleep(50);
     } finally {
       client.close();
       await supervisor.close();
     }
+    expect(terminations).toEqual(["SIGTERM", "SIGKILL"]);
   }, 10_000);
 
   test("worker startup timeouts become failed rows", async () => {

@@ -73,6 +73,9 @@ interface WorkerRuntime {
   stopTimer?: ReturnType<typeof setTimeout>;
   idleTimer?: ReturnType<typeof setTimeout>;
   termination?: Promise<void>;
+  gracefulTerminationAttempted?: boolean;
+  forceTerminationAttempted?: boolean;
+  exitFinalization?: Promise<void>;
 }
 
 interface ClientConnection {
@@ -90,6 +93,10 @@ interface SupervisorOptions {
   completedIdleMs?: number;
   workerStartupMs?: number;
   forceStopMs?: number;
+  terminateProcess?: (
+    process: Parameters<typeof terminateProcessTree>[0],
+    signal: NodeJS.Signals,
+  ) => Promise<void>;
 }
 
 export const DEFAULT_COMPLETED_RUNTIME_IDLE_MS = 10 * 60 * 1_000;
@@ -195,6 +202,20 @@ async function waitForProcessExit(
   }
 }
 
+async function waitForCompletion(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function* streamLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -232,6 +253,7 @@ export class AgentSupervisor {
   private readonly completedIdleMs: number;
   private readonly workerStartupMs: number;
   private readonly forceStopMs: number;
+  private readonly terminateProcess: NonNullable<SupervisorOptions["terminateProcess"]>;
   private ownsLock = false;
   private closing = false;
   private closePromise: Promise<void> | undefined;
@@ -245,6 +267,7 @@ export class AgentSupervisor {
     this.completedIdleMs = options.completedIdleMs ?? DEFAULT_COMPLETED_RUNTIME_IDLE_MS;
     this.workerStartupMs = options.workerStartupMs ?? 15_000;
     this.forceStopMs = options.forceStopMs ?? 5_000;
+    this.terminateProcess = options.terminateProcess ?? terminateProcessTree;
   }
 
   async start(): Promise<void> {
@@ -361,7 +384,10 @@ export class AgentSupervisor {
       runtimes.map(([sessionId, runtime]) => this.shutdownRuntime(sessionId, runtime)),
     );
     while (this.exitHandlers.size > 0) {
-      await Promise.all([...this.exitHandlers]);
+      const handlers = [...this.exitHandlers];
+      if (!(await waitForCompletion(Promise.all(handlers), Math.max(1_000, this.forceStopMs)))) {
+        throw new Error(`timed out waiting for ${handlers.length} worker exit cleanup task(s)`);
+      }
     }
     await this.saveChain;
     await serverClosed;
@@ -791,7 +817,7 @@ export class AgentSupervisor {
     void this.consumeWorker(record.sessionId, runtime);
     void this.consumeWorkerErrors(record.sessionId, child.stderr);
     const exitHandled = child.exited.then((code) =>
-      this.workerExited(record.sessionId, runtime, code),
+      this.finalizeWorkerExit(record.sessionId, runtime, code),
     );
     runtime.exitHandled = exitHandled;
     this.exitHandlers.add(exitHandled);
@@ -962,20 +988,44 @@ export class AgentSupervisor {
     await this.persistAndBroadcast(next);
   }
 
+  private finalizeWorkerExit(
+    sessionId: string,
+    runtime: WorkerRuntime,
+    code: number,
+  ): Promise<void> {
+    if (!runtime.exitFinalization) {
+      runtime.exitFinalization = this.workerExited(sessionId, runtime, code);
+    }
+    return runtime.exitFinalization;
+  }
+
   private terminateRuntime(runtime: WorkerRuntime, signal: NodeJS.Signals): Promise<void> {
+    const force = signal === "SIGKILL";
+    if (force) {
+      if (runtime.forceTerminationAttempted) return runtime.termination ?? Promise.resolve();
+      runtime.forceTerminationAttempted = true;
+    } else {
+      if (runtime.gracefulTerminationAttempted || runtime.forceTerminationAttempted) {
+        return runtime.termination ?? Promise.resolve();
+      }
+      runtime.gracefulTerminationAttempted = true;
+    }
+
     const termination = (runtime.termination ?? Promise.resolve()).then(async () => {
-      if (runtime.process.exitCode === null) await terminateProcessTree(runtime.process, signal);
+      if (runtime.process.exitCode !== null || !isProcessAlive(runtime.process.pid)) return;
+      await this.terminateProcess(runtime.process, signal);
     });
-    runtime.termination = termination;
-    return termination.finally(() => {
-      if (runtime.termination === termination) delete runtime.termination;
+    const tracked = termination.finally(() => {
+      if (runtime.termination === tracked) delete runtime.termination;
     });
+    runtime.termination = tracked;
+    return tracked;
   }
 
   private async terminateChild(child: Bun.Subprocess): Promise<void> {
-    await terminateProcessTree(child, "SIGTERM");
+    await this.terminateProcess(child, "SIGTERM");
     if (!(await waitForProcessExit(child, this.forceStopMs)) && child.exitCode === null) {
-      await terminateProcessTree(child, "SIGKILL");
+      await this.terminateProcess(child, "SIGKILL");
     }
     if (await waitForProcessExit(child, Math.max(1_000, this.forceStopMs))) return;
     if (isProcessAlive(child.pid)) {
@@ -988,22 +1038,23 @@ export class AgentSupervisor {
     if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
     delete runtime.stopTimer;
     await runtime.termination;
-    if (runtime.process.exitCode !== null) return;
-    requestWorkerShutdown(runtime);
-    const exited = await waitForProcessExit(runtime.process, this.forceStopMs);
-    if (!exited && runtime.process.exitCode === null) {
+    if (runtime.process.exitCode === null && isProcessAlive(runtime.process.pid)) {
+      requestWorkerShutdown(runtime);
+    }
+    if (!(await waitForProcessExit(runtime.process, this.forceStopMs))) {
       await this.terminateRuntime(runtime, "SIGKILL");
-      if (
-        !(await waitForProcessExit(runtime.process, Math.max(1_000, this.forceStopMs))) &&
-        isProcessAlive(runtime.process.pid)
-      ) {
-        throw new Error(`worker ${runtime.process.pid} did not exit after SIGKILL`);
-      }
+      await waitForProcessExit(runtime.process, Math.max(1_000, this.forceStopMs));
     }
-    if (runtime.process.exitCode === null && !isProcessAlive(runtime.process.pid)) {
-      if (runtime.exitHandled) this.exitHandlers.delete(runtime.exitHandled);
-      await this.workerExited(sessionId, runtime, 1);
+    if (isProcessAlive(runtime.process.pid)) {
+      throw new Error(`worker ${runtime.process.pid} did not exit after SIGKILL`);
     }
+
+    const exitHandled = runtime.exitHandled;
+    if (exitHandled && (await waitForCompletion(exitHandled, Math.max(1_000, this.forceStopMs)))) {
+      return;
+    }
+    if (exitHandled) this.exitHandlers.delete(exitHandled);
+    await this.finalizeWorkerExit(sessionId, runtime, runtime.process.exitCode ?? 1);
   }
 
   private scheduleForceStop(runtime: WorkerRuntime): void {
@@ -1021,12 +1072,12 @@ export class AgentSupervisor {
       exitCode: null,
       kill: (signal?: NodeJS.Signals | number) => process.kill(pid, signal),
     };
-    await terminateProcessTree(target, "SIGTERM");
+    await this.terminateProcess(target, "SIGTERM");
     const deadline = Date.now() + this.forceStopMs;
     while (isProcessAlive(pid) && Date.now() <= deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    if (isProcessAlive(pid)) await terminateProcessTree(target, "SIGKILL");
+    if (isProcessAlive(pid)) await this.terminateProcess(target, "SIGKILL");
     const killDeadline = Date.now() + Math.max(1_000, this.forceStopMs);
     while (isProcessAlive(pid) && Date.now() <= killDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
