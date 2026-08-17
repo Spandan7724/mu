@@ -549,16 +549,11 @@ describe("agent supervisor", () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
     const paths = agentViewPaths(root);
-    const terminations: NodeJS.Signals[] = [];
     const supervisor = new AgentSupervisor({
       paths,
-      forceStopMs: 30,
+      workerStartupMs: 2_000,
+      forceStopMs: 500,
       command: (args) => [process.execPath, fixture, ...args],
-      terminateProcess: async (process, signal) => {
-        terminations.push(signal);
-        await Bun.sleep(75);
-        if (signal === "SIGKILL") process.kill(signal);
-      },
     });
     await supervisor.start();
     const client = new AgentViewClient({ paths, scope: "project", cwd: root });
@@ -569,13 +564,42 @@ describe("agent supervisor", () => {
       ).rejects.toThrow("stale ownership generation");
       await waitFor(() => client.records[0]?.state === "failed");
       expect(client.records[0]?.lastError).toContain("stale ownership generation");
-      await Bun.sleep(50);
     } finally {
       client.close();
       await supervisor.close();
     }
-    expect(terminations).toEqual(["SIGTERM", "SIGKILL"]);
   }, 10_000);
+
+  test("coalesces duplicate worker termination and performs one force escalation", async () => {
+    const terminations: NodeJS.Signals[] = [];
+    let releaseGraceful = () => {};
+    const gracefulPending = new Promise<void>((resolve) => {
+      releaseGraceful = resolve;
+    });
+    const supervisor = new AgentSupervisor({
+      terminateProcess: async (_process, signal) => {
+        terminations.push(signal);
+        if (signal === "SIGTERM") await gracefulPending;
+      },
+    });
+    const runtime = {
+      process: { pid: process.pid, exitCode: null, kill: () => {} },
+    };
+    const internals = supervisor as unknown as {
+      terminateRuntime(candidate: typeof runtime, signal: NodeJS.Signals): Promise<void>;
+    };
+
+    const graceful = internals.terminateRuntime(runtime, "SIGTERM");
+    const duplicateGraceful = internals.terminateRuntime(runtime, "SIGTERM");
+    const force = internals.terminateRuntime(runtime, "SIGKILL");
+    const duplicateForce = internals.terminateRuntime(runtime, "SIGKILL");
+    releaseGraceful();
+    await Promise.all([graceful, duplicateGraceful, force, duplicateForce]);
+
+    expect(duplicateGraceful).toBe(graceful);
+    expect(duplicateForce).toBe(force);
+    expect(terminations).toEqual(["SIGTERM", "SIGKILL"]);
+  });
 
   test("worker startup timeouts become failed rows", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));

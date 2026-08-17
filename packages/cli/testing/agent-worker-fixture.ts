@@ -7,10 +7,13 @@ const sessionId = valueAfter("--session-id") ?? valueAfter("--resume") ?? "missi
 const profile = valueAfter("--profile");
 const ownershipToken = valueAfter("--ownership-token");
 if (!ownershipToken) process.exit(2);
-const write = (value: unknown) =>
-  process.stdout.write(
-    `${JSON.stringify({ ...(value as Record<string, unknown>), ownershipToken })}\n`,
-  );
+const outputLine = (value: unknown, token = ownershipToken) =>
+  `${JSON.stringify({ ...(value as Record<string, unknown>), ownershipToken: token })}\n`;
+const write = (value: unknown) => process.stdout.write(outputLine(value));
+const writeFlushed = (value: unknown, token?: string) =>
+  new Promise<void>((resolve) => {
+    process.stdout.write(outputLine(value, token), () => resolve());
+  });
 const acknowledge = (op: { operationId?: string }, message?: string) => {
   if (!op.operationId) return;
   write(
@@ -31,16 +34,16 @@ let running = false;
 let permissionPrompt: string | undefined;
 
 if (profile === "stale-output") {
-  process.stdout.write(
-    `${JSON.stringify({
+  await writeFlushed(
+    {
       type: "ready",
-      ownershipToken: "00000000-0000-4000-8000-000000000000",
       sessionId,
       model: "fake/fake-1",
       contextWindow: 10_000,
       thinking: "off",
       thinkingLevels: ["off"],
-    })}\n`,
+    },
+    "00000000-0000-4000-8000-000000000000",
   );
 } else if (profile !== "hang") {
   write({
