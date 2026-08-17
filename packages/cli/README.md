@@ -57,6 +57,24 @@ terminal and start a fresh chat without deleting the previous saved session. Use
 `/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
 behavior, including while the agent is running.
 
+Run `mu agents` to manage several sessions whose worker processes survive closing the
+viewer. Managed sessions commit the initiating prompt before contacting the provider and
+commit every completed assistant/tool turn before starting the next one. If a supervisor,
+worker, or machine stops during an in-flight provider or tool call, Mu marks that runtime
+failed and resumes from the last committed boundary; it never automatically replays the
+interrupted operation or claims exact mid-turn continuation.
+
+Coding workers that share a workspace serialize shadow-checkpoint Git operations with a
+cross-process ownership lock, including stale-owner recovery. Their filesystem itself is
+still shared: simultaneous agents can observe one another's edits, so coordinate tasks
+that modify the same files.
+
+Managed workers support built-in and external profiles through `--profile`. Profile
+commands, scoped session storage, runtime lifecycle hooks, and TUI renderers are preserved
+in managed mode. Environment needed only by a custom profile can be forwarded with
+uppercase `MU_PROFILE_*` variables; process identity variables such as `HOME` are never
+accepted through the viewer-to-supervisor handoff.
+
 Mu loads coding instructions from `~/.mu/AGENTS.md` and from the active project, stopping
 at its Git root. `AGENTS.override.md` takes precedence over `AGENTS.md`; Claude-compatible
 fallback files, `.mu/rules/`, `.claude/rules/`, conditional `paths` frontmatter, and safe

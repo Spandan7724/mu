@@ -77,6 +77,10 @@ export interface AgentOptions {
   budget?: Budget;
   session?: SessionStore;
   sessionId?: string;
+  // Stored in the session header so every surface can identify and reconstruct
+  // the profile-specific conversation environment.
+  sessionProfile?: string;
+  sessionEnvironment?: Record<string, string>;
   thinkingLevel?: ThinkingLevel;
   apiKey?: string;
   // Resolved for the active provider before every model request. Returning
@@ -224,8 +228,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: this._sessionId,
       createdAt: new Date().toISOString(),
-      profile: "default",
-      environment: {},
+      profile: options.sessionProfile ?? "default",
+      environment: { ...(options.sessionEnvironment ?? {}) },
     });
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
@@ -401,8 +405,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: sessionId,
       createdAt: new Date().toISOString(),
-      profile: "default",
-      environment: {},
+      profile: this.options.sessionProfile ?? "default",
+      environment: { ...(this.options.sessionEnvironment ?? {}) },
     });
     this.tree.append({
       type: "settings-change",
@@ -1778,9 +1782,19 @@ export class Agent {
           [promptMessage],
           context,
           config,
-          (event) => {
+          async (event) => {
             emit(event);
             if (event.type === "message_end") this.tree.appendMessage(event.message);
+            // The initiating prompt is durable before the provider is called,
+            // and each complete assistant/tool turn is durable before another
+            // turn starts. An interrupted provider or tool call is deliberately
+            // not replayed: recovery resumes from this last committed boundary.
+            if (
+              (event.type === "message_end" && event.message === promptMessage) ||
+              event.type === "turn_end"
+            ) {
+              await this.store.save(this._sessionId, this.tree);
+            }
           },
           this.controller.signal,
         );

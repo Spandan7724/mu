@@ -5,7 +5,20 @@ const valueAfter = (flag: string) => {
 };
 const sessionId = valueAfter("--session-id") ?? valueAfter("--resume") ?? "missing";
 const profile = valueAfter("--profile");
-const write = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
+const ownershipToken = valueAfter("--ownership-token");
+if (!ownershipToken) process.exit(2);
+const write = (value: unknown) =>
+  process.stdout.write(
+    `${JSON.stringify({ ...(value as Record<string, unknown>), ownershipToken })}\n`,
+  );
+const acknowledge = (op: { operationId?: string }, message?: string) => {
+  if (!op.operationId) return;
+  write(
+    message
+      ? { type: "op_result", operationId: op.operationId, ok: false, message }
+      : { type: "op_result", operationId: op.operationId, ok: true },
+  );
+};
 const usage = {
   inputTokens: 0,
   outputTokens: 0,
@@ -17,7 +30,19 @@ let messages: unknown[] = [];
 let running = false;
 let permissionPrompt: string | undefined;
 
-if (profile !== "hang") {
+if (profile === "stale-output") {
+  process.stdout.write(
+    `${JSON.stringify({
+      type: "ready",
+      ownershipToken: "00000000-0000-4000-8000-000000000000",
+      sessionId,
+      model: "fake/fake-1",
+      contextWindow: 10_000,
+      thinking: "off",
+      thinkingLevels: ["off"],
+    })}\n`,
+  );
+} else if (profile !== "hang") {
   write({
     type: "ready",
     sessionId,
@@ -53,7 +78,14 @@ for await (const chunk of process.stdin) {
     const line = buffer.slice(0, end);
     buffer = buffer.slice(end + 1);
     const op = JSON.parse(line);
+    if (op.ownershipToken !== ownershipToken) process.exit(8);
     if (op.type === "input" || op.type === "follow_up") {
+      if (running && op.type === "input") {
+        acknowledge(op, "a run is already active; use steer or wait for it");
+        end = buffer.indexOf("\n");
+        continue;
+      }
+      acknowledge(op);
       running = true;
       write({ type: "event", event: { type: "agent_start" } });
       if (op.text.includes("malformed")) {
@@ -80,6 +112,7 @@ for await (const chunk of process.stdin) {
         setTimeout(() => finish(op.text), op.text.includes("slow") ? 120 : 5);
       }
     } else if (op.type === "permission_reply" && permissionPrompt) {
+      acknowledge(op);
       write({
         type: "event",
         event: {
@@ -92,6 +125,8 @@ for await (const chunk of process.stdin) {
       const prompt = permissionPrompt;
       permissionPrompt = undefined;
       finish(prompt);
+    } else if (op.type === "permission_reply") {
+      acknowledge(op, `unknown permission request: ${op.requestId}`);
     } else if (op.type === "snapshot") {
       write({
         type: "snapshot",
@@ -108,9 +143,16 @@ for await (const chunk of process.stdin) {
           commands: [{ label: "cost", description: "Show usage" }],
         },
       });
+      acknowledge(op);
+    } else if (op.type === "abort") {
+      acknowledge(op);
     } else if (op.type === "shutdown") {
+      acknowledge(op);
+      if (profile === "slow-shutdown") await Bun.sleep(120);
       write({ type: "shutdown" });
       process.exit(0);
+    } else {
+      acknowledge(op);
     }
     end = buffer.indexOf("\n");
   }

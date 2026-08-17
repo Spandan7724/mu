@@ -1,3 +1,5 @@
+import { isAbsolute, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { codingProfile } from "@mu/profile-coding";
 import { FileSessionStore, loadProfile, type Profile } from "mu";
 
@@ -10,7 +12,14 @@ const BUILT_IN: Record<string, (options: Record<string, unknown>) => Promise<Pro
 
 // Anything not shipped with mu is a module specifier the user supplies, loaded
 // dynamically against this package's resolution.
-const importer = (specifier: string) => import(specifier) as Promise<Record<string, unknown>>;
+export function profileModuleSpecifier(specifier: string, cwd = process.cwd()): string {
+  return isAbsolute(specifier) || specifier.startsWith(".")
+    ? pathToFileURL(resolve(cwd, specifier)).href
+    : specifier;
+}
+
+const importer = (specifier: string) =>
+  import(profileModuleSpecifier(specifier)) as Promise<Record<string, unknown>>;
 
 export async function resolveProfile(
   name: string,

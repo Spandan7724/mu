@@ -157,7 +157,12 @@ export async function readSessionOwnership(
 export async function acquireSessionOwnership(
   paths: AgentViewPaths,
   sessionId: string,
-  options: { endpoint?: string; supervisorPid?: number; recoverStale?: boolean } = {},
+  options: {
+    endpoint?: string;
+    supervisorPid?: number;
+    recoverStale?: boolean;
+    recoverWorker?: (pid: number) => Promise<void>;
+  } = {},
 ): Promise<SessionOwnership> {
   const path = ownershipPath(paths, sessionId);
   await privateDirectory(dirname(path));
@@ -170,6 +175,19 @@ export async function acquireSessionOwnership(
       throw new Error(
         `session ${sessionId} has a stale ownership claim; run agent-view recovery before resuming it`,
       );
+    }
+    if (existing.workerPid && isProcessAlive(existing.workerPid)) {
+      if (!options.recoverWorker) {
+        throw new Error(
+          `session ${sessionId} still has a live worker ${existing.workerPid}; recovery must stop it before resuming`,
+        );
+      }
+      await options.recoverWorker(existing.workerPid);
+      if (isProcessAlive(existing.workerPid)) {
+        throw new Error(
+          `session ${sessionId} worker ${existing.workerPid} survived recovery; refusing a second owner`,
+        );
+      }
     }
     await unlink(path);
   }

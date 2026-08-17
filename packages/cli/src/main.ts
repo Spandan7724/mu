@@ -71,6 +71,7 @@ async function main(): Promise<number> {
     args.mode === "tui" ||
     args.mode === "headless" ||
     args.mode === "rpc" ||
+    args.mode === "agents" ||
     args.mode === "agents-worker"
   ) {
     modelCatalog = await initializeModelCatalog({

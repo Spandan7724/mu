@@ -11,6 +11,7 @@ import {
   agentEventSchema,
   attachmentSchema,
   MANAGED_ENVIRONMENT_KEYS,
+  MANAGED_PROFILE_ENV_PREFIX,
   MAX_AGENT_VIEW_LINE_CHARS,
   parseAgentViewRequest,
   runtimeMetadataSchema,
@@ -49,6 +50,8 @@ interface WorkerSnapshot {
   commands?: { label: string; description?: string }[];
 }
 
+type WorkerLifecycle = "starting" | "ready" | "evicting" | "stopping";
+
 interface WorkerRuntime {
   process: Bun.Subprocess<"pipe", "pipe", "pipe">;
   ownership: SessionOwnership;
@@ -56,8 +59,15 @@ interface WorkerRuntime {
   ready: Promise<void>;
   resolveReady(): void;
   rejectReady(error: Error): void;
-  stopping: boolean;
-  evicting: boolean;
+  lifecycle: WorkerLifecycle;
+  pendingOperations: Map<
+    string,
+    {
+      resolve: () => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >;
   exitHandled?: Promise<void>;
   startupTimer?: ReturnType<typeof setTimeout>;
   stopTimer?: ReturnType<typeof setTimeout>;
@@ -82,11 +92,13 @@ interface SupervisorOptions {
 }
 
 export const DEFAULT_COMPLETED_RUNTIME_IDLE_MS = 10 * 60 * 1_000;
+const WORKER_OPERATION_TIMEOUT_MS = 20_000;
 
 const workerOutSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("ready"),
+      ownershipToken: z.string().uuid(),
       sessionId: z.string().min(1).max(512),
       model: z.string().min(1).max(512),
       contextWindow: z.number().int().nonnegative(),
@@ -94,18 +106,46 @@ const workerOutSchema = z.discriminatedUnion("type", [
       thinkingLevels: z.array(z.string().max(128)).max(64),
     })
     .strict(),
-  z.object({ type: z.literal("snapshot"), snapshot: attachmentSchema }).strict(),
-  z.object({ type: z.literal("event"), event: agentEventSchema }).strict(),
-  z.object({ type: z.literal("error"), message: z.string().max(20_000) }).strict(),
+  z
+    .object({
+      type: z.literal("snapshot"),
+      ownershipToken: z.string().uuid(),
+      snapshot: attachmentSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("event"),
+      ownershipToken: z.string().uuid(),
+      event: agentEventSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("error"),
+      ownershipToken: z.string().uuid(),
+      message: z.string().max(20_000),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("command_result"),
+      ownershipToken: z.string().uuid(),
       message: z.string().max(100_000).optional(),
       data: z.unknown().optional(),
       runtime: runtimeMetadataSchema.optional(),
     })
     .strict(),
-  z.object({ type: z.literal("shutdown") }).strict(),
+  z
+    .object({
+      type: z.literal("op_result"),
+      ownershipToken: z.string().uuid(),
+      operationId: z.string().min(1).max(128),
+      ok: z.boolean(),
+      message: z.string().max(20_000).optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("shutdown"), ownershipToken: z.string().uuid() }).strict(),
 ]);
 
 export function currentExecutableCommand(args: string[]): string[] {
@@ -121,7 +161,9 @@ function write(socket: Socket, response: AgentViewResponse): void {
 }
 
 function workerWrite(runtime: WorkerRuntime, value: unknown): void {
-  runtime.process.stdin.write(`${JSON.stringify(value)}\n`);
+  runtime.process.stdin.write(
+    `${JSON.stringify({ ...(value as Record<string, unknown>), ownershipToken: runtime.ownership.token })}\n`,
+  );
   runtime.process.stdin.flush();
 }
 
@@ -151,6 +193,7 @@ export class AgentSupervisor {
   private readonly rosterStore: AgentViewRosterStore;
   private readonly records = new Map<string, ManagedSessionRecord>();
   private readonly runtimes = new Map<string, WorkerRuntime>();
+  private readonly runtimeTransitions = new Map<string, Promise<WorkerRuntime>>();
   private readonly clients = new Set<ClientConnection>();
   private saveChain = Promise.resolve();
   private server = createServer((socket) => this.accept(socket));
@@ -161,6 +204,7 @@ export class AgentSupervisor {
   private readonly workerStartupMs: number;
   private readonly forceStopMs: number;
   private ownsLock = false;
+  private closing = false;
   private closePromise: Promise<void> | undefined;
 
   constructor(options: SupervisorOptions = {}) {
@@ -188,7 +232,7 @@ export class AgentSupervisor {
               {
                 type: "worker_failed",
                 message:
-                  "supervisor restarted during active work · resume from the last saved turn",
+                  "supervisor restarted during active work · resume from the last committed turn",
               },
               this.now(),
             ),
@@ -273,9 +317,10 @@ export class AgentSupervisor {
   }
 
   private async closeInternal(): Promise<void> {
+    this.closing = true;
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
-      runtime.stopping = true;
+      runtime.lifecycle = "stopping";
       workerWrite(runtime, { type: "shutdown" });
       this.scheduleForceStop(runtime);
     }
@@ -376,14 +421,21 @@ export class AgentSupervisor {
         });
         this.records.set(sessionId, record);
         await this.persistAndBroadcast(record);
-        let runtime: WorkerRuntime;
+        let runtime: WorkerRuntime | undefined;
         try {
           runtime = await this.spawnWorker(record, {
             ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
             ...(request.noInstructions ? { noInstructions: true } : {}),
             ...(request.environment ? { environment: request.environment } : {}),
           });
+          await runtime.ready;
+          await this.workerOperation(runtime, { type: "input", text: request.prompt });
         } catch (error) {
+          if (runtime && runtime.process.exitCode === null) {
+            runtime.lifecycle = "stopping";
+            terminateProcessTree(runtime.process, "SIGTERM");
+            this.scheduleForceStop(runtime);
+          }
           const failed = reduceManagedSession(
             record,
             {
@@ -396,9 +448,6 @@ export class AgentSupervisor {
           await this.persistAndBroadcast(failed);
           throw error;
         }
-        void runtime.ready
-          .then(() => workerWrite(runtime, { type: "input", text: request.prompt }))
-          .catch(() => {});
         write(client.socket, { type: "ok", id: request.id });
         return;
       }
@@ -408,12 +457,13 @@ export class AgentSupervisor {
           (candidate) => candidate !== client && candidate.attachment === request.sessionId,
         );
         if (other) throw new Error("session already has an interactive attachment");
-        let runtime = this.runtimes.get(request.sessionId);
-        if (!runtime) runtime = await this.spawnWorker(record, { resume: true });
+        const runtime = await this.ensureRuntime(record);
         this.cancelIdleEviction(runtime);
         await runtime.ready;
-        workerWrite(runtime, { type: "snapshot" });
-        await this.waitForSnapshot(runtime);
+        delete runtime.snapshot;
+        await this.workerOperation(runtime, { type: "snapshot" });
+        if (!runtime.snapshot)
+          throw new Error("session runtime did not provide an attach snapshot");
         client.attachment = request.sessionId;
         await this.setAttached(request.sessionId, true);
         const snapshot = runtime.snapshot as WorkerSnapshot;
@@ -436,29 +486,37 @@ export class AgentSupervisor {
         return;
       case "session_op": {
         const record = this.requireRecord(request.sessionId, client.scope as string);
-        let runtime = this.runtimes.get(request.sessionId);
-        if (!runtime) runtime = await this.spawnWorker(record, { resume: true });
+        const runtime = await this.ensureRuntime(record);
         this.cancelIdleEviction(runtime);
         await runtime.ready;
-        workerWrite(runtime, request.op);
+        await this.workerOperation(runtime, request.op);
         write(client.socket, { type: "ok", id: request.id });
         return;
       }
       case "resize": {
-        const runtime = this.requireRuntime(request.sessionId);
-        workerWrite(runtime, { type: "resize", cols: request.cols, rows: request.rows });
+        const record = this.requireRecord(request.sessionId, client.scope as string);
+        const runtime = await this.ensureRuntime(record);
+        await runtime.ready;
+        await this.workerOperation(runtime, {
+          type: "resize",
+          cols: request.cols,
+          rows: request.rows,
+        });
         write(client.socket, { type: "ok", id: request.id });
         return;
       }
       case "stop": {
+        const record = this.requireRecord(request.sessionId, client.scope as string);
         const runtime = this.runtimes.get(request.sessionId);
         if (runtime) {
-          runtime.stopping = true;
-          workerWrite(runtime, { type: "abort" });
-          workerWrite(runtime, { type: "shutdown" });
+          const wasEvicting = runtime.lifecycle === "evicting";
+          runtime.lifecycle = "stopping";
+          if (!wasEvicting) {
+            await this.workerOperation(runtime, { type: "abort" }).catch(() => {});
+            workerWrite(runtime, { type: "shutdown" });
+          }
           this.scheduleForceStop(runtime);
         } else {
-          const record = this.requireRecord(request.sessionId, client.scope as string);
           this.records.set(
             request.sessionId,
             reduceManagedSession(record, { type: "stopped" }, this.now()),
@@ -491,10 +549,58 @@ export class AgentSupervisor {
     return record;
   }
 
-  private requireRuntime(sessionId: string): WorkerRuntime {
-    const runtime = this.runtimes.get(sessionId);
-    if (!runtime) throw new Error(`session runtime is not active: ${sessionId}`);
-    return runtime;
+  private async ensureRuntime(record: ManagedSessionRecord): Promise<WorkerRuntime> {
+    if (this.closing) throw new Error("agent supervisor is shutting down");
+    const current = this.runtimes.get(record.sessionId);
+    if (current && (current.lifecycle === "starting" || current.lifecycle === "ready")) {
+      return current;
+    }
+
+    const existing = this.runtimeTransitions.get(record.sessionId);
+    if (existing) return existing;
+
+    const transition = (async () => {
+      const active = this.runtimes.get(record.sessionId);
+      if (active && (active.lifecycle === "evicting" || active.lifecycle === "stopping")) {
+        await (active.exitHandled ?? active.process.exited.then(() => {}));
+      }
+      if (this.closing) throw new Error("agent supervisor is shutting down");
+      const replacement = this.runtimes.get(record.sessionId);
+      if (replacement) return replacement;
+      const latest = this.records.get(record.sessionId) ?? record;
+      return this.spawnWorker(latest, { resume: true });
+    })();
+    this.runtimeTransitions.set(record.sessionId, transition);
+    try {
+      return await transition;
+    } finally {
+      if (this.runtimeTransitions.get(record.sessionId) === transition) {
+        this.runtimeTransitions.delete(record.sessionId);
+      }
+    }
+  }
+
+  private workerOperation(runtime: WorkerRuntime, op: Record<string, unknown>): Promise<void> {
+    if (runtime.process.exitCode !== null) {
+      return Promise.reject(
+        new Error(`session runtime already exited with ${runtime.process.exitCode}`),
+      );
+    }
+    const operationId = randomUUID();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        runtime.pendingOperations.delete(operationId);
+        reject(new Error(`session runtime did not acknowledge ${String(op.type)} within 20s`));
+      }, WORKER_OPERATION_TIMEOUT_MS);
+      runtime.pendingOperations.set(operationId, { resolve, reject, timer });
+      try {
+        workerWrite(runtime, { ...op, operationId });
+      } catch (error) {
+        clearTimeout(timer);
+        runtime.pendingOperations.delete(operationId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   private sendSnapshot(client: ClientConnection): void {
@@ -541,15 +647,23 @@ export class AgentSupervisor {
       environment?: Record<string, string>;
     },
   ): Promise<WorkerRuntime> {
+    if (this.closing) throw new Error("agent supervisor is shutting down");
     if (this.runtimes.has(record.sessionId))
       throw new Error(`session ${record.sessionId} already has a runtime`);
-    const ownership = await acquireSessionOwnership(this.paths, record.sessionId, {
+    let ownership = await acquireSessionOwnership(this.paths, record.sessionId, {
       endpoint: this.paths.endpoint,
       recoverStale: true,
+      recoverWorker: (pid) => this.stopStaleWorker(pid),
     });
+    if (this.closing) {
+      await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      throw new Error("agent supervisor is shutting down");
+    }
     const args = [
       "__agents-worker",
       ...(options.resume ? ["--resume", record.sessionId] : ["--session-id", record.sessionId]),
+      "--ownership-token",
+      ownership.token,
       "--profile",
       record.profile,
       ...(record.model ? ["--model", record.model] : []),
@@ -571,6 +685,24 @@ export class AgentSupervisor {
       await releaseSessionOwnership(this.paths, ownership).catch(() => false);
       throw error;
     }
+    try {
+      ownership = await updateSessionOwnershipWorker(this.paths, ownership, child.pid);
+    } catch (error) {
+      terminateProcessTree(child, "SIGTERM");
+      await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      throw error;
+    }
+    if (this.closing) {
+      terminateProcessTree(child, "SIGTERM");
+      await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      await Promise.race([
+        child.exited,
+        new Promise((resolve) => setTimeout(resolve, this.forceStopMs)),
+      ]);
+      if (child.exitCode === null) terminateProcessTree(child, "SIGKILL");
+      await child.exited;
+      throw new Error("agent supervisor is shutting down");
+    }
     let resolveReady = () => {};
     let rejectReady = (_error: Error) => {};
     const ready = new Promise<void>((resolve, reject) => {
@@ -583,8 +715,8 @@ export class AgentSupervisor {
       ready,
       resolveReady,
       rejectReady,
-      stopping: false,
-      evicting: false,
+      lifecycle: "starting",
+      pendingOperations: new Map(),
     };
     this.runtimes.set(record.sessionId, runtime);
     runtime.startupTimer = setTimeout(() => {
@@ -607,16 +739,16 @@ export class AgentSupervisor {
     try {
       for await (const line of streamLines(runtime.process.stdout)) {
         const out = workerOutSchema.parse(JSON.parse(line) as unknown);
+        if (out.ownershipToken !== runtime.ownership.token) {
+          throw new Error("worker output used a stale ownership generation");
+        }
+        if (this.runtimes.get(sessionId) !== runtime) return;
         if (out.type === "ready") {
           if (out.sessionId !== sessionId)
             throw new Error("worker reported a different session id");
-          runtime.ownership = await updateSessionOwnershipWorker(
-            this.paths,
-            runtime.ownership,
-            runtime.process.pid,
-          );
           if (runtime.startupTimer) clearTimeout(runtime.startupTimer);
           delete runtime.startupTimer;
+          runtime.lifecycle = "ready";
           const record = this.records.get(sessionId);
           if (record) {
             const next = reduceManagedSession(
@@ -647,6 +779,14 @@ export class AgentSupervisor {
               ...(out.runtime ? { runtime: out.runtime } : {}),
             });
           }
+        } else if (out.type === "op_result") {
+          const pending = runtime.pendingOperations.get(out.operationId);
+          if (pending) {
+            runtime.pendingOperations.delete(out.operationId);
+            clearTimeout(pending.timer);
+            if (out.ok) pending.resolve();
+            else pending.reject(new Error(out.message ?? "session runtime rejected the operation"));
+          }
         } else if (out.type === "error") {
           const record = this.records.get(sessionId);
           if (record) {
@@ -663,7 +803,7 @@ export class AgentSupervisor {
       }
     } catch (error) {
       runtime.rejectReady(error instanceof Error ? error : new Error(String(error)));
-      runtime.process.kill();
+      terminateProcessTree(runtime.process, "SIGTERM");
     }
   }
 
@@ -723,27 +863,34 @@ export class AgentSupervisor {
     if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
     this.runtimes.delete(sessionId);
-    runtime.rejectReady(new Error(`worker exited with code ${code}`));
+    const exitError = new Error(`worker exited with code ${code}`);
+    runtime.rejectReady(exitError);
+    for (const pending of runtime.pendingOperations.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(exitError);
+    }
+    runtime.pendingOperations.clear();
     await releaseSessionOwnership(this.paths, runtime.ownership).catch(() => false);
     const record = this.records.get(sessionId);
     if (!record) return;
-    const next = runtime.evicting
-      ? {
-          ...record,
-          attached: false,
-          ownerPid: undefined,
-          pendingRequest: undefined,
-          updatedAt: this.now(),
-        }
-      : runtime.stopping
-        ? reduceManagedSession(record, { type: "stopped" }, this.now())
+    const next =
+      runtime.lifecycle === "evicting"
+        ? {
+            ...record,
+            attached: false,
+            ownerPid: undefined,
+            pendingRequest: undefined,
+            updatedAt: this.now(),
+          }
         : record.state === "failed"
           ? { ...record, ownerPid: undefined, attached: false, updatedAt: this.now() }
-          : reduceManagedSession(
-              record,
-              { type: "worker_failed", message: `session runtime exited with code ${code}` },
-              this.now(),
-            );
+          : runtime.lifecycle === "stopping"
+            ? reduceManagedSession(record, { type: "stopped" }, this.now())
+            : reduceManagedSession(
+                record,
+                { type: "worker_failed", message: `session runtime exited with code ${code}` },
+                this.now(),
+              );
     this.records.set(sessionId, next);
     await this.persistAndBroadcast(next);
   }
@@ -753,6 +900,27 @@ export class AgentSupervisor {
     runtime.stopTimer = setTimeout(() => {
       if (runtime.process.exitCode === null) terminateProcessTree(runtime.process, "SIGKILL");
     }, this.forceStopMs);
+  }
+
+  private async stopStaleWorker(pid: number): Promise<void> {
+    if (pid === process.pid)
+      throw new Error("refusing to recover a worker using the supervisor pid");
+    const target = {
+      pid,
+      exitCode: null,
+      kill: (signal?: NodeJS.Signals | number) => process.kill(pid, signal),
+    };
+    terminateProcessTree(target, "SIGTERM");
+    const deadline = Date.now() + this.forceStopMs;
+    while (isProcessAlive(pid) && Date.now() <= deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (isProcessAlive(pid)) terminateProcessTree(target, "SIGKILL");
+    const killDeadline = Date.now() + Math.max(1_000, this.forceStopMs);
+    while (isProcessAlive(pid) && Date.now() <= killDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (isProcessAlive(pid)) throw new Error(`stale worker ${pid} did not exit after SIGKILL`);
   }
 
   private async markWorkerFailed(sessionId: string, message: string): Promise<void> {
@@ -774,20 +942,11 @@ export class AgentSupervisor {
     if (this.completedIdleMs < 0) return;
     runtime.idleTimer = setTimeout(() => {
       delete runtime.idleTimer;
-      if (runtime.process.exitCode !== null || runtime.stopping) return;
-      runtime.evicting = true;
+      if (runtime.process.exitCode !== null || runtime.lifecycle !== "ready") return;
+      runtime.lifecycle = "evicting";
       workerWrite(runtime, { type: "shutdown" });
       this.scheduleForceStop(runtime);
     }, this.completedIdleMs);
-  }
-
-  private async waitForSnapshot(runtime: WorkerRuntime): Promise<void> {
-    const deadline = this.now() + 5_000;
-    while (!runtime.snapshot) {
-      if (this.now() > deadline)
-        throw new Error("session runtime did not provide an attach snapshot");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
   }
 }
 
@@ -803,9 +962,11 @@ export async function runAgentSupervisor(_args: ParsedArgs): Promise<number> {
 
 export function dispatchEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   return Object.fromEntries(
-    MANAGED_ENVIRONMENT_KEYS.flatMap((name) =>
-      typeof env[name] === "string" ? [[name, env[name] as string]] : [],
-    ),
+    Object.entries(env).filter(
+      ([name, value]) =>
+        typeof value === "string" &&
+        (MANAGED_ENVIRONMENT_KEYS.includes(name) || name.startsWith(MANAGED_PROFILE_ENV_PREFIX)),
+    ) as [string, string][],
   );
 }
 

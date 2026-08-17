@@ -32,6 +32,11 @@ function parsed(written: string[]): RpcOut[] {
 describe("parseOp", () => {
   test("parses a valid op", () => {
     expect(parseOp('{"type":"input","text":"hi"}')).toEqual({ type: "input", text: "hi" });
+    expect(parseOp('{"type":"input","text":"hi","operationId":"op-1"}')).toEqual({
+      type: "input",
+      text: "hi",
+      operationId: "op-1",
+    });
   });
 
   test("malformed JSON reports a parse error rather than throwing", () => {
@@ -168,6 +173,31 @@ describe("runRpc", () => {
     const errors = parsed(written).filter((o) => o.type === "error");
     expect(errors.length).toBe(1);
     expect(errors[0]?.type === "error" && errors[0].message).toContain("unknown permission");
+  });
+
+  test("a correlated operation receives one explicit rejection instead of an ambient error", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "x" }] }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({
+        type: "permission_reply",
+        requestId: "nope",
+        outcome: "allow",
+        operationId: "operation-1",
+      }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, { agent, resolvePermission: () => false });
+
+    expect(parsed(written).filter((out) => out.type === "op_result")).toEqual([
+      {
+        type: "op_result",
+        operationId: "operation-1",
+        ok: false,
+        message: "unknown permission request: nope",
+      },
+    ]);
+    expect(parsed(written).some((out) => out.type === "error")).toBe(false);
   });
 
   test("malformed input lines produce an error but keep the session alive", async () => {

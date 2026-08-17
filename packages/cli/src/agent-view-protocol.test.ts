@@ -58,6 +58,33 @@ describe("agent-view protocol", () => {
     expect(providerKeys.every((key) => MANAGED_ENVIRONMENT_KEYS.includes(key))).toBe(true);
   });
 
+  test("allows namespaced custom-profile environment without exposing process identity", () => {
+    expect(
+      parseAgentViewRequest(
+        JSON.stringify({
+          type: "dispatch",
+          id: "profile-env",
+          prompt: "work",
+          cwd: "/work",
+          profile: "custom",
+          environment: { MU_PROFILE_FIXTURE_VALUE: "custom-value" },
+        }),
+      ),
+    ).toMatchObject({ environment: { MU_PROFILE_FIXTURE_VALUE: "custom-value" } });
+    expect(() =>
+      parseAgentViewRequest(
+        JSON.stringify({
+          type: "dispatch",
+          id: "bad-profile-env",
+          prompt: "work",
+          cwd: "/work",
+          profile: "custom",
+          environment: { MU_PROFILE_bad: "not-canonical" },
+        }),
+      ),
+    ).toThrow("do not accept");
+  });
+
   test("validates supervisor output before a client adopts it", () => {
     expect(parseAgentViewResponse(JSON.stringify({ type: "hello", version: 1, pid: 42 }))).toEqual({
       type: "hello",

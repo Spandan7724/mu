@@ -29,6 +29,18 @@ describe("optionsFromProfile", () => {
     expect(options.checkpointProvider).toBe(checkpointProvider);
   });
 
+  test("propagates profile identity and environment into session options", async () => {
+    const source: Profile = {
+      ...profile(provider("profile")),
+      name: "custom",
+      environment: async () => ({ workspace: "/custom", instance: "one" }),
+    };
+    const options = await optionsFromProfile(source, "fake/model");
+
+    expect(options.sessionProfile).toBe("custom");
+    expect(options.sessionEnvironment).toEqual({ workspace: "/custom", instance: "one" });
+  });
+
   test("an explicit checkpoint provider overrides the profile", async () => {
     const profileProvider = provider("profile");
     const override = provider("override");

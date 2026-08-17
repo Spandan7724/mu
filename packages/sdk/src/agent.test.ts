@@ -3,6 +3,7 @@ import {
   type AgentEvent,
   type AnyTool,
   customMessage,
+  MemorySessionStore,
   type PermissionRequest,
   type ProfileRuntime,
   type ProfileRuntimeHost,
@@ -810,6 +811,50 @@ describe("steering, follow-ups and abort", () => {
 });
 
 describe("session persistence", () => {
+  test("commits the initiating prompt before waiting on the provider", async () => {
+    const store = new MemorySessionStore();
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "eventual answer" }], delayMs: 80 },
+    ]);
+    const agent = agentWith(provider, { sessionId: "prompt-boundary", session: store });
+    const running = agent.run("durable prompt");
+    while (provider.callCount === 0) await Bun.sleep(1);
+
+    const committed = await store.load("prompt-boundary");
+    expect(committed?.messagesAt().map((message) => message.role)).toEqual(["user"]);
+    await running;
+  });
+
+  test("commits every completed assistant and tool turn before starting the next provider call", async () => {
+    const store = new MemorySessionStore();
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "inspect", arguments: {} }] },
+      { content: [{ type: "text", text: "finished" }], delayMs: 80 },
+    ]);
+    const agent = agentWith(provider, {
+      sessionId: "turn-boundary",
+      session: store,
+      tools: [
+        {
+          name: "inspect",
+          description: "inspect",
+          inputSchema: { type: "object" },
+          execute: async () => ({ content: [{ type: "text" as const, text: "observed" }] }),
+        },
+      ],
+    });
+    const running = agent.run("inspect now");
+    while (provider.callCount < 2) await Bun.sleep(1);
+
+    const committed = await store.load("turn-boundary");
+    expect(committed?.messagesAt().map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+    ]);
+    await running;
+  });
+
   test("messages are written to the pluggable store and reload", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "remembered" }] }]);
     const agent = agentWith(provider, { sessionId: "fixed-id" });

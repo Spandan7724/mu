@@ -3,6 +3,7 @@ import { basename, join, relative } from "node:path";
 import {
   App,
   type ColorDepth,
+  CTRL_C_EXIT_WINDOW_MS,
   codingRenderers,
   composerRule,
   detectColorDepth,
@@ -13,23 +14,37 @@ import {
   type InputEvent,
   MARGIN,
   RendererRegistry,
+  type SelectItem,
+  SelectList,
   styleText,
   Terminal,
   truncateToWidth,
   wrapText,
 } from "@mu/tui";
-import type { CheckpointActionData, DiffCommandData } from "mu";
+import {
+  type CheckpointActionData,
+  type DiffCommandData,
+  ExtensionHost,
+  type Profile,
+  readAuthFile,
+} from "mu";
 import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
 import type { AgentViewResponse } from "./agent-view-protocol.ts";
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
-import { renderCheckpointCommand, renderDiffCommand } from "./interactive.ts";
-import { DEFAULT_PROFILE } from "./profiles.ts";
+import { resolveCliModel } from "./config.ts";
+import {
+  registerDeclaredRenderers,
+  renderCheckpointCommand,
+  renderDiffCommand,
+} from "./interactive.ts";
+import { modelPickerItems } from "./model-picker.ts";
+import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 interface AgentsAppCallbacks {
-  dispatch(prompt: string): void;
+  dispatch(prompt: string, model: string | undefined): void;
   attach(sessionId: string): void;
   reply(sessionId: string, text: string): void;
   permission(sessionId: string, requestId: string, outcome: "allow" | "deny"): void;
@@ -46,6 +61,24 @@ const STATE_ORDER: Record<ManagedSessionState, number> = {
   completed: 4,
   stopped: 5,
 };
+
+function stableOrderTime(record: ManagedSessionRecord): number {
+  if (record.state === "completed" || record.state === "failed") {
+    return record.completedAt ?? record.createdAt;
+  }
+  if (record.state === "stopped") return record.updatedAt;
+  // Streaming events update `updatedAt` on every token. Active rows must use
+  // their immutable creation time or concurrent workers continuously swap.
+  return record.createdAt;
+}
+
+function compareRecords(a: ManagedSessionRecord, b: ManagedSessionRecord): number {
+  return (
+    STATE_ORDER[a.state] - STATE_ORDER[b.state] ||
+    stableOrderTime(b) - stableOrderTime(a) ||
+    a.sessionId.localeCompare(b.sessionId)
+  );
+}
 
 const MENTION_SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
 
@@ -109,23 +142,29 @@ export class AgentsApp {
   private replyTarget: string | undefined;
   private removeTarget: string | undefined;
   private notice: string | undefined;
+  private ctrlCArmedAt = 0;
+  private dispatchModel: string | undefined;
+  private modelItems: SelectItem[] = [];
+  private readonly modelList = new SelectList([]);
+  private modelQuery = "";
+  private selectingModel = false;
 
   constructor(
     private width: number,
-    _height: number,
+    private height: number,
     private depth: ColorDepth,
     private callbacks: AgentsAppCallbacks,
+    private readonly now: () => number = Date.now,
   ) {}
 
-  setSize(width: number, _height: number): void {
+  setSize(width: number, height: number): void {
     this.width = width;
+    this.height = height;
   }
 
   setRecords(records: readonly ManagedSessionRecord[]): void {
     const selectedId = this.selectedRecord?.sessionId;
-    this.records = [...records].sort(
-      (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.updatedAt - a.updatedAt,
-    );
+    this.records = [...records].sort(compareRecords);
     if (selectedId) {
       const next = this.records.findIndex((record) => record.sessionId === selectedId);
       if (next !== -1) this.selected = next;
@@ -137,21 +176,114 @@ export class AgentsApp {
     this.notice = message;
   }
 
+  setDispatchModels(items: readonly SelectItem[], selected: string): void {
+    this.dispatchModel = selected;
+    this.modelItems = [...items];
+    if (!this.modelItems.some((item) => (item.value ?? item.label) === selected)) {
+      this.modelItems.unshift({ label: selected, description: "current selection" });
+    }
+    this.refreshModelList();
+  }
+
   get selectedRecord(): ManagedSessionRecord | undefined {
     return this.records[this.selected];
   }
 
+  private get ctrlCPending(): boolean {
+    return this.ctrlCArmedAt !== 0 && this.now() - this.ctrlCArmedAt < CTRL_C_EXIT_WINDOW_MS;
+  }
+
+  private handleCtrlC(): void {
+    if (!this.editor.isEmpty) {
+      this.editor.setText("");
+      this.ctrlCArmedAt = 0;
+      return;
+    }
+    if (this.ctrlCPending) {
+      this.callbacks.exit();
+      return;
+    }
+    this.ctrlCArmedAt = this.now();
+  }
+
+  private refreshModelList(): void {
+    const query = this.modelQuery.trim().toLowerCase();
+    this.modelList.setItems(
+      query
+        ? this.modelItems.filter((item) =>
+            `${item.label} ${item.description ?? ""}`.toLowerCase().includes(query),
+          )
+        : this.modelItems,
+    );
+  }
+
+  private openModelPicker(): void {
+    if (this.modelItems.length === 0) {
+      this.notice = "no authenticated models available";
+      return;
+    }
+    this.notice = undefined;
+    this.modelQuery = "";
+    this.selectingModel = true;
+    this.refreshModelList();
+  }
+
+  private chooseModel(model: string): void {
+    this.dispatchModel = model;
+    this.selectingModel = false;
+    this.modelQuery = "";
+    this.notice = `new sessions will use ${model}`;
+  }
+
+  private handleModelPickerInput(event: InputEvent): boolean {
+    if (!this.selectingModel) return false;
+    if (event.type === "paste") {
+      this.modelQuery += event.text.replace(/\s+/g, " ");
+      this.refreshModelList();
+      return true;
+    }
+    if (event.type !== "key") return true;
+    const key = event.key;
+    if (key.name === "escape" || key.name === "left") {
+      this.selectingModel = false;
+      this.modelQuery = "";
+      return true;
+    }
+    if (key.name === "up" || key.name === "down") {
+      this.modelList.move(key.name);
+      return true;
+    }
+    if (key.name === "backspace") {
+      this.modelQuery = [...this.modelQuery].slice(0, -1).join("");
+      this.refreshModelList();
+      return true;
+    }
+    if (key.name === "return") {
+      const selected = this.modelList.selected;
+      if (selected) this.chooseModel(selected.value ?? selected.label);
+      return true;
+    }
+    if (!key.alt && !key.ctrl && key.text) {
+      this.modelQuery += key.text;
+      this.refreshModelList();
+    }
+    return true;
+  }
+
   handleInput(event: InputEvent): void {
+    const confirmingCtrlC = event.type === "key" && event.key.ctrl && event.key.name === "c";
+    if (this.ctrlCArmedAt !== 0 && !confirmingCtrlC) this.ctrlCArmedAt = 0;
+    if (confirmingCtrlC) {
+      this.handleCtrlC();
+      return;
+    }
+    if (this.handleModelPickerInput(event)) return;
     if (event.type === "paste") {
       this.editor.insert(event.text);
       return;
     }
     if (event.type !== "key") return;
     const key = event.key;
-    if (key.ctrl && key.name === "c") {
-      this.callbacks.exit();
-      return;
-    }
     if (key.name === "escape" || key.name === "left") {
       if (this.help || this.peek || this.replyTarget || this.removeTarget) {
         this.help = false;
@@ -165,12 +297,23 @@ export class AgentsApp {
     }
     if (key.name === "return") {
       const text = this.editor.submit().trim();
+      if (text === "/model") {
+        this.openModelPicker();
+        return;
+      }
+      if (text.startsWith("/model ")) {
+        const requested = text.slice("/model ".length).trim();
+        const match = this.modelItems.find((item) => (item.value ?? item.label) === requested);
+        if (match) this.chooseModel(match.value ?? match.label);
+        else this.notice = `model is not available: ${requested}`;
+        return;
+      }
       if (text) {
         if (this.replyTarget) {
           this.callbacks.reply(this.replyTarget, text);
           this.replyTarget = undefined;
         } else {
-          this.callbacks.dispatch(text);
+          this.callbacks.dispatch(text, this.dispatchModel);
         }
       } else if (this.selectedRecord) {
         this.callbacks.attach(this.selectedRecord.sessionId);
@@ -195,10 +338,6 @@ export class AgentsApp {
     }
     if (key.name === "?" && this.editor.isEmpty) {
       this.help = !this.help;
-      return;
-    }
-    if (key.name === "q" && this.editor.isEmpty) {
-      this.callbacks.exit();
       return;
     }
     if (key.name === "f" && this.editor.isEmpty && this.selectedRecord) {
@@ -244,20 +383,25 @@ export class AgentsApp {
 
   render(): string[] {
     const width = this.width;
-    const lines = [
+    const header = [
       "",
       `${MARGIN}${styleText("mu agents", { accent: true, bold: true }, this.depth)}${styleText(
         " · ordinary sessions, one runtime each",
         { dim: true },
         this.depth,
       )}`,
+      ...(this.dispatchModel
+        ? [
+            `${MARGIN}${styleText(`new sessions · ${this.dispatchModel}`, { dim: true }, this.depth)}`,
+          ]
+        : []),
       "",
     ];
     const mutating = this.records.filter((record) =>
       ["starting", "working", "needs_input"].includes(record.state),
     );
     if (mutating.length > 1) {
-      lines.push(
+      header.push(
         `${MARGIN}${styleText(
           `same workspace · ${mutating.length} live sessions can edit concurrently`,
           { toolMutate: true },
@@ -266,21 +410,12 @@ export class AgentsApp {
         "",
       );
     }
-    if (this.records.length === 0) {
-      lines.push(
-        `${MARGIN}${styleText("no managed sessions", { dim: true }, this.depth)}`,
-        `${MARGIN}${styleText("type a task below and press enter", { dim: true }, this.depth)}`,
-        "",
-      );
-    } else {
-      for (const [index, record] of this.records.entries()) {
-        lines.push(...this.renderRow(record, index === this.selected));
-      }
-    }
-    if (this.help) lines.push(...this.helpRows());
-    else if (this.peek && this.selectedRecord) lines.push(...this.peekRows(this.selectedRecord));
+
+    const tail: string[] = [];
+    if (this.help) tail.push(...this.helpRows());
+    else if (this.peek && this.selectedRecord) tail.push(...this.peekRows(this.selectedRecord));
     if (this.removeTarget) {
-      lines.push(
+      tail.push(
         "",
         `${MARGIN}${styleText("remove row only", { toolMutate: true, bold: true }, this.depth)}${styleText(
           " · session history remains · press delete again",
@@ -289,28 +424,87 @@ export class AgentsApp {
         )}`,
       );
     }
-    if (this.notice)
-      lines.push("", `${MARGIN}${styleText(this.notice, { dim: true }, this.depth)}`);
-    lines.push("", composerRule(width, this.depth));
+    if (this.notice) tail.push("", `${MARGIN}${styleText(this.notice, { dim: true }, this.depth)}`);
+    tail.push("", composerRule(width, this.depth));
     if (this.replyTarget) {
-      lines.push(
+      tail.push(
         `${MARGIN}${styleText("follow-up to selected session", { accent: true }, this.depth)}`,
       );
     }
-    lines.push(...this.editor.render(width, this.depth), composerRule(width, this.depth));
-    lines.push(
-      `${MARGIN}${styleText(
-        "enter dispatch/attach · space peek · f follow-up · x stop · del remove · ? help · q exit",
-        { dim: true },
-        this.depth,
-      )}`,
+    if (this.selectingModel) {
+      tail.push(
+        `${MARGIN}${styleText(
+          `select model for new sessions${this.modelQuery ? ` · ${this.modelQuery}` : ""}`,
+          { bold: true },
+          this.depth,
+        )}`,
+        ...this.modelList.render(width, this.depth),
+      );
+    } else {
+      tail.push(...this.editor.render(width, this.depth));
+    }
+    tail.push(composerRule(width, this.depth));
+    const footer = this.selectingModel
+      ? "↑/↓ select · enter choose · esc cancel"
+      : this.ctrlCPending
+        ? "press ctrl+c again to exit"
+        : "enter dispatch/attach · /model choose model · space peek · f follow-up · x stop · del remove · ? help · ctrl+c twice exit";
+    tail.push(
+      ...wrapText(footer, Math.max(10, width - MARGIN.length)).map(
+        (line) => `${MARGIN}${styleText(line, { dim: true }, this.depth)}`,
+      ),
     );
+
+    const lines = [...header];
+    if (this.records.length === 0) {
+      lines.push(
+        `${MARGIN}${styleText("no managed sessions", { dim: true }, this.depth)}`,
+        `${MARGIN}${styleText("type a task below and press enter", { dim: true }, this.depth)}`,
+        "",
+      );
+    } else {
+      const availableRows = Math.max(3, this.height - header.length - tail.length);
+      let visibleCount = Math.max(1, Math.floor(availableRows / 3));
+      if (this.records.length > visibleCount) {
+        // Streaming dashboards reserve a line at each edge for hidden-session
+        // counts, keeping the selected record and composer inside the viewport.
+        visibleCount = Math.max(1, Math.floor((availableRows - 2) / 3));
+      }
+      const maxStart = Math.max(0, this.records.length - visibleCount);
+      const start = Math.min(maxStart, Math.max(0, this.selected - Math.floor(visibleCount / 2)));
+      const end = Math.min(this.records.length, start + visibleCount);
+      if (start > 0) {
+        lines.push(
+          `${MARGIN}${styleText(`… ${start} session${start === 1 ? "" : "s"} above`, { dim: true }, this.depth)}`,
+        );
+      }
+      for (let index = start; index < end; index++) {
+        lines.push(
+          ...this.renderRow(this.records[index] as ManagedSessionRecord, index === this.selected),
+        );
+      }
+      if (end < this.records.length) {
+        const hidden = this.records.length - end;
+        lines.push(
+          `${MARGIN}${styleText(`… ${hidden} session${hidden === 1 ? "" : "s"} below`, { dim: true }, this.depth)}`,
+        );
+      }
+    }
+    lines.push(...tail);
     return lines;
   }
 
   private renderRow(record: ManagedSessionRecord, selected: boolean): string[] {
     const marker = selected ? styleText("›", { accent: true, bold: true }, this.depth) : " ";
-    const suffix = styleText(` · ${age(record.updatedAt)}`, { dim: true }, this.depth);
+    const finished = record.state === "completed" || record.state === "failed";
+    // Attaching, detaching, and restarting a worker are record updates, but they
+    // must not make an already-finished run appear newly completed.
+    const timestamp = finished ? (record.completedAt ?? record.updatedAt) : record.updatedAt;
+    const suffix = styleText(
+      ` · ${age(timestamp, this.now())}${finished ? " ago" : ""}`,
+      { dim: true },
+      this.depth,
+    );
     const available = Math.max(10, this.width - 8);
     const name = truncateToWidth(record.name, Math.max(8, available - 24));
     const summary = truncateToWidth(record.summary, available);
@@ -344,7 +538,8 @@ export class AgentsApp {
       `${MARGIN}${styleText("agent view keys", { accent: true, bold: true }, this.depth)}`,
       `${MARGIN}↑/↓ select · enter/right attach · space peek`,
       `${MARGIN}f follow-up · x stop runtime · delete remove row`,
-      `${MARGIN}left/esc back · q/ctrl+c leave sessions running`,
+      `${MARGIN}/model select the model for new sessions`,
+      `${MARGIN}left/esc back · ctrl+c twice leaves sessions running`,
       composerRule(this.width, this.depth),
     ];
   }
@@ -353,6 +548,28 @@ export class AgentsApp {
 interface ActiveConversation {
   sessionId: string;
   app: App;
+  disposePresentation?: () => Promise<void>;
+}
+
+export async function rendererRegistryForManagedProfile(
+  record: Pick<ManagedSessionRecord, "profile" | "workingCwd">,
+  load: typeof resolveProfile = resolveProfile,
+): Promise<{ registry: RendererRegistry; dispose: () => Promise<void> }> {
+  const registry = new RendererRegistry();
+  registry.registerAll(codingRenderers);
+  if (record.profile === DEFAULT_PROFILE) return { registry, dispose: async () => {} };
+
+  const profile: Profile = await load(record.profile, {
+    root: record.workingCwd,
+    presentationOnly: true,
+  });
+  registerDeclaredRenderers(registry, Object.entries(profile.renderers ?? {}));
+  return {
+    registry,
+    dispose: async () => {
+      await profile.runtime?.shutdown?.();
+    },
+  };
 }
 
 export async function runAgentView(
@@ -365,6 +582,9 @@ export async function runAgentView(
     return 2;
   }
   const cwd = process.cwd();
+  const dispatchModel = await resolveCliModel(args.model);
+  const auth = await readAuthFile().catch(() => ({ version: 1 as const, providers: {} }));
+  const selectableModels = modelPickerItems(new ExtensionHost(), auth.providers);
   const depth = detectColorDepth();
   const renderer = new FullScreenRenderer(terminal);
   const client = new AgentViewClient({ scope: scopeForCurrentProject(cwd), cwd });
@@ -382,9 +602,11 @@ export async function runAgentView(
 
   const detach = async () => {
     if (!active) return;
-    const sessionId = active.sessionId;
+    const detached = active;
+    const sessionId = detached.sessionId;
     active = undefined;
     await client.detach(sessionId).catch(showError);
+    await detached.disposePresentation?.().catch(showError);
     if (options.exitAfterDetach) {
       exiting = true;
       return;
@@ -398,10 +620,16 @@ export async function runAgentView(
   const openAttachment = async (sessionId: string) => {
     if (attaching || active) return;
     attaching = true;
+    let attached = false;
+    let disposePresentation: (() => Promise<void>) | undefined;
     try {
       const snapshot = await client.attach(sessionId);
-      const registry = new RendererRegistry();
-      registry.registerAll(codingRenderers);
+      attached = true;
+      const record = client.records.find((candidate) => candidate.sessionId === sessionId);
+      if (!record) throw new Error(`managed session ${sessionId} is no longer available`);
+      const presentation = await rendererRegistryForManagedProfile(record);
+      const { registry } = presentation;
+      disposePresentation = presentation.dispose;
       let conversation: App;
       conversation = new App({
         width: terminal.columns,
@@ -497,12 +725,15 @@ export async function runAgentView(
         contextTokens: Math.round(snapshot.contextPercent * snapshot.contextWindow),
         contextPercent: snapshot.contextPercent,
       });
-      active = { sessionId, app: conversation };
+      active = { sessionId, app: conversation, disposePresentation };
+      disposePresentation = undefined;
       terminal.setTitle(`mu - ${basename(cwd) || cwd}`);
       renderer.clear();
       await client.resize(sessionId, terminal.columns, terminal.rows);
       paint();
     } catch (error) {
+      await disposePresentation?.().catch(() => {});
+      if (attached) await client.detach(sessionId).catch(() => {});
       showError(error);
     } finally {
       attaching = false;
@@ -510,13 +741,13 @@ export async function runAgentView(
   };
 
   app = new AgentsApp(terminal.columns, terminal.rows, depth, {
-    dispatch: (prompt) =>
+    dispatch: (prompt, model) =>
       void client
         .dispatch({
           prompt,
           cwd,
           profile: args.profile ?? DEFAULT_PROFILE,
-          ...(args.model ? { model: args.model } : {}),
+          model: model ?? dispatchModel,
           ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
           ...(args.noInstructions ? { noInstructions: true } : {}),
           environment: dispatchEnvironment(),
@@ -535,6 +766,7 @@ export async function runAgentView(
       exiting = true;
     },
   });
+  app.setDispatchModels(selectableModels, dispatchModel);
   app.setRecords(client.records);
   const unsubscribe = client.subscribe((response: AgentViewResponse) => {
     app.setRecords(client.records);
@@ -627,7 +859,10 @@ export async function runAgentView(
     }
   } finally {
     if (escapeTimer) clearTimeout(escapeTimer);
-    if (active) await client.detach(active.sessionId).catch(() => {});
+    if (active) {
+      await client.detach(active.sessionId).catch(() => {});
+      await active.disposePresentation?.().catch(() => {});
+    }
     unsubscribe();
     stopResize();
     client.close();

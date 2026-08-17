@@ -28,7 +28,11 @@ export const MANAGED_ENVIRONMENT_KEYS = [
     ...[...builtinProviderConfigs.values()].flatMap((provider) => provider.env),
   ]),
 ] as readonly string[];
+export const MANAGED_PROFILE_ENV_PREFIX = "MU_PROFILE_";
 const managedEnvironmentKeys = new Set<string>(MANAGED_ENVIRONMENT_KEYS);
+const managedEnvironmentKey = (key: string): boolean =>
+  managedEnvironmentKeys.has(key) ||
+  (key.startsWith(MANAGED_PROFILE_ENV_PREFIX) && /^[A-Z_][A-Z0-9_]*$/.test(key));
 const requestId = z.string().min(1).max(128);
 const sessionId = z.string().min(1).max(512);
 const text = z.string().max(MAX_AGENT_VIEW_PROMPT_CHARS);
@@ -58,7 +62,7 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
         .record(z.string(), z.string().max(100_000))
         .refine((value) => Object.keys(value).length <= 64, "environment has too many entries")
         .refine(
-          (value) => Object.keys(value).every((key) => managedEnvironmentKeys.has(key)),
+          (value) => Object.keys(value).every(managedEnvironmentKey),
           "environment contains a key that managed runtimes do not accept",
         )
         .optional(),

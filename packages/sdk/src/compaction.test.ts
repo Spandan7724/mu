@@ -217,11 +217,17 @@ describe("/compact on demand", () => {
 
   test("compactNow does not install a candidate boundary when persistence fails", async () => {
     class FailManualSaveStore extends MemorySessionStore {
-      private saves = 0;
+      private failNext = false;
+
+      failNextSave(): void {
+        this.failNext = true;
+      }
 
       override async save(sessionId: string, tree: SessionTree): Promise<void> {
-        this.saves++;
-        if (this.saves === 2) throw new Error("disk unavailable");
+        if (this.failNext) {
+          this.failNext = false;
+          throw new Error("disk unavailable");
+        }
         await super.save(sessionId, tree);
       }
     }
@@ -234,6 +240,7 @@ describe("/compact on demand", () => {
     const agent = new Agent({ provider, model: smallModel, autoCompact: false, session: store });
     await agent.run(longPrompt());
     const before = agent.session.toJsonl();
+    store.failNextSave();
 
     const result = await agent.compactNow();
 

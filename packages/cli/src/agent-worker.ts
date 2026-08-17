@@ -24,11 +24,37 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
   );
 }
 
-export async function runAgentWorker(args: ParsedArgs): Promise<number> {
+async function* fencedWorkerLines(
+  lines: AsyncIterable<string>,
+  ownershipToken: string,
+): AsyncGenerator<string> {
+  for await (const line of lines) {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    if (parsed.ownershipToken !== ownershipToken) {
+      throw new Error("managed worker received a command for a different ownership generation");
+    }
+    const { ownershipToken: _ownershipToken, ...op } = parsed;
+    yield JSON.stringify(op);
+  }
+}
+
+export interface AgentWorkerIo {
+  lines?: AsyncIterable<string>;
+  write?: (line: string) => void;
+  stderr?: (message: string) => void;
+}
+
+export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): Promise<number> {
+  const stderr = io.stderr ?? ((message: string) => process.stderr.write(message));
   if (!args.workerSessionId && !args.resumeSessionId) {
-    process.stderr.write("mu: managed worker requires --session-id or --resume\n");
+    stderr("mu: managed worker requires --session-id or --resume\n");
     return 2;
   }
+  if (!args.workerOwnershipToken) {
+    stderr("mu: managed worker requires --ownership-token\n");
+    return 2;
+  }
+  const ownershipToken = args.workerOwnershipToken;
   const runtime = await createCliSessionRuntime({
     cwd: process.cwd(),
     profile: args.profile,
@@ -41,11 +67,11 @@ export async function runAgentWorker(args: ParsedArgs): Promise<number> {
     maxTurns: args.maxTurns,
     maxCostUsd: args.maxCostUsd,
     permissions: "forward",
-    onDiagnostic: (message) => process.stderr.write(`mu: ${message}\n`),
+    onDiagnostic: (message) => stderr(`mu: ${message}\n`),
   });
   const { agent } = runtime;
   const auth = await readAuthFile().catch((error: unknown) => {
-    process.stderr.write(
+    stderr(
       `mu: could not read saved authentication for /model: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return { version: 1 as const, providers: {} };
@@ -85,7 +111,15 @@ export async function runAgentWorker(args: ParsedArgs): Promise<number> {
 
   try {
     await runRpc(
-      { write: (line) => process.stdout.write(line), lines: linesFrom(process.stdin) },
+      {
+        write: (line) => {
+          const value = JSON.parse(line) as Record<string, unknown>;
+          (io.write ?? ((output: string) => process.stdout.write(output)))(
+            `${JSON.stringify({ ...value, ownershipToken })}\n`,
+          );
+        },
+        lines: fencedWorkerLines(io.lines ?? linesFrom(process.stdin), ownershipToken),
+      },
       {
         agent,
         ready: {

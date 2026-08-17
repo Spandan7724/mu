@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,10 +17,11 @@ async function scratch(): Promise<string> {
 // Production puts the shadow repo under ~/.mu, i.e. entirely outside the
 // session root. Mirror that here (in a temp dir) so tests never touch ~/.mu.
 let shadowCounter = 0;
+const shadowRun = randomUUID();
 function provider(root: string): ShadowCheckpointProvider {
   return new ShadowCheckpointProvider({
     root,
-    shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowCounter++}`),
+    shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
   });
 }
 
@@ -31,6 +33,49 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 }
 
 describe("shadow checkpoints", () => {
+  test("two coding workers checkpoint concurrently in one workspace", async () => {
+    const root = await scratch();
+    const home = await scratch();
+    const gate = join(root, "start-workers");
+    const fixture = join(import.meta.dir, "../testing/concurrent-checkpoint-worker.ts");
+    const spawnWorker = (name: string) =>
+      Bun.spawn([process.execPath, fixture, root, name, gate], {
+        env: { ...process.env, HOME: home, USERPROFILE: home },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const first = spawnWorker("first-worker");
+    const second = spawnWorker("second-worker");
+    await writeFile(gate, "go\n");
+
+    const results = await Promise.all(
+      [first, second].map(async (worker) => {
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(worker.stdout).text(),
+          new Response(worker.stderr).text(),
+          worker.exited,
+        ]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+    expect(results).toEqual([
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+    ]);
+    expect(JSON.parse(await readFile(join(root, "first-worker.result.json"), "utf8"))).toEqual({
+      checkpoints: 1,
+    });
+    expect(JSON.parse(await readFile(join(root, "second-worker.result.json"), "utf8"))).toEqual({
+      checkpoints: 1,
+    });
+    expect(await readFile(join(root, "first-worker.txt"), "utf8")).toBe("first-worker\n");
+    expect(await readFile(join(root, "second-worker.txt"), "utf8")).toBe("second-worker\n");
+    const checkpointRoot = join(home, ".mu", "checkpoints");
+    const entries = await readdir(checkpointRoot);
+    expect(entries.filter((entry) => entry.endsWith(".lock"))).toEqual([]);
+    expect(entries.filter((entry) => !entry.endsWith(".lock"))).toHaveLength(1);
+  });
+
   test("snapshot then restore brings a modified file back", async () => {
     const root = await scratch();
     await writeFile(join(root, "a.txt"), "original\n");

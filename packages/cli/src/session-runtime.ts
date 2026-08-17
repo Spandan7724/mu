@@ -132,6 +132,10 @@ export async function createCliSessionRuntime(
     agent.resume(tree);
   } else if (options.sessionId) {
     agent.newSession(options.sessionId);
+    // Establish the scoped session and its profile/environment header before
+    // the first operation so a worker crash during startup is still visible
+    // and resumable through the same profile scope.
+    await agent.sessionStore.save(agent.sessionId, agent.session);
   }
 
   const commands = registryWithCoreCommands({

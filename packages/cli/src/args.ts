@@ -22,6 +22,7 @@ export interface ParsedArgs {
   noInstructions: boolean;
   purgeData: boolean;
   workerSessionId?: string | undefined;
+  workerOwnershipToken?: string | undefined;
   errors: string[];
 }
 
@@ -88,6 +89,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--session-id":
         parsed.workerSessionId = argv[++i];
         if (!parsed.workerSessionId) parsed.errors.push("--session-id requires a value");
+        break;
+      case "--ownership-token":
+        parsed.workerOwnershipToken = argv[++i];
+        if (!parsed.workerOwnershipToken) parsed.errors.push("--ownership-token requires a value");
         break;
       case "self": {
         const sub = argv[++i];

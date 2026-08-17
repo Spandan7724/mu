@@ -2,9 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentSupervisor } from "./agent-supervisor.ts";
+import { AgentSupervisor, dispatchEnvironment } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
-import { agentViewPaths, readSessionOwnership } from "./agent-view-store.ts";
+import { createManagedSessionRecord } from "./agent-view-state.ts";
+import {
+  AgentViewRosterStore,
+  acquireSessionOwnership,
+  agentViewPaths,
+  isProcessAlive,
+  readSessionOwnership,
+  updateSessionOwnershipWorker,
+} from "./agent-view-store.ts";
 
 const roots: string[] = [];
 const fixture = join(import.meta.dir, "../testing/agent-worker-fixture.ts");
@@ -22,6 +30,17 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, timeout = 2_
 };
 
 describe("agent supervisor", () => {
+  test("forwards canonical and namespaced profile environment only", () => {
+    expect(
+      dispatchEnvironment({
+        HOME: "/private",
+        PATH: "/bin",
+        MU_PROFILE_CUSTOM_TOKEN: "profile-value",
+        UNRELATED: "drop-me",
+      }),
+    ).toEqual({ PATH: "/bin", MU_PROFILE_CUSTOM_TOKEN: "profile-value" });
+  });
+
   test("hosts independent workers after a viewer disconnect and supports attach/remove semantics", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
@@ -171,6 +190,141 @@ describe("agent supervisor", () => {
     }
   });
 
+  test("waits for an evicting worker to exit before accepting work on its replacement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      completedIdleMs: 10,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({
+        prompt: "finish before eviction",
+        cwd: root,
+        profile: "slow-shutdown",
+      });
+      await waitFor(() => client.records[0]?.state === "completed");
+      const sessionId = client.records[0]?.sessionId ?? "";
+      await Bun.sleep(35);
+      await client.sessionOp(sessionId, { type: "input", text: "accepted after eviction" });
+      await waitFor(
+        () => client.records[0]?.summary.includes("finished accepted after eviction") === true,
+      );
+      expect(client.records[0]?.state).toBe("completed");
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
+  test("propagates a worker rejection to the originating client request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "ordinary", cwd: root, profile: "coding" });
+      await waitFor(() => client.records[0]?.state === "completed");
+      const sessionId = client.records[0]?.sessionId ?? "";
+      await expect(
+        client.sessionOp(sessionId, {
+          type: "permission_reply",
+          requestId: "not-open",
+          outcome: "allow",
+        }),
+      ).rejects.toThrow("unknown permission request");
+      expect(client.records[0]?.lastError).toBeUndefined();
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
+  test("terminates a stale live worker before fencing and starting its replacement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const store = new AgentViewRosterStore(paths);
+    await store.initialize();
+    const sessionId = "session-stale-worker";
+    const record = {
+      ...createManagedSessionRecord({
+        sessionId,
+        scope: "project",
+        prompt: "recover me",
+        cwd: root,
+        profile: "coding",
+      }),
+      state: "completed" as const,
+    };
+    await store.save([record]);
+    const staleSupervisorPid = 2_000_000_000;
+    expect(isProcessAlive(staleSupervisorPid)).toBe(false);
+    let ownership = await acquireSessionOwnership(paths, sessionId, {
+      supervisorPid: staleSupervisorPid,
+    });
+    const orphan = Bun.spawn(
+      [
+        process.execPath,
+        fixture,
+        "__agents-worker",
+        "--session-id",
+        sessionId,
+        "--ownership-token",
+        ownership.token,
+        "--profile",
+        "hang",
+      ],
+      {
+        cwd: root,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: process.platform !== "win32",
+      },
+    );
+    ownership = await updateSessionOwnershipWorker(paths, ownership, orphan.pid);
+    expect(isProcessAlive(orphan.pid)).toBe(true);
+
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 100,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      const attachment = await client.attach(sessionId);
+      expect(attachment.sessionId).toBe(sessionId);
+      await Promise.race([
+        orphan.exited,
+        Bun.sleep(2_000).then(() => {
+          throw new Error("stale worker was not terminated");
+        }),
+      ]);
+      const recovered = await readSessionOwnership(paths, sessionId);
+      expect(recovered?.token).not.toBe(ownership.token);
+      expect(recovered?.workerPid).not.toBe(orphan.pid);
+    } finally {
+      client.close();
+      await supervisor.close();
+      if (orphan.exitCode === null) orphan.kill("SIGKILL");
+      await orphan.exited;
+    }
+  });
+
   test("malformed output, worker crashes, and startup timeouts become failed rows", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
@@ -187,15 +341,21 @@ describe("agent supervisor", () => {
       await client.connect(false);
       await client.dispatch({ prompt: "malformed output", cwd: root, profile: "coding" });
       await client.dispatch({ prompt: "crash now", cwd: root, profile: "coding" });
-      await client.dispatch({ prompt: "never ready", cwd: root, profile: "hang" });
+      await expect(
+        client.dispatch({ prompt: "stale generation", cwd: root, profile: "stale-output" }),
+      ).rejects.toThrow("stale ownership generation");
+      await expect(
+        client.dispatch({ prompt: "never ready", cwd: root, profile: "hang" }),
+      ).rejects.toThrow("did not become ready");
       await waitFor(
-        () => client.records.length === 3 && client.records.every((row) => row.state === "failed"),
+        () => client.records.length === 4 && client.records.every((row) => row.state === "failed"),
         4_000,
       );
       const errors = client.records.map((row) => row.lastError ?? "");
       expect(errors).toEqual(
         expect.arrayContaining([
           expect.stringContaining("exited with code 7"),
+          expect.stringContaining("stale ownership generation"),
           expect.stringContaining("did not become ready"),
         ]),
       );
