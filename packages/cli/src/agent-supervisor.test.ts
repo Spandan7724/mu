@@ -16,6 +16,7 @@ import {
 
 const roots: string[] = [];
 const fixture = join(import.meta.dir, "../testing/agent-worker-fixture.ts");
+const closeFixture = join(import.meta.dir, "../testing/agent-supervisor-close-fixture.ts");
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -164,6 +165,70 @@ describe("agent supervisor", () => {
       await supervisor.close();
     }
   });
+
+  test("close tolerates worker stdin closing before its exit is observed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      forceStopMs: 30,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "ordinary", cwd: root, profile: "coding" });
+      const internals = supervisor as unknown as {
+        runtimes: Map<string, { process: Bun.Subprocess<"pipe", "pipe", "pipe"> }>;
+      };
+      const runtime = [...internals.runtimes.values()][0];
+      expect(runtime).toBeDefined();
+      if (runtime) {
+        const child = runtime.process;
+        runtime.process = new Proxy(child, {
+          get(target, property) {
+            if (property === "stdin") {
+              return {
+                write: () => {
+                  throw Object.assign(new Error("broken pipe"), { code: "EPIPE" });
+                },
+                flush: () => {},
+              };
+            }
+            return Reflect.get(target, property, target);
+          },
+        });
+      }
+      client.close();
+
+      await expect(supervisor.close()).resolves.toBeUndefined();
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
+  test("close clears its force-stop deadline after a graceful worker exit", async () => {
+    const child = Bun.spawn([process.execPath, closeFixture], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    let timedOut = false;
+    const exitCode = await Promise.race([
+      child.exited,
+      Bun.sleep(10_000).then(async () => {
+        timedOut = true;
+        child.kill("SIGKILL");
+        return child.exited;
+      }),
+    ]);
+    const stderr = await new Response(child.stderr).text();
+
+    expect({ timedOut, exitCode, stderr }).toEqual({ timedOut: false, exitCode: 0, stderr: "" });
+  }, 20_000);
 
   test("evicts an idle completed worker without changing completion or losing restartability", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));

@@ -168,6 +168,32 @@ function workerWrite(runtime: WorkerRuntime, value: unknown): void {
   runtime.process.stdin.flush();
 }
 
+function requestWorkerShutdown(runtime: WorkerRuntime): void {
+  try {
+    workerWrite(runtime, { type: "shutdown" });
+  } catch {
+    // The worker may have closed stdin before Bun publishes its exit code.
+  }
+}
+
+async function waitForProcessExit(
+  process: Pick<Bun.Subprocess, "exitCode" | "exited">,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (process.exitCode !== null) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      process.exited.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function* streamLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -519,7 +545,7 @@ export class AgentSupervisor {
           runtime.lifecycle = "stopping";
           if (!wasEvicting) {
             await this.workerOperation(runtime, { type: "abort" }).catch(() => {});
-            workerWrite(runtime, { type: "shutdown" });
+            requestWorkerShutdown(runtime);
           }
           this.scheduleForceStop(runtime);
         } else {
@@ -694,19 +720,19 @@ export class AgentSupervisor {
     try {
       ownership = await updateSessionOwnershipWorker(this.paths, ownership, child.pid);
     } catch (error) {
-      await terminateProcessTree(child, "SIGTERM");
-      await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      try {
+        await this.terminateChild(child);
+      } finally {
+        await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      }
       throw error;
     }
     if (this.closing) {
-      await terminateProcessTree(child, "SIGTERM");
-      await releaseSessionOwnership(this.paths, ownership).catch(() => false);
-      await Promise.race([
-        child.exited,
-        new Promise((resolve) => setTimeout(resolve, this.forceStopMs)),
-      ]);
-      if (child.exitCode === null) await terminateProcessTree(child, "SIGKILL");
-      await child.exited;
+      try {
+        await this.terminateChild(child);
+      } finally {
+        await releaseSessionOwnership(this.paths, ownership).catch(() => false);
+      }
       throw new Error("agent supervisor is shutting down");
     }
     let resolveReady = () => {};
@@ -911,17 +937,22 @@ export class AgentSupervisor {
     });
   }
 
+  private async terminateChild(child: Bun.Subprocess): Promise<void> {
+    await terminateProcessTree(child, "SIGTERM");
+    if (!(await waitForProcessExit(child, this.forceStopMs)) && child.exitCode === null) {
+      await terminateProcessTree(child, "SIGKILL");
+    }
+    await child.exited;
+  }
+
   private async shutdownRuntime(runtime: WorkerRuntime): Promise<void> {
     runtime.lifecycle = "stopping";
     if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
     delete runtime.stopTimer;
     await runtime.termination;
     if (runtime.process.exitCode !== null) return;
-    workerWrite(runtime, { type: "shutdown" });
-    const exited = await Promise.race([
-      runtime.process.exited.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), this.forceStopMs)),
-    ]);
+    requestWorkerShutdown(runtime);
+    const exited = await waitForProcessExit(runtime.process, this.forceStopMs);
     if (!exited && runtime.process.exitCode === null) {
       await this.terminateRuntime(runtime, "SIGKILL");
       await runtime.process.exited;
@@ -977,7 +1008,7 @@ export class AgentSupervisor {
       delete runtime.idleTimer;
       if (runtime.process.exitCode !== null || runtime.lifecycle !== "ready") return;
       runtime.lifecycle = "evicting";
-      workerWrite(runtime, { type: "shutdown" });
+      requestWorkerShutdown(runtime);
       this.scheduleForceStop(runtime);
     }, this.completedIdleMs);
   }
