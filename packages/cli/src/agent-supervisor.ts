@@ -221,6 +221,7 @@ export class AgentSupervisor {
   private readonly records = new Map<string, ManagedSessionRecord>();
   private readonly runtimes = new Map<string, WorkerRuntime>();
   private readonly runtimeTransitions = new Map<string, Promise<WorkerRuntime>>();
+  private readonly exitHandlers = new Set<Promise<void>>();
   private readonly clients = new Set<ClientConnection>();
   private saveChain = Promise.resolve();
   private server = createServer((socket) => this.accept(socket));
@@ -345,19 +346,14 @@ export class AgentSupervisor {
 
   private async closeInternal(): Promise<void> {
     this.closing = true;
-    const sockets = [...this.clients].map(
-      (client) =>
-        new Promise<void>((resolve) => {
-          if (client.socket.closed) return resolve();
-          client.socket.once("close", resolve);
-          client.socket.destroy();
-        }),
-    );
-    await Promise.all(sockets);
-    this.clients.clear();
+    const clients = [...this.clients];
+    for (const client of clients) client.socket.destroy();
+    await Promise.all(clients.map((client) => this.disconnect(client)));
     const runtimes = [...this.runtimes.values()];
     await Promise.all(runtimes.map((runtime) => this.shutdownRuntime(runtime)));
-    await Promise.all(runtimes.map((runtime) => runtime.exitHandled));
+    while (this.exitHandlers.size > 0) {
+      await Promise.all([...this.exitHandlers]);
+    }
     await this.saveChain;
     if (this.server.listening) {
       await new Promise<void>((resolve) => this.server.close(() => resolve()));
@@ -369,6 +365,10 @@ export class AgentSupervisor {
   }
 
   private accept(socket: Socket): void {
+    if (this.closing) {
+      socket.destroy();
+      return;
+    }
     const client: ClientConnection = {
       id: randomUUID(),
       socket,
@@ -761,8 +761,14 @@ export class AgentSupervisor {
     }, this.workerStartupMs);
     void this.consumeWorker(record.sessionId, runtime);
     void this.consumeWorkerErrors(record.sessionId, child.stderr);
-    runtime.exitHandled = child.exited.then((code) =>
+    const exitHandled = child.exited.then((code) =>
       this.workerExited(record.sessionId, runtime, code),
+    );
+    runtime.exitHandled = exitHandled;
+    this.exitHandlers.add(exitHandled);
+    void exitHandled.then(
+      () => this.exitHandlers.delete(exitHandled),
+      () => this.exitHandlers.delete(exitHandled),
     );
     return runtime;
   }

@@ -62,7 +62,12 @@ describe("agent supervisor", () => {
 
       const second = new AgentViewClient({ paths, scope: "project", cwd: root });
       await second.connect(false);
-      await waitFor(() => second.records.every((record) => record.state === "completed"));
+      expect(second.records).toHaveLength(2);
+      await waitFor(
+        () =>
+          second.records.length === 2 &&
+          second.records.every((record) => record.state === "completed"),
+      );
       const target = second.records[0];
       expect(target).toBeDefined();
       const attachment = await second.attach(target?.sessionId ?? "");
@@ -164,6 +169,63 @@ describe("agent supervisor", () => {
       client.close();
       await supervisor.close();
     }
+  });
+
+  test("close does not depend on a client socket close event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({ paths });
+    await supervisor.start();
+    let destroyed = false;
+    const internals = supervisor as unknown as {
+      clients: Set<{
+        id: string;
+        socket: { destroy(): void };
+        scope: string | undefined;
+        attachment: string | undefined;
+      }>;
+    };
+    internals.clients.add({
+      id: "client-without-close-event",
+      socket: {
+        destroy: () => {
+          destroyed = true;
+        },
+      },
+      scope: undefined,
+      attachment: undefined,
+    });
+
+    await supervisor.close();
+
+    expect(destroyed).toBe(true);
+  });
+
+  test("close waits for exit cleanup after a worker leaves the runtime roster", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const supervisor = new AgentSupervisor({ paths: agentViewPaths(root) });
+    await supervisor.start();
+    let finishExitCleanup = () => {};
+    const exitCleanup = new Promise<void>((resolve) => {
+      finishExitCleanup = resolve;
+    });
+    const internals = supervisor as unknown as {
+      exitHandlers: Set<Promise<void>>;
+    };
+    internals.exitHandlers.add(exitCleanup);
+    void exitCleanup.then(() => internals.exitHandlers.delete(exitCleanup));
+    let closed = false;
+    const close = supervisor.close().then(() => {
+      closed = true;
+    });
+    await Bun.sleep(10);
+    expect(closed).toBe(false);
+
+    finishExitCleanup();
+    await close;
+    expect(closed).toBe(true);
   });
 
   test("close tolerates worker stdin closing before its exit is observed", async () => {
