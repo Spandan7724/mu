@@ -157,6 +157,17 @@ const workerOutSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("shutdown"), ownershipToken: z.string().uuid() }).strict(),
 ]);
 
+export function parseWorkerOutput(
+  line: string,
+  ownershipToken: string,
+): z.infer<typeof workerOutSchema> {
+  const output = workerOutSchema.parse(JSON.parse(line) as unknown);
+  if (output.ownershipToken !== ownershipToken) {
+    throw new Error("worker output used a stale ownership generation");
+  }
+  return output;
+}
+
 export function currentExecutableCommand(args: string[]): string[] {
   const entry = process.argv[1];
   if (entry && !entry.startsWith("/$bunfs/") && /\.[cm]?[jt]s$/.test(entry)) {
@@ -831,10 +842,7 @@ export class AgentSupervisor {
   private async consumeWorker(sessionId: string, runtime: WorkerRuntime): Promise<void> {
     try {
       for await (const line of streamLines(runtime.process.stdout)) {
-        const out = workerOutSchema.parse(JSON.parse(line) as unknown);
-        if (out.ownershipToken !== runtime.ownership.token) {
-          throw new Error("worker output used a stale ownership generation");
-        }
+        const out = parseWorkerOutput(line, runtime.ownership.token);
         if (this.runtimes.get(sessionId) !== runtime) return;
         if (out.type === "ready") {
           if (out.sessionId !== sessionId)

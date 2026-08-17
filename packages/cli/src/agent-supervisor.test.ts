@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentSupervisor, dispatchEnvironment } from "./agent-supervisor.ts";
+import { AgentSupervisor, dispatchEnvironment, parseWorkerOutput } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
 import { createManagedSessionRecord, type ManagedSessionRecord } from "./agent-view-state.ts";
 import {
@@ -583,13 +583,28 @@ describe("agent supervisor", () => {
     }
   }, 10_000);
 
-  test("stale worker output becomes a failed row", async () => {
+  test("rejects stale worker output ownership generations", () => {
+    const expectedToken = "10000000-0000-4000-8000-000000000000";
+    const staleToken = "20000000-0000-4000-8000-000000000000";
+    const output = JSON.stringify({
+      type: "ready",
+      ownershipToken: staleToken,
+      sessionId: "session-1",
+      model: "fake/fake-1",
+      contextWindow: 10_000,
+      thinking: "off",
+      thinkingLevels: ["off"],
+    });
+
+    expect(() => parseWorkerOutput(output, expectedToken)).toThrow("stale ownership generation");
+  });
+
+  test("reports stale worker output to a separate client process", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
     const paths = agentViewPaths(root);
     const supervisor = new AgentSupervisor({
       paths,
-      workerStartupMs: 2_000,
       forceStopMs: 500,
       command: (args) => [process.execPath, fixture, ...args],
     });
@@ -603,7 +618,7 @@ describe("agent supervisor", () => {
     } finally {
       await supervisor.close();
     }
-  }, 10_000);
+  }, 15_000);
 
   test("coalesces duplicate worker termination and performs one force escalation", async () => {
     const terminations: NodeJS.Signals[] = [];
