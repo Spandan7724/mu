@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentSupervisor, dispatchEnvironment } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
-import { createManagedSessionRecord } from "./agent-view-state.ts";
+import { createManagedSessionRecord, type ManagedSessionRecord } from "./agent-view-state.ts";
 import {
   AgentViewRosterStore,
   acquireSessionOwnership,
@@ -17,6 +17,10 @@ import {
 const roots: string[] = [];
 const fixture = join(import.meta.dir, "../testing/agent-worker-fixture.ts");
 const closeFixture = join(import.meta.dir, "../testing/agent-supervisor-close-fixture.ts");
+const dispatchClientFixture = join(
+  import.meta.dir,
+  "../testing/agent-view-dispatch-client-fixture.ts",
+);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -27,6 +31,40 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>, timeout = 2_
   while (!(await predicate())) {
     if (Date.now() > deadline) throw new Error("timed out waiting for supervisor state");
     await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+};
+
+const dispatchFromSeparateClient = async (
+  root: string,
+  prompt: string,
+  profile: string,
+): Promise<{ dispatchError: string; record?: ManagedSessionRecord }> => {
+  const client = Bun.spawn([process.execPath, dispatchClientFixture, root, prompt, profile], {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    windowsHide: true,
+  });
+  const stdoutPromise = new Response(client.stdout).text();
+  const stderrPromise = new Response(client.stderr).text();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const exitCode = await Promise.race([
+      client.exited,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("isolated dispatch client timed out")), 6_000);
+      }),
+    ]);
+    const stdout = await stdoutPromise;
+    const stderr = await stderrPromise;
+    if (exitCode !== 0 || stderr) {
+      throw new Error(`isolated dispatch client exited with code ${exitCode}: ${stderr}`);
+    }
+    return JSON.parse(stdout) as { dispatchError: string; record?: ManagedSessionRecord };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (client.exitCode === null) client.kill("SIGKILL");
+    await client.exited;
   }
 };
 
@@ -556,16 +594,13 @@ describe("agent supervisor", () => {
       command: (args) => [process.execPath, fixture, ...args],
     });
     await supervisor.start();
-    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
     try {
-      await client.connect(false);
-      await expect(
-        client.dispatch({ prompt: "stale generation", cwd: root, profile: "stale-output" }),
-      ).rejects.toThrow("stale ownership generation");
-      await waitFor(() => client.records[0]?.state === "failed");
-      expect(client.records[0]?.lastError).toContain("stale ownership generation");
+      const result = await dispatchFromSeparateClient(root, "stale generation", "stale-output");
+
+      expect(result.dispatchError).toContain("stale ownership generation");
+      expect(result.record?.state).toBe("failed");
+      expect(result.record?.lastError).toContain("stale ownership generation");
     } finally {
-      client.close();
       await supervisor.close();
     }
   }, 10_000);
@@ -612,16 +647,13 @@ describe("agent supervisor", () => {
       command: (args) => [process.execPath, fixture, ...args],
     });
     await supervisor.start();
-    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
     try {
-      await client.connect(false);
-      await expect(
-        client.dispatch({ prompt: "never ready", cwd: root, profile: "hang" }),
-      ).rejects.toThrow("did not become ready");
-      await waitFor(() => client.records[0]?.state === "failed", 4_000);
-      expect(client.records[0]?.lastError).toContain("did not become ready");
+      const result = await dispatchFromSeparateClient(root, "never ready", "hang");
+
+      expect(result.dispatchError).toContain("did not become ready");
+      expect(result.record?.state).toBe("failed");
+      expect(result.record?.lastError).toContain("did not become ready");
     } finally {
-      client.close();
       await supervisor.close();
     }
   }, 10_000);
