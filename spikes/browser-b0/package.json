@@ -1,0 +1,13 @@
+{
+  "name": "@mu/spike-browser-b0",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "fixture": "bun run fixture.ts",
+    "probe": "bun run mcp-client.ts"
+  },
+  "dependencies": {
+    "@playwright/mcp": "0.0.79"
+  }
+}
