@@ -72,6 +72,7 @@ interface WorkerRuntime {
   startupTimer?: ReturnType<typeof setTimeout>;
   stopTimer?: ReturnType<typeof setTimeout>;
   idleTimer?: ReturnType<typeof setTimeout>;
+  termination?: Promise<void>;
 }
 
 interface ClientConnection {
@@ -318,17 +319,20 @@ export class AgentSupervisor {
 
   private async closeInternal(): Promise<void> {
     this.closing = true;
+    const sockets = [...this.clients].map(
+      (client) =>
+        new Promise<void>((resolve) => {
+          if (client.socket.closed) return resolve();
+          client.socket.once("close", resolve);
+          client.socket.destroy();
+        }),
+    );
+    await Promise.all(sockets);
+    this.clients.clear();
     const runtimes = [...this.runtimes.values()];
-    for (const runtime of runtimes) {
-      runtime.lifecycle = "stopping";
-      workerWrite(runtime, { type: "shutdown" });
-      this.scheduleForceStop(runtime);
-    }
-    await Promise.all(runtimes.map((runtime) => runtime.process.exited));
+    await Promise.all(runtimes.map((runtime) => this.shutdownRuntime(runtime)));
     await Promise.all(runtimes.map((runtime) => runtime.exitHandled));
     await this.saveChain;
-    for (const client of this.clients) client.socket.destroy();
-    this.clients.clear();
     if (this.server.listening) {
       await new Promise<void>((resolve) => this.server.close(() => resolve()));
     }
@@ -435,7 +439,7 @@ export class AgentSupervisor {
         } catch (error) {
           if (runtime && runtime.process.exitCode === null) {
             runtime.lifecycle = "stopping";
-            terminateProcessTree(runtime.process, "SIGTERM");
+            void this.terminateRuntime(runtime, "SIGTERM");
             this.scheduleForceStop(runtime);
           }
           const failed = reduceManagedSession(
@@ -690,18 +694,18 @@ export class AgentSupervisor {
     try {
       ownership = await updateSessionOwnershipWorker(this.paths, ownership, child.pid);
     } catch (error) {
-      terminateProcessTree(child, "SIGTERM");
+      await terminateProcessTree(child, "SIGTERM");
       await releaseSessionOwnership(this.paths, ownership).catch(() => false);
       throw error;
     }
     if (this.closing) {
-      terminateProcessTree(child, "SIGTERM");
+      await terminateProcessTree(child, "SIGTERM");
       await releaseSessionOwnership(this.paths, ownership).catch(() => false);
       await Promise.race([
         child.exited,
         new Promise((resolve) => setTimeout(resolve, this.forceStopMs)),
       ]);
-      if (child.exitCode === null) terminateProcessTree(child, "SIGKILL");
+      if (child.exitCode === null) await terminateProcessTree(child, "SIGKILL");
       await child.exited;
       throw new Error("agent supervisor is shutting down");
     }
@@ -727,7 +731,7 @@ export class AgentSupervisor {
       );
       runtime.rejectReady(error);
       void this.markWorkerFailed(record.sessionId, error.message);
-      terminateProcessTree(runtime.process, "SIGTERM");
+      void this.terminateRuntime(runtime, "SIGTERM");
     }, this.workerStartupMs);
     void this.consumeWorker(record.sessionId, runtime);
     void this.consumeWorkerErrors(record.sessionId, child.stderr);
@@ -805,7 +809,7 @@ export class AgentSupervisor {
       }
     } catch (error) {
       runtime.rejectReady(error instanceof Error ? error : new Error(String(error)));
-      terminateProcessTree(runtime.process, "SIGTERM");
+      void this.terminateRuntime(runtime, "SIGTERM");
     }
   }
 
@@ -897,10 +901,37 @@ export class AgentSupervisor {
     await this.persistAndBroadcast(next);
   }
 
+  private terminateRuntime(runtime: WorkerRuntime, signal: NodeJS.Signals): Promise<void> {
+    const termination = (runtime.termination ?? Promise.resolve()).then(async () => {
+      if (runtime.process.exitCode === null) await terminateProcessTree(runtime.process, signal);
+    });
+    runtime.termination = termination;
+    return termination.finally(() => {
+      if (runtime.termination === termination) delete runtime.termination;
+    });
+  }
+
+  private async shutdownRuntime(runtime: WorkerRuntime): Promise<void> {
+    runtime.lifecycle = "stopping";
+    if (runtime.stopTimer) clearTimeout(runtime.stopTimer);
+    delete runtime.stopTimer;
+    await runtime.termination;
+    if (runtime.process.exitCode !== null) return;
+    workerWrite(runtime, { type: "shutdown" });
+    const exited = await Promise.race([
+      runtime.process.exited.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), this.forceStopMs)),
+    ]);
+    if (!exited && runtime.process.exitCode === null) {
+      await this.terminateRuntime(runtime, "SIGKILL");
+      await runtime.process.exited;
+    }
+  }
+
   private scheduleForceStop(runtime: WorkerRuntime): void {
     if (runtime.stopTimer) return;
     runtime.stopTimer = setTimeout(() => {
-      if (runtime.process.exitCode === null) terminateProcessTree(runtime.process, "SIGKILL");
+      if (runtime.process.exitCode === null) void this.terminateRuntime(runtime, "SIGKILL");
     }, this.forceStopMs);
   }
 
@@ -912,12 +943,12 @@ export class AgentSupervisor {
       exitCode: null,
       kill: (signal?: NodeJS.Signals | number) => process.kill(pid, signal),
     };
-    terminateProcessTree(target, "SIGTERM");
+    await terminateProcessTree(target, "SIGTERM");
     const deadline = Date.now() + this.forceStopMs;
     while (isProcessAlive(pid) && Date.now() <= deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    if (isProcessAlive(pid)) terminateProcessTree(target, "SIGKILL");
+    if (isProcessAlive(pid)) await terminateProcessTree(target, "SIGKILL");
     const killDeadline = Date.now() + Math.max(1_000, this.forceStopMs);
     while (isProcessAlive(pid) && Date.now() <= killDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));

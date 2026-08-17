@@ -72,11 +72,11 @@ function fallbackKill(process: ProcessTreeTarget, signal: NodeJS.Signals): void 
 
 // Bun's detached POSIX processes are group leaders. Windows has no equivalent
 // signal for descendants, so taskkill /T is the native process-tree boundary.
-export function terminateProcessTree(
+export async function terminateProcessTree(
   process: ProcessTreeTarget,
   signal: NodeJS.Signals,
   platform: NodeJS.Platform = globalThis.process.platform,
-): void {
+): Promise<void> {
   if (platform !== "win32") {
     try {
       globalThis.process.kill(-process.pid, signal);
@@ -93,11 +93,7 @@ export function terminateProcessTree(
       stderr: "ignore",
       windowsHide: true,
     });
-    void killer.exited
-      .then((exitCode) => {
-        if (exitCode !== 0 && process.exitCode === null) fallbackKill(process, signal);
-      })
-      .catch(() => fallbackKill(process, signal));
+    if ((await killer.exited) !== 0 && process.exitCode === null) fallbackKill(process, signal);
   } catch {
     fallbackKill(process, signal);
   }
