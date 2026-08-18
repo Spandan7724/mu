@@ -1060,6 +1060,94 @@ describe("renderer registry", () => {
   });
 });
 
+describe("superseded plans", () => {
+  const plan = (statuses: ("completed" | "in_progress" | "pending")[]) =>
+    statuses.map((status, index) => ({ content: `task ${index + 1}`, status }));
+
+  const record = (app: App, id: string, items: ReturnType<typeof plan>) => {
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "todo",
+      args: { items },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "todo",
+        content: [{ type: "text", text: "[~] task 1" }],
+        details: { items },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("only the newest plan stays a full list; earlier ones become one row", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["in_progress", "pending", "pending"]));
+    record(app, "p2", plan(["completed", "in_progress", "pending"]));
+    record(app, "p3", plan(["completed", "completed", "in_progress"]));
+
+    const screen = app.renderScreen().map(stripAnsi);
+    expect(screen).toContain("  │ plan · 0/3 · task 1");
+    expect(screen).toContain("  │ plan · 1/3 · task 2");
+    // The newest keeps its bracket and its tasks.
+    expect(screen).toContain("  ┌ plan · 2/3 done");
+    expect(screen).toContain("  └ ▸ task 3");
+    // Three plans of three tasks would be twelve rows unfolded.
+    expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
+  });
+
+  test("a superseded plan that finished reports done rather than a live task", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["completed", "completed"]));
+    record(app, "p2", plan(["completed", "completed", "in_progress"]));
+
+    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 2/2 done");
+  });
+
+  test("ctrl+o restores a superseded plan to its full list", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["in_progress", "pending"]));
+    record(app, "p2", plan(["completed", "in_progress"]));
+
+    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 0/2 · task 1");
+    feed(app, "\u000f");
+    const expanded = app.renderScreen().map(stripAnsi);
+    expect(expanded.filter((line) => line === "  ┌ plan · 0/2 done")).toHaveLength(1);
+    expect(expanded.filter((line) => line.includes("task 1"))).toHaveLength(2);
+  });
+
+  test("tools that do not supersede keep every call in full", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    for (const id of ["c1", "c2"]) {
+      app.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: id,
+        result: {
+          role: "toolResult",
+          toolCallId: id,
+          toolName: "read",
+          content: [{ type: "text", text: "contents" }],
+          details: { lines: 4 },
+          isError: false,
+          timestamp: 1,
+        },
+      });
+    }
+    const screen = app.renderScreen().map(stripAnsi);
+    expect(screen.filter((line) => line.includes("read · 4 lines"))).toHaveLength(2);
+  });
+});
+
 describe("tool output toggle", () => {
   test("ctrl+o expands completed commands and collapses them again", () => {
     const { app } = harness();

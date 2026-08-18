@@ -25,6 +25,8 @@ export interface ToolRenderInfo {
   // Arguments are still arriving from the model, so anything rendered from them
   // is a fragment of itself.
   argsStreaming?: boolean;
+  // A later call to the same tool has replaced what this one reported.
+  superseded?: boolean;
 }
 
 export interface ToolRendererFn {
@@ -32,6 +34,10 @@ export interface ToolRendererFn {
   // The renderer draws its own expanded form, so the registry must not staple
   // the raw result text underneath it as well.
   ownsExpansion?: boolean;
+  // Each call replaces the last rather than adding to it, so only the newest
+  // is still true. Earlier ones render as `superseded` and are expected to
+  // shrink to a record of what changed.
+  supersedes?: boolean;
 }
 
 function firstString(args: unknown, keys: string[]): string | undefined {
@@ -276,6 +282,12 @@ export class RendererRegistry {
     return this.renderers.has(toolName);
   }
 
+  // Whether later calls to this tool replace earlier ones, so the transcript
+  // can mark all but the newest as superseded.
+  supersedes(toolName: string): boolean {
+    return this.renderers.get(toolName)?.supersedes === true;
+  }
+
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
     let lines: string[];
@@ -332,9 +344,19 @@ const planRenderer: ToolRendererFn = (info, ctx) => {
       ...(info.result?.isError ? resultPreview(info, ctx) : []),
     ];
   }
-  return planCell({ items, ...(info.expanded ? { expanded: true } : {}) }, ctx);
+  return planCell(
+    {
+      items,
+      ...(info.expanded ? { expanded: true } : {}),
+      ...(info.superseded ? { superseded: true } : {}),
+    },
+    ctx,
+  );
 };
 planRenderer.ownsExpansion = true;
+// The tool replaces the whole list every call, so an earlier plan is not a
+// second plan — it is the same one, out of date.
+planRenderer.supersedes = true;
 
 // Renderers for the coding profile's tools, expressed as data so the TUI does
 // not import the profile (dependency direction).

@@ -183,6 +183,9 @@ export interface PlanItem {
 export interface PlanCellOptions {
   items: PlanItem[];
   expanded?: boolean;
+  // A later plan has replaced this one. It is history now, so it says what was
+  // true at this point instead of reprinting a list that no longer is.
+  superseded?: boolean;
 }
 
 const PLAN_MARKS: Record<PlanStatus, string> = {
@@ -215,6 +218,23 @@ export function planCell(options: PlanCellOptions, ctx: RenderContext): string[]
   const { items, expanded } = options;
   const completed = items.filter((item) => item.status === "completed").length;
   const summary = items.length === 0 ? "no tasks" : `${completed}/${items.length} done`;
+
+  if (options.superseded && !expanded && items.length > 0) {
+    const active = items.find((item) => item.status === "in_progress");
+    const progress = `${completed}/${items.length}`;
+    return toolCell(
+      {
+        name: "plan",
+        tone: "state",
+        summary: active
+          ? `${progress} ${GLYPHS.separator} ${active.content}`
+          : completed === items.length
+            ? `${progress} done`
+            : progress,
+      },
+      ctx,
+    );
+  }
   // An empty plan is the whole cell, so it takes the ordinary rule — a bracket
   // that opens and never closes reads as a rendering bug.
   const header = toolCell(
