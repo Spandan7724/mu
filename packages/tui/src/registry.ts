@@ -2,7 +2,10 @@ import type { ToolResultMessage } from "@mu/core";
 import {
   type DiffLine,
   diffCell,
+  type PlanItem,
+  type PlanStatus,
   type PrimaryRole,
+  planCell,
   type RenderContext,
   type ToolCellOptions,
   toolCell,
@@ -24,7 +27,12 @@ export interface ToolRenderInfo {
   argsStreaming?: boolean;
 }
 
-export type ToolRendererFn = (info: ToolRenderInfo, ctx: RenderContext) => string[];
+export interface ToolRendererFn {
+  (info: ToolRenderInfo, ctx: RenderContext): string[];
+  // The renderer draws its own expanded form, so the registry must not staple
+  // the raw result text underneath it as well.
+  ownsExpansion?: boolean;
+}
 
 function firstString(args: unknown, keys: string[]): string | undefined {
   if (typeof args !== "object" || args === null) return undefined;
@@ -271,21 +279,67 @@ export class RendererRegistry {
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
     let lines: string[];
+    let ownsExpansion = renderer.ownsExpansion === true;
     try {
       lines = renderer(info, ctx);
     } catch {
-      // A broken renderer must never take the UI down with it.
+      // A broken renderer must never take the UI down with it — and the
+      // fallback has no expanded form of its own.
       lines = genericRenderer(info, ctx);
+      ownsExpansion = false;
     }
-    return info.expanded && info.result
+    return info.expanded && info.result && !ownsExpansion
       ? [...lines, ...toolOutputCell(resultText(info.result), ctx)]
       : lines;
   }
 }
 
+const PLAN_STATUSES: PlanStatus[] = ["completed", "in_progress", "pending"];
+
+// The task list, read structurally from the result so the TUI still does not
+// import the profile. Anything malformed returns nothing rather than a
+// half-plan, and the cell degrades to its header.
+function planItems(info: ToolRenderInfo): PlanItem[] | undefined {
+  const fromResult = (info.result?.details as { items?: unknown } | undefined)?.items;
+  const fromArgs =
+    typeof info.args === "object" && info.args !== null
+      ? (info.args as Record<string, unknown>).items
+      : undefined;
+  const source = Array.isArray(fromResult) ? fromResult : fromArgs;
+  if (!Array.isArray(source)) return undefined;
+  const items = source.filter((item): item is PlanItem => {
+    if (typeof item !== "object" || item === null) return false;
+    const { content, status } = item as Record<string, unknown>;
+    return typeof content === "string" && PLAN_STATUSES.includes(status as PlanStatus);
+  });
+  return items.length === source.length ? items : undefined;
+}
+
+// A plan is state, not an event: it is only readable whole, and a list rendered
+// from half-arrived arguments shows tasks that were never recorded.
+const planRenderer: ToolRendererFn = (info, ctx) => {
+  const items = info.argsStreaming ? undefined : planItems(info);
+  if (!items || info.result?.isError) {
+    return [
+      ...toolCell(
+        {
+          name: "plan",
+          tone: "state",
+          ...(info.result?.isError ? { isError: true } : {}),
+        },
+        ctx,
+      ),
+      ...(info.result?.isError ? resultPreview(info, ctx) : []),
+    ];
+  }
+  return planCell({ items, ...(info.expanded ? { expanded: true } : {}) }, ctx);
+};
+planRenderer.ownsExpansion = true;
+
 // Renderers for the coding profile's tools, expressed as data so the TUI does
 // not import the profile (dependency direction).
 export const codingRenderers: Record<string, ToolRendererFn> = {
+  todo: planRenderer,
   read: (info, ctx) => {
     const details = info.result?.details as { lines?: number } | undefined;
     return [

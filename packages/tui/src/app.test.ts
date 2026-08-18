@@ -972,6 +972,92 @@ describe("renderer registry", () => {
     expect(complete.length).toBeGreaterThan(1);
     expect(complete.map(stripAnsi).join("\n")).toContain("const limit = 3;");
   });
+
+  test("a todo call renders a bracketed plan instead of one truncated line", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const items = [
+      { content: "add the plan cell", status: "completed" },
+      { content: "update the docs", status: "in_progress" },
+      { content: "run the full ci pass", status: "pending" },
+    ];
+
+    const lines = registry
+      .render(
+        {
+          toolName: "todo",
+          args: { items },
+          result: {
+            role: "toolResult",
+            toolCallId: "p",
+            toolName: "todo",
+            content: [{ type: "text", text: "[x] add the plan cell" }],
+            details: { items },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines).toEqual([
+      "  ┌ plan · 1/3 done",
+      "  │ ✓ add the plan cell",
+      "  │ ▸ update the docs",
+      "  └ ▹ run the full ci pass",
+    ]);
+  });
+
+  test("an expanded plan is not also dumped as raw result text", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const items = [{ content: "update the docs", status: "in_progress" }];
+    const lines = registry
+      .render(
+        {
+          toolName: "todo",
+          args: { items },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "p",
+            toolName: "todo",
+            content: [{ type: "text", text: "[~] update the docs" }],
+            details: { items },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines).toEqual(["  ┌ plan · 0/1 done", "  └ ▸ update the docs"]);
+  });
+
+  test("a plan whose arguments are still streaming renders no partial list", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    // Half the list has arrived; showing it would report tasks never recorded.
+    const args = { items: [{ content: "add the plan c", status: "in_progress" }] };
+
+    const streaming = registry.render(
+      { toolName: "todo", args, argsStreaming: true },
+      { width: 60, depth: "none" },
+    );
+    expect(streaming.map(stripAnsi)).toEqual(["  │ plan"]);
+  });
+
+  test("a malformed plan degrades to its header rather than half a list", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      { toolName: "todo", args: { items: [{ content: "no status" }] } },
+      { width: 60, depth: "none" },
+    );
+    expect(lines.map(stripAnsi)).toEqual(["  │ plan"]);
+  });
 });
 
 describe("tool output toggle", () => {

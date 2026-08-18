@@ -5,6 +5,8 @@ import {
   diffCell,
   diffLinesFromHunks,
   errorCell,
+  type PlanItem,
+  planCell,
   type RenderContext,
   taskCell,
   thinkingCell,
@@ -250,6 +252,119 @@ describe("transcript cells (golden lines)", () => {
   test("a no-op compaction says so instead of reporting a boundary", () => {
     const line = visible(compactionCell(0, plain, { status: "noop" }))[0];
     expect(line).toBe("  • Context already compact");
+  });
+});
+
+describe("plan rendering", () => {
+  const plan: PlanItem[] = [
+    { content: "read the renderer registry", status: "completed" },
+    { content: "add the plan cell", status: "completed" },
+    { content: "wire the coding renderer", status: "completed" },
+    { content: "update the docs", status: "in_progress" },
+    { content: "add golden-line tests", status: "pending" },
+    { content: "run the full ci pass", status: "pending" },
+  ];
+
+  test("the rule brackets the list instead of repeating per row", () => {
+    expect(visible(planCell({ items: plan }, plain))).toEqual([
+      "  ┌ plan · 3/6 done",
+      "  │ ✓ read the renderer registry",
+      "  │ ✓ add the plan cell",
+      "  │ ✓ wire the coding renderer",
+      "  │ ▸ update the docs",
+      "  │ ▹ add golden-line tests",
+      "  └ ▹ run the full ci pass",
+    ]);
+  });
+
+  test("a single task closes the bracket on its own row", () => {
+    expect(visible(planCell({ items: [plan[3] as PlanItem] }, plain))).toEqual([
+      "  ┌ plan · 0/1 done",
+      "  └ ▸ update the docs",
+    ]);
+  });
+
+  test("an empty plan takes the ordinary rule — a bracket would never close", () => {
+    expect(visible(planCell({ items: [] }, plain))).toEqual(["  │ plan · no tasks"]);
+  });
+
+  test("completed work is struck through and dim, the live task is neither", () => {
+    const lines = planCell({ items: plan }, colored);
+    expect(lines[1]).toContain("[2;9mread the renderer registry");
+    expect(lines[4]).toContain(`${ACCENT}▸[0m update the docs`);
+    // Pending recedes without the strike: it is unstarted, not finished.
+    expect(lines[5]).toContain("[2madd golden-line tests");
+    expect(lines[5]).not.toContain("[2;9m");
+  });
+
+  test("the three marks differ in shape, so NO_COLOR loses nothing", () => {
+    const marks = visible(planCell({ items: plan }, plain))
+      .slice(1)
+      .map((line) => line.slice(4, 5));
+    expect(marks).toEqual(["✓", "✓", "✓", "▸", "▹", "▹"]);
+  });
+
+  test("an overlong plan folds its finished head and keeps what is left", () => {
+    const long: PlanItem[] = [
+      ...Array.from({ length: 8 }, (_, i) => ({
+        content: `finished step ${i + 1}`,
+        status: "completed" as const,
+      })),
+      { content: "update the docs", status: "in_progress" as const },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        content: `remaining step ${i + 1}`,
+        status: "pending" as const,
+      })),
+    ];
+    const lines = visible(planCell({ items: long }, plain));
+    expect(lines).toEqual([
+      "  ┌ plan · 8/14 done",
+      "  │ … 7 done",
+      "  │ ✓ finished step 8",
+      "  │ ▸ update the docs",
+      "  │ ▹ remaining step 1",
+      "  │ ▹ remaining step 2",
+      "  │ ▹ remaining step 3",
+      "  │ ▹ remaining step 4",
+      "  └ ▹ remaining step 5",
+    ]);
+    // Expanding restores every task, and the bracket still closes last.
+    const expanded = visible(planCell({ items: long, expanded: true }, plain));
+    expect(expanded).toHaveLength(long.length + 1);
+    expect(expanded.at(-1)).toBe("  └ ▹ remaining step 5");
+  });
+
+  test("a plan with nothing finished truncates its tail instead", () => {
+    const pending: PlanItem[] = Array.from({ length: 12 }, (_, i) => ({
+      content: `step ${i + 1}`,
+      status: "pending" as const,
+    }));
+    const lines = visible(planCell({ items: pending }, plain));
+    expect(lines).toHaveLength(9);
+    expect(lines.at(-1)).toBe("  └ … 5 more · ctrl+o to expand");
+  });
+
+  test("compact rows never wrap; expanded ones hang under the task text", () => {
+    const long: PlanItem[] = [
+      { content: "wire the renderer into the registry and close the bracket", status: "pending" },
+    ];
+    const narrow: RenderContext = { width: 40, depth: "none" };
+    expect(visible(planCell({ items: long }, narrow))).toEqual([
+      "  ┌ plan · 0/1 done",
+      "  └ ▹ wire the renderer into the regist…",
+    ]);
+    expect(visible(planCell({ items: long, expanded: true }, narrow))).toEqual([
+      "  ┌ plan · 0/1 done",
+      "  │ ▹ wire the renderer into the",
+      "  └   registry and close the bracket",
+    ]);
+  });
+
+  test("every row fits the terminal", () => {
+    const narrow: RenderContext = { width: 28, depth: "truecolor" };
+    for (const line of planCell({ items: plan }, narrow)) {
+      expect(stringWidth(line)).toBeLessThanOrEqual(28);
+    }
   });
 });
 
