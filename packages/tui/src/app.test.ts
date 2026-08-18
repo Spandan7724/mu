@@ -523,6 +523,36 @@ describe("input handling", () => {
     expect(h.submitted).toEqual(["line one\nline two"]);
   });
 
+  test("a paste with terminal-style carriage-return newlines stays intact", () => {
+    const h = harness();
+    feed(h.app, `${ESC}[200~one\rtwo\r\nthree${ESC}[201~`);
+
+    expect(h.submitted).toEqual([]);
+    expect(h.app.editor.text).toBe("one\ntwo\nthree");
+    expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("one\n    two\n    three");
+  });
+
+  test("arrow keys move through a non-empty draft instead of replacing it with history", () => {
+    const h = harness();
+    feed(h.app, "previous\r");
+    h.app.editor.insert("first line\nsecond line");
+
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("first line\nsecond line");
+    expect(h.app.editor.cursor).toEqual({ row: 0, col: "first line".length });
+
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("first line\nsecond line");
+    expect(h.app.editor.cursor).toEqual({ row: 1, col: "first line".length });
+  });
+
+  test("up arrow recalls history when the editor is empty", () => {
+    const h = harness();
+    feed(h.app, "previous\r");
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("previous");
+  });
+
   test("escape aborts a running agent but not an idle one", () => {
     const h = harness();
     feed(h.app, ESC);

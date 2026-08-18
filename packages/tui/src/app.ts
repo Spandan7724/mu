@@ -1184,14 +1184,16 @@ export class App {
           );
           return;
         }
-        if (!this.editor.recallHistory("up")) this.editor.move("up");
+        if (this.editor.isEmpty && this.editor.recallHistory("up")) return;
+        this.editor.move("up");
         return;
       }
       case "backspace":
         this.editor.backspace();
         return;
       case "down":
-        if (!this.editor.recallHistory(key.name)) this.editor.move(key.name);
+        if (this.editor.isEmpty && this.editor.recallHistory("down")) return;
+        this.editor.move("down");
         return;
       case "left":
         if (this.editor.isEmpty && this.options.callbacks.onDetach) {

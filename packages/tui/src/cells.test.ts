@@ -616,6 +616,13 @@ describe("editor", () => {
     expect(editor.render(40, "none").length).toBe(2);
   });
 
+  test("normalizes CRLF and bare CR line endings before rendering", () => {
+    const editor = new Editor();
+    editor.insert("one\r\ntwo\rthree");
+    expect(editor.text).toBe("one\ntwo\nthree");
+    expect(editor.render(40, "none").map(stripAnsi)).toEqual(["  ▸ one", "    two", "    three "]);
+  });
+
   test("backspace removes a whole grapheme", () => {
     const editor = new Editor();
     editor.insert("é");
