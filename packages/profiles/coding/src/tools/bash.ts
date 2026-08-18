@@ -2,7 +2,7 @@ import { errorResult, OutputBuffer, type ProcessManager, type ToolResult } from 
 import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
-import { isInspectionShellCommand } from "../shell-inspection.ts";
+import { isInspectionShellCommand, isSingleRipgrepCommand } from "../shell-inspection.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -145,7 +145,7 @@ export function bashTool(deps: BashDeps) {
       run_in_background !== true && isInspectionShellCommand(command) ? "bash:inspect" : "bash",
     permissionPattern: ({ command }) => command,
     description:
-      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only rg, sed, head, tail, find, and git status/diff commands to search and narrow before reading files. Use write/edit tools for file changes.",
+      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use write/edit tools for file changes.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
       description: z
@@ -209,6 +209,19 @@ export function bashTool(deps: BashDeps) {
           content: [{ type: "text", text: `${body}\n\n[command timed out and was killed]` }],
           details: { command, exitCode: result.exitCode, timedOut: true, durationMs },
           isError: true,
+        };
+      }
+
+      if (result.exitCode === 1 && isSingleRipgrepCommand(command)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: parts.length > 0 ? `${body}\n\n[no matches]` : "No matches",
+            },
+          ],
+          details: { command, exitCode: result.exitCode, noMatches: true, durationMs },
+          isError: false,
         };
       }
 

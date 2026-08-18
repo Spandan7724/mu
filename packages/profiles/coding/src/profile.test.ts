@@ -49,8 +49,6 @@ describe("codingProfile", () => {
     expect(names).toEqual([
       "bash",
       "edit",
-      "glob",
-      "grep",
       "ls",
       "read",
       "task_detach",
@@ -68,8 +66,6 @@ describe("codingProfile", () => {
     const byName = new Map(profile.toolset.map((t) => [t.name, t]));
     expect(byName.get("read")?.isConcurrencySafe?.({ path: "a.txt" })).toBe(true);
     expect(byName.get("ls")?.isConcurrencySafe?.({})).toBe(true);
-    expect(byName.get("glob")?.isConcurrencySafe?.({ pattern: "**/*" })).toBe(true);
-    expect(byName.get("grep")?.isConcurrencySafe?.({ pattern: "text" })).toBe(true);
     for (const unsafe of ["write", "edit"]) {
       expect(byName.get(unsafe)?.isConcurrencySafe).toBeUndefined();
     }
@@ -102,8 +98,8 @@ describe("codingProfile", () => {
 });
 
 describe("permission defaults", () => {
-  test("reads and searches are allowed without asking", () => {
-    for (const tool of ["read", "ls", "glob", "grep", "todo"]) {
+  test("read-only tools are allowed without asking", () => {
+    for (const tool of ["read", "ls", "todo"]) {
       expect(evaluate(CODING_PERMISSION_DEFAULTS, tool, "anything")).toBe("allow");
     }
   });
@@ -331,6 +327,22 @@ describe("prompts", () => {
   test("the base prompt asks for one edit call per file, not one per change", () => {
     const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
     expect(base).toContain("single edit call carrying multiple edits");
+  });
+
+  test("the base prompt defines shell ripgrep as the canonical search interface", () => {
+    const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
+    expect(base).toContain("Use rg for content search and rg --files for file discovery");
+    expect(base).toContain("do not add printf/echo headings");
+    expect(base).toContain("Use rg --sort path, --no-messages, and repeated -e arguments");
+    expect(base).toContain("never splice quote characters inside a shell regex");
+    expect(base).toContain("read only the relevant line ranges");
+    expect(base).not.toContain("Use grep and glob to find things");
+  });
+
+  test("the base prompt requires citations on exact evidence lines", () => {
+    const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
+    expect(base).toContain("exact definition, assertion, or evidence line");
+    expect(base).toContain("not the\n  surrounding block heading");
   });
 
   test("GPT-family models get an extra literal-instruction section", () => {

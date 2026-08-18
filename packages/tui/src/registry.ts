@@ -406,32 +406,4 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ),
     ...resultPreview(info, ctx),
   ],
-  glob: (info, ctx) => [
-    ...toolCell(
-      {
-        name: "glob",
-        tone: "read",
-        ...(firstString(info.args, ["pattern"])
-          ? { primaryArg: firstString(info.args, ["pattern"]) as string, primaryRole: "code" }
-          : {}),
-        ...(info.result?.isError ? { isError: true } : {}),
-      },
-      ctx,
-    ),
-    ...resultPreview(info, ctx),
-  ],
-  grep: (info, ctx) => [
-    ...toolCell(
-      {
-        name: "grep",
-        tone: "read",
-        ...(firstString(info.args, ["pattern"])
-          ? { primaryArg: firstString(info.args, ["pattern"]) as string, primaryRole: "code" }
-          : {}),
-        ...(info.result?.isError ? { isError: true } : {}),
-      },
-      ctx,
-    ),
-    ...resultPreview(info, ctx),
-  ],
 };

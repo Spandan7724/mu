@@ -1,5 +1,5 @@
 import { delimiter, dirname } from "node:path";
-import { resolveRipgrepExecutable } from "./tools/search.ts";
+import { resolveRipgrepExecutable } from "./ripgrep.ts";
 
 const WINDOWS_TASKKILL_TIMEOUT_MS = 2_000;
 
