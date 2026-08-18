@@ -1060,6 +1060,58 @@ describe("renderer registry", () => {
   });
 });
 
+describe("transcript spacing", () => {
+  const ran = (app: App, id: string, command: string, output: string) => {
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "bash",
+      args: { command },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "bash",
+        content: [{ type: "text", text: output }],
+        details: { exitCode: 0, durationMs: 5 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("a cell that spans rows gets air; a run of one-liners stays tight", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    ran(app, "c1", "bun test", "270 pass\n0 fail");
+    ran(app, "c2", "pwd", "");
+    ran(app, "c3", "whoami", "");
+
+    const screen = app.renderScreen().map(stripAnsi);
+    const first = screen.findIndex((line) => line.includes("270 pass"));
+    // Output runs into the next verb without this blank.
+    expect(screen[first + 2]).toBe("");
+    // Two bare one-line calls are one stream, not two paragraphs.
+    const bare = screen.findIndex((line) => line.includes("ran pwd"));
+    expect(screen[bare + 1]).toContain("ran whoami");
+  });
+
+  test("speech after machinery always gets a break", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    ran(app, "c1", "pwd", "");
+    app.handleEvent({ type: "message_end", message: assistant("Done — that is the cwd.") });
+
+    const screen = app.renderScreen().map(stripAnsi);
+    const cell = screen.findIndex((line) => line.includes("ran pwd"));
+    expect(screen[cell + 1]).toBe("");
+    expect(screen[cell + 2]).toContain("Done — that is the cwd.");
+  });
+});
+
 describe("superseded plans", () => {
   const plan = (statuses: ("completed" | "in_progress" | "pending")[]) =>
     statuses.map((status, index) => ({ content: `task ${index + 1}`, status }));

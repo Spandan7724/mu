@@ -789,7 +789,16 @@ export class App {
           ),
         };
       }
-      return item.rendered.lines;
+      // A run of one-line calls reads as one stream and stays tight. A cell
+      // that spans rows needs air after it, or its output runs straight into
+      // the next call's verb; and speech after machinery always gets a break.
+      const next = this.transcript[index + 1];
+      const separated =
+        next !== undefined &&
+        (next.kind === "user" || next.kind === "assistant"
+          ? true
+          : next.kind === "tool" && item.rendered.lines.length > 1);
+      return separated ? [...item.rendered.lines, ""] : item.rendered.lines;
     });
     const rows = this.toTerminalRows(logical);
     this.transcriptCache = {
