@@ -1,0 +1,14 @@
+{
+  "name": "@mu/cli-runtime",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mu/core": "workspace:*",
+    "@mu/tui": "workspace:*",
+    "mu": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

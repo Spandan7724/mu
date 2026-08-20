@@ -5,7 +5,10 @@
     { "path": "packages/core" },
     { "path": "packages/sdk" },
     { "path": "packages/tui" },
+    { "path": "packages/cli-runtime" },
     { "path": "packages/profiles/coding" },
+    { "path": "packages/profiles/browser" },
+    { "path": "packages/browser-fixture" },
     { "path": "packages/cli" }
   ]
 }

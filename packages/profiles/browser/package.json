@@ -1,0 +1,14 @@
+{
+  "name": "@mu/profile-browser",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@mu/ai": "workspace:*",
+    "@mu/core": "workspace:*",
+    "mu": "workspace:*",
+    "zod": "4.4.3"
+  }
+}

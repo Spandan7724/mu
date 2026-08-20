@@ -14,9 +14,13 @@
       "name": "@mu/ai",
       "version": "0.0.1",
     },
+    "packages/browser-fixture": {
+      "name": "@mu/browser-fixture",
+      "version": "0.0.1",
+    },
     "packages/cli": {
       "name": "@mu-agent/mu",
-      "version": "0.0.4",
+      "version": "0.0.6",
       "bin": {
         "mu": "./dist/mu.js",
       },
@@ -35,11 +39,31 @@
         "@mu-agent/ripgrep-windows-x64": "0.0.1",
       },
     },
+    "packages/cli-runtime": {
+      "name": "@mu/cli-runtime",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/core": "workspace:*",
+        "@mu/tui": "workspace:*",
+        "mu": "workspace:*",
+        "zod": "4.4.3",
+      },
+    },
     "packages/core": {
       "name": "@mu/core",
       "version": "0.0.1",
       "dependencies": {
         "@mu/ai": "workspace:*",
+      },
+    },
+    "packages/profiles/browser": {
+      "name": "@mu/profile-browser",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/ai": "workspace:*",
+        "@mu/core": "workspace:*",
+        "mu": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/profiles/coding": {
@@ -117,7 +141,13 @@
 
     "@mu/ai": ["@mu/ai@workspace:packages/ai"],
 
+    "@mu/browser-fixture": ["@mu/browser-fixture@workspace:packages/browser-fixture"],
+
+    "@mu/cli-runtime": ["@mu/cli-runtime@workspace:packages/cli-runtime"],
+
     "@mu/core": ["@mu/core@workspace:packages/core"],
+
+    "@mu/profile-browser": ["@mu/profile-browser@workspace:packages/profiles/browser"],
 
     "@mu/profile-coding": ["@mu/profile-coding@workspace:packages/profiles/coding"],
 
