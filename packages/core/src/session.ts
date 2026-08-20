@@ -3,6 +3,81 @@ import type { AgentMessage, Usage } from "./messages.ts";
 
 export const SESSION_VERSION = 1;
 
+// Product-specific runtime facts recorded once in the session header. The
+// kernel never interprets them; it only guarantees they stay small enough to
+// replay cheaply and to survive a round trip through the JSONL file.
+export type SessionEnvironment = Record<string, string>;
+
+export const SESSION_ENVIRONMENT_LIMITS = {
+  maxEntries: 32,
+  maxKeyLength: 64,
+  maxValueLength: 4_096,
+} as const;
+
+// Identity of the profile the session was started with. Reserved for an Agent
+// configured without one, so it can never collide with a real profile name.
+export const NO_SESSION_PROFILE = "default";
+
+const SESSION_ENVIRONMENT_KEY = /^[A-Za-z][A-Za-z0-9._-]*$/;
+
+export function sessionEnvironmentIssues(value: unknown): string[] {
+  if (!record(value)) return ["environment must be an object"];
+  const keys = Object.keys(value);
+  const issues: string[] = [];
+  if (keys.length > SESSION_ENVIRONMENT_LIMITS.maxEntries) {
+    issues.push(
+      `environment has ${keys.length} entries, limit is ${SESSION_ENVIRONMENT_LIMITS.maxEntries}`,
+    );
+  }
+  for (const key of keys) {
+    if (key.length > SESSION_ENVIRONMENT_LIMITS.maxKeyLength) {
+      issues.push(`environment key "${key.slice(0, 16)}…" exceeds the key length limit`);
+    } else if (!SESSION_ENVIRONMENT_KEY.test(key)) {
+      issues.push(`environment key "${key}" must match ${String(SESSION_ENVIRONMENT_KEY)}`);
+    }
+    const entry = value[key];
+    if (typeof entry !== "string") issues.push(`environment value for "${key}" must be a string`);
+    else if (entry.length > SESSION_ENVIRONMENT_LIMITS.maxValueLength) {
+      issues.push(`environment value for "${key}" exceeds the value length limit`);
+    }
+  }
+  return issues;
+}
+
+// Applied before a header is written. Oversized values are clamped rather than
+// rejected — a truncated fact is still useful — but a malformed shape is a
+// programming error in the product and is reported loudly.
+export function normalizeSessionEnvironment(value: unknown): SessionEnvironment {
+  if (value === undefined) return {};
+  if (!record(value)) throw new Error("Invalid session environment: expected an object");
+  const normalized: SessionEnvironment = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key.length > SESSION_ENVIRONMENT_LIMITS.maxKeyLength || !SESSION_ENVIRONMENT_KEY.test(key))
+      throw new Error(`Invalid session environment key: "${key.slice(0, 64)}"`);
+    if (typeof entry !== "string")
+      throw new Error(`Invalid session environment value for "${key}": expected a string`);
+    normalized[key] =
+      entry.length > SESSION_ENVIRONMENT_LIMITS.maxValueLength
+        ? `${entry.slice(0, SESSION_ENVIRONMENT_LIMITS.maxValueLength - 1)}…`
+        : entry;
+    if (Object.keys(normalized).length > SESSION_ENVIRONMENT_LIMITS.maxEntries) {
+      throw new Error(
+        `Invalid session environment: more than ${SESSION_ENVIRONMENT_LIMITS.maxEntries} entries`,
+      );
+    }
+  }
+  return normalized;
+}
+
+export function normalizeSessionProfile(value: unknown): string {
+  if (value === undefined) return NO_SESSION_PROFILE;
+  if (typeof value !== "string" || value.trim().length === 0)
+    throw new Error("Invalid session profile identity: expected a non-empty string");
+  if (value.length > SESSION_ENVIRONMENT_LIMITS.maxKeyLength)
+    throw new Error("Invalid session profile identity: too long");
+  return value;
+}
+
 export type SessionEntry =
   | {
       type: "session";
@@ -10,7 +85,7 @@ export type SessionEntry =
       id: string;
       createdAt: string;
       profile: string;
-      environment: Record<string, string>;
+      environment: SessionEnvironment;
     }
   | {
       type: "message";
@@ -194,12 +269,12 @@ function assertSessionEntry(value: unknown): asserts value is SessionEntry {
       !finite(value.version) ||
       !nonEmptyString(value.id) ||
       !string(value.createdAt) ||
-      !string(value.profile) ||
-      !record(value.environment) ||
-      !Object.values(value.environment).every(string)
+      !nonEmptyString(value.profile)
     ) {
       throw new Error("Invalid session header");
     }
+    const issues = sessionEnvironmentIssues(value.environment);
+    if (issues.length > 0) throw new Error(`Invalid session header: ${issues.join("; ")}`);
     return;
   }
   if (!nonEmptyString(value.id) || !(value.parentId === null || nonEmptyString(value.parentId))) {

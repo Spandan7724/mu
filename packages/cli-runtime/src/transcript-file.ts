@@ -5,6 +5,8 @@ export interface SaveTranscriptOptions {
   cwd?: string;
   requestedPath?: string;
   now?: Date;
+  // Leading segment of a generated filename; the product owns its own name.
+  prefix?: string;
 }
 
 function unquotePath(path: string): string {
@@ -19,8 +21,8 @@ function unquotePath(path: string): string {
   return trimmed;
 }
 
-function timestampName(now: Date): string {
-  return `mu-transcript-${now.toISOString().replaceAll(/[:.]/g, "-")}.md`;
+function timestampName(now: Date, prefix: string): string {
+  return `${prefix}-transcript-${now.toISOString().replaceAll(/[:.]/g, "-")}.md`;
 }
 
 function withSuffix(path: string, suffix: number): string {
@@ -34,7 +36,10 @@ export function transcriptPath(options: SaveTranscriptOptions = {}): {
   const cwd = resolve(options.cwd ?? process.cwd());
   const requested = unquotePath(options.requestedPath ?? "");
   if (!requested) {
-    return { path: resolve(cwd, timestampName(options.now ?? new Date())), generated: true };
+    return {
+      path: resolve(cwd, timestampName(options.now ?? new Date(), options.prefix ?? "session")),
+      generated: true,
+    };
   }
   const extension = extname(requested);
   if (extension && extension.toLowerCase() !== ".md") {

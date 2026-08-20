@@ -1,17 +1,12 @@
-import { readdirSync, statSync } from "node:fs";
-import { basename, join, relative } from "node:path";
-import { bashTool } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
   CTRL_C_EXIT_WINDOW_MS,
   checkpointCell,
-  codingRenderers,
   detectColorDepth,
   diffCell,
   diffLinesFromHunks,
   FullScreenRenderer,
-  formatCwdForFooter,
   formatKeybindings,
   hyperlink,
   InputDecoder,
@@ -41,8 +36,6 @@ import {
   type ToolRenderer,
   toCommand,
 } from "mu";
-import cliPackage from "../package.json";
-import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
 import { saveDefaultModel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
@@ -56,6 +49,7 @@ import {
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
+import { diagnosticPrefix, type ProductDescriptor } from "./product.ts";
 import { resumePickerItems } from "./session-picker.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
@@ -63,8 +57,17 @@ import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const SPINNER_INTERVAL_MS = 120;
 
-export function formatTerminalTitle(cwd: string): string {
-  return `mu - ${basename(cwd) || cwd}`;
+// A session that another process owns must not be opened a second time. The
+// product supplies the check because ownership records are its own state.
+export interface SessionOwnershipGuard {
+  // Returns a message to show instead of resuming, or undefined to proceed.
+  check: (sessionId: string) => Promise<string | undefined> | string | undefined;
+}
+
+export interface InteractiveOptions {
+  agentOptions?: AgentOptions;
+  modelCatalog?: ModelCatalog | undefined;
+  ownership?: SessionOwnershipGuard | undefined;
 }
 
 export function renderDiffCommand(
@@ -122,9 +125,13 @@ export function formatAuthUrl(
   ];
 }
 
-export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
+export function formatResumeHint(
+  sessionId: string,
+  depth: ColorDepth,
+  commandName: string,
+): string {
   const label = styleText("To resume this session:", { resumeHint: true }, depth);
-  return `  ${label} mu --resume ${sessionId}`;
+  return `  ${label} ${commandName} --resume ${sessionId}`;
 }
 
 const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
@@ -236,34 +243,51 @@ export function registerDeclaredRenderers(
   }
 }
 
-export async function runInteractive(
-  args: ParsedArgs,
-  options: AgentOptions = {},
-  modelCatalog?: ModelCatalog,
+// Product renderers may be written directly against the TUI's line API or as
+// the profile-facing `ToolRenderer` shape; both register the same way.
+export function registerProductRenderers(
+  registry: RendererRegistry,
+  renderers: Readonly<Record<string, ToolRendererFn | ToolRenderer>> | undefined,
+): void {
+  for (const [name, renderer] of Object.entries(renderers ?? {})) {
+    if (typeof renderer === "function") registry.register(name, renderer);
+    else registerDeclaredRenderers(registry, [[name, renderer]]);
+  }
+}
+
+export async function runInteractive<Options>(
+  product: ProductDescriptor<Options>,
+  args: ParsedArgs<Options>,
+  options: InteractiveOptions = {},
 ): Promise<number> {
+  const cwd = process.cwd();
+  const prefix = diagnosticPrefix(product);
+  const modelCatalog = options.modelCatalog;
   const terminal = new Terminal();
   if (!terminal.isTty) {
-    process.stderr.write("mu: not a terminal — use -p for headless mode\n");
+    process.stderr.write(`${prefix}not a terminal — use -p for headless mode\n`);
     return 2;
   }
 
   let runtime: Awaited<ReturnType<typeof createCliSessionRuntime>>;
   try {
     runtime = await createCliSessionRuntime({
-      cwd: process.cwd(),
+      cwd,
+      product,
+      productOptions: args.product,
       profile: args.profile,
       model: args.model,
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
       resumeSessionId: args.resumeSessionId,
-      agentOptions: options,
+      agentOptions: options.agentOptions ?? {},
       permissions: "forward",
-      onDiagnostic: (message) => process.stderr.write(`mu: ${message}\n`),
+      onDiagnostic: (message) => process.stderr.write(`${prefix}${message}\n`),
     });
   } catch (error) {
     process.stderr.write(
-      `mu: could not start interactive session: ${error instanceof Error ? error.message : String(error)}\n`,
+      `${prefix}could not start interactive session: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 2;
   }
@@ -275,7 +299,7 @@ export async function runInteractive(
   let sessionResumable = Boolean(args.resumeSessionId);
 
   const registry = new RendererRegistry();
-  registry.registerAll(codingRenderers);
+  registerProductRenderers(registry, product.renderers);
   registerDeclaredRenderers(registry, Object.entries(profileRenderers));
   registerDeclaredRenderers(registry, extensions.renderers);
   const depth = detectColorDepth();
@@ -286,9 +310,12 @@ export async function runInteractive(
   let activeShell: Promise<void> | undefined;
   let shellController: AbortController | undefined;
   let loginController: AbortController | undefined;
-  const shellTool =
-    resolved.tools?.find((candidate) => candidate.name === "bash") ??
-    bashTool({ root: process.cwd() });
+  const fileMentions = product.capabilities?.fileMentions;
+  const directShell = product.capabilities?.directShell;
+  const shellTool = directShell
+    ? (resolved.tools?.find((candidate) => candidate.name === directShell.toolName) ??
+      directShell.fallbackTool({ cwd }))
+    : undefined;
 
   // Leaving must not strand an in-flight run or a permission promise: abort the
   // run and deny anything still waiting, or the process lingers after the UI
@@ -306,8 +333,9 @@ export async function runInteractive(
     height: terminal.rows,
     depth,
     model: modelRef,
-    version: cliPackage.version,
-    cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
+    version: product.version,
+    tagline: product.bannerTagline ?? product.tagline,
+    ...(product.footerLocation?.({ cwd }) ? { cwd: product.footerLocation({ cwd }) as string } : {}),
     contextWindow: agent.contextWindow,
     thinkingLevels: agent.thinkingLevels,
     registry,
@@ -341,7 +369,7 @@ export async function runInteractive(
         return true;
       },
       onEditQueued: (kind, text) => agent.removeQueuedMessage(kind, text),
-      onShell: (command) => beginUserShell(command),
+      ...(shellTool ? { onShell: (command: string) => beginUserShell(command) } : {}),
       onAbort: () => {
         if (shellController) shellController.abort();
         else agent.abort();
@@ -358,7 +386,9 @@ export async function runInteractive(
         }
         void runCommand(text);
       },
-      onMentionQuery: (query) => mentionCandidates(query),
+      ...(fileMentions
+        ? { onMentionQuery: (query: string) => fileMentions.candidates(query, { cwd }) }
+        : {}),
       onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
       onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember) => {
@@ -369,7 +399,7 @@ export async function runInteractive(
     },
   });
   // User- and project-authored markdown commands join the built-ins.
-  for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
+  for (const markdown of await loadMarkdownCommands({ projectDir: cwd })) {
     commands.register(toCommand(markdown));
   }
   // /model and /resume open selection lists rather than needing exact typing.
@@ -430,7 +460,7 @@ export async function runInteractive(
           app.setModel(label, agent.contextWindow);
           app.setThinking(agent.thinking, agent.thinkingLevels);
           try {
-            await saveDefaultModel(label);
+            await saveDefaultModel(label, product.data.configFile());
             commitLines([`  model set to ${label} · saved as default`]);
           } catch (error) {
             commitLines([
@@ -546,13 +576,9 @@ export async function runInteractive(
                 paint();
                 return;
               }
-              const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
-              if (ownership) {
-                commitLines([
-                  isProcessAlive(ownership.supervisorPid)
-                    ? `  ${sessionId} is live in agent view · exit and run mu --resume ${sessionId}`
-                    : `  ${sessionId} has a stale runtime owner · open mu agents to recover it safely`,
-                ]);
+              const owned = await options.ownership?.check(sessionId);
+              if (owned) {
+                commitLines([`  ${owned}`]);
                 paint();
                 return;
               }
@@ -617,7 +643,8 @@ export async function runInteractive(
       save: async (markdown, requestedPath, now) =>
         (
           await saveTranscriptMarkdown(markdown, {
-            cwd: process.cwd(),
+            cwd,
+            ...(product.transcriptPrefix ? { prefix: product.transcriptPrefix } : {}),
             requestedPath,
             now,
           })
@@ -639,39 +666,6 @@ export async function runInteractive(
     app.handleEvent(event);
     paint();
   });
-
-  // Shallow file listing for the `@` popup — bounded so a huge tree cannot
-  // stall a keystroke.
-  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
-  function mentionCandidates(query: string): { label: string }[] {
-    const root = process.cwd();
-    const out: { label: string }[] = [];
-    const walk = (dir: string, depth: number) => {
-      if (depth > 3 || out.length >= 50) return;
-      let names: string[];
-      try {
-        names = readdirSync(dir);
-      } catch {
-        return;
-      }
-      for (const name of names.sort()) {
-        if (name.startsWith(".") || SKIP.has(name)) continue;
-        const full = join(dir, name);
-        try {
-          if (statSync(full).isDirectory()) walk(full, depth + 1);
-          else {
-            const rel = relative(root, full);
-            if (query.length === 0 || rel.includes(query)) out.push({ label: rel });
-          }
-        } catch {
-          // unreadable entry — skip
-        }
-        if (out.length >= 50) return;
-      }
-    };
-    walk(root, 0);
-    return out;
-  }
 
   function applyPermissionMode(mode: PermissionMode): void {
     agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
@@ -702,6 +696,7 @@ export async function runInteractive(
   }
 
   function beginUserShell(command: string): void {
+    if (!shellTool) return;
     if (activeRun || agent.isRunning) {
       commitLines(["  Wait for the agent turn to finish before running a shell command."]);
       paint();
@@ -803,7 +798,7 @@ export async function runInteractive(
     app.setModel(ref, agent.contextWindow);
     app.setThinking(agent.thinking, agent.thinkingLevels);
     try {
-      await saveDefaultModel(ref);
+      await saveDefaultModel(ref, product.data.configFile());
     } catch (error) {
       commitLines([
         `  could not save ${ref} as the default model: ${
@@ -1002,11 +997,12 @@ export async function runInteractive(
   terminal.onExit = () => {
     shutdown();
     if (sessionResumable) {
-      terminal.write(`\r\n${formatResumeHint(agent.sessionId, depth)}\r\n`);
+      terminal.write(`\r\n${formatResumeHint(agent.sessionId, depth, product.commandName)}\r\n`);
     }
   };
   terminal.start();
-  terminal.setTitle(formatTerminalTitle(process.cwd()));
+  const title = product.terminalTitle?.({ cwd });
+  if (title) terminal.setTitle(title);
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking, agent.thinkingLevels);
   if (args.resumeSessionId) {
@@ -1089,7 +1085,7 @@ export async function runInteractive(
     stopResize();
     renderer.renderNow([
       ...app.renderTranscript(),
-      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth), ""] : []),
+      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth, product.commandName), ""] : []),
     ]);
     renderer.stop();
     terminal.restore();

@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
   defaultAuthFile,
   defaultModelRef,
@@ -16,10 +15,6 @@ export interface UserConfig {
 }
 
 const userConfigSchema = z.object({ model: z.string().min(1).optional() }).loose();
-
-export function userConfigPath(home = homedir()): string {
-  return join(home, ".mu", "config.json");
-}
 
 function parseConfig(raw: string, file: string): UserConfig {
   const parsed: unknown = JSON.parse(raw);
@@ -44,7 +39,7 @@ async function readUserConfig(file: string): Promise<UserConfig> {
 }
 
 export async function loadUserConfig(
-  file = userConfigPath(),
+  file: string,
   onWarning: (message: string) => void = (message) => void process.stderr.write(`${message}\n`),
 ): Promise<UserConfig> {
   try {
@@ -56,8 +51,8 @@ export async function loadUserConfig(
 }
 
 export async function resolveCliModel(
-  explicit?: string,
-  file = userConfigPath(),
+  explicit: string | undefined,
+  file: string,
   authFile = defaultAuthFile(),
   env = process.env,
   onWarning: (message: string) => void = (message) => void process.stderr.write(message),
@@ -92,13 +87,13 @@ export async function resolveCliModel(
   const resolved = fallback();
   onWarning(
     model
-      ? `mu: ${configured} needs credentials you are not signed in with — using ${resolved}\n`
-      : `mu: ${configured} is no longer in the model catalog — using ${resolved}\n`,
+      ? `${configured} needs credentials you are not signed in with — using ${resolved}\n`
+      : `${configured} is no longer in the model catalog — using ${resolved}\n`,
   );
   return resolved;
 }
 
-export async function saveDefaultModel(model: string, file = userConfigPath()): Promise<void> {
+export async function saveDefaultModel(model: string, file: string): Promise<void> {
   const config = await readUserConfig(file);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify({ ...config, model }, null, 2)}\n`, {

@@ -112,16 +112,27 @@ export {
   isContextTooLongResult,
   withContextRecovery,
 } from "./recovery.ts";
-export type { NewTreeEntry, SessionEntry, SessionStore, TreeEntry } from "./session.ts";
+export type {
+  NewTreeEntry,
+  SessionEntry,
+  SessionEnvironment,
+  SessionStore,
+  TreeEntry,
+} from "./session.ts";
 export {
   isTreeEntry,
   MemorySessionStore,
   newEntryId,
+  NO_SESSION_PROFILE,
+  normalizeSessionEnvironment,
+  normalizeSessionProfile,
   parseEntry,
   parseSession,
+  SESSION_ENVIRONMENT_LIMITS,
   SESSION_VERSION,
   SessionTree,
   serializeEntry,
+  sessionEnvironmentIssues,
   serializeSession,
 } from "./session.ts";
 export type { AnyTool, Tool, ToolResult } from "./tools.ts";

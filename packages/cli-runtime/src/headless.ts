@@ -1,5 +1,6 @@
 import type { AgentOptions, HaltReason } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { diagnosticPrefix, type ProductDescriptor } from "./product.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
@@ -19,13 +20,15 @@ export interface HeadlessIo {
   stderr: (chunk: string) => void;
 }
 
-export async function runHeadless(
-  args: ParsedArgs,
+export async function runHeadless<Options>(
+  product: ProductDescriptor<Options>,
+  args: ParsedArgs<Options>,
   options: AgentOptions,
   io: HeadlessIo,
 ): Promise<number> {
+  const prefix = diagnosticPrefix(product);
   if (!args.prompt) {
-    io.stderr("mu: -p requires a prompt\n");
+    io.stderr(`${prefix}-p requires a prompt\n`);
     return EXIT.usage;
   }
 
@@ -33,6 +36,8 @@ export async function runHeadless(
   try {
     runtime = await createCliSessionRuntime({
       cwd: process.cwd(),
+      product,
+      productOptions: args.product,
       profile: args.profile,
       model: args.model,
       permissionMode: args.permissionMode,
@@ -43,10 +48,10 @@ export async function runHeadless(
       maxCostUsd: args.maxCostUsd,
       agentOptions: options,
       permissions: "deny",
-      onDiagnostic: (message) => io.stderr(`mu: ${message}\n`),
+      onDiagnostic: (message) => io.stderr(`${prefix}${message}\n`),
     });
   } catch (error) {
-    io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+    io.stderr(`${prefix}${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.usage;
   }
   const { agent } = runtime;
@@ -101,13 +106,13 @@ export async function runHeadless(
     if (!args.json) io.stdout("\n");
 
     if (result.reason === "error") {
-      io.stderr(`mu: ${failure ?? "the provider returned an error"}\n`);
+      io.stderr(`${prefix}${failure ?? "the provider returned an error"}\n`);
     } else if (result.reason !== "done" && result.reason !== "aborted") {
-      io.stderr(`mu: halted early (${result.reason})\n`);
+      io.stderr(`${prefix}halted early (${result.reason})\n`);
     }
     return EXIT[result.reason];
   } catch (error) {
-    io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+    io.stderr(`${prefix}${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.error;
   } finally {
     process.off("SIGINT", onSigint);

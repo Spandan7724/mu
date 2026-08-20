@@ -3,13 +3,9 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveApiKey } from "mu";
-import { loadUserConfig, resolveCliModel, saveDefaultModel, userConfigPath } from "./config.ts";
+import { loadUserConfig, resolveCliModel, saveDefaultModel } from "./config.ts";
 
 describe("user model configuration", () => {
-  test("the user config lives under ~/.mu", () => {
-    expect(userConfigPath("/users/test")).toBe(join("/users/test", ".mu", "config.json"));
-  });
-
   test("saving a model preserves unrelated user settings", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-user-config-"));
     const file = join(root, "config.json");
