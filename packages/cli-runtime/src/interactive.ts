@@ -139,8 +139,8 @@ const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
 };
 
 export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): string {
-  // Bold as well as coloured: the four modes have to stay apart under NO_COLOR
-  // and for anyone who does not separate them by hue.
+  // Bold as well as coloured: a profile's modes have to stay apart under
+  // NO_COLOR and for anyone who does not separate them by hue.
   const style = {
     ...(mode.tone ? PERMISSION_TONE_STYLES[mode.tone] : { accent: true }),
     bold: true,
