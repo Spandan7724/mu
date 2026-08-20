@@ -1,0 +1,148 @@
+import type { RecordedField, RecordedFile, RecordedResponse, RecordedSubmission } from "./types.ts";
+
+export type RecordInput = {
+  method: string;
+  path: string;
+  origin: string;
+  fields: RecordedField[];
+  files: RecordedFile[];
+  response: RecordedResponse;
+};
+
+export type WaitOptions = {
+  timeoutMs?: number;
+  pollMs?: number;
+};
+
+function fingerprintOf(fields: RecordedField[], files: RecordedFile[]): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  for (const field of [...fields].sort((a, b) =>
+    a.name === b.name ? a.value.localeCompare(b.value) : a.name.localeCompare(b.name),
+  )) {
+    hasher.update(`${field.name}\u0000${field.value}\u0001`);
+  }
+  for (const file of [...files]
+    .map((f) => `${f.field}\u0000${f.basename}\u0000${f.sha256}`)
+    .sort()) {
+    hasher.update(`${file}\u0002`);
+  }
+  return hasher.digest("hex");
+}
+
+function toValues(fields: RecordedField[]): Record<string, string[]> {
+  const values: Record<string, string[]> = {};
+  for (const field of fields) {
+    const bucket = values[field.name];
+    if (bucket) bucket.push(field.value);
+    else values[field.name] = [field.value];
+  }
+  return values;
+}
+
+/**
+ * Semantic record of everything that reached the server. It is deliberately reachable
+ * only in-process: no fixture route exposes it, so an agent under test cannot read or
+ * forge its own evidence.
+ */
+export class SubmissionRecorder {
+  #submissions: RecordedSubmission[] = [];
+  #listeners = new Set<(submission: RecordedSubmission) => void>();
+  #nextId = 1;
+
+  record(input: RecordInput): RecordedSubmission {
+    const submission: RecordedSubmission = {
+      id: `sub_${String(this.#nextId++).padStart(4, "0")}`,
+      timestamp: Date.now(),
+      method: input.method,
+      path: input.path,
+      origin: input.origin,
+      fields: input.fields,
+      values: toValues(input.fields),
+      files: input.files,
+      fingerprint: fingerprintOf(input.fields, input.files),
+      response: input.response,
+    };
+    this.#submissions.push(submission);
+    for (const listener of this.#listeners) listener(submission);
+    return submission;
+  }
+
+  all(): readonly RecordedSubmission[] {
+    return this.#submissions;
+  }
+
+  byPath(path: string): RecordedSubmission[] {
+    return this.#submissions.filter((s) => s.path === path);
+  }
+
+  count(path?: string): number {
+    return path === undefined ? this.#submissions.length : this.byPath(path).length;
+  }
+
+  latest(path?: string): RecordedSubmission | undefined {
+    const list = path === undefined ? this.#submissions : this.byPath(path);
+    return list[list.length - 1];
+  }
+
+  /**
+   * Asserts the single-submission invariant (BD18): exactly one submission reached the
+   * given path. Throws with the observed count so a duplicate is a loud failure.
+   */
+  only(path?: string): RecordedSubmission {
+    const list = path === undefined ? [...this.#submissions] : this.byPath(path);
+    const first = list[0];
+    if (list.length !== 1 || !first) {
+      throw new Error(
+        `expected exactly 1 submission${path ? ` to ${path}` : ""}, recorded ${list.length}`,
+      );
+    }
+    return first;
+  }
+
+  /** Groups of submissions carrying identical payloads — a duplicate submit is a group of 2+. */
+  duplicateGroups(): RecordedSubmission[][] {
+    const groups = new Map<string, RecordedSubmission[]>();
+    for (const submission of this.#submissions) {
+      const key = `${submission.path}\u0000${submission.fingerprint}`;
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(submission);
+      else groups.set(key, [submission]);
+    }
+    return [...groups.values()].filter((group) => group.length > 1);
+  }
+
+  hasDuplicates(): boolean {
+    return this.duplicateGroups().length > 0;
+  }
+
+  fieldValue(submission: RecordedSubmission, name: string): string | undefined {
+    return submission.values[name]?.[0];
+  }
+
+  async waitFor(
+    predicate: (submissions: readonly RecordedSubmission[]) => boolean,
+    options: WaitOptions = {},
+  ): Promise<readonly RecordedSubmission[]> {
+    const timeoutMs = options.timeoutMs ?? 5000;
+    const pollMs = options.pollMs ?? 10;
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate(this.#submissions)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `waitFor timed out after ${timeoutMs}ms (${this.#submissions.length} recorded)`,
+        );
+      }
+      await Bun.sleep(pollMs);
+    }
+    return this.#submissions;
+  }
+
+  subscribe(listener: (submission: RecordedSubmission) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  clear(): void {
+    this.#submissions = [];
+  }
+}

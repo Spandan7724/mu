@@ -5,6 +5,5 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src"],
-  "references": []
+  "include": ["src"]
 }
