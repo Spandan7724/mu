@@ -29,6 +29,25 @@ function summaryRows(fields: RecordedField[], files: RecordedFile[]): [string, s
   return rows;
 }
 
+const PARTIAL_BODY = '<!doctype html><html><body data-fixture-page="outcome-ambiguous"><h1>Proces';
+
+/**
+ * The response after the side effect was already committed: headers and a partial body
+ * arrive, then nothing ever completes it. The client cannot distinguish this from a
+ * request that never reached the server, which is exactly the `unknown` outcome.
+ */
+function lostResponse(): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(PARTIAL_BODY));
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
 /**
  * The single funnel every consequential POST goes through: the side effect is recorded
  * before the response exists, which is what makes the ambiguous outcome honest.
@@ -46,20 +65,7 @@ export function finishSubmission(ctx: FixtureContext, input: FinishInput): Respo
 
   if (input.outcome === "ambiguous") {
     record({ status: 0, responseLost: true });
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(
-            '<!doctype html><html><body data-fixture-page="outcome-ambiguous"><h1>Proces',
-          ),
-        );
-        controller.error(new Error("fixture: connection dropped after the side effect"));
-      },
-    });
-    return new Response(stream, {
-      status: 200,
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-    });
+    return lostResponse();
   }
 
   if (input.outcome === "failed") {

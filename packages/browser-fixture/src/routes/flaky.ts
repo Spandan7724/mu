@@ -92,12 +92,13 @@ export const flakyRoutes: RouteTable = {
     });
   },
 
-  /** Response headers are sent, then the body is aborted mid-stream. */
-  "GET /flaky/drop": () => {
+  /** Headers and a partial body arrive, then the response never finishes. */
+  "GET /flaky/stall": () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode("<!doctype html><html><body><h1>Partial"));
-        controller.error(new Error("fixture: connection dropped"));
+        controller.enqueue(
+          new TextEncoder().encode('<!doctype html><html><body data-stalled="true">'),
+        );
       },
     });
     return new Response(stream, { headers: { "content-type": "text/html; charset=utf-8" } });
@@ -113,7 +114,7 @@ export const flakyRoutes: RouteTable = {
 <li><a href="/flaky/transient?fail=2">Transient 503 then success</a></li>
 <li><a href="/flaky/redirect?hops=3">Three-hop redirect</a></li>
 <li><a href="/flaky/status?code=500">Explicit server error</a></li>
-<li><a href="/flaky/drop">Connection dropped mid-body</a></li>
+<li><a href="/flaky/stall">Response that never finishes</a></li>
 </ul>
 <p>Served by ${esc(ctx.origins[ctx.role])}.</p>`,
     }),

@@ -348,7 +348,7 @@ cross origin ${esc(ctx.origins.secondary)}.</p>
 <li><a href="/frames/cross-origin">Cross-origin frame</a></li>
 <li><a href="/dialogs">Dialogs, popups and before-unload</a></li>
 <li><a href="/uploads">Uploads, downloads and rejection</a></li>
-<li><a href="/flaky/slow">Slow, transient and redirecting pages</a></li>
+<li><a href="/flaky">Slow, transient and redirecting pages</a></li>
 <li><a href="/stale">Submit button that moves and is relabelled</a></li>
 <li><a href="/auth/login">Takeover simulations</a></li>
 <li><a href="/adversarial">Adversarial pages</a></li>
