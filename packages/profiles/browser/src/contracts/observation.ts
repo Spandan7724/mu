@@ -293,10 +293,7 @@ export type RefValidity = "current" | "wrong-tab" | "stale-revision" | "unknown-
 
 // BD9/ARCHITECTURE §8: a ref is judged against the observation that is current, and
 // a failure is reported as such. It is never repaired by index, position or guess.
-export function refValidity(
-  ref: BrowserElementRef,
-  observation: BrowserObservation,
-): RefValidity {
+export function refValidity(ref: BrowserElementRef, observation: BrowserObservation): RefValidity {
   if (ref.tabId !== observation.tab.id) return "wrong-tab";
   if (ref.revision !== observation.revision) return "stale-revision";
   if (ref.frameId !== undefined && !observation.frames.some((f) => f.id === ref.frameId)) {

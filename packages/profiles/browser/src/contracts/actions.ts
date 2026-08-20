@@ -10,8 +10,10 @@ import {
 import {
   type AuthorizedDocumentId,
   authorizedDocumentIdSchema,
+  basenameSchema,
   identifierSchema,
   observedUrlSchema,
+  sha256Schema,
   webUrlSchema,
 } from "./primitives.ts";
 import { type ReceiptCandidate, receiptCandidateSchema } from "./receipt.ts";
@@ -240,6 +242,34 @@ const actionSnapshotSchema = z.strictObject({
   revision: observationRevisionSchema,
   url: observedUrlSchema,
 });
+
+// A download is reported by metadata only. Downloaded bytes are untrusted, stay in
+// the private artifact root, and their location is never model-visible, so this
+// shape deliberately has nowhere to put a filesystem path.
+export interface BrowserDownload {
+  basename: string;
+  mimeType?: string | undefined;
+  bytes?: number | undefined;
+  sha256?: string | undefined;
+}
+
+export const browserDownloadSchema = z.strictObject({
+  basename: basenameSchema,
+  mimeType: z.string().min(1).max(256).optional(),
+  bytes: z.number().int().nonnegative().optional(),
+  sha256: sha256Schema.optional(),
+});
+
+export const downloadDetailsSchema = z.strictObject({ download: browserDownloadSchema });
+
+export function downloadDetails(download: BrowserDownload): JsonValue {
+  return downloadDetailsSchema.parse({ download }) as unknown as JsonValue;
+}
+
+export function readDownloadDetails(details: JsonValue | undefined): BrowserDownload | undefined {
+  const parsed = downloadDetailsSchema.safeParse(details);
+  return parsed.success ? parsed.data.download : undefined;
+}
 
 export const actionOutcomeSchema = z
   .strictObject({
