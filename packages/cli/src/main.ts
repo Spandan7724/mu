@@ -92,7 +92,8 @@ async function main(): Promise<number> {
   }
 
   try {
-    switch (args.productCommand) {
+    // `--help` and `--version` stay free even beside a product command.
+    switch (args.mode === "product" ? args.productCommand : undefined) {
       case "self-update":
         return runSelfUpdate(
           {
