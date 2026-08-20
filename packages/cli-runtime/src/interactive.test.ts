@@ -20,11 +20,7 @@ import {
   renderDiffCommand,
   startNewInteractiveSession,
 } from "./interactive.ts";
-import {
-  availableModels,
-  modelPickerDescription,
-  preferredProviderModel,
-} from "./model-picker.ts";
+import { availableModels, modelPickerDescription, preferredProviderModel } from "./model-picker.ts";
 
 test("the session close hint names the product's own command", () => {
   expect(formatResumeHint("019fa562-3975-71e6-b7a1-ed63c54f1fac", "none", "mu")).toBe(
@@ -296,9 +292,9 @@ describe("declared tool renderers", () => {
       declared: { render: () => ["declared"] },
     });
 
-    expect(registry.render({ toolName: "direct", args: {} }, { width: 80, depth: "none" })).toEqual([
-      "direct",
-    ]);
+    expect(registry.render({ toolName: "direct", args: {} }, { width: 80, depth: "none" })).toEqual(
+      ["direct"],
+    );
     expect(
       registry.render({ toolName: "declared", args: {} }, { width: 80, depth: "none" }),
     ).toEqual(["declared"]);

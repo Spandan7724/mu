@@ -23,13 +23,7 @@ describe("mu command line", () => {
 
   test("the managed supervisor and worker keep their private tokens", () => {
     expect(args(["__agents-supervisor"]).productCommand).toBe("agents-supervisor");
-    const worker = args([
-      "__agents-worker",
-      "--session-id",
-      "s1",
-      "--ownership-token",
-      "t1",
-    ]);
+    const worker = args(["__agents-worker", "--session-id", "s1", "--ownership-token", "t1"]);
     expect(worker.productCommand).toBe("agents-worker");
     expect(worker.product.workerSessionId).toBe("s1");
     expect(worker.product.workerOwnershipToken).toBe("t1");

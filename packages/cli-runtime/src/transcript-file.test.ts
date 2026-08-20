@@ -19,7 +19,9 @@ afterEach(async () => {
 describe("transcript files", () => {
   test("generates a timestamped Markdown path in the current directory", () => {
     const cwd = resolve("workspace");
-    expect(transcriptPath({ cwd, prefix: "mu", now: new Date("2026-08-03T12:34:56.789Z") })).toEqual({
+    expect(
+      transcriptPath({ cwd, prefix: "mu", now: new Date("2026-08-03T12:34:56.789Z") }),
+    ).toEqual({
       path: join(cwd, "mu-transcript-2026-08-03T12-34-56-789Z.md"),
       generated: true,
     });

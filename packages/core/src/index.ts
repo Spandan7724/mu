@@ -122,8 +122,8 @@ export type {
 export {
   isTreeEntry,
   MemorySessionStore,
-  newEntryId,
   NO_SESSION_PROFILE,
+  newEntryId,
   normalizeSessionEnvironment,
   normalizeSessionProfile,
   parseEntry,
@@ -132,8 +132,8 @@ export {
   SESSION_VERSION,
   SessionTree,
   serializeEntry,
-  sessionEnvironmentIssues,
   serializeSession,
+  sessionEnvironmentIssues,
 } from "./session.ts";
 export type { AnyTool, Tool, ToolResult } from "./tools.ts";
 export { concurrencySafe, errorResult, textResult } from "./tools.ts";

@@ -1,5 +1,5 @@
-import { codingProfile } from "@mu/profile-coding";
 import { profileModuleSpecifier } from "@mu/cli-runtime";
+import { codingProfile } from "@mu/profile-coding";
 import { loadProfile, type Profile } from "mu";
 
 // Profiles shipped with mu are imported statically so the bundler can see them.

@@ -17,11 +17,7 @@ test("terminal title identifies mu and the working directory", () => {
 
 test("session close hint is a directly runnable resume command", () => {
   expect(
-    formatResumeHint(
-      "019fa562-3975-71e6-b7a1-ed63c54f1fac",
-      "none",
-      codingProduct.commandName,
-    ),
+    formatResumeHint("019fa562-3975-71e6-b7a1-ed63c54f1fac", "none", codingProduct.commandName),
   ).toBe("  To resume this session: mu --resume 019fa562-3975-71e6-b7a1-ed63c54f1fac");
 });
 

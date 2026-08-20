@@ -23,10 +23,8 @@ import {
   type CheckpointActionData,
   customMessage,
   type DiffCommandData,
-  defaultModelId,
   loadMarkdownCommands,
   type MarkdownCommandRun,
-  type ModelInfo,
   type PermissionMode,
   type PermissionModeTone,
   readAuthFile,
@@ -47,11 +45,7 @@ import {
   logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
-import {
-  availableModels,
-  modelPickerDescription,
-  preferredProviderModel,
-} from "./model-picker.ts";
+import { availableModels, modelPickerDescription, preferredProviderModel } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { diagnosticPrefix, type ProductDescriptor } from "./product.ts";
 import { resumePickerItems } from "./session-picker.ts";
@@ -322,7 +316,9 @@ export async function runInteractive<Options>(
     model: modelRef,
     version: product.version,
     tagline: product.bannerTagline ?? product.tagline,
-    ...(product.footerLocation?.({ cwd }) ? { cwd: product.footerLocation({ cwd }) as string } : {}),
+    ...(product.footerLocation?.({ cwd })
+      ? { cwd: product.footerLocation({ cwd }) as string }
+      : {}),
     contextWindow: agent.contextWindow,
     thinkingLevels: agent.thinkingLevels,
     registry,
@@ -1072,7 +1068,9 @@ export async function runInteractive<Options>(
     stopResize();
     renderer.renderNow([
       ...app.renderTranscript(),
-      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth, product.commandName), ""] : []),
+      ...(sessionResumable
+        ? ["", formatResumeHint(agent.sessionId, depth, product.commandName), ""]
+        : []),
     ]);
     renderer.stop();
     terminal.restore();

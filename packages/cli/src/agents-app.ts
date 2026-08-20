@@ -1,6 +1,15 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import {
+  modelPickerItems,
+  type ParsedArgs,
+  registerDeclaredRenderers,
+  registerProductRenderers,
+  renderCheckpointCommand,
+  renderDiffCommand,
+  resolveCliModel,
+} from "@mu/cli-runtime";
+import {
   App,
   type ColorDepth,
   CTRL_C_EXIT_WINDOW_MS,
@@ -27,15 +36,6 @@ import {
   type Profile,
   readAuthFile,
 } from "mu";
-import {
-  modelPickerItems,
-  type ParsedArgs,
-  registerDeclaredRenderers,
-  registerProductRenderers,
-  renderCheckpointCommand,
-  renderDiffCommand,
-  resolveCliModel,
-} from "@mu/cli-runtime";
 import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";

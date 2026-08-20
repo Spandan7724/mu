@@ -4,20 +4,20 @@ import {
   EXIT,
   initializeModelCatalog,
   linesFrom,
+  loadUserConfig,
   type ModelCatalog,
   modelCatalogDiagnostics,
-  loadUserConfig,
   parseArgs,
   runHeadless,
   runInteractive,
   runRpc,
 } from "@mu/cli-runtime";
 import { createCredentialResolver, findModel } from "mu";
+import cliPackage from "../package.json";
 import { runAgentSupervisor } from "./agent-supervisor.ts";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import { runAgentWorker } from "./agent-worker.ts";
 import { runAgentView } from "./agents-app.ts";
-import cliPackage from "../package.json";
 import { userConfigPath } from "./data.ts";
 import { codingProduct, HELP_TEXT } from "./product.ts";
 import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
@@ -193,7 +193,6 @@ async function main(): Promise<number> {
     modelCatalog?.stop();
   }
 }
-
 
 // Interactive /resume must not open a session the agent-view supervisor owns.
 async function describeSessionOwner(sessionId: string): Promise<string | undefined> {
