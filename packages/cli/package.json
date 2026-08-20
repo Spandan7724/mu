@@ -1,6 +1,6 @@
 {
   "name": "@mu-agent/mu",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Mu, a general-purpose extensible AI agent platform for the terminal and TypeScript",
   "type": "module",
   "main": "./dist/index.js",
