@@ -5,6 +5,7 @@ import {
   type AuthorizedDocumentId,
   authorizedDocumentIdSchema,
   basenameSchema,
+  hasGlobMetacharacters,
   sha256Schema,
   timestampSchema,
 } from "./primitives.ts";
@@ -40,6 +41,14 @@ export const authorizedDocumentSchema = z
     addedAt: timestampSchema,
   })
   .superRefine((document, ctx) => {
+    // Only exact declared paths become authorized: directories and globs never do.
+    if (hasGlobMetacharacters(document.path) || hasGlobMetacharacters(document.basename)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["path"],
+        message: "a glob is never an authorization; declare the exact file",
+      });
+    }
     if (!document.path.endsWith(document.basename)) {
       ctx.addIssue({
         code: "custom",

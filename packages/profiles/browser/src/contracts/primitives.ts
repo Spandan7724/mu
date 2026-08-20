@@ -15,8 +15,14 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 // reference or a drive letter. BD16: the model names documents, never paths.
 const PATH_SHAPED = /[/\\]|^~|^\.\.?$|\.\.|^[A-Za-z]:/;
 
+const GLOB_META = /[*?[\]{}]/;
+
 export function isPathShaped(value: string): boolean {
   return PATH_SHAPED.test(value);
+}
+
+export function hasGlobMetacharacters(value: string): boolean {
+  return GLOB_META.test(value);
 }
 
 export const elementRefIdSchema: z.ZodType<ElementRefId, string> = z
