@@ -16,7 +16,7 @@
     },
     "packages/cli": {
       "name": "@mu-agent/mu",
-      "version": "0.0.4",
+      "version": "0.0.8",
       "bin": {
         "mu": "./dist/mu.js",
       },
@@ -24,6 +24,7 @@
         "zod": "4.4.3",
       },
       "devDependencies": {
+        "@mu/cli-runtime": "workspace:*",
         "@mu/core": "workspace:*",
         "@mu/profile-coding": "workspace:*",
         "@mu/tui": "workspace:*",
@@ -33,6 +34,16 @@
         "@mu-agent/ripgrep-darwin-arm64": "0.0.1",
         "@mu-agent/ripgrep-linux-x64": "0.0.1",
         "@mu-agent/ripgrep-windows-x64": "0.0.1",
+      },
+    },
+    "packages/cli-runtime": {
+      "name": "@mu/cli-runtime",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/core": "workspace:*",
+        "@mu/tui": "workspace:*",
+        "mu": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/core": {
@@ -116,6 +127,8 @@
     "@mu-agent/ripgrep-windows-x64": ["@mu-agent/ripgrep-windows-x64@workspace:packages/ripgrep-windows-x64"],
 
     "@mu/ai": ["@mu/ai@workspace:packages/ai"],
+
+    "@mu/cli-runtime": ["@mu/cli-runtime@workspace:packages/cli-runtime"],
 
     "@mu/core": ["@mu/core@workspace:packages/core"],
 
