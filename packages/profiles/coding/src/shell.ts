@@ -1,5 +1,7 @@
 import { delimiter, dirname } from "node:path";
-import { resolveRipgrepExecutable } from "./tools/search.ts";
+import { resolveRipgrepExecutable } from "./ripgrep.ts";
+
+const WINDOWS_TASKKILL_TIMEOUT_MS = 2_000;
 
 export interface ShellCommandOptions {
   platform?: NodeJS.Platform;
@@ -72,11 +74,11 @@ function fallbackKill(process: ProcessTreeTarget, signal: NodeJS.Signals): void 
 
 // Bun's detached POSIX processes are group leaders. Windows has no equivalent
 // signal for descendants, so taskkill /T is the native process-tree boundary.
-export function terminateProcessTree(
+export async function terminateProcessTree(
   process: ProcessTreeTarget,
   signal: NodeJS.Signals,
   platform: NodeJS.Platform = globalThis.process.platform,
-): void {
+): Promise<void> {
   if (platform !== "win32") {
     try {
       globalThis.process.kill(-process.pid, signal);
@@ -93,11 +95,23 @@ export function terminateProcessTree(
       stderr: "ignore",
       windowsHide: true,
     });
-    void killer.exited
-      .then((exitCode) => {
-        if (exitCode !== 0 && process.exitCode === null) fallbackKill(process, signal);
-      })
-      .catch(() => fallbackKill(process, signal));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const exitCode = await Promise.race([
+      killer.exited,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), WINDOWS_TASKKILL_TIMEOUT_MS);
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+    if (exitCode === undefined) {
+      try {
+        killer.kill("SIGKILL");
+      } catch {}
+      fallbackKill(process, signal);
+    } else if (exitCode !== 0 && process.exitCode === null) {
+      fallbackKill(process, signal);
+    }
   } catch {
     fallbackKill(process, signal);
   }

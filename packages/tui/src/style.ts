@@ -209,9 +209,15 @@ export function diffLineStyle(kind: "add" | "del" | "context", depth: ColorDepth
 export const GLYPHS = {
   userMarker: "▸",
   rule: "│",
+  // A plan is one object rather than a run of events, so its rule opens and
+  // closes around the whole list instead of repeating per row.
+  ruleOpen: "┌",
+  ruleClose: "└",
   nestedRule: "│ │",
   ok: "✓",
   error: "✗",
+  // Not started yet — the spinner's own "not this one" glyph, held still.
+  pending: "▹",
   bullet: "•",
   separator: "·",
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],

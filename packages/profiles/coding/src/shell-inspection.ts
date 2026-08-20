@@ -289,3 +289,13 @@ export function classifyShellCommand(command: string): ShellCommandClassificatio
 export function isInspectionShellCommand(command: string): boolean {
   return classifyShellCommand(command) === "inspect";
 }
+
+// Ripgrep reserves exit code 1 for a successful search with no matches. Keep
+// this narrower than the general inspection classification: compound shell
+// expressions may instead be reporting the status of a later command.
+export function isSingleRipgrepCommand(command: string): boolean {
+  const commands = parseInspectionCommands(command);
+  if (commands?.length !== 1) return false;
+  const argv = commands[0];
+  return argv !== undefined && isInspectionArgv(argv) && executableName(argv[0] ?? "") === "rg";
+}

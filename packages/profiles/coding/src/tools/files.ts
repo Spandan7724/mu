@@ -146,7 +146,7 @@ export function readTool(deps: ToolDeps) {
         const info = await stat(absolute);
         if (info.size > MAX_READ_SOURCE_BYTES) {
           return errorResult(
-            `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${MAX_READ_SOURCE_BYTES.toLocaleString()} bytes. Use grep or a bounded shell command to inspect it.`,
+            `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${MAX_READ_SOURCE_BYTES.toLocaleString()} bytes. Use rg through the bounded bash tool to inspect it.`,
           );
         }
         content = await readFile(absolute, "utf8");

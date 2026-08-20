@@ -84,6 +84,8 @@ export class AgentViewClient {
   private helloPromise: Promise<void> | undefined;
   private helloResolve: (() => void) | undefined;
   private helloReject: ((error: Error) => void) | undefined;
+  private helloReceived = false;
+  private snapshotReceived = false;
   records: ManagedSessionRecord[] = [];
 
   constructor(private options: AgentViewClientOptions) {}
@@ -96,6 +98,8 @@ export class AgentViewClient {
     this.socket.on("data", (chunk: string) => this.consume(chunk));
     this.socket.on("error", (error) => this.fail(error));
     this.socket.on("close", () => this.fail(new Error("agent supervisor disconnected")));
+    this.helloReceived = false;
+    this.snapshotReceived = false;
     this.helloPromise = new Promise<void>((resolve, reject) => {
       this.helloResolve = resolve;
       this.helloReject = reject;
@@ -184,8 +188,10 @@ export class AgentViewClient {
   }
 
   close(): void {
-    this.socket?.destroy();
+    const socket = this.socket;
     this.socket = undefined;
+    this.fail(new Error("agent-view client closed"));
+    socket?.destroy();
   }
 
   private request(request: AgentViewRequest): Promise<AgentViewResponse> {
@@ -229,8 +235,12 @@ export class AgentViewClient {
   }
 
   private handle(response: AgentViewResponse): void {
-    if (response.type === "hello") this.helloResolve?.();
-    if (response.type === "snapshot") this.records = response.records;
+    if (response.type === "hello") this.helloReceived = true;
+    if (response.type === "snapshot") {
+      this.records = response.records;
+      this.snapshotReceived = true;
+    }
+    if (this.helloReceived && this.snapshotReceived) this.helloResolve?.();
     if (response.type === "record") {
       const next = this.records.filter((record) => record.sessionId !== response.record.sessionId);
       next.push(response.record);

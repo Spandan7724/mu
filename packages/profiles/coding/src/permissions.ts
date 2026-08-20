@@ -8,8 +8,6 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "*", pattern: "*", action: "ask" },
   { permission: "read", pattern: "*", action: "allow" },
   { permission: "ls", pattern: "*", action: "allow" },
-  { permission: "glob", pattern: "*", action: "allow" },
-  { permission: "grep", pattern: "*", action: "allow" },
   { permission: "todo", pattern: "*", action: "allow" },
   { permission: "task_output", pattern: "*", action: "allow" },
   { permission: "task_list", pattern: "*", action: "allow" },

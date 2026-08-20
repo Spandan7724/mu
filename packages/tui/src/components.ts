@@ -127,14 +127,19 @@ export class Editor {
   }
 
   insert(text: string): void {
-    const parts = text.split("\n");
+    // Terminals disagree on whether pasted line endings arrive as LF, CRLF,
+    // or bare CR. Never retain a carriage return in the editor: rendering one
+    // would move the real terminal cursor back to column zero and let later
+    // pasted text overwrite earlier rows on screen.
+    const normalized = text.replace(/\r\n?/g, "\n");
+    const parts = normalized.split("\n");
     const line = this.lines[this.row] ?? "";
     const before = line.slice(0, this.col);
     const after = line.slice(this.col);
 
     if (parts.length === 1) {
-      this.lines[this.row] = before + text + after;
-      this.col += text.length;
+      this.lines[this.row] = before + normalized + after;
+      this.col += normalized.length;
       return;
     }
     const inserted = [

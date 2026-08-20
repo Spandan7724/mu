@@ -25,11 +25,14 @@ const dim = (text: string, depth: ColorDepth) => styleText(text, { dim: true }, 
 const accent = (text: string, depth: ColorDepth) => styleText(text, { accent: true }, depth);
 
 // What a tool did, not which tool it was: an unknown tool that reads still reads.
-export type ToolTone = "read" | "mutate" | "exec";
+// `state` is the odd one out — it changes the agent's own working state rather
+// than the world's, so it speaks in mu's voice the way a heading does.
+export type ToolTone = "read" | "mutate" | "exec" | "state";
 const TOOL_TONES: Record<ToolTone, Style> = {
   read: { toolRead: true },
   mutate: { toolMutate: true },
   exec: { toolExec: true },
+  state: { accent: true },
 };
 // A path is a location and a command is code; neither is mu speaking, which is
 // what the accent means everywhere else.
@@ -83,15 +86,18 @@ export interface ToolCellOptions {
   isSuccess?: boolean;
   isError?: boolean;
   nested?: boolean;
+  // Overrides the left rule glyph, for a cell that brackets a block rather than
+  // marking one event. Wins over `nested`.
+  rule?: string;
   // Live output tail shown while running; omitted once collapsed.
   tail?: string[];
 }
 
 // │ read src/api/client.ts · 142 lines
 export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[] {
-  const rule = dim(`${options.nested ? GLYPHS.nestedRule : GLYPHS.rule} `, ctx.depth);
-  const available =
-    ctx.width - MARGIN.length - stringWidth(`${options.nested ? GLYPHS.nestedRule : GLYPHS.rule} `);
+  const ruleGlyph = options.rule ?? (options.nested ? GLYPHS.nestedRule : GLYPHS.rule);
+  const rule = dim(`${ruleGlyph} `, ctx.depth);
+  const available = ctx.width - MARGIN.length - stringWidth(`${ruleGlyph} `);
   const separator = ` ${GLYPHS.separator} `;
   const status = options.isError
     ? styleText(GLYPHS.error, { red: true }, ctx.depth)
@@ -165,6 +171,128 @@ export function toolOutputCell(text: string, ctx: RenderContext): string[] {
   const safe = sanitizeUntrusted(text).replace(/\t/g, "    ");
   const content = safe.length > 0 ? safe : "(no output)";
   return wrapText(content, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
+}
+
+export type PlanStatus = "completed" | "in_progress" | "pending";
+
+export interface PlanItem {
+  content: string;
+  status: PlanStatus;
+}
+
+export interface PlanCellOptions {
+  items: PlanItem[];
+  expanded?: boolean;
+  // A later plan has replaced this one. It is history now, so it says what was
+  // true at this point instead of reprinting a list that no longer is.
+  superseded?: boolean;
+}
+
+const PLAN_MARKS: Record<PlanStatus, string> = {
+  completed: GLYPHS.ok,
+  in_progress: GLYPHS.userMarker,
+  pending: GLYPHS.pending,
+};
+const PLAN_MARK_STYLES: Record<PlanStatus, Style> = {
+  completed: { green: true },
+  in_progress: { accent: true },
+  pending: { dim: true },
+};
+// Finished work is struck through as well as dimmed, so the eye lands on what
+// is left instead of re-reading what is done. A terminal without SGR 9 loses
+// the line and keeps the dim and the green ✓, which still say the same thing.
+const PLAN_TEXT_STYLES: Record<PlanStatus, Style> = {
+  completed: { dim: true, strikethrough: true },
+  in_progress: {},
+  pending: { dim: true },
+};
+
+// A compact plan is one row per task; wrapping is what expansion is for.
+const COMPACT_PLAN_ROWS = 8;
+
+// ┌ plan · 3/6 done
+// │ ✓ read the registry
+// │ ▸ update the docs
+// └ ▹ run the full ci pass
+export function planCell(options: PlanCellOptions, ctx: RenderContext): string[] {
+  const { items, expanded } = options;
+  const completed = items.filter((item) => item.status === "completed").length;
+  const summary = items.length === 0 ? "no tasks" : `${completed}/${items.length} done`;
+
+  if (options.superseded && !expanded && items.length > 0) {
+    const active = items.find((item) => item.status === "in_progress");
+    const progress = `${completed}/${items.length}`;
+    return toolCell(
+      {
+        name: "plan",
+        tone: "state",
+        summary: active
+          ? `${progress} ${GLYPHS.separator} ${active.content}`
+          : completed === items.length
+            ? `${progress} done`
+            : progress,
+      },
+      ctx,
+    );
+  }
+  // An empty plan is the whole cell, so it takes the ordinary rule — a bracket
+  // that opens and never closes reads as a rendering bug.
+  const header = toolCell(
+    {
+      name: "plan",
+      tone: "state",
+      summary,
+      ...(items.length > 0 ? { rule: GLYPHS.ruleOpen } : {}),
+    },
+    ctx,
+  );
+  if (items.length === 0) return header;
+
+  const textWidth = Math.max(8, body(ctx) - 4);
+  const paint = (item: PlanItem, text: string) =>
+    styleText(text, PLAN_TEXT_STYLES[item.status], ctx.depth);
+
+  // Completed work already recedes on its own — struck through and dim — so a
+  // plan that fits is shown whole. Only an overlong one gives anything up, and
+  // what it gives up is the finished head: models work the list top-down, so
+  // that is the part already read. Completed tasks below the head stay in
+  // place rather than being hoisted, which would misreport their position.
+  const overflow = expanded ? 0 : items.length - COMPACT_PLAN_ROWS;
+  let head = 0;
+  while (head < items.length && items[head]?.status === "completed") head++;
+  // Folding a single task into a "… 1 done" row saves no space and reads worse.
+  const collapsed = overflow > 0 ? Math.min(head, overflow + 1) : 0;
+  const rest = collapsed >= 2 ? items.slice(collapsed) : items;
+
+  const budget = COMPACT_PLAN_ROWS - (collapsed >= 2 ? 1 : 0);
+  const shown = expanded || rest.length <= budget ? rest : rest.slice(0, budget - 1);
+  const hidden = rest.length - shown.length;
+
+  const rows: string[] = [];
+  if (collapsed >= 2) rows.push(dim(`… ${collapsed} done`, ctx.depth));
+  for (const item of shown) {
+    const mark = styleText(PLAN_MARKS[item.status], PLAN_MARK_STYLES[item.status], ctx.depth);
+    const content = sanitizeUntrusted(item.content).replace(/\t/g, "    ");
+    if (!expanded) {
+      rows.push(`${mark} ${paint(item, truncateToWidth(content, textWidth))}`);
+      continue;
+    }
+    const wrapped = wrapText(content, textWidth);
+    rows.push(`${mark} ${paint(item, wrapped[0] ?? "")}`);
+    // Continuation hangs under the task text, not under its mark.
+    for (const line of wrapped.slice(1)) rows.push(`  ${paint(item, line)}`);
+  }
+  if (hidden > 0) {
+    rows.push(dim(`… ${hidden} more ${GLYPHS.separator} ctrl+o to expand`, ctx.depth));
+  }
+
+  return [
+    ...header,
+    ...rows.map((row, index) => {
+      const glyph = index === rows.length - 1 ? GLYPHS.ruleClose : GLYPHS.rule;
+      return MARGIN + dim(`${glyph} `, ctx.depth) + row;
+    }),
+  ];
 }
 
 export interface TaskCellOptions {

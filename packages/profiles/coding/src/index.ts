@@ -28,7 +28,6 @@ import { codingPrompt } from "./prompts.ts";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
-import { globTool, grepTool } from "./tools/search.ts";
 import { shellSpawner, taskTools } from "./tools/tasks.ts";
 import { TodoStore, todoTool } from "./tools/todo.ts";
 
@@ -118,8 +117,6 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     writeTool(deps),
     editTool(deps),
     lsTool(deps),
-    globTool(deps),
-    grepTool(deps),
     bashTool({ root, processes, ...(options.spawn ? { spawn: options.spawn } : {}) }),
     todoTool(todos),
     ...taskTools(processes),
@@ -261,15 +258,6 @@ export {
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
-export {
-  globTool,
-  globToRegExp,
-  grepTool,
-  type RipgrepRunner,
-  resolveNpmRipgrepExecutable,
-  resolveRipgrepExecutable,
-  type SearchToolOptions,
-} from "./tools/search.ts";
 export { shellSpawner, taskTools } from "./tools/tasks.ts";
 export type { TodoItem } from "./tools/todo.ts";
 export { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";

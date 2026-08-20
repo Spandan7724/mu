@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { delimiter } from "node:path";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import type { AnyTool } from "@mu/core";
+import { resolveNpmRipgrepExecutable, resolveRipgrepExecutable } from "./ripgrep.ts";
 import { shellEnv } from "./shell.ts";
 import { bashTool } from "./tools/bash.ts";
 
 const signal = new AbortController().signal;
+
+async function scratch(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "mu-shell-"));
+}
 
 function textOf(result: { content: { type: string; text?: string }[] }): string {
   return result.content
@@ -53,6 +60,59 @@ describe("shellEnv", () => {
       }
       Object.assign(process.env, original);
     }
+  });
+});
+
+describe("ripgrep detection", () => {
+  test("prefers a bundled sidecar and otherwise searches PATH", async () => {
+    const root = await scratch();
+    const executable = join(root, "bin", "mu");
+    const bundled = join(root, "mu-path", "rg");
+    await mkdir(join(root, "bin"), { recursive: true });
+    await mkdir(join(root, "mu-path"), { recursive: true });
+    await writeFile(bundled, "");
+    await chmod(bundled, 0o755);
+
+    expect(
+      resolveRipgrepExecutable(
+        executable,
+        "linux",
+        () => "/usr/bin/rg",
+        () => undefined,
+      ),
+    ).toBe(bundled);
+    const unbundled = join(root, "other", "bin", "mu");
+    expect(
+      resolveRipgrepExecutable(
+        unbundled,
+        "linux",
+        () => "/usr/bin/rg",
+        () => undefined,
+      ),
+    ).toBe("/usr/bin/rg");
+    expect(
+      resolveRipgrepExecutable(
+        unbundled,
+        "linux",
+        () => null,
+        () => undefined,
+      ),
+    ).toBeUndefined();
+  });
+
+  test("finds the matching optional npm platform package", async () => {
+    const root = await scratch();
+    const packageRoot = join(root, "node_modules", "@mu-agent", "ripgrep-linux-x64");
+    const executable = join(packageRoot, "vendor", "rg");
+    await mkdir(join(packageRoot, "vendor"), { recursive: true });
+    await writeFile(join(packageRoot, "package.json"), "{}");
+    await writeFile(executable, "");
+    await chmod(executable, 0o755);
+
+    expect(
+      resolveNpmRipgrepExecutable("linux", "x64", root, () => join(packageRoot, "package.json")),
+    ).toBe(executable);
+    expect(resolveNpmRipgrepExecutable("linux", "arm64", root, () => "unused")).toBeUndefined();
   });
 });
 

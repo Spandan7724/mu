@@ -523,6 +523,36 @@ describe("input handling", () => {
     expect(h.submitted).toEqual(["line one\nline two"]);
   });
 
+  test("a paste with terminal-style carriage-return newlines stays intact", () => {
+    const h = harness();
+    feed(h.app, `${ESC}[200~one\rtwo\r\nthree${ESC}[201~`);
+
+    expect(h.submitted).toEqual([]);
+    expect(h.app.editor.text).toBe("one\ntwo\nthree");
+    expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("one\n    two\n    three");
+  });
+
+  test("arrow keys move through a non-empty draft instead of replacing it with history", () => {
+    const h = harness();
+    feed(h.app, "previous\r");
+    h.app.editor.insert("first line\nsecond line");
+
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("first line\nsecond line");
+    expect(h.app.editor.cursor).toEqual({ row: 0, col: "first line".length });
+
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("first line\nsecond line");
+    expect(h.app.editor.cursor).toEqual({ row: 1, col: "first line".length });
+  });
+
+  test("up arrow recalls history when the editor is empty", () => {
+    const h = harness();
+    feed(h.app, "previous\r");
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("previous");
+  });
+
   test("escape aborts a running agent but not an idle one", () => {
     const h = harness();
     feed(h.app, ESC);
@@ -941,6 +971,232 @@ describe("renderer registry", () => {
     const complete = registry.render({ toolName: "edit", args }, { width: 60, depth: "none" });
     expect(complete.length).toBeGreaterThan(1);
     expect(complete.map(stripAnsi).join("\n")).toContain("const limit = 3;");
+  });
+
+  test("a todo call renders a bracketed plan instead of one truncated line", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const items = [
+      { content: "add the plan cell", status: "completed" },
+      { content: "update the docs", status: "in_progress" },
+      { content: "run the full ci pass", status: "pending" },
+    ];
+
+    const lines = registry
+      .render(
+        {
+          toolName: "todo",
+          args: { items },
+          result: {
+            role: "toolResult",
+            toolCallId: "p",
+            toolName: "todo",
+            content: [{ type: "text", text: "[x] add the plan cell" }],
+            details: { items },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines).toEqual([
+      "  ┌ plan · 1/3 done",
+      "  │ ✓ add the plan cell",
+      "  │ ▸ update the docs",
+      "  └ ▹ run the full ci pass",
+    ]);
+  });
+
+  test("an expanded plan is not also dumped as raw result text", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const items = [{ content: "update the docs", status: "in_progress" }];
+    const lines = registry
+      .render(
+        {
+          toolName: "todo",
+          args: { items },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "p",
+            toolName: "todo",
+            content: [{ type: "text", text: "[~] update the docs" }],
+            details: { items },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines).toEqual(["  ┌ plan · 0/1 done", "  └ ▸ update the docs"]);
+  });
+
+  test("a plan whose arguments are still streaming renders no partial list", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    // Half the list has arrived; showing it would report tasks never recorded.
+    const args = { items: [{ content: "add the plan c", status: "in_progress" }] };
+
+    const streaming = registry.render(
+      { toolName: "todo", args, argsStreaming: true },
+      { width: 60, depth: "none" },
+    );
+    expect(streaming.map(stripAnsi)).toEqual(["  │ plan"]);
+  });
+
+  test("a malformed plan degrades to its header rather than half a list", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      { toolName: "todo", args: { items: [{ content: "no status" }] } },
+      { width: 60, depth: "none" },
+    );
+    expect(lines.map(stripAnsi)).toEqual(["  │ plan"]);
+  });
+});
+
+describe("transcript spacing", () => {
+  const ran = (app: App, id: string, command: string, output: string) => {
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "bash",
+      args: { command },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "bash",
+        content: [{ type: "text", text: output }],
+        details: { exitCode: 0, durationMs: 5 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("a cell that spans rows gets air; a run of one-liners stays tight", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    ran(app, "c1", "bun test", "270 pass\n0 fail");
+    ran(app, "c2", "pwd", "");
+    ran(app, "c3", "whoami", "");
+
+    const screen = app.renderScreen().map(stripAnsi);
+    const first = screen.findIndex((line) => line.includes("270 pass"));
+    // Output runs into the next verb without this blank.
+    expect(screen[first + 2]).toBe("");
+    // Two bare one-line calls are one stream, not two paragraphs.
+    const bare = screen.findIndex((line) => line.includes("ran pwd"));
+    expect(screen[bare + 1]).toContain("ran whoami");
+  });
+
+  test("speech after machinery always gets a break", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    ran(app, "c1", "pwd", "");
+    app.handleEvent({ type: "message_end", message: assistant("Done — that is the cwd.") });
+
+    const screen = app.renderScreen().map(stripAnsi);
+    const cell = screen.findIndex((line) => line.includes("ran pwd"));
+    expect(screen[cell + 1]).toBe("");
+    expect(screen[cell + 2]).toContain("Done — that is the cwd.");
+  });
+});
+
+describe("superseded plans", () => {
+  const plan = (statuses: ("completed" | "in_progress" | "pending")[]) =>
+    statuses.map((status, index) => ({ content: `task ${index + 1}`, status }));
+
+  const record = (app: App, id: string, items: ReturnType<typeof plan>) => {
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "todo",
+      args: { items },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "todo",
+        content: [{ type: "text", text: "[~] task 1" }],
+        details: { items },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("only the newest plan stays a full list; earlier ones become one row", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["in_progress", "pending", "pending"]));
+    record(app, "p2", plan(["completed", "in_progress", "pending"]));
+    record(app, "p3", plan(["completed", "completed", "in_progress"]));
+
+    const screen = app.renderScreen().map(stripAnsi);
+    expect(screen).toContain("  │ plan · 0/3 · task 1");
+    expect(screen).toContain("  │ plan · 1/3 · task 2");
+    // The newest keeps its bracket and its tasks.
+    expect(screen).toContain("  ┌ plan · 2/3 done");
+    expect(screen).toContain("  └ ▸ task 3");
+    // Three plans of three tasks would be twelve rows unfolded.
+    expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
+  });
+
+  test("a superseded plan that finished reports done rather than a live task", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["completed", "completed"]));
+    record(app, "p2", plan(["completed", "completed", "in_progress"]));
+
+    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 2/2 done");
+  });
+
+  test("ctrl+o restores a superseded plan to its full list", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    record(app, "p1", plan(["in_progress", "pending"]));
+    record(app, "p2", plan(["completed", "in_progress"]));
+
+    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 0/2 · task 1");
+    feed(app, "\u000f");
+    const expanded = app.renderScreen().map(stripAnsi);
+    expect(expanded.filter((line) => line === "  ┌ plan · 0/2 done")).toHaveLength(1);
+    expect(expanded.filter((line) => line.includes("task 1"))).toHaveLength(2);
+  });
+
+  test("tools that do not supersede keep every call in full", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    for (const id of ["c1", "c2"]) {
+      app.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: id,
+        result: {
+          role: "toolResult",
+          toolCallId: id,
+          toolName: "read",
+          content: [{ type: "text", text: "contents" }],
+          details: { lines: 4 },
+          isError: false,
+          timestamp: 1,
+        },
+      });
+    }
+    const screen = app.renderScreen().map(stripAnsi);
+    expect(screen.filter((line) => line.includes("read · 4 lines"))).toHaveLength(2);
   });
 });
 

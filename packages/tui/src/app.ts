@@ -226,7 +226,7 @@ type TranscriptItem =
   | {
       kind: "tool";
       info: ToolRenderInfo;
-      rendered?: { width: number; expanded: boolean; lines: string[] };
+      rendered?: { width: number; expanded: boolean; superseded: boolean; lines: string[] };
     };
 
 export class App {
@@ -513,6 +513,8 @@ export class App {
           rendered: {
             width: this.options.width,
             expanded: false,
+            // Newest by construction — it is the call that just landed.
+            superseded: false,
             lines,
           },
         });
@@ -751,7 +753,15 @@ export class App {
     ) {
       return cached.rows;
     }
-    const logical = this.transcript.flatMap((item) => {
+    // A tool whose calls replace one another leaves only its newest call still
+    // true; the rest are history and say so themselves.
+    const newest = new Map<string, number>();
+    this.transcript.forEach((item, index) => {
+      if (item.kind === "tool" && this.registry.supersedes(item.info.toolName)) {
+        newest.set(item.info.toolName, index);
+      }
+    });
+    const logical = this.transcript.flatMap((item, index) => {
       if (item.kind === "lines") return item.lines;
       if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
       if (item.kind === "assistant") {
@@ -763,20 +773,32 @@ export class App {
         }
         return [...item.rendered.lines, ""];
       }
+      const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
       if (
         item.rendered?.width !== this.options.width ||
-        item.rendered.expanded !== this.toolOutputExpanded
+        item.rendered.expanded !== this.toolOutputExpanded ||
+        item.rendered.superseded !== superseded
       ) {
         item.rendered = {
           width: this.options.width,
           expanded: this.toolOutputExpanded,
+          superseded,
           lines: this.registry.render(
-            { ...item.info, expanded: this.toolOutputExpanded },
+            { ...item.info, expanded: this.toolOutputExpanded, superseded },
             this.ctx,
           ),
         };
       }
-      return item.rendered.lines;
+      // A run of one-line calls reads as one stream and stays tight. A cell
+      // that spans rows needs air after it, or its output runs straight into
+      // the next call's verb; and speech after machinery always gets a break.
+      const next = this.transcript[index + 1];
+      const separated =
+        next !== undefined &&
+        (next.kind === "user" || next.kind === "assistant"
+          ? true
+          : next.kind === "tool" && item.rendered.lines.length > 1);
+      return separated ? [...item.rendered.lines, ""] : item.rendered.lines;
     });
     const rows = this.toTerminalRows(logical);
     this.transcriptCache = {
@@ -1184,14 +1206,16 @@ export class App {
           );
           return;
         }
-        if (!this.editor.recallHistory("up")) this.editor.move("up");
+        if (this.editor.isEmpty && this.editor.recallHistory("up")) return;
+        this.editor.move("up");
         return;
       }
       case "backspace":
         this.editor.backspace();
         return;
       case "down":
-        if (!this.editor.recallHistory(key.name)) this.editor.move(key.name);
+        if (this.editor.isEmpty && this.editor.recallHistory("down")) return;
+        this.editor.move("down");
         return;
       case "left":
         if (this.editor.isEmpty && this.options.callbacks.onDetach) {

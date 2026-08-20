@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyShellCommand,
   isInspectionShellCommand,
+  isSingleRipgrepCommand,
   parseInspectionCommands,
 } from "./shell-inspection.ts";
 
@@ -35,6 +36,25 @@ describe("shell inspection classification", () => {
     expect(isInspectionShellCommand(command)).toBe(true);
     expect(isInspectionShellCommand("rg todo src | xargs rm")).toBe(false);
     expect(isInspectionShellCommand("rg todo src && npm test")).toBe(false);
+  });
+
+  test("accepts shell-simple ripgrep discovery and multi-pattern searches", () => {
+    const command = [
+      "rg --files --sort path packages/profiles/coding/src -g '*.ts'",
+      "rg -n --no-messages -e 'name: \"grep\"' -e 'name: \"glob\"' packages/profiles/coding/src",
+    ].join("; ");
+
+    expect(isInspectionShellCommand(command)).toBe(true);
+  });
+
+  test("identifies only one safe ripgrep invocation for no-match semantics", () => {
+    expect(isSingleRipgrepCommand("rg -n -e 'grepTool' packages")).toBe(true);
+    expect(isSingleRipgrepCommand("rg --files --sort path packages")).toBe(true);
+    expect(isSingleRipgrepCommand("rg missing packages | head -20")).toBe(false);
+    expect(isSingleRipgrepCommand("rg missing packages; false")).toBe(false);
+    expect(isSingleRipgrepCommand("rg --pre cat missing packages")).toBe(false);
+    expect(isSingleRipgrepCommand("./rg missing packages")).toBe(false);
+    expect(isSingleRipgrepCommand("grep missing packages")).toBe(false);
   });
 
   test("treats newlines as command boundaries", () => {
