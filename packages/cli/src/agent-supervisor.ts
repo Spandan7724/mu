@@ -35,7 +35,7 @@ import {
   type SessionOwnership,
   updateSessionOwnershipWorker,
 } from "./agent-view-store.ts";
-import type { ParsedArgs } from "./args.ts";
+import type { ParsedArgs } from "@mu/cli-runtime";
 
 interface WorkerSnapshot {
   sessionId: string;
@@ -1120,7 +1120,7 @@ export class AgentSupervisor {
   }
 }
 
-export async function runAgentSupervisor(_args: ParsedArgs): Promise<number> {
+export async function runAgentSupervisor(_args: ParsedArgs<unknown>): Promise<number> {
   const supervisor = new AgentSupervisor();
   await supervisor.start();
   const close = () => void supervisor.close();

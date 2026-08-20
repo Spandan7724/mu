@@ -47,7 +47,11 @@ import {
   logoutProviders,
 } from "./login.ts";
 import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
-import { availableModels, modelPickerDescription } from "./model-picker.ts";
+import {
+  availableModels,
+  modelPickerDescription,
+  preferredProviderModel,
+} from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { diagnosticPrefix, type ProductDescriptor } from "./product.ts";
 import { resumePickerItems } from "./session-picker.ts";
@@ -192,23 +196,6 @@ export function startNewInteractiveSession(
   renderer.clear();
   renderer.renderNow(app.renderScreen());
   return agent.sessionId;
-}
-
-export { availableModels, modelPickerDescription } from "./model-picker.ts";
-
-// Post-login selection resolves the same default as startup. Keeping a second
-// table here let the two drift: providers listed only in the catalog's table
-// were picked by refreshed-catalog order after login, which models.dev owns.
-export function preferredProviderModel(
-  provider: string,
-  models: readonly ModelInfo[],
-): ModelInfo | undefined {
-  const providerModels = models.filter((model) => model.provider === provider);
-  const preferred = defaultModelId(provider);
-  return (
-    (preferred ? providerModels.find((model) => model.id === preferred) : undefined) ??
-    providerModels[0]
-  );
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {

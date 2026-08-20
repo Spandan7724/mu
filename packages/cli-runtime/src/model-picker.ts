@@ -1,4 +1,4 @@
-import { type ExtensionHost, listModels, type ModelInfo } from "mu";
+import { defaultModelId, type ExtensionHost, listModels, type ModelInfo } from "mu";
 import { accountLoginProviders } from "./login.ts";
 
 export type ModelCredentialSource = "apiKey" | "oauth" | "extension";
@@ -47,4 +47,19 @@ export function modelPickerItems(
       description: modelPickerDescription(model, source),
     };
   });
+}
+
+// Post-login selection resolves the same default as startup. Keeping a second
+// table here let the two drift: providers listed only in the catalog's table
+// were picked by refreshed-catalog order after login, which models.dev owns.
+export function preferredProviderModel(
+  provider: string,
+  models: readonly ModelInfo[],
+): ModelInfo | undefined {
+  const providerModels = models.filter((model) => model.provider === provider);
+  const preferred = defaultModelId(provider);
+  return (
+    (preferred ? providerModels.find((model) => model.id === preferred) : undefined) ??
+    providerModels[0]
+  );
 }

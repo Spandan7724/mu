@@ -1,12 +1,16 @@
-import { bashTool } from "@mu/profile-coding";
+import {
+  createCliSessionRuntime,
+  formatUserShellRecord,
+  linesFrom,
+  modelPickerItems,
+  type ParsedArgs,
+  runRpc,
+  runUserShellCommand,
+  saveTranscriptMarkdown,
+  transcriptExportCommand,
+} from "@mu/cli-runtime";
 import { type AgentEvent, customMessage, type MarkdownCommandRun, readAuthFile } from "mu";
-import type { ParsedArgs } from "./args.ts";
-import { transcriptExportCommand } from "./export-command.ts";
-import { modelPickerItems } from "./model-picker.ts";
-import { linesFrom, runRpc } from "./rpc.ts";
-import { createCliSessionRuntime } from "./session-runtime.ts";
-import { saveTranscriptMarkdown } from "./transcript-file.ts";
-import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
+import { type CodingProductOptions, codingProduct } from "./product.ts";
 
 const MAX_TASK_SNAPSHOT_CHARS = 100_000;
 
@@ -44,25 +48,30 @@ export interface AgentWorkerIo {
   stderr?: (message: string) => void;
 }
 
-export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): Promise<number> {
+export async function runAgentWorker(
+  args: ParsedArgs<CodingProductOptions>,
+  io: AgentWorkerIo = {},
+): Promise<number> {
   const stderr = io.stderr ?? ((message: string) => process.stderr.write(message));
-  if (!args.workerSessionId && !args.resumeSessionId) {
+  if (!args.product.workerSessionId && !args.resumeSessionId) {
     stderr("mu: managed worker requires --session-id or --resume\n");
     return 2;
   }
-  if (!args.workerOwnershipToken) {
+  if (!args.product.workerOwnershipToken) {
     stderr("mu: managed worker requires --ownership-token\n");
     return 2;
   }
-  const ownershipToken = args.workerOwnershipToken;
+  const ownershipToken = args.product.workerOwnershipToken;
   const runtime = await createCliSessionRuntime({
     cwd: process.cwd(),
+    product: codingProduct,
+    productOptions: args.product,
     profile: args.profile,
     model: args.model,
     permissionMode: args.permissionMode,
     allowAll: args.allowAll,
     noInstructions: args.noInstructions,
-    sessionId: args.workerSessionId,
+    sessionId: args.product.workerSessionId,
     resumeSessionId: args.resumeSessionId,
     maxTurns: args.maxTurns,
     maxCostUsd: args.maxCostUsd,
@@ -87,6 +96,7 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
         (
           await saveTranscriptMarkdown(markdown, {
             cwd: process.cwd(),
+            prefix: codingProduct.transcriptPrefix as string,
             requestedPath,
             now,
           })
@@ -104,9 +114,10 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
       liveTasks.delete(event.taskId);
     }
   });
+  const directShell = codingProduct.capabilities?.directShell;
   const shellTool =
-    runtime.agentOptions.tools?.find((candidate) => candidate.name === "bash") ??
-    bashTool({ root: process.cwd() });
+    runtime.agentOptions.tools?.find((candidate) => candidate.name === directShell?.toolName) ??
+    directShell?.fallbackTool({ cwd: process.cwd() });
   let shellController: AbortController | undefined;
 
   try {
@@ -162,6 +173,7 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
         setPermissionMode: runtime.setPermissionMode,
         abortAuxiliary: () => shellController?.abort(),
         runShell: async (command, emit) => {
+          if (!shellTool) throw new Error("direct shell execution is unavailable");
           if (shellController) throw new Error("a shell command is already active");
           const controller = new AbortController();
           shellController = controller;

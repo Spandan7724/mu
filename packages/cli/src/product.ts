@@ -6,7 +6,7 @@ import type {
   ProductLaunchContext,
   ProfileRequest,
 } from "@mu/cli-runtime";
-import { usageLine } from "@mu/cli-runtime";
+import { helpText, usageLine } from "@mu/cli-runtime";
 import { bashTool } from "@mu/profile-coding";
 import { codingRenderers, formatCwdForFooter } from "@mu/tui";
 import cliPackage from "../package.json";
@@ -160,3 +160,5 @@ export const codingProduct: ProductDescriptor<CodingProductOptions> = {
   footerLocation: (context) =>
     formatCwdForFooter(context.cwd, process.env.HOME ?? process.env.USERPROFILE),
 };
+
+export const HELP_TEXT = helpText(codingProduct);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_VERSION, SessionTree } from "@mu/core";
 import { codingProfile } from "@mu/profile-coding";
-import { sessionStoreForProfile } from "./profiles.ts";
+import { sessionStoreForProfile } from "@mu/cli-runtime";
 
 describe("profile session persistence", () => {
   test("file-backed stores use the profile scope across process instances", async () => {

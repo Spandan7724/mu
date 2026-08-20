@@ -3,10 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { parseArgs } from "./args.ts";
-import { runHeadless } from "./headless.ts";
-import { runRpc } from "./rpc.ts";
-import { createCliSessionRuntime } from "./session-runtime.ts";
+import { createCliSessionRuntime, parseArgs, runHeadless, runRpc } from "@mu/cli-runtime";
+import { codingProduct } from "./product.ts";
 
 interface WorkerResult {
   outputs: Record<string, unknown>[];
@@ -138,6 +136,7 @@ describe("compiled managed custom profiles", () => {
     try {
       const interactiveRuntime = await createCliSessionRuntime({
         cwd: home,
+        product: codingProduct,
         profile,
         model: "anthropic/claude-haiku-4-5",
         permissions: "forward",
@@ -152,14 +151,11 @@ describe("compiled managed custom profiles", () => {
 
       let headlessOutput = "";
       const headlessCode = await runHeadless(
-        parseArgs([
-          "-p",
-          "/fixture",
-          "--profile",
-          profile,
-          "--model",
-          "anthropic/claude-haiku-4-5",
-        ]),
+        codingProduct,
+        parseArgs(
+          ["-p", "/fixture", "--profile", profile, "--model", "anthropic/claude-haiku-4-5"],
+          codingProduct,
+        ),
         {},
         {
           stdout: (chunk) => {
@@ -171,6 +167,7 @@ describe("compiled managed custom profiles", () => {
 
       const rpcRuntime = await createCliSessionRuntime({
         cwd: home,
+        product: codingProduct,
         profile,
         model: "anthropic/claude-haiku-4-5",
         permissions: "forward",

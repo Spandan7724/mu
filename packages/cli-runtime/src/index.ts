@@ -45,6 +45,7 @@ export {
   availableModels,
   modelPickerDescription,
   modelPickerItems,
+  preferredProviderModel,
 } from "./model-picker.ts";
 export { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 export type {
