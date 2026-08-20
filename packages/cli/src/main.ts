@@ -1,27 +1,32 @@
 #!/usr/bin/env bun
+import {
+  createCliSessionRuntime,
+  EXIT,
+  initializeModelCatalog,
+  linesFrom,
+  loadUserConfig,
+  type ModelCatalog,
+  modelCatalogDiagnostics,
+  parseArgs,
+  runHeadless,
+  runInteractive,
+  runRpc,
+} from "@mu/cli-runtime";
 import { createCredentialResolver, findModel } from "mu";
 import cliPackage from "../package.json";
 import { runAgentSupervisor } from "./agent-supervisor.ts";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import { runAgentWorker } from "./agent-worker.ts";
 import { runAgentView } from "./agents-app.ts";
-import { HELP_TEXT, parseArgs } from "./args.ts";
-import { loadUserConfig } from "./config.ts";
-import { EXIT, runHeadless } from "./headless.ts";
-import { runInteractive } from "./interactive.ts";
-import {
-  initializeModelCatalog,
-  type ModelCatalog,
-  modelCatalogDiagnostics,
-} from "./model-catalog.ts";
-import { linesFrom, runRpc } from "./rpc.ts";
+import { userConfigPath } from "./data.ts";
+import { codingProduct, HELP_TEXT } from "./product.ts";
 import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
-import { createCliSessionRuntime } from "./session-runtime.ts";
 
-const VERSION = cliPackage.version;
+const VERSION = codingProduct.version;
+const PACKAGE_NAME = cliPackage.name;
 
 async function main(): Promise<number> {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseArgs(process.argv.slice(2), codingProduct);
   const io = {
     stdout: (chunk: string) => process.stdout.write(chunk),
     stderr: (chunk: string) => process.stderr.write(chunk),
@@ -33,10 +38,8 @@ async function main(): Promise<number> {
     return EXIT.usage;
   }
 
-  if (
-    args.resumeSessionId &&
-    (args.mode === "tui" || args.mode === "headless" || args.mode === "rpc")
-  ) {
+  const surface = args.mode === "tui" || args.mode === "headless" || args.mode === "rpc";
+  if (args.resumeSessionId && surface) {
     const ownership = await readSessionOwnership(agentViewPaths(), args.resumeSessionId).catch(
       (error) => {
         io.stderr(
@@ -66,19 +69,16 @@ async function main(): Promise<number> {
     }
   }
 
+  const needsCatalog =
+    surface || args.productCommand === "agents" || args.productCommand === "agents-worker";
   let modelCatalog: ModelCatalog | undefined;
-  if (
-    args.mode === "tui" ||
-    args.mode === "headless" ||
-    args.mode === "rpc" ||
-    args.mode === "agents" ||
-    args.mode === "agents-worker"
-  ) {
+  if (needsCatalog) {
     modelCatalog = await initializeModelCatalog({
+      cacheFile: codingProduct.data.modelCatalogFile(),
       getCredentials: createCredentialResolver(),
       clientVersion: VERSION,
     });
-    const configured = args.model ?? (await loadUserConfig()).model;
+    const configured = args.model ?? (await loadUserConfig(userConfigPath())).model;
     const needsConfiguredModel =
       typeof configured === "string" && configured.length > 0 && !findModel(configured);
     if (args.mode !== "tui" || needsConfiguredModel) {
@@ -92,18 +92,13 @@ async function main(): Promise<number> {
   }
 
   try {
-    switch (args.mode) {
-      case "help":
-        io.stdout(HELP_TEXT);
-        return 0;
-      case "version":
-        io.stdout(`mu ${VERSION}\n`);
-        return 0;
+    // `--help` and `--version` stay free even beside a product command.
+    switch (args.mode === "product" ? args.productCommand : undefined) {
       case "self-update":
         return runSelfUpdate(
           {
             currentVersion: VERSION,
-            packageName: cliPackage.name,
+            packageName: PACKAGE_NAME,
             entryPath: process.argv[1],
             execPath: process.execPath,
           },
@@ -112,24 +107,37 @@ async function main(): Promise<number> {
       case "self-uninstall":
         return runSelfUninstall(
           {
-            packageName: cliPackage.name,
+            packageName: PACKAGE_NAME,
             entryPath: process.argv[1],
             execPath: process.execPath,
-            purgeData: args.purgeData,
+            purgeData: args.product.purgeData,
           },
           io,
         );
-      case "headless":
-        return runHeadless(args, {}, io);
       case "agents":
         return runAgentView(args);
       case "agents-supervisor":
         return runAgentSupervisor(args);
       case "agents-worker":
         return runAgentWorker(args);
+      default:
+        break;
+    }
+
+    switch (args.mode) {
+      case "help":
+        io.stdout(HELP_TEXT);
+        return 0;
+      case "version":
+        io.stdout(`mu ${VERSION}\n`);
+        return 0;
+      case "headless":
+        return runHeadless(codingProduct, args, {}, io);
       case "rpc": {
         const runtime = await createCliSessionRuntime({
           cwd: process.cwd(),
+          product: codingProduct,
+          productOptions: args.product,
           profile: args.profile,
           model: args.model,
           permissionMode: args.permissionMode,
@@ -174,7 +182,10 @@ async function main(): Promise<number> {
         return 0;
       }
       default:
-        return runInteractive(args, {}, modelCatalog);
+        return runInteractive(codingProduct, args, {
+          ...(modelCatalog ? { modelCatalog } : {}),
+          ownership: { check: describeSessionOwner },
+        });
     }
   } catch (error) {
     io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -182,6 +193,15 @@ async function main(): Promise<number> {
   } finally {
     modelCatalog?.stop();
   }
+}
+
+// Interactive /resume must not open a session the agent-view supervisor owns.
+async function describeSessionOwner(sessionId: string): Promise<string | undefined> {
+  const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
+  if (!ownership) return undefined;
+  return isProcessAlive(ownership.supervisorPid)
+    ? `${sessionId} is live in agent view · exit and run mu --resume ${sessionId}`
+    : `${sessionId} has a stale runtime owner · open mu agents to recover it safely`;
 }
 
 process.exitCode = await main();

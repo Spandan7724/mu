@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   type Credential,
@@ -53,7 +52,8 @@ export function modelCatalogDiagnostics(
 }
 
 export interface ModelCatalogOptions {
-  cacheFile?: string;
+  // The product owns its data namespace, so the cache location is supplied.
+  cacheFile: string;
   timeoutMs?: number;
   attempts?: number;
   refresh?: RefreshModels;
@@ -172,10 +172,6 @@ async function saveCache(file: string, models: ModelInfo[]): Promise<void> {
   }
 }
 
-export function modelCatalogCachePath(home = homedir()): string {
-  return join(home, ".mu", "models.json");
-}
-
 export class ModelCatalog {
   private readonly cacheFile: string;
   private readonly timeoutMs: number;
@@ -192,8 +188,8 @@ export class ModelCatalog {
   private cachedModels = 0;
   private cacheIssue: string | undefined;
 
-  constructor(options: ModelCatalogOptions = {}) {
-    this.cacheFile = options.cacheFile ?? modelCatalogCachePath();
+  constructor(options: ModelCatalogOptions) {
+    this.cacheFile = options.cacheFile;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.attempts = Math.max(1, options.attempts ?? DEFAULT_ATTEMPTS);
     this.refreshModels = options.refresh ?? refreshModels;
@@ -305,9 +301,7 @@ export class ModelCatalog {
   }
 }
 
-export async function initializeModelCatalog(
-  options: ModelCatalogOptions = {},
-): Promise<ModelCatalog> {
+export async function initializeModelCatalog(options: ModelCatalogOptions): Promise<ModelCatalog> {
   const catalog = new ModelCatalog(options);
   await catalog.loadCache();
   void catalog.refresh();

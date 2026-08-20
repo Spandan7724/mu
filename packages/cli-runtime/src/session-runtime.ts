@@ -16,15 +16,15 @@ import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
-import {
-  DEFAULT_PROFILE,
-  profileOptionsFromArgs,
-  resolveProfile,
-  sessionStoreForProfile,
-} from "./profiles.ts";
+import type { ProductDescriptor } from "./product.ts";
+import { sessionStoreForProfile } from "./profiles.ts";
 
-export interface SessionRuntimeOptions {
+export interface SessionRuntimeOptions<Options = unknown> {
   cwd: string;
+  // Supplies the profile, the data namespace, and any product commands. Absent
+  // only for callers that hand over a complete `agentOptions` themselves.
+  product?: ProductDescriptor<Options> | undefined;
+  productOptions?: Options | undefined;
   profile?: string | undefined;
   model?: string | undefined;
   permissionMode?: string | undefined;
@@ -56,26 +56,43 @@ export interface CliSessionRuntime {
   cancelPermissions(): void;
 }
 
-export async function createCliSessionRuntime(
-  options: SessionRuntimeOptions,
+export async function createCliSessionRuntime<Options>(
+  options: SessionRuntimeOptions<Options>,
 ): Promise<CliSessionRuntime> {
   const overrides = options.agentOptions ?? {};
-  const useBuiltIns = !overrides.tools;
+  const product = options.product;
+  const useBuiltIns = !overrides.tools && product !== undefined;
+  // Without a product there is no config file to consult; that branch is only
+  // reachable with an explicit --model, which short-circuits the file read.
   const model =
-    useBuiltIns || options.model ? await resolveCliModel(options.model) : overrides.model;
+    useBuiltIns || options.model
+      ? await resolveCliModel(
+          options.model,
+          product?.data.configFile() ?? "",
+          undefined,
+          undefined,
+          (message) => options.onDiagnostic?.(message.trimEnd()),
+        )
+      : overrides.model;
   let profile: Profile | undefined;
   let resolved = overrides;
-  if (useBuiltIns) {
-    profile = await resolveProfile(
-      options.profile ?? DEFAULT_PROFILE,
-      profileOptionsFromArgs(options.noInstructions ? { noInstructions: true } : {}),
-    );
+  if (useBuiltIns && product) {
+    profile = await product.createProfile({
+      name: options.profile,
+      cwd: options.cwd,
+      noInstructions: options.noInstructions === true,
+      options: options.productOptions as Options,
+    });
     for (const diagnostic of profile.diagnostics ?? [])
       options.onDiagnostic?.(`instruction warning: ${diagnostic}`);
     if (typeof model !== "string") throw new Error("profile loading requires a model reference");
     resolved = await optionsFromProfile(profile, model, overrides);
-    if (!resolved.session)
-      resolved = { ...resolved, session: await sessionStoreForProfile(profile) };
+    if (!resolved.session) {
+      resolved = {
+        ...resolved,
+        session: await sessionStoreForProfile(profile, product.data.sessionRoot?.()),
+      };
+    }
   }
 
   const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
@@ -147,6 +164,7 @@ export async function createCliSessionRuntime(
     forkPoints: () => agent.forkPoints(),
     diff: () => agent.sessionDiff(),
   });
+  for (const command of product?.commands?.({ cwd: options.cwd }) ?? []) commands.register(command);
   for (const command of profile?.commands ?? []) commands.register(command);
   for (const command of loaded.host.commands.list()) commands.register(command);
   for (const markdown of await loadMarkdownCommands({ projectDir: options.cwd })) {

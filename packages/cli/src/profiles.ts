@@ -1,7 +1,6 @@
-import { isAbsolute, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { profileModuleSpecifier } from "@mu/cli-runtime";
 import { codingProfile } from "@mu/profile-coding";
-import { FileSessionStore, loadProfile, type Profile } from "mu";
+import { loadProfile, type Profile } from "mu";
 
 // Profiles shipped with mu are imported statically so the bundler can see them.
 // A runtime-string import works under `bun run` but not inside a
@@ -12,12 +11,6 @@ const BUILT_IN: Record<string, (options: Record<string, unknown>) => Promise<Pro
 
 // Anything not shipped with mu is a module specifier the user supplies, loaded
 // dynamically against this package's resolution.
-export function profileModuleSpecifier(specifier: string, cwd = process.cwd()): string {
-  return isAbsolute(specifier) || specifier.startsWith(".")
-    ? pathToFileURL(resolve(cwd, specifier)).href
-    : specifier;
-}
-
 const importer = (specifier: string) =>
   import(profileModuleSpecifier(specifier)) as Promise<Record<string, unknown>>;
 
@@ -36,15 +29,4 @@ export function profileOptionsFromArgs(args: {
   noInstructions?: boolean;
 }): Record<string, unknown> {
   return args.noInstructions ? { instructions: { enabled: false } } : {};
-}
-
-export async function sessionStoreForProfile(
-  profile: Profile,
-  root?: string,
-): Promise<FileSessionStore> {
-  const scope = await profile.scope?.();
-  return new FileSessionStore({
-    ...(root ? { root } : {}),
-    ...(scope ? { scope } : {}),
-  });
 }

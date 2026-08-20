@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
+import { parseArgs } from "@mu/cli-runtime";
 import { runAgentWorker } from "../src/agent-worker.ts";
-import { parseArgs } from "../src/args.ts";
+import { codingProduct } from "../src/product.ts";
 
 const input = process.env.MU_COMPILED_WORKER_INPUT;
 const lines = input
@@ -11,6 +12,6 @@ const lines = input
     })()
   : undefined;
 
-process.exitCode = await runAgentWorker(parseArgs(process.argv.slice(2)), {
+process.exitCode = await runAgentWorker(parseArgs(process.argv.slice(2), codingProduct), {
   ...(lines ? { lines } : {}),
 });

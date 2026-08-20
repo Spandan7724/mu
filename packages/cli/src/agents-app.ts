@@ -1,10 +1,18 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import {
+  modelPickerItems,
+  type ParsedArgs,
+  registerDeclaredRenderers,
+  registerProductRenderers,
+  renderCheckpointCommand,
+  renderDiffCommand,
+  resolveCliModel,
+} from "@mu/cli-runtime";
+import {
   App,
   type ColorDepth,
   CTRL_C_EXIT_WINDOW_MS,
-  codingRenderers,
   composerRule,
   detectColorDepth,
   Editor,
@@ -33,14 +41,8 @@ import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.
 import { AgentViewClient } from "./agent-view-client.ts";
 import type { AgentViewResponse } from "./agent-view-protocol.ts";
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
-import type { ParsedArgs } from "./args.ts";
-import { resolveCliModel } from "./config.ts";
-import {
-  registerDeclaredRenderers,
-  renderCheckpointCommand,
-  renderDiffCommand,
-} from "./interactive.ts";
-import { modelPickerItems } from "./model-picker.ts";
+import { userConfigPath } from "./data.ts";
+import { type CodingProductOptions, codingProduct } from "./product.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 interface AgentsAppCallbacks {
@@ -556,7 +558,7 @@ export async function rendererRegistryForManagedProfile(
   load: typeof resolveProfile = resolveProfile,
 ): Promise<{ registry: RendererRegistry; dispose: () => Promise<void> }> {
   const registry = new RendererRegistry();
-  registry.registerAll(codingRenderers);
+  registerProductRenderers(registry, codingProduct.renderers);
   if (record.profile === DEFAULT_PROFILE) return { registry, dispose: async () => {} };
 
   const profile: Profile = await load(record.profile, {
@@ -573,7 +575,7 @@ export async function rendererRegistryForManagedProfile(
 }
 
 export async function runAgentView(
-  args: ParsedArgs,
+  args: ParsedArgs<CodingProductOptions>,
   options: { initialSessionId?: string; exitAfterDetach?: boolean } = {},
 ): Promise<number> {
   const terminal = new Terminal();
@@ -582,7 +584,7 @@ export async function runAgentView(
     return 2;
   }
   const cwd = process.cwd();
-  const dispatchModel = await resolveCliModel(args.model);
+  const dispatchModel = await resolveCliModel(args.model, userConfigPath());
   const auth = await readAuthFile().catch(() => ({ version: 1 as const, providers: {} }));
   const selectableModels = modelPickerItems(new ExtensionHost(), auth.providers);
   const depth = detectColorDepth();

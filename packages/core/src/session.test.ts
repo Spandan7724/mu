@@ -2,10 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { customMessage, userMessage } from "./messages.ts";
 import {
   MemorySessionStore,
+  NO_SESSION_PROFILE,
+  normalizeSessionEnvironment,
+  normalizeSessionProfile,
+  parseEntry,
   parseSession,
+  SESSION_ENVIRONMENT_LIMITS,
   SESSION_VERSION,
   SessionTree,
   serializeSession,
+  sessionEnvironmentIssues,
 } from "./session.ts";
 
 function newTree(): SessionTree {
@@ -339,5 +345,78 @@ describe("MemorySessionStore", () => {
     const loaded = await store.load("s1");
     expect(loaded?.messagesAt().length).toBe(1);
     expect(await store.load("missing")).toBeUndefined();
+  });
+});
+
+describe("session environment contract", () => {
+  test("a bounded environment survives serialization untouched", () => {
+    const environment = normalizeSessionEnvironment({
+      surface: "remote",
+      connection: "socket",
+      "host.family": "linux",
+      tab_count: "3",
+    });
+    const header = {
+      type: "session" as const,
+      version: SESSION_VERSION,
+      id: "s1",
+      createdAt: new Date(0).toISOString(),
+      profile: "example",
+      environment,
+    };
+
+    expect(parseSession(serializeSession([header]))[0]).toEqual(header);
+    expect(new SessionTree(header).header?.environment).toEqual(environment);
+  });
+
+  test("an oversized value is clamped instead of rejected", () => {
+    const clamped = normalizeSessionEnvironment({ note: "x".repeat(9_000) });
+    expect(clamped.note?.length).toBe(SESSION_ENVIRONMENT_LIMITS.maxValueLength);
+    expect(clamped.note?.endsWith("\u2026")).toBe(true);
+    expect(sessionEnvironmentIssues(clamped)).toEqual([]);
+  });
+
+  test("a malformed environment is a loud error, not a silent header", () => {
+    expect(() => normalizeSessionEnvironment({ ok: 42 })).toThrow("expected a string");
+    expect(() => normalizeSessionEnvironment({ "not a key": "v" })).toThrow(
+      "Invalid session environment key",
+    );
+    expect(() => normalizeSessionEnvironment("nope")).toThrow("expected an object");
+    expect(() =>
+      normalizeSessionEnvironment(
+        Object.fromEntries(
+          Array.from({ length: SESSION_ENVIRONMENT_LIMITS.maxEntries + 1 }, (_, i) => [
+            `k${i}`,
+            "v",
+          ]),
+        ),
+      ),
+    ).toThrow("more than");
+  });
+
+  test("a header carrying an out-of-contract environment does not load", () => {
+    const header = {
+      type: "session",
+      version: SESSION_VERSION,
+      id: "s1",
+      createdAt: new Date(0).toISOString(),
+      profile: "coding",
+      environment: { "bad key": "v" },
+    };
+    expect(() => parseEntry(JSON.stringify(header))).toThrow("Invalid session header");
+    expect(() => parseEntry(JSON.stringify({ ...header, environment: { ok: 1 } }))).toThrow(
+      "Invalid session header",
+    );
+    expect(() => parseEntry(JSON.stringify({ ...header, profile: "" }))).toThrow(
+      "Invalid session header",
+    );
+  });
+
+  test("a profile identity has to be a real name", () => {
+    expect(normalizeSessionProfile(undefined)).toBe(NO_SESSION_PROFILE);
+    expect(normalizeSessionProfile("browser")).toBe("browser");
+    expect(() => normalizeSessionProfile("")).toThrow("non-empty string");
+    expect(() => normalizeSessionProfile("   ")).toThrow("non-empty string");
+    expect(() => normalizeSessionProfile("p".repeat(200))).toThrow("too long");
   });
 });

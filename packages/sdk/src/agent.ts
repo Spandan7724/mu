@@ -39,11 +39,14 @@ import {
   MemorySessionStore,
   MICROCOMPACT_THRESHOLD,
   microcompact,
+  normalizeSessionEnvironment,
+  normalizeSessionProfile,
   type PermissionRequest,
   type PermissionRule,
   type ProfileRuntime,
   runLoop,
   SESSION_VERSION,
+  type SessionEnvironment,
   type SessionStore,
   SessionTree,
   shouldCompact,
@@ -78,9 +81,11 @@ export interface AgentOptions {
   session?: SessionStore;
   sessionId?: string;
   // Stored in the session header so every surface can identify and reconstruct
-  // the profile-specific conversation environment.
+  // the profile-specific conversation environment. Both are resolved once and
+  // reused by newSession(), so a session never loses the identity it was
+  // started with. Absent sessionProfile means no profile was selected.
   sessionProfile?: string;
-  sessionEnvironment?: Record<string, string>;
+  sessionEnvironment?: SessionEnvironment;
   thinkingLevel?: ThinkingLevel;
   apiKey?: string;
   // Resolved for the active provider before every model request. Returning
@@ -214,9 +219,13 @@ export class Agent {
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
   private permissionRules: PermissionRule[];
+  private readonly profileIdentity: string;
+  private readonly environmentMetadata: SessionEnvironment;
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
+    this.profileIdentity = normalizeSessionProfile(options.sessionProfile);
+    this.environmentMetadata = normalizeSessionEnvironment(options.sessionEnvironment);
     this.permissionRules = [...(options.permissions ?? DEFAULT_PERMISSIONS)];
     this.model = resolveModel(options.model, options.extensions);
     this.currentThinking = thinkingLevelForModel(this.model, options.thinkingLevel);
@@ -228,8 +237,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: this._sessionId,
       createdAt: new Date().toISOString(),
-      profile: options.sessionProfile ?? "default",
-      environment: { ...(options.sessionEnvironment ?? {}) },
+      profile: this.profileIdentity,
+      environment: { ...this.environmentMetadata },
     });
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
@@ -251,6 +260,15 @@ export class Agent {
 
   get sessionStore(): SessionStore {
     return this.store;
+  }
+
+  // The identity written into every session header this Agent starts.
+  get sessionProfile(): string {
+    return this.profileIdentity;
+  }
+
+  get sessionEnvironment(): SessionEnvironment {
+    return { ...this.environmentMetadata };
   }
 
   get modelRef(): string {
@@ -405,8 +423,8 @@ export class Agent {
       version: SESSION_VERSION,
       id: sessionId,
       createdAt: new Date().toISOString(),
-      profile: this.options.sessionProfile ?? "default",
-      environment: { ...(this.options.sessionEnvironment ?? {}) },
+      profile: this.profileIdentity,
+      environment: { ...this.environmentMetadata },
     });
     this.tree.append({
       type: "settings-change",

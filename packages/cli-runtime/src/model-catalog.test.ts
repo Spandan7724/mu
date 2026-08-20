@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelInfo } from "mu";
-import { ModelCatalog, modelCatalogCachePath, modelCatalogDiagnostics } from "./model-catalog.ts";
+import { ModelCatalog, modelCatalogDiagnostics } from "./model-catalog.ts";
 
 function model(id: string): ModelInfo {
   return {
@@ -34,10 +34,6 @@ function cacheBody(models: ModelInfo[]): string {
 }
 
 describe("model catalog cache", () => {
-  test("lives under ~/.mu", () => {
-    expect(modelCatalogCachePath("/users/test")).toBe(join("/users/test", ".mu", "models.json"));
-  });
-
   test("a successful refresh is persisted privately and loads on the next launch", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-"));
     const file = join(root, ".mu", "models.json");

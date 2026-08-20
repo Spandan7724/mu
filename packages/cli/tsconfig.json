@@ -17,6 +17,9 @@
       "path": "../tui"
     },
     {
+      "path": "../cli-runtime"
+    },
+    {
       "path": "../profiles/coding"
     }
   ]

@@ -26,7 +26,7 @@ export async function runUserShellCommand(
   emit({
     type: "tool_execution_start",
     toolCallId,
-    toolName: "bash",
+    toolName: tool.name,
     args: { command, userShell: true },
   });
 
@@ -42,7 +42,7 @@ export async function runUserShellCommand(
   const message: ToolResultMessage = {
     role: "toolResult",
     toolCallId,
-    toolName: "bash",
+    toolName: tool.name,
     content: result.content,
     ...(result.details !== undefined ? { details: result.details } : {}),
     isError: result.isError === true,

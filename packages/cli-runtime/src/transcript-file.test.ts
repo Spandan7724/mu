@@ -19,7 +19,9 @@ afterEach(async () => {
 describe("transcript files", () => {
   test("generates a timestamped Markdown path in the current directory", () => {
     const cwd = resolve("workspace");
-    expect(transcriptPath({ cwd, now: new Date("2026-08-03T12:34:56.789Z") })).toEqual({
+    expect(
+      transcriptPath({ cwd, prefix: "mu", now: new Date("2026-08-03T12:34:56.789Z") }),
+    ).toEqual({
       path: join(cwd, "mu-transcript-2026-08-03T12-34-56-789Z.md"),
       generated: true,
     });
@@ -51,8 +53,8 @@ describe("transcript files", () => {
   test("adds a suffix when a generated timestamp collides", async () => {
     const cwd = await temporaryDirectory();
     const now = new Date("2026-08-03T12:34:56.789Z");
-    const first = await saveTranscriptMarkdown("first", { cwd, now });
-    const second = await saveTranscriptMarkdown("second", { cwd, now });
+    const first = await saveTranscriptMarkdown("first", { cwd, prefix: "mu", now });
+    const second = await saveTranscriptMarkdown("second", { cwd, prefix: "mu", now });
     expect(first.displayPath).toBe("mu-transcript-2026-08-03T12-34-56-789Z.md");
     expect(second.displayPath).toBe("mu-transcript-2026-08-03T12-34-56-789Z-2.md");
   });

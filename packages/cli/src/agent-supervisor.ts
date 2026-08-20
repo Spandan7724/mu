@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmod, open, readFile, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
+import type { ParsedArgs } from "@mu/cli-runtime";
 import { terminateProcessTree } from "@mu/profile-coding";
 import type { AgentEvent, AgentMessage, PermissionRequest, Usage } from "mu";
 import { z } from "zod";
@@ -35,7 +36,6 @@ import {
   type SessionOwnership,
   updateSessionOwnershipWorker,
 } from "./agent-view-store.ts";
-import type { ParsedArgs } from "./args.ts";
 
 interface WorkerSnapshot {
   sessionId: string;
@@ -1120,7 +1120,7 @@ export class AgentSupervisor {
   }
 }
 
-export async function runAgentSupervisor(_args: ParsedArgs): Promise<number> {
+export async function runAgentSupervisor(_args: ParsedArgs<unknown>): Promise<number> {
   const supervisor = new AgentSupervisor();
   await supervisor.start();
   const close = () => void supervisor.close();

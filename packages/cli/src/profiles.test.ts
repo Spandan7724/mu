@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sessionStoreForProfile } from "@mu/cli-runtime";
 import { SESSION_VERSION, SessionTree } from "@mu/core";
 import { codingProfile } from "@mu/profile-coding";
-import { sessionStoreForProfile } from "./profiles.ts";
 
 describe("profile session persistence", () => {
   test("file-backed stores use the profile scope across process instances", async () => {
