@@ -9,6 +9,7 @@
     { "path": "packages/profiles/coding" },
     { "path": "packages/profiles/browser" },
     { "path": "packages/browser-fixture" },
-    { "path": "packages/cli" }
+    { "path": "packages/cli" },
+    { "path": "packages/browser-cli" }
   ]
 }

@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../sdk"
+    },
+    {
+      "path": "../tui"
+    },
+    {
+      "path": "../cli-runtime"
+    },
+    {
+      "path": "../profiles/browser"
+    }
+  ]
+}
