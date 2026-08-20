@@ -145,7 +145,7 @@ export const outcomeRoutes: RouteTable = {
   "GET /outcome/ambiguous": () =>
     outcomeForm(
       "/outcome/ambiguous",
-      "Posts here record the side effect and then drop the connection. The client can never know.",
+      "Posts here record the side effect and then never finish the response. The client can never know.",
       "outcome-ambiguous-form",
     ),
   "POST /outcome/confirmed": (ctx) => postWith(ctx, "confirmed"),
