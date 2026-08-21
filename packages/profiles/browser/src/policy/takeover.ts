@@ -114,12 +114,14 @@ export function detectTakeover(element: BrowserElement): TakeoverRequirement {
     claim("captcha", "captcha challenge");
   }
   if (inputType === "password") claim("password", "password input type");
-  if (PASSWORD_PATTERN.test(text)) claim("password", "password-shaped label");
-  if (PASSKEY_PATTERN.test(text)) claim("passkey", "passkey or biometric prompt");
   if (inputType !== undefined && OTP_INPUT_TYPES.has(inputType)) {
     claim("mfa", "one-time-code input type");
   }
+  // Checked ahead of the password pattern so "one-time password" reports as the
+  // one-time code it is. Both require takeover either way.
   if (MFA_PATTERN.test(text)) claim("mfa", "one-time code, MFA or security question");
+  if (PASSWORD_PATTERN.test(text)) claim("password", "password-shaped label");
+  if (PASSKEY_PATTERN.test(text)) claim("passkey", "passkey or biometric prompt");
   if (element.risk?.includes("password") === true) claim("password", "driver flagged a credential");
   if (element.risk?.includes("authentication") === true) {
     claim("login", "driver flagged authentication");
