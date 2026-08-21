@@ -100,11 +100,11 @@ const PATTERNS: [InjectionKind, RegExp][] = [
   ],
   [
     "policy-change",
-    /\b(?:add|append|include|extend)\b[^.\n]{0,60}\b(?:allowed|permitted|trusted)\s+(?:origins?|domains?|sites?|hosts?)/i,
+    /\b(?:add|append|include|extend)\b[^\n]{0,60}\b(?:allowed|permitted|trusted)\s+(?:origins?|domains?|sites?|hosts?)/i,
   ],
   [
     "policy-change",
-    /\b(?:update|change|edit|modify|rewrite|set)\b[^.\n]{0,40}\b(?:permission|policy|policies|permissions|safety\s+rules?|allow\s*list|allowlist)\b/i,
+    /\b(?:update|change|edit|modify|rewrite|set)\b[^\n]{0,40}\b(?:permission|policy|policies|permissions|safety\s+rules?|allow\s*list|allowlist)\b/i,
   ],
   [
     "origin-widening",
@@ -112,7 +112,7 @@ const PATTERNS: [InjectionKind, RegExp][] = [
   ],
   [
     "safeguard-disable",
-    /\b(?:disable|turn\s+off|bypass|circumvent|override|suppress)\b[^.\n]{0,40}\b(?:safeguard\w*|safety|check\w*|guard\w*|filter\w*|restriction\w*|confirmation\w*|approval\w*|policy)/i,
+    /\b(?:disable|turn\s+off|bypass|circumvent|override|suppress)\b[^\n]{0,40}\b(?:safeguard\w*|safety|check\w*|guard\w*|filter\w*|restriction\w*|confirmation\w*|approval\w*|policy)/i,
   ],
   [
     "safeguard-disable",
@@ -132,11 +132,11 @@ const PATTERNS: [InjectionKind, RegExp][] = [
   ],
   [
     "commitment-coercion",
-    /\b(?:submit|purchase|send|delete|order)\b[^.\n]{0,40}\b(?:automatically|without\s+(?:asking|confirmation|approval|review))/i,
+    /\b(?:submit|purchase|send|delete|order)\b[^\n]{0,40}\b(?:automatically|without\s+(?:asking|confirmation|approval|review))/i,
   ],
   [
     "secret-exfiltration",
-    /\b(?:reveal|show|print|share|send|report|disclose|paste|output|return)\b[^.\n]{0,50}\b(?:cookies?|session\s+tokens?|access\s+tokens?|api\s+keys?|credentials?|passwords?|authorization\s+header|local\s*storage|session\s*storage)\b/i,
+    /\b(?:reveal|show|print|share|send|report|disclose|paste|output|return)\b[^\n]{0,50}\b(?:cookies?|session\s+tokens?|access\s+tokens?|api\s+keys?|credentials?|passwords?|authorization\s+header|local\s*storage|session\s*storage)\b/i,
   ],
   [
     "secret-exfiltration",
@@ -144,15 +144,15 @@ const PATTERNS: [InjectionKind, RegExp][] = [
   ],
   [
     "data-exfiltration",
-    /\b(?:upload|attach|send|email|post|transmit)\b[^.\n]{0,60}\b(?:resume|cv|passport|ssn|social\s+security|tax|bank|id\s+card|driver'?s\s+licen[cs]e|another\s+file|other\s+files?|all\s+(?:your|the)\s+files?)\b/i,
+    /\b(?:upload|attach|send|email|post|transmit)\b[^\n]{0,60}\b(?:resume|cv|passport|ssn|social\s+security|tax|bank|id\s+card|driver'?s\s+licen[cs]e|another\s+file|other\s+files?|all\s+(?:your|the)\s+files?)\b/i,
   ],
   [
     "data-exfiltration",
-    /\b(?:list|enumerate|read)\b[^.\n]{0,40}\b(?:local\s+files?|your\s+files?|the\s+file\s*system|home\s+directory)\b/i,
+    /\b(?:list|enumerate|read)\b[^\n]{0,40}\b(?:local\s+files?|your\s+files?|the\s+file\s*system|home\s+directory)\b/i,
   ],
   [
     "local-execution",
-    /\b(?:run|execute|invoke)\b[^.\n]{0,40}\b(?:command|shell|terminal|script|bash|sh|zsh|powershell|cmd\.exe)\b|\b(?:curl|wget)\s+https?:\/\//i,
+    /\b(?:run|execute|invoke)\b[^\n]{0,40}\b(?:command|shell|terminal|script|bash|sh|zsh|powershell|cmd\.exe)\b|\b(?:curl|wget)\s+https?:\/\//i,
   ],
   [
     "software-install",
