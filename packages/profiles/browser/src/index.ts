@@ -2,4 +2,5 @@
 // modules under src/ and the barrel is wired when their work merges.
 // The driver conformance harness is deliberately not re-exported here — it is
 // test-only and reachable at @mu/profile-browser/testing.
+export * from "./artifacts/index.ts";
 export * from "./contracts/index.ts";
