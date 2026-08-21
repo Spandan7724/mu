@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { identifierSchema, timestampSchema } from "./primitives.ts";
-import { type BrowserSecret, browserSecretSchema } from "./secret.ts";
+import { type BrowserSecret, browserSecretSchema, isBrowserSecret } from "./secret.ts";
 
 export type BrowserConnectionMode = "extension" | "persistent";
 export type BrowserFamily = "chrome" | "edge" | "chromium";
@@ -67,7 +67,43 @@ export interface ConnectOptions {
   headless?: boolean | undefined;
 }
 
-export const connectOptionsSchema = z
+// The cross-field rules are shared so the input and live schemas cannot drift apart.
+function refineConnectOptions(
+  options: {
+    mode: BrowserConnectionMode;
+    userDataDir?: string | undefined;
+    extensionToken?: unknown;
+    headless?: boolean | undefined;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (options.mode === "extension") {
+    if (options.userDataDir !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["userDataDir"],
+        message: "extension mode attaches to the user's browser and owns no profile directory",
+      });
+    }
+    if (options.headless === true) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["headless"],
+        message: "extension mode attaches to a visible browser",
+      });
+    }
+  } else if (options.extensionToken !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["extensionToken"],
+      message: "an extension token is only meaningful for extension mode (BD27)",
+    });
+  }
+}
+
+// Configuration-shaped input: the token arrives as a raw string and leaves boxed.
+// This is what parses a config file or CLI flags.
+export const connectOptionsInputSchema = z
   .strictObject({
     mode: browserConnectionModeSchema,
     browser: browserFamilySchema,
@@ -75,33 +111,25 @@ export const connectOptionsSchema = z
     extensionToken: browserSecretSchema.optional(),
     headless: z.boolean().optional(),
   })
-  .superRefine((options, ctx) => {
-    if (options.mode === "extension") {
-      if (options.userDataDir !== undefined) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["userDataDir"],
-          message: "extension mode attaches to the user's browser and owns no profile directory",
-        });
-      }
-      if (options.headless === true) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["headless"],
-          message: "extension mode attaches to a visible browser",
-        });
-      }
-    } else if (options.extensionToken !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["extensionToken"],
-        message: "an extension token is only meaningful for extension mode (BD27)",
-      });
-    }
-  });
+  .superRefine(refineConnectOptions);
 
-// Configuration-shaped input: the token arrives as a string and leaves boxed.
-export type ConnectOptionsInput = z.input<typeof connectOptionsSchema>;
+// A live ConnectOptions that already holds a boxed secret. Passing a raw string here
+// is a bug, not a convenience: it would mean an unboxed token reached the runtime.
+export const connectOptionsSchema = z
+  .strictObject({
+    mode: browserConnectionModeSchema,
+    browser: browserFamilySchema,
+    userDataDir: z.string().min(1).optional(),
+    extensionToken: z
+      .custom<BrowserSecret>(isBrowserSecret, {
+        message: "a live ConnectOptions carries a boxed BrowserSecret, never a raw string",
+      })
+      .optional(),
+    headless: z.boolean().optional(),
+  })
+  .superRefine(refineConnectOptions);
+
+export type ConnectOptionsInput = z.input<typeof connectOptionsInputSchema>;
 
 export function connectionSummary(state: BrowserConnectionState): string {
   const tab = state.activeTabId ? ` tab ${state.activeTabId}` : "";

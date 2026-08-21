@@ -139,7 +139,7 @@ export function planFill(input: PlanInput): FillPlan {
     }
 
     if (isPolicyGoverned(field)) {
-      const decision = resolvePolicy(input.policy, {
+      const decision = resolvePolicy(input.policy, input.facts, {
         field,
         label: match.label,
         required: match.required,

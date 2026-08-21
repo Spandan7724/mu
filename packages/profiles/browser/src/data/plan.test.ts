@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DisclosureLedger } from "../artifacts/disclosure.ts";
-import type { ApplicantPolicy } from "../contracts/applicant.ts";
+import type { ApplicantFact, ApplicantPolicy } from "../contracts/applicant.ts";
 import { findSerializationViolations } from "../contracts/json.ts";
 import { elementRefId } from "../contracts/primitives.ts";
 import { groundedCarryover } from "./carryover.ts";
@@ -27,9 +27,15 @@ function stated(field: string, value: string): FactCandidate {
 }
 
 /** A store grounded exactly the way the product grounds one: resume first, then profile. */
-function groundedStore(document = sampleResume(), policy: ApplicantPolicy = {}) {
+function groundedStore(
+  document = sampleResume(),
+  policy: ApplicantPolicy = {},
+  policyAnswers: ApplicantFact[] = [],
+) {
   const store = createFactStore({ documents: [document], policy, now: () => SAMPLE_TIME });
   const layers: LayeredFact[] = [];
+  // A policy answer is an ordinary fact referenced by id, so it must be in the store.
+  for (const answer of policyAnswers) store.adopt(answer);
   for (const candidate of ingestDocument(document).candidates) {
     const result = store.add(candidate);
     if (result.ok) layers.push({ layer: "document", fact: result.fact });
@@ -45,13 +51,15 @@ function groundedStore(document = sampleResume(), policy: ApplicantPolicy = {}) 
   return { store, layers };
 }
 
+const WORK_AUTH_FACT = policyFact("work_authorization", "yes", "fact-auth");
+
 const POLICY: ApplicantPolicy = {
-  workAuthorization: policyFact("work_authorization", "yes", "fact-auth"),
+  workAuthorizationFactId: WORK_AUTH_FACT.id,
   defaultDemographicBehavior: "decline",
 };
 
 function plan(policy: ApplicantPolicy = POLICY, elements = applyFormElements()) {
-  const { store, layers } = groundedStore(sampleResume(), policy);
+  const { store, layers } = groundedStore(sampleResume(), policy, [WORK_AUTH_FACT]);
   const questions = createQuestionQueue();
   return {
     store,
@@ -132,7 +140,7 @@ describe("nothing is invented", () => {
 
   test("without a demographic policy the question is asked, never answered", () => {
     const { plan: filled } = plan({
-      workAuthorization: policyFact("work_authorization", "yes", "fact-auth"),
+      workAuthorizationFactId: policyFact("work_authorization", "yes", "fact-auth").id,
     });
     expect(filled.fills.find((fill) => fill.field === "gender")).toBeUndefined();
     expect(filled.questions.find((entry) => entry.field === "gender")?.reason).toBe(
@@ -223,7 +231,7 @@ describe("hostile pages produce no values and no questions about identity", () =
   });
 
   test("an instruction injected into a resume never becomes a submitted value", () => {
-    const { store, layers } = groundedStore(poisonedResume(), POLICY);
+    const { store, layers } = groundedStore(poisonedResume(), POLICY, [WORK_AUTH_FACT]);
     const filled = planFill({
       url: SAMPLE_URL,
       elements: applyFormElements(),

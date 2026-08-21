@@ -165,3 +165,58 @@ describe("applicant profile", () => {
     expect(factsForField(profile, "nothing")).toHaveLength(0);
   });
 });
+
+describe("policy answers are facts referenced by id", () => {
+  const fact = {
+    id: "fact-auth",
+    field: "work_authorization",
+    value: "yes",
+    source: { kind: "user" } as const,
+    confidence: "exact" as const,
+    sensitivity: "sensitive" as const,
+    updatedAt: 1,
+  };
+  const base = { version: 1 as const, documents: [], facts: [fact] };
+
+  test("a policy slot resolves to a fact in the collection", () => {
+    const parsed = applicantProfileSchema.safeParse({
+      ...base,
+      policy: { workAuthorizationFactId: "fact-auth" },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  test("a policy referencing an unknown fact is rejected", () => {
+    const parsed = applicantProfileSchema.safeParse({
+      ...base,
+      policy: { workAuthorizationFactId: "fact-missing" },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // A policy slot must not be answerable by an unrelated fact.
+  test("a policy slot cannot be answered by the wrong canonical field", () => {
+    const parsed = applicantProfileSchema.safeParse({
+      ...base,
+      facts: [{ ...fact, field: "phone" }],
+      policy: { workAuthorizationFactId: "fact-auth" },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  test("a demographic slot accepts only demographic facts", () => {
+    expect(
+      applicantProfileSchema.safeParse({
+        ...base,
+        facts: [{ ...fact, field: "gender" }],
+        policy: { demographicAnswerFactIds: ["fact-auth"] },
+      }).success,
+    ).toBe(true);
+    expect(
+      applicantProfileSchema.safeParse({
+        ...base,
+        policy: { demographicAnswerFactIds: ["fact-auth"] },
+      }).success,
+    ).toBe(false);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { browserConnectionStateSchema, connectOptionsSchema } from "./connection.ts";
+import { browserConnectionStateSchema, connectOptionsInputSchema } from "./connection.ts";
 import { BrowserSecret, isBrowserSecret, REDACTED } from "./secret.ts";
 
 const TOKEN = "mu_ext_9f3c1a";
@@ -32,7 +32,7 @@ describe("browser secret", () => {
   });
 
   test("connect options box a configured token so it cannot be serialized raw", () => {
-    const parsed = connectOptionsSchema.parse({
+    const parsed = connectOptionsInputSchema.parse({
       mode: "extension",
       browser: "chrome",
       extensionToken: TOKEN,

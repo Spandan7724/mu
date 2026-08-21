@@ -39,6 +39,12 @@ export function contains(haystack: string, needle: string, what: string): void {
   }
 }
 
+export function includes<T>(allowed: readonly T[], value: T, what: string): void {
+  if (!allowed.includes(value)) {
+    fail(`${what}: ${JSON.stringify(value)} is not one of ${JSON.stringify(allowed)}`);
+  }
+}
+
 export function excludes(haystack: string, needle: string, what: string): void {
   if (haystack.includes(needle)) {
     fail(`${what}: must not contain ${JSON.stringify(needle)}`);

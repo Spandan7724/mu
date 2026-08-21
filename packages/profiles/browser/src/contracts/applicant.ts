@@ -107,21 +107,34 @@ export type DemographicBehavior = "ask" | "decline" | "omit-when-optional";
 
 export const demographicBehaviorSchema = z.enum(["ask", "decline", "omit-when-optional"]);
 
+// A policy answer is a fact like any other. It lives exactly once, in
+// ApplicantProfile.facts, and the policy references it by id — so disclosure,
+// replay, provenance and receipts all resolve it through the same lookup.
 export interface ApplicantPolicy {
-  workAuthorization?: ApplicantFact | undefined;
-  sponsorship?: ApplicantFact | undefined;
-  relocation?: ApplicantFact | undefined;
-  compensation?: ApplicantFact | undefined;
-  demographicAnswers?: ApplicantFact[] | undefined;
+  workAuthorizationFactId?: string | undefined;
+  sponsorshipFactId?: string | undefined;
+  relocationFactId?: string | undefined;
+  compensationFactId?: string | undefined;
+  demographicAnswerFactIds?: string[] | undefined;
   defaultDemographicBehavior?: DemographicBehavior | undefined;
 }
 
+// The canonical field each policy slot must point at, so a policy cannot answer
+// "work authorization" with a fact about someone's phone number.
+export const POLICY_FACT_FIELDS = {
+  workAuthorizationFactId: ["work_authorization"],
+  sponsorshipFactId: ["sponsorship"],
+  relocationFactId: ["relocation"],
+  compensationFactId: ["desired_salary"],
+  demographicAnswerFactIds: ["gender", "ethnicity", "veteran_status", "disability_status"],
+} as const;
+
 export const applicantPolicySchema = z.strictObject({
-  workAuthorization: applicantFactSchema.optional(),
-  sponsorship: applicantFactSchema.optional(),
-  relocation: applicantFactSchema.optional(),
-  compensation: applicantFactSchema.optional(),
-  demographicAnswers: z.array(applicantFactSchema).max(100).optional(),
+  workAuthorizationFactId: identifierSchema.optional(),
+  sponsorshipFactId: identifierSchema.optional(),
+  relocationFactId: identifierSchema.optional(),
+  compensationFactId: identifierSchema.optional(),
+  demographicAnswerFactIds: z.array(identifierSchema).max(100).optional(),
   defaultDemographicBehavior: demographicBehaviorSchema.optional(),
 });
 
@@ -165,6 +178,29 @@ export const applicantProfileSchema = z
               message: `fact ${fact.id} derives from unknown fact ${id}`,
             });
           }
+        }
+      }
+    }
+    const byId = new Map(profile.facts.map((fact) => [fact.id, fact]));
+    for (const [slot, fields] of Object.entries(POLICY_FACT_FIELDS)) {
+      const value = profile.policy[slot as keyof typeof POLICY_FACT_FIELDS];
+      const ids = value === undefined ? [] : Array.isArray(value) ? value : [value];
+      for (const id of ids) {
+        const fact = byId.get(id);
+        if (fact === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["policy", slot],
+            message: `policy references unknown fact ${id}`,
+          });
+          continue;
+        }
+        if (!(fields as readonly string[]).includes(fact.field)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["policy", slot],
+            message: `fact ${id} has field "${fact.field}", which ${slot} cannot answer`,
+          });
         }
       }
     }

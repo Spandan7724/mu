@@ -14,7 +14,17 @@ import {
 } from "../contracts/observation.ts";
 import { authorizedDocumentId, elementRefId, normalizeOrigin } from "../contracts/primitives.ts";
 import { REDACTED } from "../contracts/secret.ts";
-import { check, contains, defined, equal, excludes, fail, oneOf, rejects } from "./assert.ts";
+import {
+  check,
+  contains,
+  defined,
+  equal,
+  excludes,
+  fail,
+  includes,
+  oneOf,
+  rejects,
+} from "./assert.ts";
 import type { DriverContractCase, DriverContractContext } from "./conformance-types.ts";
 
 function expectStatus(
@@ -728,9 +738,30 @@ const downloadCases: DriverContractCase[] = [
       expectStatus(outcome, ["completed"], "download trigger click");
       const download = defined(readDownloadDetails(outcome.details), "download report");
       equal(download.basename, ctx.fixture.values.downloadBasename, "download basename");
-      const serialized = JSON.stringify(outcome.details);
-      excludes(serialized, "/", "download details must carry no filesystem path");
-      excludes(serialized, "\\", "download details must carry no filesystem path");
+      // The invariant is "no filesystem path", not "no slash anywhere": a legitimate
+      // mimeType such as image/png contains one. The shape is what enforces it.
+      excludes(download.basename, "/", "download basename must be a bare filename");
+      excludes(download.basename, "\\", "download basename must be a bare filename");
+      for (const key of Object.keys(download)) {
+        includes(
+          ["basename", "mimeType", "bytes", "sha256"],
+          key,
+          "download details carry only metadata fields",
+        );
+      }
+      for (const leaked of ["path", "localPath", "filePath", "directory"]) {
+        equal(
+          readDownloadDetails({ download: { ...download, [leaked]: "/tmp/x" } } as never),
+          undefined,
+          `a ${leaked} property must fail download validation`,
+        );
+      }
+      equal(
+        readDownloadDetails({ download: { basename: "a.png", mimeType: "image/png" } } as never)
+          ?.mimeType,
+        "image/png",
+        "a valid mime type is accepted",
+      );
     },
   },
 ];

@@ -5,6 +5,7 @@ import {
   type BrowserConnectionState,
   browserConnectionStateSchema,
   connectionSummary,
+  connectOptionsInputSchema,
   connectOptionsSchema,
 } from "./connection.ts";
 
@@ -68,7 +69,7 @@ describe("connect options", () => {
 
   test("a persistent profile never carries an extension token", () => {
     expect(
-      connectOptionsSchema.safeParse({
+      connectOptionsInputSchema.safeParse({
         mode: "persistent",
         browser: "chromium",
         extensionToken: "mu_ext_1",

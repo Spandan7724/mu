@@ -95,6 +95,9 @@ export interface FactProvenance {
 
 export interface FactStoreOptions {
   documents?: readonly AuthorizedDocument[] | undefined;
+  // Facts restored from a persisted ApplicantProfile. They keep their ids, because
+  // policy slots, disclosure records and receipts all reference facts by id.
+  facts?: readonly ApplicantFact[] | undefined;
   policy?: ApplicantPolicy | undefined;
   now?: (() => number) | undefined;
 }
@@ -115,10 +118,6 @@ function rejection(field: string, reason: FactRejectionReason, detail: string): 
 
 export class FactStore implements FactLookup {
   readonly #facts = new Map<string, ApplicantFact>();
-  // Policy answers are facts too, and a disclosure ledger has to be able to resolve the id
-  // it recorded. They stay out of #facts because ApplicantProfile keeps `policy` and
-  // `facts` separate, so they are indexed for lookup only.
-  readonly #policyFacts = new Map<string, ApplicantFact>();
   readonly #documents = new Map<string, AuthorizedDocument>();
   readonly #now: () => number;
   #policy: ApplicantPolicy;
@@ -127,23 +126,23 @@ export class FactStore implements FactLookup {
   constructor(options: FactStoreOptions = {}) {
     this.#now = options.now ?? Date.now;
     this.#policy = options.policy ?? {};
-    this.#indexPolicy();
     for (const document of options.documents ?? []) this.#documents.set(document.id, document);
+    for (const fact of options.facts ?? []) this.adopt(fact);
   }
 
-  #indexPolicy(): void {
-    this.#policyFacts.clear();
-    const policy = this.#policy;
-    const facts = [
-      policy.workAuthorization,
-      policy.sponsorship,
-      policy.relocation,
-      policy.compensation,
-      ...(policy.demographicAnswers ?? []),
-    ];
-    for (const fact of facts) {
-      if (fact !== undefined) this.#policyFacts.set(fact.id, fact);
-    }
+  // Readmit an existing fact under its own id. Every admission guard still applies, so a
+  // persisted profile cannot reintroduce a credential or a non-mechanical inference.
+  adopt(fact: ApplicantFact): FactAdmission {
+    return this.add({
+      id: fact.id,
+      field: fact.field,
+      value: fact.value,
+      source: fact.source,
+      confidence: fact.confidence,
+      sensitivity: fact.sensitivity,
+      updatedAt: fact.updatedAt,
+      ...(fact.allowedOrigins === undefined ? {} : { allowedOrigins: fact.allowedOrigins }),
+    });
   }
 
   addDocument(document: AuthorizedDocument): void {
@@ -160,7 +159,6 @@ export class FactStore implements FactLookup {
 
   setPolicy(policy: ApplicantPolicy): void {
     this.#policy = policy;
-    this.#indexPolicy();
   }
 
   add(candidate: FactCandidate): FactAdmission {
@@ -242,7 +240,7 @@ export class FactStore implements FactLookup {
   }
 
   get(id: string): ApplicantFact | undefined {
-    return this.#facts.get(id) ?? this.#policyFacts.get(id);
+    return this.#facts.get(id);
   }
 
   all(): ApplicantFact[] {

@@ -4,15 +4,16 @@ import type {
   DemographicBehavior,
 } from "../contracts/applicant.ts";
 import type { BrowserElementOption } from "../contracts/observation.ts";
+import type { FactLookup } from "./facts.ts";
 import { canonicalField, isDemographicField, normalizeFieldName } from "./fields.ts";
 
 // Canonical field key → the ApplicantPolicy slot that may answer it. A consequential
 // field has exactly one authorized answer: the one the user put in their policy.
 const POLICY_SLOTS = {
-  work_authorization: "workAuthorization",
-  sponsorship: "sponsorship",
-  relocation: "relocation",
-  desired_salary: "compensation",
+  work_authorization: "workAuthorizationFactId",
+  sponsorship: "sponsorshipFactId",
+  relocation: "relocationFactId",
+  desired_salary: "compensationFactId",
 } as const satisfies Record<string, keyof ApplicantPolicy>;
 
 export type ConsequentialField = keyof typeof POLICY_SLOTS;
@@ -55,8 +56,16 @@ function matchesField(fact: ApplicantFact, field: string): boolean {
   return canonicalField(fact.field)?.key === field;
 }
 
-function demographicAnswer(policy: ApplicantPolicy, field: string): ApplicantFact | undefined {
-  return policy.demographicAnswers?.find((fact) => matchesField(fact, field));
+function demographicAnswer(
+  policy: ApplicantPolicy,
+  facts: FactLookup,
+  field: string,
+): ApplicantFact | undefined {
+  for (const id of policy.demographicAnswerFactIds ?? []) {
+    const fact = facts.get(id);
+    if (fact !== undefined && matchesField(fact, field)) return fact;
+  }
+  return undefined;
 }
 
 function declineOrFallBack(request: PolicyRequest, why: string): PolicyDecision {
@@ -80,9 +89,14 @@ function declineOrFallBack(request: PolicyRequest, why: string): PolicyDecision 
  * branch that produces a value the user did not supply: a missing policy always becomes a
  * question, never a plausible default.
  */
-export function resolvePolicy(policy: ApplicantPolicy, request: PolicyRequest): PolicyDecision {
+export function resolvePolicy(
+  policy: ApplicantPolicy,
+  facts: FactLookup,
+  request: PolicyRequest,
+): PolicyDecision {
   if (isConsequentialField(request.field)) {
-    const fact = policy[POLICY_SLOTS[request.field]];
+    const id = policy[POLICY_SLOTS[request.field]];
+    const fact = id === undefined ? undefined : facts.get(id);
     if (fact === undefined) {
       return {
         kind: "ask",
@@ -93,7 +107,7 @@ export function resolvePolicy(policy: ApplicantPolicy, request: PolicyRequest): 
   }
 
   if (isDemographicField(request.field)) {
-    const explicit = demographicAnswer(policy, request.field);
+    const explicit = demographicAnswer(policy, facts, request.field);
     if (explicit !== undefined) {
       return { kind: "answer", fact: explicit, reason: "you set an explicit demographic answer" };
     }
