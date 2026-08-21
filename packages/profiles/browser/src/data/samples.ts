@@ -2,6 +2,7 @@ import type { ApplicantFact, ApplicantPolicy } from "../contracts/applicant.ts";
 import type { AuthorizedDocument } from "../contracts/documents.ts";
 import type { BrowserElement } from "../contracts/observation.ts";
 import { authorizedDocumentId, elementRefId } from "../contracts/primitives.ts";
+import { fieldSensitivity } from "./fields.ts";
 
 /**
  * Test input for this lane only — deliberately not exported from ./index.ts.
@@ -90,20 +91,21 @@ export function poisonedResume(): AuthorizedDocument {
 }
 
 export function fact(overrides: Partial<ApplicantFact> = {}): ApplicantFact {
+  const field = overrides.field ?? "full_name";
   return {
     id: "fact-sample",
-    field: "full_name",
+    field,
     value: "Ada Testwell",
     source: { kind: "user" },
     confidence: "exact",
-    sensitivity: "personal",
+    sensitivity: fieldSensitivity(field),
     updatedAt: SAMPLE_TIME,
     ...overrides,
   };
 }
 
 export function policyFact(field: string, value: string, id: string): ApplicantFact {
-  return fact({ id, field, value, sensitivity: "sensitive" });
+  return fact({ id, field, value });
 }
 
 export const DECLINING_POLICY: ApplicantPolicy = { defaultDemographicBehavior: "decline" };
