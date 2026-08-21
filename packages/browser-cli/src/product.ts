@@ -112,10 +112,12 @@ function parseBrowserArgs(
 
 export function browserProfileOptionsFrom(
   options: BrowserProductOptions | undefined,
+  home?: string,
 ): BrowserProfileOptions {
   const product = options ?? emptyBrowserProductOptions();
   const choice = product.connection ?? DEFAULT_CONNECTION;
   return {
+    ...(home === undefined ? {} : { home }),
     // The fake driver is a development connection over the extension contract; it
     // never claims to own a browser.
     connection: choice === "fake" ? "extension" : choice,
@@ -134,17 +136,41 @@ export function browserProfileOptionsFrom(
 // does not know is refused rather than silently falling back to something else.
 export async function resolveBrowserProfile(
   request: ProfileRequest<BrowserProductOptions>,
+  home?: string,
 ): Promise<Profile> {
   const name = request.name ?? DEFAULT_BROWSER_PROFILE;
   if (name !== DEFAULT_BROWSER_PROFILE) {
     throw new Error(`Unknown profile "${name}". mu-browser ships the "browser" profile.`);
   }
-  return browserProfile(browserProfileOptionsFrom(request.options));
+  return browserProfile(browserProfileOptionsFrom(request.options, home));
 }
 
-export function browserDiagnostics(): string[] {
-  const layout = browserDataLayout();
+export function browserDiagnostics(home?: string): string[] {
+  const layout = browserDataLayout(home);
   return [`browser data root: ${layout.root}`];
+}
+
+// `home` exists so a test can give the product a scratch data root; the shipped
+// descriptor below takes none and resolves against the user's real home.
+export function createBrowserProduct(
+  config: { home?: string } = {},
+): ProductDescriptor<BrowserProductOptions> {
+  return { ...browserProduct, ...homeBoundParts(config.home) };
+}
+
+function homeBoundParts(
+  home: string | undefined,
+): Partial<ProductDescriptor<BrowserProductOptions>> {
+  if (home === undefined) return {};
+  return {
+    createProfile: (request) => resolveBrowserProfile(request, home),
+    data: {
+      configFile: (override) => browserConfigPath(override ?? home),
+      modelCatalogFile: (override) => browserModelCatalogPath(override ?? home),
+      sessionRoot: (override) => browserSessionsDir(override ?? home),
+    },
+    diagnostics: () => browserDiagnostics(home),
+  };
 }
 
 export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
@@ -155,7 +181,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
   tagline: "a general-purpose browser automation agent",
   bannerTagline: "an agent that drives your browser",
   defaultProfile: DEFAULT_BROWSER_PROFILE,
-  createProfile: resolveBrowserProfile,
+  createProfile: (request) => resolveBrowserProfile(request),
   argTokens: {
     doctor: 0,
     "--connection": 1,
@@ -195,7 +221,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
   renderers: browserRenderers,
   // No direct shell and no file mentions: this product has no shell, and a
   // browser session is not rooted in a directory to mention files from.
-  diagnostics: () => browserDiagnostics(),
+  diagnostics: () => browserDiagnostics(undefined),
   transcriptPrefix: BROWSER_COMMAND,
   terminalTitle: (_context: ProductLaunchContext) => BROWSER_COMMAND,
   footerLocation: () => undefined,
