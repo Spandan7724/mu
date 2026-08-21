@@ -91,9 +91,16 @@ describe.skipIf(skip)("the browser tarball", () => {
     expect(browser.entries).not.toContain("dist/mu.js");
   });
 
-  test("declares no dependency on the coding product and no browser runtime package", () => {
-    expect(dependencyNames(browser.manifest)).toEqual(["zod"]);
+  test("declares only the BD31-authorized runtime dependency, never the coding product", () => {
+    expect(dependencyNames(browser.manifest)).toEqual(["@playwright/mcp", "zod"]);
     expect(JSON.stringify(browser.manifest)).not.toContain("@mu-agent/mu");
+  });
+
+  // BD31 and BD19: a range would let a security-critical browser integration change
+  // under the user between installs.
+  test("every runtime dependency is exact-pinned", () => {
+    const deps = (browser.manifest as { dependencies?: Record<string, string> }).dependencies ?? {};
+    for (const range of Object.values(deps)) expect(range).toMatch(/^\d+\.\d+\.\d+/);
   });
 
   test("its declaration bundle resolves inside the package, not to a workspace name", async () => {

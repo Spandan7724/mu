@@ -50,7 +50,17 @@ describe("published package shape", () => {
   });
 
   test("the internal workspaces are devDependencies, never runtime ones", () => {
-    expect(browserPackage.dependencies).toEqual({ zod: "4.4.3" });
+    // BD31 promotes the Playwright MCP sidecar to a production dependency. Every entry
+    // here is exact-pinned: a range would let a security-critical browser integration
+    // change under the user mid-release.
+    expect(browserPackage.dependencies).toEqual({
+      "@playwright/mcp": "0.0.79",
+      zod: "4.4.3",
+    });
+    for (const [name, range] of Object.entries(browserPackage.dependencies)) {
+      expect(range).toMatch(/^\d+\.\d+\.\d+/);
+      expect(name).not.toBe("@mu-agent/mu");
+    }
     for (const internal of [
       "@mu/cli-runtime",
       "@mu/core",
@@ -65,12 +75,14 @@ describe("published package shape", () => {
     }
   });
 
-  test("no new runtime dependency was added for the browser product", () => {
-    // A browser runtime dependency needs its own decision entry first (BD24/BD25),
-    // so this list must stay identical to the coding product's until one lands.
-    expect(Object.keys(browserPackage.dependencies)).toEqual(
-      Object.keys(codingPackage.dependencies),
+  test("the browser product adds only the runtime dependency BD31 authorizes", () => {
+    // A browser runtime dependency needs a decision entry first. BD31 authorizes exactly
+    // one beyond what the coding product carries; anything else is an unreviewed addition.
+    const extra = Object.keys(browserPackage.dependencies).filter(
+      (name) => !(name in codingPackage.dependencies),
     );
+    expect(extra).toEqual(["@playwright/mcp"]);
+    expect(browserPackage.dependencies["@playwright/mcp"]).toBe("0.0.79");
   });
 });
 
