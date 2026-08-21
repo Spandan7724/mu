@@ -95,7 +95,12 @@ export class BrowserRuntime implements ProfileRuntime {
   // The connection is lazy: starting the product without a browser must not fail
   // (ARCHITECTURE §13). Concurrent callers share one attempt.
   async connect(signal: AbortSignal): Promise<BrowserDriver> {
-    if (this.phase === "ready" && this.handle) return this.handle.driver;
+    // An open connection is never re-opened. Reconnecting after a drop is
+    // `reconnect()`; re-entering `connect()` here would silently discard a
+    // takeover, a live tab set and every reference minted against it.
+    if (this.handle && (this.phase === "ready" || this.phase === "takeover")) {
+      return this.handle.driver;
+    }
     if (this.connecting) return this.connecting;
     this.connecting = this.openConnection(signal).finally(() => {
       this.connecting = undefined;
