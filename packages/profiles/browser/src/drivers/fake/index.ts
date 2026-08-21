@@ -4,6 +4,7 @@ export type {
   FakeSubmissionRecord,
 } from "./driver.ts";
 export { createFakeBrowserDriver } from "./driver.ts";
+export type { FakeDriverFixture } from "./fixture.ts";
 export { FAKE_DRIVER_CAPABILITIES, FAKE_DRIVER_FIXTURE, fakeUploadDocument } from "./fixture.ts";
 export type {
   FakeBehavior,

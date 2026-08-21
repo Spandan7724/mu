@@ -1,9 +1,11 @@
-// The fake site, described in the shape the driver conformance harness consumes.
-// The imports here are type-only, so nothing from `testing/` reaches a build.
-import { resolve } from "node:path";
+// The fake site described in the shape the driver conformance harness consumes.
+//
+// The types are declared here rather than imported from `testing/`: shipped code
+// must not be typed by test scaffolding, and the published declaration bundle
+// must not have to carry the harness to stay resolvable. `fixture.test.ts` proves
+// these values still satisfy the harness's own types.
 import type { AuthorizedDocument } from "../../contracts/documents.ts";
 import { authorizedDocumentId } from "../../contracts/primitives.ts";
-import type { DriverCapability, DriverContractFixture } from "../../testing/conformance-types.ts";
 import {
   FAKE_FRAME_ORIGIN,
   FAKE_LABELS,
@@ -12,7 +14,46 @@ import {
   FAKE_VALUES,
 } from "./site.ts";
 
-export const FAKE_DRIVER_FIXTURE: DriverContractFixture = {
+export interface FakeDriverFixture {
+  origin: string;
+  pages: Record<
+    | "blank"
+    | "form"
+    | "dynamic"
+    | "popup"
+    | "dialog"
+    | "upload"
+    | "download"
+    | "frames"
+    | "redirect"
+    | "redirectTarget"
+    | "slow"
+    | "submit"
+    | "unknownSubmit"
+    | "credentials",
+    string
+  >;
+  labels: Record<
+    | "textField"
+    | "select"
+    | "checkbox"
+    | "fileField"
+    | "submitButton"
+    | "popupTrigger"
+    | "dialogTrigger"
+    | "downloadTrigger"
+    | "passwordField"
+    | "scrollTarget",
+    string
+  >;
+  values: Record<
+    "text" | "selectOption" | "slowText" | "confirmationText" | "downloadBasename" | "secretMarker",
+    string
+  >;
+  crossOriginFrameOrigin?: string | undefined;
+}
+
+export const FAKE_DRIVER_FIXTURE: FakeDriverFixture = {
   origin: FAKE_ORIGIN,
   pages: {
     blank: FAKE_PAGE_URLS.blank,
@@ -36,9 +77,9 @@ export const FAKE_DRIVER_FIXTURE: DriverContractFixture = {
 };
 
 // Everything the in-memory site can model honestly. Anything it could not model
-// would be declared false so the harness reports those cases as skipped rather
+// would be declared false, so the harness reports those cases as skipped rather
 // than letting the fake pass them vacuously.
-export const FAKE_DRIVER_CAPABILITIES: Readonly<Record<DriverCapability, boolean>> = {
+export const FAKE_DRIVER_CAPABILITIES = {
   history: true,
   popups: true,
   dialogs: true,
@@ -49,12 +90,13 @@ export const FAKE_DRIVER_CAPABILITIES: Readonly<Record<DriverCapability, boolean
   crashSimulation: true,
   reconnect: true,
   submissionLedger: true,
-};
+} as const;
 
 export function fakeUploadDocument(): AuthorizedDocument {
   return {
     id: authorizedDocumentId("doc-fake-resume"),
-    path: resolve("/documents/resume.pdf"),
+    // Never read: the fake attaches a basename, it does not open a file.
+    path: "/documents/resume.pdf",
     basename: "resume.pdf",
     mimeType: "application/pdf",
     bytes: 12_345,
