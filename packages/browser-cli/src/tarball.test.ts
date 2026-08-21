@@ -131,6 +131,22 @@ describe.skipIf(skip)("the browser tarball", () => {
     expect(browser.entries).toContain("dist/types/profile-browser/drivers/fake/driver.d.ts");
   });
 
+  // Dropping the conformance harness from the declaration bundle must not leave
+  // a re-export pointing at a file that is no longer there.
+  test("every relative import in the declaration bundle resolves inside the tarball", async () => {
+    const declarations = browser.entries.filter((entry) => entry.endsWith(".d.ts"));
+    const present = new Set(declarations);
+    const dangling: string[] = [];
+    for (const entry of declarations) {
+      const source = await browser.read(entry);
+      for (const match of source.matchAll(/from\s+["'](\.[^"']+)["']/g)) {
+        const target = join(entry, "..", (match[1] as string).replace(/\.js$/, ".d.ts"));
+        if (!present.has(target)) dangling.push(`${entry} -> ${match[1]}`);
+      }
+    }
+    expect(dangling).toEqual([]);
+  }, 120_000);
+
   test("bundles no personal document or applicant profile", async () => {
     const bundle = await browser.read("dist/mu-browser.js");
     expect(bundle).not.toContain("SYNTHETIC_APPLICANT");

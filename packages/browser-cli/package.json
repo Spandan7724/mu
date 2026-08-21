@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "build": "bun build src/main.ts --target=bun --minify --outfile dist/mu-browser.js && bun build src/index.ts --target=bun --minify --external zod --outfile dist/index.js && bun ../../node_modules/typescript/bin/tsc -b ./tsconfig.json --force && bun ./scripts/prepare-declarations.ts",
+    "verify:sdk": "bun run build && bun ../../node_modules/typescript/bin/tsc --noEmit --strict --allowImportingTsExtensions --target ESNext --module ESNext --moduleResolution bundler --types bun testing/sdk-consumer.ts && bun testing/sdk-consumer.ts",
     "prepack": "bun run build"
   },
   "keywords": [
