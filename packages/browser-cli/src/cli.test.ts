@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCliSessionRuntime, EXIT, parseArgs, runHeadless, runRpc } from "@mu/cli-runtime";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import type { BrowserProfile } from "@mu/profile-browser/profile";
 import { ExtensionHost, FileSessionStore } from "mu";
 import { browserDoctorChecks, runBrowserDoctor } from "./doctor.ts";
 import {
@@ -289,7 +290,7 @@ describe("a browser session runs end to end against the fake driver", () => {
       permissions: "deny",
       agentOptions: { provider: new FakeProvider([]), extensions: await fakeModelHost() },
     });
-    const profile = runtime.profile as { runtime: { status: () => { phase: string } } };
+    const profile = runtime.profile as unknown as BrowserProfile;
     await runtime.agent.shutdown();
     expect(profile.runtime.status().phase).toBe("disconnected");
   });
