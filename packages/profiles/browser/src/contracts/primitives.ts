@@ -88,9 +88,13 @@ export const artifactRelativePathSchema = z
   .refine(
     (value) =>
       !value.startsWith("/") &&
-      !/^[A-Za-z]:/.test(value) &&
+      // Any scheme prefix, not just a single-letter Windows drive: `data:` would
+      // otherwise smuggle an inline base64 screenshot through a path field.
+      !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) &&
       !value.split(/[/\\]/).includes("..") &&
-      !value.startsWith("~"),
+      !value.startsWith("~") &&
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL/control bytes must never reach a path
+      !/[\u0000-\u001f\u007f]/.test(value),
     "must be a path relative to the artifact root",
   );
 
