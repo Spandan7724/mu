@@ -38,6 +38,7 @@ export type {
   EventSink,
   StreamDelta,
 } from "./events.ts";
+export { PROFILE_RESOURCE_STATUS_LIMITS, profileResourceStatus } from "./events.ts";
 export type {
   Extension,
   ExtensionAPI,

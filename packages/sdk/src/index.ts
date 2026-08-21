@@ -60,6 +60,8 @@ export {
   NO_SESSION_PROFILE,
   normalizeSessionEnvironment,
   normalizeSessionProfile,
+  PROFILE_RESOURCE_STATUS_LIMITS,
+  profileResourceStatus,
   SESSION_ENVIRONMENT_LIMITS,
   SessionTree,
   sessionEnvironmentIssues,

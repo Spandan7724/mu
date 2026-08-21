@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "./events.ts";
+import { PROFILE_RESOURCE_STATUS_LIMITS, profileResourceStatus } from "./events.ts";
 import { runLoop } from "./loop.ts";
 import { userMessage } from "./messages.ts";
 import { FakeProvider, fakeModel } from "./testing/fake-provider.ts";
@@ -159,5 +160,38 @@ describe("AgentEvent", () => {
       expect(thinking?.type === "thinking" && thinking.signature).toBe("SIG");
     }
     expect(events.some((e) => e.type === "tool_execution_update")).toBe(true);
+  });
+});
+
+describe("profile resource status", () => {
+  test("carries only neutral fields and no metadata bag", () => {
+    const event = profileResourceStatus({
+      resourceId: "browser",
+      state: "ready",
+      summary: "chrome: connected",
+    });
+    expect(Object.keys(event).sort()).toEqual(["resourceId", "state", "summary", "type"]);
+    expect(JSON.parse(JSON.stringify(event))).toEqual(event);
+  });
+
+  test("bounds every string it forwards", () => {
+    const event = profileResourceStatus({
+      resourceId: "browser",
+      state: "s".repeat(500),
+      summary: "x".repeat(500),
+      detail: "d".repeat(5_000),
+    });
+    expect(event.state.length).toBe(PROFILE_RESOURCE_STATUS_LIMITS.maxStateLength);
+    expect(event.summary.length).toBe(PROFILE_RESOURCE_STATUS_LIMITS.maxSummaryLength);
+    expect(event.detail?.length).toBe(PROFILE_RESOURCE_STATUS_LIMITS.maxDetailLength);
+  });
+
+  // A resource id names a profile-owned resource, not a domain concept in the kernel.
+  test("rejects a resource id that is not a plain slug", () => {
+    for (const id of ["Browser", "browser_status", "brow ser", "", "browser/tab"]) {
+      expect(() =>
+        profileResourceStatus({ resourceId: id, state: "ready", summary: "s" }),
+      ).toThrow();
+    }
   });
 });

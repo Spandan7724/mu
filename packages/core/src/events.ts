@@ -78,7 +78,53 @@ export type AgentEvent =
       sessionTotals: Usage;
       contextTokens: number;
       contextPercent: number;
+    }
+  // Status of a resource a profile owns — a browser connection, a database session, a
+  // remote runtime. The kernel forwards it without interpreting any of it: no field
+  // here names a domain, and there is no free-form metadata bag for one to hide in.
+  // Ephemeral by design: it describes what is true now, so it is never written to the
+  // transcript and never replayed.
+  | {
+      type: "profile_resource_status";
+      resourceId: string;
+      state: string;
+      summary: string;
+      detail?: string;
     };
+
+export const PROFILE_RESOURCE_STATUS_LIMITS = {
+  maxResourceIdLength: 64,
+  maxStateLength: 64,
+  maxSummaryLength: 200,
+  maxDetailLength: 2_000,
+} as const;
+
+const PROFILE_RESOURCE_ID = /^[a-z][a-z0-9-]*$/;
+
+// A profile can emit anything; the kernel guarantees the shape stays small and
+// serializable so every consumer can render it without defensive truncation.
+export function profileResourceStatus(input: {
+  resourceId: string;
+  state: string;
+  summary: string;
+  detail?: string | undefined;
+}): Extract<AgentEvent, { type: "profile_resource_status" }> {
+  const { maxResourceIdLength, maxStateLength, maxSummaryLength, maxDetailLength } =
+    PROFILE_RESOURCE_STATUS_LIMITS;
+  if (!PROFILE_RESOURCE_ID.test(input.resourceId))
+    throw new Error(`Invalid profile resource id: "${input.resourceId.slice(0, 64)}"`);
+  if (input.resourceId.length > maxResourceIdLength)
+    throw new Error("Invalid profile resource id: too long");
+  const clamp = (value: string, max: number) =>
+    value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  return {
+    type: "profile_resource_status",
+    resourceId: input.resourceId,
+    state: clamp(input.state, maxStateLength),
+    summary: clamp(input.summary, maxSummaryLength),
+    ...(input.detail === undefined ? {} : { detail: clamp(input.detail, maxDetailLength) }),
+  };
+}
 
 export type AgentEventType = AgentEvent["type"];
 

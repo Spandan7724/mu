@@ -2680,3 +2680,42 @@ describe("mid-buffer file mentions", () => {
     expect(app.editor.text).toBe("look at src/chosen.ts ");
   });
 });
+
+describe("profile resource status", () => {
+  test("the latest status per resource reaches the footer", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "profile_resource_status",
+      resourceId: "browser",
+      state: "connecting",
+      summary: "chrome: connecting",
+    });
+    app.handleEvent({
+      type: "profile_resource_status",
+      resourceId: "browser",
+      state: "ready",
+      summary: "chrome: connected",
+    });
+    const rendered = stripAnsi(app.renderBottom().join("\n"));
+    expect(rendered).toContain("chrome: connected");
+    expect(rendered).not.toContain("chrome: connecting");
+  });
+
+  test("two resources are both retained", () => {
+    const { app } = harness();
+    for (const [resourceId, summary] of [
+      ["browser", "ok-a"],
+      ["database", "ok-b"],
+    ]) {
+      app.handleEvent({
+        type: "profile_resource_status",
+        resourceId: resourceId as string,
+        state: "ready",
+        summary: summary as string,
+      });
+    }
+    const rendered = stripAnsi(app.renderBottom().join("\n"));
+    expect(rendered).toContain("ok-a");
+    expect(rendered).toContain("ok-b");
+  });
+});

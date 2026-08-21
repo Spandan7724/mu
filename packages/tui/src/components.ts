@@ -429,6 +429,9 @@ export interface FooterData {
   outputTokens: number;
   costUsd: number;
   backgroundTasks?: number;
+  // Latest status per profile-owned resource, in publish order. The TUI renders the
+  // summaries a profile supplied; it knows nothing about what they mean.
+  resources?: readonly { resourceId: string; summary: string }[];
   hint?: string;
 }
 
@@ -497,6 +500,9 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
     ...(tokenParts.length > 0 ? [{ text: tokenParts.join(" "), style: quiet }] : []),
     { text: `$${data.costUsd.toFixed(2)}`, style: quiet },
   ];
+  for (const resource of data.resources ?? []) {
+    if (resource.summary.length > 0) parts.push({ text: resource.summary, style: quiet });
+  }
   if (data.backgroundTasks && data.backgroundTasks > 0) {
     parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
   }

@@ -274,6 +274,7 @@ export class App {
   private lastError: string | undefined;
   private ctrlCArmedAt = 0;
   private footerData: FooterData;
+  private readonly resourceStatus = new Map<string, string>();
   private commands: { label: string; description?: string }[] = [];
   private thinkingLevel = "off";
   private thinkingLevels: string[];
@@ -580,6 +581,20 @@ export class App {
               ];
         this.appendTranscript(lines);
         return lines;
+      }
+
+      case "profile_resource_status": {
+        // Latest wins per resource: this event describes what is true now, so an
+        // older status for the same resource is never useful.
+        this.resourceStatus.set(event.resourceId, event.summary);
+        this.footerData = {
+          ...this.footerData,
+          resources: [...this.resourceStatus].map(([resourceId, summary]) => ({
+            resourceId,
+            summary,
+          })),
+        };
+        return [];
       }
 
       case "usage_updated":

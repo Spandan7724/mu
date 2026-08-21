@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentEvent } from "@mu/core";
 import { BrowserDriverError } from "../contracts/driver.ts";
 import { extensionFactory } from "../drivers/extension.ts";
 import type { BrowserDriverFactory, BrowserDriverHandle } from "../drivers/factory.ts";
@@ -398,5 +399,46 @@ describe("the existing-browser factory enforces the B0 rules before connecting",
     );
     expect(handle.diagnostics?.join(" ")).toContain("extension token is configured");
     expect(JSON.stringify(handle.diagnostics)).not.toContain("tok-secret-value");
+  });
+});
+
+describe("connection status reaches the user as an ordinary event", () => {
+  function harness() {
+    const events: AgentEvent[] = [];
+    const { factory } = attachedFactory();
+    const runtime = new BrowserRuntime({
+      factory,
+      connection: "extension",
+      browser: "chrome",
+      dataRoot: "/unused",
+    });
+    runtime.attach({ emit: (event) => events.push(event), followUp: () => {} });
+    return { runtime, events };
+  }
+
+  test("attaching publishes the current state without waiting for a transition", () => {
+    const { events } = harness();
+    const status = events.filter((e) => e.type === "profile_resource_status");
+    expect(status.length).toBe(1);
+    expect(status[0]).toMatchObject({ resourceId: "browser", state: "disconnected" });
+  });
+
+  test("every transition publishes a new status", async () => {
+    const { runtime, events } = harness();
+    await runtime.connect(signal());
+    const states = events
+      .filter((e) => e.type === "profile_resource_status")
+      .map((e) => (e as { state: string }).state);
+    expect(states[0]).toBe("disconnected");
+    expect(states).toContain("ready");
+  });
+
+  // No browser vocabulary may reach the kernel event: the domain lives in the values.
+  test("the event carries no browser-specific field", () => {
+    const { events } = harness();
+    const status = events.find((e) => e.type === "profile_resource_status");
+    expect(Object.keys(status ?? {}).sort()).toEqual(
+      ["resourceId", "state", "summary", "type"].sort(),
+    );
   });
 });

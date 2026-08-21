@@ -2,11 +2,13 @@
 // the only thing that moves the connection phase, and the only thing that decides
 // whether shutdown detaches from a browser or closes one.
 import type { ProfileRuntime, ProfileRuntimeHost } from "@mu/core";
+import { profileResourceStatus } from "@mu/core";
 import type {
   BrowserConnectionMode,
   BrowserConnectionState,
   BrowserFamily,
 } from "../contracts/connection.ts";
+import { connectionSummary } from "../contracts/connection.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
 import { BrowserDriverError, isBrowserDriverError } from "../contracts/driver.ts";
 import type { BrowserObservation } from "../contracts/observation.ts";
@@ -39,6 +41,10 @@ export interface BrowserRuntimeJournalEntry {
   message?: string;
 }
 
+// The resource id the browser profile publishes status under. Kernel-neutral: it is
+// just a slug, and core never interprets it.
+export const BROWSER_RESOURCE_ID = "browser";
+
 export type BrowserRuntimeListener = (state: BrowserConnectionState) => void;
 
 export class BrowserRuntime implements ProfileRuntime {
@@ -59,6 +65,9 @@ export class BrowserRuntime implements ProfileRuntime {
 
   attach(host: ProfileRuntimeHost): void {
     this.host = host;
+    // A late subscriber must not have to wait for the next transition to learn
+    // where the connection already stands.
+    this.emitStatus();
   }
 
   subscribe(listener: BrowserRuntimeListener): () => void {
@@ -266,5 +275,20 @@ export class BrowserRuntime implements ProfileRuntime {
     if (this.entries.length > MAX_JOURNAL_ENTRIES) this.entries.shift();
     const state = this.status();
     for (const listener of this.listeners) listener(state);
+    this.emitStatus(message);
+  }
+
+  private emitStatus(detail?: string): void {
+    const host = this.host;
+    if (host === undefined) return;
+    const state = this.status();
+    host.emit(
+      profileResourceStatus({
+        resourceId: BROWSER_RESOURCE_ID,
+        state: state.phase,
+        summary: connectionSummary(state),
+        ...(detail === undefined ? {} : { detail }),
+      }),
+    );
   }
 }
