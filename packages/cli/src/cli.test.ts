@@ -147,3 +147,37 @@ describe("coding product identity", () => {
     expect(Object.keys(codingProduct.renderers ?? {})).toContain("bash");
   });
 });
+
+// Frozen precedence matrix. `main` resolved mode by letting each recognized token
+// overwrite the previous one, so a contradictory command line was decided by token
+// order. B1 replaced that with a structural rule: surface flags win, and a product
+// command takes over only when no surface mode was set. The only user-visible change
+// is `mu --help agents`, which now prints help instead of opening agent view.
+describe("argv precedence is structural, not positional", () => {
+  const cases: { argv: string[]; mode: string; command?: string; prompt?: string }[] = [
+    { argv: [], mode: "tui" },
+    { argv: ["agents"], mode: "product", command: "agents" },
+    { argv: ["agents", "-p", "x"], mode: "headless", command: "agents", prompt: "x" },
+    { argv: ["-p", "x"], mode: "headless", prompt: "x" },
+    { argv: ["--help"], mode: "help" },
+    { argv: ["--help", "agents"], mode: "help", command: "agents" },
+    { argv: ["agents", "--help"], mode: "help", command: "agents" },
+    { argv: ["agents", "-v"], mode: "version", command: "agents" },
+    { argv: ["--rpc"], mode: "rpc" },
+    { argv: ["agents", "--rpc"], mode: "rpc", command: "agents" },
+  ];
+
+  for (const expected of cases) {
+    test(`mu ${expected.argv.join(" ") || "(no args)"} → ${expected.mode}`, () => {
+      const parsed = args(expected.argv);
+      expect(parsed.mode).toBe(expected.mode as typeof parsed.mode);
+      expect(parsed.productCommand).toBe(expected.command);
+      expect(parsed.prompt).toBe(expected.prompt);
+    });
+  }
+
+  test("a surface flag is never overridden by a later product command", () => {
+    expect(args(["--help", "agents"]).mode).toBe("help");
+    expect(args(["-p", "x", "agents"]).mode).toBe("headless");
+  });
+});
