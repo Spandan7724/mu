@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { documentSummary } from "../contracts/documents.ts";
-import { browserReceiptSchema } from "../contracts/receipt.ts";
+import {
+  browserReceiptSchema,
+  RECEIPT_STATUS_SUMMARY,
+  receiptNeedsReview,
+} from "../contracts/receipt.ts";
 import { REDACTED } from "../contracts/secret.ts";
 import { SAMPLE_ORIGIN, SAMPLE_URL, sampleDocument, sampleFact } from "../testing/samples.ts";
+import { CommitmentLedger } from "./commitment.ts";
 import { DisclosureLedger } from "./disclosure.ts";
 import { buildReceipt, ReceiptBuildError, type ReceiptDraft } from "./receipts.ts";
 
@@ -55,8 +60,10 @@ describe("receipt construction", () => {
     const { receipt } = buildReceipt(draft({ status: "unknown" }));
     expect(receipt.status).toBe("unknown");
     expect(receipt.externalId).toBeUndefined();
+    // BD32: a completed-but-unconfirmed action reads differently from a lost one,
+    // and neither may carry an external id it could not verify.
     const completed = buildReceipt(draft({ status: "completed" }));
-    expect(completed.receipt.status).toBe("unknown");
+    expect(completed.receipt.status).toBe("unconfirmed");
     expect(completed.receipt.externalId).toBeUndefined();
   });
 
@@ -166,5 +173,40 @@ describe("receipt construction", () => {
   test("the completion timestamp is normalized to ISO-8601", () => {
     const { receipt } = buildReceipt(draft({ completedAt: 1_700_000_000_000 }));
     expect(receipt.completedAt).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+});
+
+// BD32: the two uncertain states are equally unsafe to retry but must not read alike.
+describe("unconfirmed and unknown are distinct to the user", () => {
+  test("each status has its own explanation", () => {
+    const summaries = new Set(Object.values(RECEIPT_STATUS_SUMMARY));
+    expect(summaries.size).toBe(4);
+    expect(RECEIPT_STATUS_SUMMARY.unconfirmed).not.toBe(RECEIPT_STATUS_SUMMARY.unknown);
+    expect(RECEIPT_STATUS_SUMMARY.unconfirmed).toContain("no sufficient confirmation");
+    expect(RECEIPT_STATUS_SUMMARY.unknown).toContain("connection");
+  });
+
+  test("both uncertain states demand review and neither reads as success", () => {
+    for (const status of ["unconfirmed", "unknown"] as const) {
+      expect(receiptNeedsReview(status)).toBe(true);
+      expect(status).not.toBe("confirmed");
+    }
+    expect(receiptNeedsReview("confirmed")).toBe(false);
+    expect(receiptNeedsReview("failed")).toBe(false);
+  });
+
+  test("a commitment that only completed still cannot be retried automatically", () => {
+    const ledger = new CommitmentLedger();
+    const request = {
+      intent: "submit-form" as const,
+      url: "https://jobs.example.com/apply",
+      fingerprint: "fp-1",
+    };
+    const authorized = ledger.authorize(request);
+    if (!authorized.ok) throw new Error("expected a permit");
+    const attempt = ledger.begin(authorized.permit);
+    ledger.settle(attempt, { status: "completed", message: "clicked, no confirmation" } as never);
+    const again = ledger.authorize(request);
+    expect(again.ok).toBe(false);
   });
 });

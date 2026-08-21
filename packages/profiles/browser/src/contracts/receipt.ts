@@ -30,9 +30,25 @@ export const receiptCandidateSchema = z.strictObject({
 });
 
 // BD17: confirmed / unknown / failed. There is deliberately no "rolled back".
-export type ReceiptStatus = "confirmed" | "unknown" | "failed";
+// BD32. `unconfirmed` and `unknown` are equally unsafe to retry, but they are not the
+// same thing to a person: "the page showed no confirmation" is a different next step
+// from "the connection dropped and Mu cannot say what happened".
+export type ReceiptStatus = "confirmed" | "unconfirmed" | "unknown" | "failed";
 
-export const receiptStatusSchema = z.enum(["confirmed", "unknown", "failed"]);
+export const receiptStatusSchema = z.enum(["confirmed", "unconfirmed", "unknown", "failed"]);
+
+// What the user should be told, and why the two uncertain states differ.
+export const RECEIPT_STATUS_SUMMARY: Record<ReceiptStatus, string> = {
+  confirmed: "the site confirmed the action",
+  unconfirmed: "the action was performed, but the page showed no sufficient confirmation",
+  unknown: "the browser connection was lost afterwards, so the outcome cannot be established",
+  failed: "the site reported that the action did not complete",
+};
+
+// Neither uncertain state may be retried automatically (BD18).
+export function receiptNeedsReview(status: ReceiptStatus): boolean {
+  return status === "unconfirmed" || status === "unknown";
+}
 
 export interface ReceiptUpload {
   documentId: AuthorizedDocumentId;

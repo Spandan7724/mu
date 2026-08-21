@@ -151,14 +151,19 @@ export function mayCommitAgain(status: CommitStatus): boolean {
 }
 
 // A cancelled commitment produced no external effect, so it has nothing to receipt.
+// BD32: `completed` and `unknown` are equally unsafe to retry, so both park in
+// awaiting-reconciliation — but they are reported distinctly, because the user's next
+// step differs. A missing confirmation means "check the page"; a lost connection means
+// "check the site before doing anything else".
 export function commitReceiptStatus(status: CommitStatus): ReceiptStatus | undefined {
   switch (status) {
     case "confirmed":
       return "confirmed";
     case "failed":
       return "failed";
-    case "unknown":
     case "completed":
+      return "unconfirmed";
+    case "unknown":
       return "unknown";
     case "cancelled":
       return undefined;

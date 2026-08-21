@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { unknownOutcome } from "../contracts/actions.ts";
+import type { ReceiptStatus } from "../contracts/receipt.ts";
+import { receiptNeedsReview } from "../contracts/receipt.ts";
 import {
   SAMPLE_ORIGIN,
   SAMPLE_TAB_ID,
@@ -144,10 +146,15 @@ describe("what a status permits", () => {
   });
 
   test("an unproven commitment cannot receipt as success", () => {
-    expect(commitReceiptStatus("completed")).toBe("unknown");
+    // BD32: distinct statuses, but neither of the uncertain ones is "confirmed".
+    expect(commitReceiptStatus("completed")).toBe("unconfirmed");
     expect(commitReceiptStatus("unknown")).toBe("unknown");
     expect(commitReceiptStatus("failed")).toBe("failed");
     expect(commitReceiptStatus("confirmed")).toBe("confirmed");
+    for (const status of ["completed", "unknown"] as const) {
+      expect(receiptNeedsReview(commitReceiptStatus(status) as ReceiptStatus)).toBe(true);
+    }
+    expect(receiptNeedsReview("confirmed")).toBe(false);
   });
 
   test("a cancelled commitment has no external effect to receipt", () => {
