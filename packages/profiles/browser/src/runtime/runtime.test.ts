@@ -272,8 +272,8 @@ describe("the persistent-profile factory owns its directory exclusively", () => 
   test("a profile name never escapes the browser data root (BD7)", () => {
     const root = "/tmp/mu-browser-data";
     expect(persistentProfileDir(root, "work")).toBe(join(root, "profiles", "work"));
-    for (const escape of ["..", "../../.config/google-chrome", "/home/someone/.config"]) {
-      expect(() => persistentProfileDir(root, escape)).toThrow("not a Mu-owned browser profile");
+    for (const outside of ["..", "../../.config/google-chrome", "/home/someone/.config"]) {
+      expect(() => persistentProfileDir(root, outside)).toThrow("not a Mu-owned browser profile");
     }
   });
 
