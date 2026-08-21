@@ -2,7 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCliSessionRuntime, EXIT, parseArgs, runHeadless, runRpc } from "@mu/cli-runtime";
+import {
+  createCliSessionRuntime,
+  EXIT,
+  parseArgs,
+  runHeadless,
+  runInteractive,
+  runRpc,
+} from "@mu/cli-runtime";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import type { BrowserProfile } from "@mu/profile-browser/profile";
 import { ExtensionHost, FileSessionStore } from "mu";
@@ -293,6 +300,26 @@ describe("a browser session runs end to end against the fake driver", () => {
     const profile = runtime.profile as unknown as BrowserProfile;
     await runtime.agent.shutdown();
     expect(profile.runtime.status().phase).toBe("disconnected");
+  });
+});
+
+describe("the interactive surface", () => {
+  test("it reports under mu-browser's own command name", async () => {
+    const messages: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string) => {
+      messages.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      // Bun's test runner has no TTY, so this is the interactive entry point's
+      // first branch — enough to prove the branding comes from this descriptor.
+      const product = createBrowserProduct({ home: await tempHome() });
+      expect(await runInteractive(product, parseArgs([], product))).toBe(2);
+    } finally {
+      process.stderr.write = write;
+    }
+    expect(messages.join("")).toBe("mu-browser: not a terminal — use -p for headless mode\n");
   });
 });
 
