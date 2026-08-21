@@ -69,7 +69,7 @@ function isDirective(line: string): boolean {
 
 const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/;
 const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?)?\d{3}[\s.-]?\d{3,4}(?:[\s.-]?\d{2,4})?/;
-const URL = /\bhttps:\/\/[^\s<>"']+/;
+const WEB_URL = /\bhttps:\/\/[^\s<>"']+/;
 const NAME = /^[A-Z][\p{L}'’-]+(?:\s+[A-Z][\p{L}'’.-]+){1,3}$/u;
 
 interface Extraction {
@@ -91,7 +91,7 @@ function extractFrom(lines: readonly string[]): Extraction[] {
     const location = `line ${index + 1}`;
     const email = EMAIL.exec(line);
     if (email !== null) claim("email", email[0], location, true);
-    const url = URL.exec(line);
+    const url = WEB_URL.exec(line);
     if (url !== null) {
       const value = url[0];
       const host = safeHost(value);
@@ -103,7 +103,7 @@ function extractFrom(lines: readonly string[]): Extraction[] {
     }
     // A phone number is only credible when the line says so or holds nothing else; digits
     // inside a date range or an address are not a contact number.
-    const withoutEmail = line.replace(EMAIL, " ").replace(URL, " ");
+    const withoutEmail = line.replace(EMAIL, " ").replace(WEB_URL, " ");
     const phone = PHONE.exec(withoutEmail);
     if (
       phone !== null &&
