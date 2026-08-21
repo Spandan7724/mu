@@ -4,6 +4,7 @@ import {
   type BrowserElement,
   type BrowserRisk,
   isCredentialElement,
+  TAKEOVER_RISKS,
 } from "../contracts/observation.ts";
 import type { TakeoverReason } from "../contracts/takeover.ts";
 
@@ -422,8 +423,13 @@ export function gateGenericAction(context: GenericActionContext): GenericActionG
     classifications.push(classifyElement(context.source));
   }
 
+  // Takeover outranks commitment here even though a commitment is the more severe
+  // class for a preview: handing the browser back to the user is the narrowest
+  // possible authority, so a login submitter must never reach browser_submit.
   for (const classification of classifications) {
-    if (classification.riskClass === "authentication") return takeover(classification);
+    if (classification.risks.some((risk) => TAKEOVER_RISKS.includes(risk))) {
+      return takeover(classification);
+    }
   }
 
   for (const classification of classifications) {
