@@ -40,7 +40,7 @@ const INJECTION_PATTERNS: readonly { pattern: RegExp; label: string }[] = [
   { pattern: /\bwithout (?:asking|requesting|permission)\b/i, label: "approval bypass" },
 ];
 
-export interface InjectionFinding {
+export interface DocumentInjectionFinding {
   where: "basename" | "text";
   label: string;
   // The offending line, bounded, kept so a human can see what was quarantined. It is
@@ -50,11 +50,11 @@ export interface InjectionFinding {
 
 const MAX_EXCERPT = 200;
 
-export function detectInjection(
+export function detectDocumentInjection(
   value: string,
-  where: InjectionFinding["where"],
-): InjectionFinding[] {
-  const findings: InjectionFinding[] = [];
+  where: DocumentInjectionFinding["where"],
+): DocumentInjectionFinding[] {
+  const findings: DocumentInjectionFinding[] = [];
   for (const { pattern, label } of INJECTION_PATTERNS) {
     if (!pattern.test(value)) continue;
     if (findings.some((finding) => finding.label === label)) continue;
@@ -129,7 +129,7 @@ function safeHost(value: string): string | undefined {
 export interface DocumentIngestion {
   documentId: AuthorizedDocumentId;
   candidates: FactCandidate[];
-  findings: InjectionFinding[];
+  findings: DocumentInjectionFinding[];
   quarantinedLines: number;
   // The document text a model may see, with directive lines removed and the whole thing
   // tagged as reference material rather than instruction.
@@ -150,7 +150,7 @@ export function ingestDocument(
   document: AuthorizedDocument,
   options: IngestOptions = {},
 ): DocumentIngestion {
-  const findings = detectInjection(document.basename, "basename");
+  const findings = detectDocumentInjection(document.basename, "basename");
   const skipped: { field: string; reason: string }[] = [];
   if (!document.purposes.includes("reference")) {
     return {
@@ -170,7 +170,7 @@ export function ingestDocument(
   for (const line of lines) {
     if (isDirective(line)) {
       quarantinedLines += 1;
-      for (const finding of detectInjection(line, "text")) {
+      for (const finding of detectDocumentInjection(line, "text")) {
         if (!findings.some((f) => f.where === "text" && f.label === finding.label)) {
           findings.push(finding);
         }

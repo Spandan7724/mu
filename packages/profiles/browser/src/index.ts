@@ -4,3 +4,5 @@
 // test-only and reachable at @mu/profile-browser/testing.
 export * from "./artifacts/index.ts";
 export * from "./contracts/index.ts";
+export * from "./data/index.ts";
+export * from "./policy/index.ts";
