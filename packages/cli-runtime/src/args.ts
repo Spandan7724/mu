@@ -163,7 +163,9 @@ export function helpText(
     "      --max-turns <n>      stop after n turns",
     "      --max-cost <usd>     stop once the run costs this much",
     "      --permission-mode <mode>",
-    "                           default | accept-edits | plan-readonly | yolo",
+    ...(product.help?.permissionModes === undefined
+      ? []
+      : [`                           ${product.help.permissionModes.join(" | ")}`]),
     "      --allow-all          alias for --permission-mode yolo",
     "      --no-instructions    disable global and project instruction loading",
     ...(product.help?.options ?? []),

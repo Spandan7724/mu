@@ -49,6 +49,10 @@ export interface ProductDataNamespace {
 export interface ProductHelp {
   usage?: readonly string[];
   options?: readonly string[];
+  // Rendered after `--permission-mode`. The runtime knows the flag exists but not
+  // what a product's modes are called, so an omitted list prints no enumeration
+  // rather than another product's vocabulary.
+  permissionModes?: readonly string[];
 }
 
 // Neutral flags the runtime already parsed, handed to the product so it can

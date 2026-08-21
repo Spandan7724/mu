@@ -7,6 +7,7 @@ import type {
 import { helpText, usageLine } from "@mu/cli-runtime";
 import type { Profile } from "@mu/core";
 import {
+  BROWSER_PERMISSION_MODES,
   type BrowserProfileOptions,
   browserConfigPath,
   browserDataLayout,
@@ -212,6 +213,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
       "      --artifact-root <path>",
       "                           where screenshots, downloads and receipts are kept",
     ],
+    permissionModes: BROWSER_PERMISSION_MODES.map((mode) => mode.id),
   },
   data: {
     configFile: (home) => browserConfigPath(home),

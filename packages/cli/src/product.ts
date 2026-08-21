@@ -139,6 +139,7 @@ export const codingProduct: ProductDescriptor<CodingProductOptions> = {
     options: [
       "      --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)",
     ],
+    permissionModes: ["default", "accept-edits", "plan-readonly", "yolo"],
   },
   data: {
     configFile: (home) => userConfigPath(home),
