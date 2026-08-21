@@ -124,9 +124,9 @@ export function scopesForAction(action: BrowserAction, element?: BrowserElement)
   const classification = element === undefined ? undefined : classifyElement(element);
   const disclosing = action.kind === "fill" || action.kind === "type" || action.kind === "select";
 
-  if (disclosing || classification?.risks.includes("personal-data") === true) {
-    scopes.add("browser:disclose");
-  }
+  // Clicking or hovering a personal-data field tells the site nothing; only entering
+  // a value does, so the disclosure scope follows the action, not the field.
+  if (disclosing) scopes.add("browser:disclose");
   if (classification?.risks.includes("file-upload") === true) scopes.add("browser:upload");
   if (scopes.size === 0) scopes.add("browser:interact");
   return [...scopes];
