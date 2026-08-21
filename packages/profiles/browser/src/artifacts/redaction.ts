@@ -10,7 +10,9 @@ export interface RedactableValue {
 // SECURITY.md §11: these never reach a receipt, ledger, log or event, whoever
 // assembled the string they are hiding in.
 const SECRET_PATTERNS: readonly RegExp[] = [
-  /\b(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|authorization|cookie|set-cookie|session[_-]?id)\b\s*[:=]\s*("[^"]*"|'[^']*'|\S+)/gi,
+  // The scheme word is consumed with the value: stopping at "Bearer" would leave
+  // the token it introduces sitting in the text.
+  /\b(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|authorization|cookie|set-cookie|session[_-]?id)\b\s*[:=]\s*(?:(?:Bearer|Basic|Token|Digest)\s+)?("[^"]*"|'[^']*'|\S+)/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}/gi,
   /\bdata:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi,
   // Full payment data. A 13-19 digit run is a card number far more often than it is
