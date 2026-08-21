@@ -11,4 +11,4 @@ packages/ripgrep-*/UNLICENSE
 *.tsbuildinfo
 CLAUDE.md
 .claude/
-scripts/
+/scripts/
