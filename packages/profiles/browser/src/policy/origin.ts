@@ -3,6 +3,7 @@ import { factAllowsOrigin } from "../contracts/applicant.ts";
 import { normalizeOrigin } from "../contracts/primitives.ts";
 import type { BrowserFrame } from "../contracts/tabs.ts";
 import { type AuthorityContext, assertPolicyAuthority, isAuthorityActive } from "./authority.ts";
+import { assertNotUntrusted } from "./untrusted.ts";
 
 // TOOLS.md: v1 navigation is http(s) only. Everything here is denied outright rather
 // than asked about, because none of these targets is a web origin a user could
@@ -246,6 +247,7 @@ export function withApprovedOrigin(
   authority: unknown,
 ): OriginPolicy {
   assertPolicyAuthority(authority, "allowing a new origin");
+  assertNotUntrusted(origin, "an allowed origin");
   if (!isAuthorityActive(authority, policy.context)) return policy;
   const normalized = normalizeOrigin(origin);
   if (normalized === undefined || policy.allowed.includes(normalized)) return policy;
@@ -258,6 +260,7 @@ export function withLoginTakeoverApproval(
   authority: unknown,
 ): OriginPolicy {
   assertPolicyAuthority(authority, "approving a login takeover");
+  assertNotUntrusted(origin, "a login-approved origin");
   if (!isAuthorityActive(authority, policy.context)) return policy;
   const normalized = normalizeOrigin(origin);
   if (normalized === undefined || policy.loginApproved.includes(normalized)) return policy;
