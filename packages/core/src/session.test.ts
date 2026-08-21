@@ -420,3 +420,67 @@ describe("session environment contract", () => {
     expect(() => normalizeSessionProfile("p".repeat(200))).toThrow("too long");
   });
 });
+
+describe("pre-v2 session environments migrate rather than fail", () => {
+  const v1 = (environment: unknown) =>
+    JSON.stringify({
+      type: "session",
+      version: 1,
+      id: "s1",
+      createdAt: new Date(0).toISOString(),
+      profile: "coding",
+      environment,
+    });
+
+  test("an over-limit entry count is trimmed, not rejected", () => {
+    const wide: Record<string, string> = {};
+    for (let i = 0; i < 40; i++) wide[`key${i}`] = "v";
+    const entry = parseEntry(v1(wide));
+    if (entry.type !== "session") throw new Error("expected a header");
+    expect(Object.keys(entry.environment).length).toBe(SESSION_ENVIRONMENT_LIMITS.maxEntries);
+    expect(entry.environmentMigration?.length).toBeGreaterThan(0);
+  });
+
+  test("an invalid key is dropped and an oversized value truncated", () => {
+    const entry = parseEntry(
+      v1({
+        "bad key!": "x",
+        good: "y",
+        big: "z".repeat(SESSION_ENVIRONMENT_LIMITS.maxValueLength + 10),
+      }),
+    );
+    if (entry.type !== "session") throw new Error("expected a header");
+    expect(entry.environment["bad key!"]).toBeUndefined();
+    expect(entry.environment.good).toBe("y");
+    expect(entry.environment.big?.length).toBe(SESSION_ENVIRONMENT_LIMITS.maxValueLength);
+    expect(entry.environmentMigration?.length).toBe(2);
+  });
+
+  test("a non-string value is dropped rather than failing the load", () => {
+    const entry = parseEntry(v1({ ok: "1", nope: 2 }));
+    if (entry.type !== "session") throw new Error("expected a header");
+    expect(entry.environment).toEqual({ ok: "1" });
+  });
+
+  test("a clean v1 header migrates silently", () => {
+    const entry = parseEntry(v1({ directory: "/tmp", platform: "linux" }));
+    if (entry.type !== "session") throw new Error("expected a header");
+    expect(entry.environmentMigration).toBeUndefined();
+  });
+
+  // v2 is the current contract, so a malformed v2 header is a bug, not history.
+  test("a v2 header is still validated strictly", () => {
+    expect(() =>
+      parseEntry(
+        JSON.stringify({
+          type: "session",
+          version: SESSION_VERSION,
+          id: "s1",
+          createdAt: new Date(0).toISOString(),
+          profile: "coding",
+          environment: { "bad key!": "x" },
+        }),
+      ),
+    ).toThrow();
+  });
+});

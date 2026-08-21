@@ -1,7 +1,10 @@
 import { compactionSummaryMessage } from "./compaction.ts";
 import type { AgentMessage, Usage } from "./messages.ts";
 
-export const SESSION_VERSION = 1;
+// v2 headers carry a bounded, validated environment. v1 headers predate that
+// contract, so they are migrated tolerantly on read rather than rejected —
+// environment metadata is informational and never worth losing a transcript over.
+export const SESSION_VERSION = 2;
 
 // Product-specific runtime facts recorded once in the session header. The
 // kernel never interprets them; it only guarantees they stay small enough to
@@ -69,6 +72,47 @@ export function normalizeSessionEnvironment(value: unknown): SessionEnvironment 
   return normalized;
 }
 
+export interface SessionEnvironmentMigration {
+  environment: SessionEnvironment;
+  // Empty when the stored value already satisfied the v2 contract.
+  changes: string[];
+}
+
+// Read-side repair for a pre-v2 header. Never throws: anything unusable is dropped
+// and reported, so a transcript stays loadable.
+export function migrateSessionEnvironment(value: unknown): SessionEnvironmentMigration {
+  if (value === undefined) return { environment: {}, changes: [] };
+  if (!record(value)) {
+    return { environment: {}, changes: ["environment was not an object and was discarded"] };
+  }
+  const environment: SessionEnvironment = {};
+  const changes: string[] = [];
+  for (const [key, entry] of Object.entries(value)) {
+    if (Object.keys(environment).length >= SESSION_ENVIRONMENT_LIMITS.maxEntries) {
+      changes.push(`kept the first ${SESSION_ENVIRONMENT_LIMITS.maxEntries} environment entries`);
+      break;
+    }
+    if (typeof entry !== "string") {
+      changes.push(`dropped non-string environment value for "${key.slice(0, 32)}"`);
+      continue;
+    }
+    if (
+      key.length > SESSION_ENVIRONMENT_LIMITS.maxKeyLength ||
+      !SESSION_ENVIRONMENT_KEY.test(key)
+    ) {
+      changes.push(`dropped invalid environment key "${key.slice(0, 32)}"`);
+      continue;
+    }
+    if (entry.length > SESSION_ENVIRONMENT_LIMITS.maxValueLength) {
+      environment[key] = `${entry.slice(0, SESSION_ENVIRONMENT_LIMITS.maxValueLength - 1)}…`;
+      changes.push(`truncated oversized environment value for "${key}"`);
+      continue;
+    }
+    environment[key] = entry;
+  }
+  return { environment, changes };
+}
+
 export function normalizeSessionProfile(value: unknown): string {
   if (value === undefined) return NO_SESSION_PROFILE;
   if (typeof value !== "string" || value.trim().length === 0)
@@ -86,6 +130,9 @@ export type SessionEntry =
       createdAt: string;
       profile: string;
       environment: SessionEnvironment;
+      // Present only when a pre-v2 header needed repair on read. Diagnostic for the
+      // product to surface; the file on disk is never rewritten just by reading it.
+      environmentMigration?: string[];
     }
   | {
       type: "message";
@@ -273,8 +320,16 @@ function assertSessionEntry(value: unknown): asserts value is SessionEntry {
     ) {
       throw new Error("Invalid session header");
     }
-    const issues = sessionEnvironmentIssues(value.environment);
-    if (issues.length > 0) throw new Error(`Invalid session header: ${issues.join("; ")}`);
+    // A v2 header must already be valid; an older one is repaired in place so the
+    // rest of the transcript still loads. Structural damage still fails.
+    if (value.version >= SESSION_VERSION) {
+      const issues = sessionEnvironmentIssues(value.environment);
+      if (issues.length > 0) throw new Error(`Invalid session header: ${issues.join("; ")}`);
+      return;
+    }
+    const migrated = migrateSessionEnvironment(value.environment);
+    value.environment = migrated.environment;
+    if (migrated.changes.length > 0) value.environmentMigration = migrated.changes;
     return;
   }
   if (!nonEmptyString(value.id) || !(value.parentId === null || nonEmptyString(value.parentId))) {
