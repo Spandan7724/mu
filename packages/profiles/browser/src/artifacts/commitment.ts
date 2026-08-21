@@ -1,0 +1,333 @@
+import { createHash } from "node:crypto";
+import type { SubmitIntent } from "../contracts/intent.ts";
+import { normalizeOrigin } from "../contracts/primitives.ts";
+import type {
+  CommitClassification,
+  CommitStatus,
+  ConfirmationEvidence,
+  FailureEvidence,
+} from "./outcome.ts";
+import { isSufficientConfirmation } from "./outcome.ts";
+
+export const COMMITMENT_LIMITS = {
+  maxRecords: 200,
+} as const;
+
+export type CommitmentPhase =
+  | "authorized"
+  | "attempted"
+  | "confirmed"
+  | "failed"
+  | "cancelled"
+  | "awaiting-reconciliation"
+  | "reconciled-failed";
+
+export interface CommitmentRequest {
+  intent: SubmitIntent;
+  url: string;
+  // Whatever makes this commitment the same commitment: the target, the disclosed
+  // fields, the order contents. Two attempts with one fingerprint are one effect.
+  fingerprint: string;
+  // Honored only for a commitment that observation has already resolved to failed.
+  // Nothing in an automatic loop can set it truthfully.
+  userReauthorized?: boolean | undefined;
+}
+
+export type CommitRefusalReason =
+  | "invalid-origin"
+  | "permit-outstanding"
+  | "attempt-in-flight"
+  | "already-confirmed"
+  | "awaiting-reconciliation"
+  | "needs-user-approval";
+
+// Minted only by CommitmentLedger.authorize and recognized only by the ledger that
+// minted it: a literal with the same fields is not a permit.
+export interface CommitPermit {
+  readonly commitmentId: string;
+  readonly key: string;
+  readonly intent: SubmitIntent;
+  readonly origin: string;
+  readonly url: string;
+}
+
+export interface CommitAttempt {
+  readonly commitmentId: string;
+  readonly key: string;
+  readonly intent: SubmitIntent;
+  readonly origin: string;
+  readonly startedAt: number;
+}
+
+export type CommitAuthorization =
+  | { ok: true; permit: CommitPermit }
+  | { ok: false; reason: CommitRefusalReason; message: string; commitmentId?: string | undefined };
+
+export interface CommitmentRecord {
+  id: string;
+  key: string;
+  intent: SubmitIntent;
+  origin: string;
+  url: string;
+  phase: CommitmentPhase;
+  status?: CommitStatus | undefined;
+  authorizedAt: number;
+  attemptedAt?: number | undefined;
+  settledAt?: number | undefined;
+  reconciledAt?: number | undefined;
+  attempts: number;
+}
+
+export type ReconcileResolution =
+  | { status: "confirmed"; evidence: readonly ConfirmationEvidence[] }
+  | { status: "failed"; evidence: readonly FailureEvidence[] };
+
+export type ReconcileResult =
+  | { ok: true; record: CommitmentRecord }
+  | {
+      ok: false;
+      reason: "unknown-commitment" | "not-awaiting" | "insufficient-evidence";
+      message: string;
+    };
+
+export function commitmentKey(intent: SubmitIntent, origin: string, fingerprint: string): string {
+  return createHash("sha256").update(`${intent}\u0000${origin}\u0000${fingerprint}`).digest("hex");
+}
+
+export interface CommitmentLedgerOptions {
+  now?: (() => number) | undefined;
+  maxRecords?: number | undefined;
+}
+
+// BD18 in code. A commitment cannot be attempted without a permit, a permit is
+// single use, and an unproven outcome parks the commitment in a phase that mints
+// no further permits. Duplicating an external effect is therefore not something a
+// caller is trusted to avoid — it is something it cannot express.
+export class CommitmentLedger {
+  private readonly records = new Map<string, CommitmentRecord>();
+  private readonly byKey = new Map<string, string>();
+  private readonly permits = new WeakSet<CommitPermit>();
+  private readonly attempts = new WeakSet<CommitAttempt>();
+  private readonly now: () => number;
+  private readonly maxRecords: number;
+  private counter = 0;
+
+  constructor(options: CommitmentLedgerOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.maxRecords = options.maxRecords ?? COMMITMENT_LIMITS.maxRecords;
+  }
+
+  authorize(request: CommitmentRequest): CommitAuthorization {
+    const origin = normalizeOrigin(request.url);
+    if (origin === undefined) {
+      return {
+        ok: false,
+        reason: "invalid-origin",
+        message: "a commitment targets an http(s) origin",
+      };
+    }
+    const key = commitmentKey(request.intent, origin, request.fingerprint);
+    const existingId = this.byKey.get(key);
+    const existing = existingId === undefined ? undefined : this.records.get(existingId);
+    if (existing !== undefined) {
+      const refusal = this.refusalFor(existing, request.userReauthorized === true);
+      if (refusal !== undefined) return refusal;
+    }
+    const id = `commit-${(++this.counter).toString(36)}-${key.slice(0, 8)}`;
+    const record: CommitmentRecord = {
+      id,
+      key,
+      intent: request.intent,
+      origin,
+      url: request.url,
+      phase: "authorized",
+      authorizedAt: this.now(),
+      attempts: existing?.attempts ?? 0,
+    };
+    this.records.set(id, record);
+    this.byKey.set(key, id);
+    this.evict();
+    const permit: CommitPermit = Object.freeze({
+      commitmentId: id,
+      key,
+      intent: request.intent,
+      origin,
+      url: request.url,
+    });
+    this.permits.add(permit);
+    return { ok: true, permit };
+  }
+
+  private refusalFor(
+    record: CommitmentRecord,
+    userReauthorized: boolean,
+  ): CommitAuthorization | undefined {
+    switch (record.phase) {
+      case "authorized":
+        return {
+          ok: false,
+          reason: "permit-outstanding",
+          message: "this commitment already has an unused authorization",
+          commitmentId: record.id,
+        };
+      case "attempted":
+        return {
+          ok: false,
+          reason: "attempt-in-flight",
+          message: "this commitment is already in flight",
+          commitmentId: record.id,
+        };
+      case "confirmed":
+        return {
+          ok: false,
+          reason: "already-confirmed",
+          message: "this commitment already happened; repeating it would duplicate it",
+          commitmentId: record.id,
+        };
+      case "awaiting-reconciliation":
+        return {
+          ok: false,
+          reason: "awaiting-reconciliation",
+          message: "the outcome is unproven; observe what the site shows instead of repeating it",
+          commitmentId: record.id,
+        };
+      case "reconciled-failed":
+        return userReauthorized
+          ? undefined
+          : {
+              ok: false,
+              reason: "needs-user-approval",
+              message:
+                "an uncertain commitment observed as failed needs the user to approve a retry",
+              commitmentId: record.id,
+            };
+      case "failed":
+      case "cancelled":
+        return undefined;
+    }
+  }
+
+  begin(permit: CommitPermit): CommitAttempt {
+    if (!this.permits.has(permit)) {
+      throw new TypeError("a commitment attempt needs a permit this ledger issued");
+    }
+    const record = this.records.get(permit.commitmentId);
+    if (record === undefined || record.phase !== "authorized") {
+      throw new TypeError("this permit is no longer valid");
+    }
+    // Single use: the permit is spent whether or not the attempt succeeds.
+    this.permits.delete(permit);
+    record.phase = "attempted";
+    record.attemptedAt = this.now();
+    record.attempts += 1;
+    const attempt: CommitAttempt = Object.freeze({
+      commitmentId: record.id,
+      key: record.key,
+      intent: record.intent,
+      origin: record.origin,
+      startedAt: record.attemptedAt,
+    });
+    this.attempts.add(attempt);
+    return attempt;
+  }
+
+  settle(attempt: CommitAttempt, classification: CommitClassification): CommitmentRecord {
+    if (!this.attempts.has(attempt)) {
+      throw new TypeError("this attempt was already settled or was not issued by this ledger");
+    }
+    const record = this.records.get(attempt.commitmentId);
+    if (record === undefined) throw new TypeError("unknown commitment");
+    this.attempts.delete(attempt);
+    record.status = classification.status;
+    record.settledAt = this.now();
+    record.phase = phaseForStatus(classification.status);
+    return { ...record };
+  }
+
+  reconcile(commitmentId: string, resolution: ReconcileResolution): ReconcileResult {
+    const record = this.records.get(commitmentId);
+    if (record === undefined) {
+      return { ok: false, reason: "unknown-commitment", message: `no commitment ${commitmentId}` };
+    }
+    if (record.phase !== "awaiting-reconciliation") {
+      return {
+        ok: false,
+        reason: "not-awaiting",
+        message: `commitment ${commitmentId} is ${record.phase}, not awaiting reconciliation`,
+      };
+    }
+    // Reconciliation is an observation. Asserting an outcome without evidence would
+    // be the blind retry BD18 forbids, wearing a different name.
+    if (resolution.evidence.length === 0) {
+      return {
+        ok: false,
+        reason: "insufficient-evidence",
+        message: "reconciling an unknown outcome requires what was observed",
+      };
+    }
+    if (resolution.status === "confirmed") {
+      if (!isSufficientConfirmation(resolution.evidence)) {
+        return {
+          ok: false,
+          reason: "insufficient-evidence",
+          message: "the observed evidence does not establish that the commitment happened",
+        };
+      }
+      record.phase = "confirmed";
+      record.status = "confirmed";
+    } else {
+      record.phase = "reconciled-failed";
+      record.status = "failed";
+    }
+    record.reconciledAt = this.now();
+    return { ok: true, record: { ...record } };
+  }
+
+  record(commitmentId: string): CommitmentRecord | undefined {
+    const record = this.records.get(commitmentId);
+    return record === undefined ? undefined : { ...record };
+  }
+
+  all(): CommitmentRecord[] {
+    return [...this.records.values()].map((record) => ({ ...record }));
+  }
+
+  awaitingReconciliation(): CommitmentRecord[] {
+    return this.all().filter((record) => record.phase === "awaiting-reconciliation");
+  }
+
+  // BD22 bounds the ledger, but evicting an unreconciled commitment would forget the
+  // very fact that blocks a duplicate, so only settled records are evictable.
+  private evict(): void {
+    if (this.records.size <= this.maxRecords) return;
+    const evictable = [...this.records.values()]
+      .filter((record) => isTerminal(record.phase))
+      .sort(
+        (left, right) =>
+          (left.settledAt ?? left.authorizedAt) - (right.settledAt ?? right.authorizedAt),
+      );
+    for (const record of evictable) {
+      if (this.records.size <= this.maxRecords) return;
+      this.records.delete(record.id);
+      if (this.byKey.get(record.key) === record.id) this.byKey.delete(record.key);
+    }
+  }
+}
+
+function phaseForStatus(status: CommitStatus): CommitmentPhase {
+  switch (status) {
+    case "confirmed":
+      return "confirmed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return "cancelled";
+    case "unknown":
+    case "completed":
+      return "awaiting-reconciliation";
+  }
+}
+
+function isTerminal(phase: CommitmentPhase): boolean {
+  return phase === "confirmed" || phase === "failed" || phase === "cancelled";
+}
