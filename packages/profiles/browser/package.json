@@ -4,6 +4,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./commands": "./src/commands/index.ts",
+    "./drivers": "./src/drivers/index.ts",
+    "./profile": "./src/profile/index.ts",
+    "./renderers": "./src/renderers/index.ts",
+    "./runtime": "./src/runtime/index.ts",
     "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
