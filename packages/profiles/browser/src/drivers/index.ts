@@ -14,6 +14,7 @@ export type {
   BrowserDriverOwnership,
 } from "./factory.ts";
 export * from "./fake/index.ts";
+export * from "./mcp/index.ts";
 export type { PersistentProfileFactoryOptions, ProfileOwnershipRecord } from "./persistent.ts";
 export {
   claimProfile,
