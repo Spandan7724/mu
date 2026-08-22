@@ -280,6 +280,7 @@ describe("a browser session runs end to end against the fake driver", () => {
       "browser_navigate",
       "browser_observe",
       "browser_status",
+      "browser_submit",
       "browser_tabs",
       "browser_takeover",
       "browser_wait",
