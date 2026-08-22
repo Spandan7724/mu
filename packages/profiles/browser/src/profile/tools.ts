@@ -1,16 +1,21 @@
-// PLACEHOLDER TOOLSET — B2 ONLY.
+// The browser profile's toolset.
 //
-// B2's job is the product skeleton, not the model-facing browser surface. The
-// observation, navigation, action, upload, submit and takeover tools that TOOLS.md
-// specifies are B3 work and are deliberately absent. What is here is the single
-// read-only status tool a session needs in order to prove that a browser session
-// actually runs end to end: it opens the connection through the real runtime and
-// reports the real connection state. It changes nothing and observes no page.
+// `browserToolset` is the B3 surface from TOOLS.md: observe, navigate, tabs, act, wait and
+// takeover, built around one `BrowserToolSession` so every reference the model holds is
+// minted, revised and invalidated in a single place. `browser_status` remains beside them
+// because a session has to be able to say what it is connected to without touching a page.
 import { type AnyTool, textResult } from "@mu/core";
 import { connectionSummary } from "../contracts/connection.ts";
 import { isBrowserDriverError } from "../contracts/driver.ts";
+import type { FactLookup } from "../data/facts.ts";
+import { taskAuthority } from "../policy/authority.ts";
+import type { BrowserPolicyState } from "../policy/decide.ts";
+import type { BrowserPermissionMode } from "../policy/modes.ts";
+import { createOriginPolicy } from "../policy/origin.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
 import { phaseSummary } from "../runtime/state.ts";
+import { browserToolset as buildBrowserToolset } from "../tools/index.ts";
+import { BrowserToolSession } from "../tools/session.ts";
 import { BROWSER_PERMISSION_SCOPES } from "./permissions.ts";
 
 export const BROWSER_STATUS_TOOL = "browser_status";
@@ -63,6 +68,50 @@ export function browserStatusTool(runtime: BrowserRuntime): AnyTool {
   };
 }
 
+export interface BrowserToolsetOptions {
+  runtime: BrowserRuntime;
+  /** Origins the task and explicit configuration made reachable. */
+  allowedOrigins?: readonly string[] | undefined;
+  mode?: BrowserPermissionMode | undefined;
+  facts?: FactLookup | undefined;
+  /** Set when the user has approved plaintext disclosure for this task. */
+  allowInsecureDisclosure?: boolean | undefined;
+}
+
+export interface BrowserToolset {
+  tools: AnyTool[];
+  session: BrowserToolSession;
+}
+
+/**
+ * Builds the session and the tools that share it. The origin policy is minted with a task
+ * authority because that is exactly what it is: origins the user's task named. Nothing
+ * page-derived can widen it, by construction — `createOriginPolicy` demands the authority.
+ */
+export function browserToolset(options: BrowserToolsetOptions): BrowserToolset {
+  const policy: BrowserPolicyState = {
+    origins: createOriginPolicy(
+      {
+        configuredOrigins: options.allowedOrigins ?? [],
+        ...(options.allowInsecureDisclosure === undefined
+          ? {}
+          : { allowInsecureDisclosure: options.allowInsecureDisclosure }),
+      },
+      taskAuthority({ reason: "origins configured for this task" }),
+    ),
+    mode: options.mode ?? "confirm-submission",
+  };
+  const session = new BrowserToolSession({ runtime: options.runtime, policy });
+  const context = { session, ...(options.facts === undefined ? {} : { facts: options.facts }) };
+  return {
+    tools: [browserStatusTool(options.runtime), ...buildBrowserToolset(context)],
+    session,
+  };
+}
+
+// B2's single status tool. `browserProfile` still wires this one; replacing it with
+// `browserToolset` needs `profile/profile.ts`, which belongs to the integration gate
+// rather than to this lane.
 export function browserPlaceholderToolset(runtime: BrowserRuntime): AnyTool[] {
   return [browserStatusTool(runtime)];
 }

@@ -8,6 +8,7 @@ import {
 } from "./authority.ts";
 import {
   type BrowserScope,
+  COMMITMENT_SCOPES,
   NEVER_AUTO_ALLOWED_SCOPES,
   originPattern,
   scopeForIntent,
@@ -16,11 +17,13 @@ import {
 // BD13. There is deliberately no fourth member: SECURITY §9 states there is no global
 // full-access mode in v1, and adding one requires a new BD* decision.
 export type BrowserPermissionMode =
+  | "read-only"
   | "confirm-submission"
   | "confirm-every-write"
   | "autonomous-submit";
 
 export const BROWSER_PERMISSION_MODES: readonly BrowserPermissionMode[] = [
+  "read-only",
   "confirm-submission",
   "confirm-every-write",
   "autonomous-submit",
@@ -80,6 +83,17 @@ export function browserPermissionRules(
   options: ModeRuleOptions = {},
 ): PermissionRule[] {
   const rules = [...BASE_RULES];
+
+  // Observe and navigate; refuse every change and every commitment. Stricter than the
+  // base rules, so it denies rather than asks — a read-only session should not be able
+  // to talk its way into a write.
+  if (mode === "read-only") {
+    rules.push(rule("browser:interact", "*", "deny"));
+    rules.push(rule("browser:disclose", "*", "deny"));
+    rules.push(rule("browser:upload", "*", "deny"));
+    for (const scope of COMMITMENT_SCOPES) rules.push(rule(scope, "*", "deny"));
+    return rules;
+  }
 
   if (mode === "confirm-every-write") {
     rules.push(rule("browser:interact", "*", "ask"));

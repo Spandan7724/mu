@@ -94,16 +94,31 @@ describe("browserProfile", () => {
     try {
       const profile = await browserProfile({ home, factory: fakeFactory() });
       expect(profile.name).toBe("browser");
-      expect(profile.toolset.map((tool) => tool.name)).toEqual([BROWSER_STATUS_TOOL]);
+      expect(profile.toolset.map((tool) => tool.name).sort()).toEqual([
+        "browser_act",
+        "browser_navigate",
+        "browser_observe",
+        BROWSER_STATUS_TOOL,
+        "browser_tabs",
+        "browser_takeover",
+        "browser_wait",
+      ]);
+      // B5 and B8 surfaces must not appear before their milestones land.
+      for (const later of ["browser_upload", "browser_submit", "browser_pointer"]) {
+        expect(profile.toolset.some((tool) => tool.name === later)).toBe(false);
+      }
       expect(profile.promptFor("anthropic/claude-opus-5")[0]?.text).toContain("mu-browser");
       expect(profile.permissionModes?.map((mode) => mode.id)).toEqual(
         BROWSER_PERMISSION_MODES.map((mode) => mode.id),
       );
-      expect(profile.defaultPermissionMode).toBe("confirm-submit");
+      expect(profile.defaultPermissionMode).toBe("confirm-submission");
       expect(Object.keys(profile.renderers ?? {})).toEqual([BROWSER_STATUS_TOOL]);
       expect(profile.commands?.map((command) => command.name).sort()).toEqual([
         "browser",
         "disconnect",
+        "documents",
+        "profile",
+        "receipt",
         "resume-browser",
         "tabs",
         "takeover",

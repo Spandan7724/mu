@@ -248,7 +248,9 @@ describe("a browser session runs end to end against the fake driver", () => {
       product,
       productOptions: { ...emptyBrowserProductOptions(), connection: "fake" },
       model: "fake/fake-1",
-      permissionMode: "yolo",
+      // `browser_status` only needs browser:observe, which read-only allows. There is
+      // deliberately no full-access mode to reach for here (SECURITY §9).
+      permissionMode: "read-only",
       permissions: "forward",
       agentOptions: {
         provider: new FakeProvider([
@@ -273,7 +275,15 @@ describe("a browser session runs end to end against the fake driver", () => {
     );
     await runtime.agent.shutdown();
 
-    expect(runtime.agentOptions.tools?.map((tool) => tool.name)).toEqual(["browser_status"]);
+    expect(runtime.agentOptions.tools?.map((tool) => tool.name).sort()).toEqual([
+      "browser_act",
+      "browser_navigate",
+      "browser_observe",
+      "browser_status",
+      "browser_tabs",
+      "browser_takeover",
+      "browser_wait",
+    ]);
     const commands = runtime.commands.list().map((command) => command.name);
     expect(commands).toContain("browser");
     expect(commands).toContain("disconnect");
