@@ -56,7 +56,7 @@ export function liveContractFixture(origins: LiveFixtureOrigins): LiveContractFi
       fileField: "Document",
       submitButton: "Submit",
       popupTrigger: "Open in a new tab",
-      dialogTrigger: "Show confirm",
+      dialogTrigger: "Show alert",
       downloadTrigger: "ada-testwell-resume.pdf",
       passwordField: "Password",
       scrollTarget: "Enable notifications",

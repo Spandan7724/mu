@@ -136,6 +136,18 @@ describe("threat: a normal click unexpectedly reaches a purchase, send or delete
     expect(outcome.kind).toBe("ask");
   });
 
+  test("a grant never covers answering a question the page writes itself", () => {
+    const outcome = decideSubmitRequest(autonomous(), {
+      request: {
+        target: submitButton,
+        intent: "submit-form",
+        dialog: { accept: true, expectedMessage: "Send this application now?" },
+      },
+      observation: withElements([submitButton]),
+    });
+    expect(outcome.kind).toBe("ask");
+  });
+
   test("ordinary form submission is what the grant actually pre-authorizes", () => {
     const outcome = decideSubmitRequest(autonomous(), {
       request: { target: submitButton, intent: "submit-form" },

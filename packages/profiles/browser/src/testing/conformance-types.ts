@@ -26,7 +26,10 @@ export type DriverCapability =
   | "screenshots"
   | "crashSimulation"
   | "reconnect"
-  | "submissionLedger";
+  | "submissionLedger"
+  // The fixture has a commitment the page guards with its own confirm(), so
+  // dismissing and accepting can be told apart by what reached the server.
+  | "dialogGuard";
 
 // URLs and semantic labels of the deterministic fixture site. Every driver runs
 // the suite against a site satisfying this description, so the extension-backed
@@ -48,6 +51,8 @@ export interface DriverContractFixture {
     submit: string;
     unknownSubmit: string;
     credentials: string;
+    // Only present when the fixture declares `dialogGuard`.
+    guardedSubmit?: string | undefined;
   };
   labels: {
     textField: string;
@@ -67,6 +72,8 @@ export interface DriverContractFixture {
     slowText: string;
     confirmationText: string;
     downloadBasename: string;
+    // The exact words of the guarded commitment's confirm(), when there is one.
+    guardMessage?: string | undefined;
     // Pre-filled into the credentials page's password field. It must never appear
     // anywhere in an observation.
     secretMarker: string;

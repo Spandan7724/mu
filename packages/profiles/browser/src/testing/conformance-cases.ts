@@ -660,6 +660,68 @@ const dialogCases: DriverContractCase[] = [
       expectStatus(outcome, ["completed", "blocked", "takeover"], "click that raises a dialog");
       const after = await ctx.observe();
       equal(after.tab.attached, true, "the tab must remain attached after a dialog");
+      // The message is the page's own words. Reporting it as prose inside `message`
+      // leaves the caller parsing English to find out what it agreed to.
+      const dialog = defined(outcome.dialog, "a structured record of the dialog");
+      equal(dialog.handled, "dismissed", "a dialog raised by a generic action");
+      check(dialog.message.length > 0, "the dialog must carry the page's own words");
+    },
+  },
+  {
+    id: "dialogs/a-dismissed-guard-commits-nothing",
+    group: "dialogs",
+    title: "dismissing a page's confirmation leaves the commitment undone",
+    requires: ["dialogGuard"],
+    async run(ctx) {
+      const url = defined(ctx.fixture.pages.guardedSubmit, "a guarded submit page");
+      const before = await submissionCount(ctx);
+      const observation = await ctx.open(url);
+      const target = elementRefOf(ctx.find(observation, ctx.fixture.labels.submitButton));
+      // No acceptance is supplied, so the driver must dismiss.
+      const outcome = await ctx.submit({ target, intent: "submit-form" });
+      const dialog = defined(outcome.dialog, "a structured record of the guard");
+      equal(dialog.handled, "dismissed", "an unapproved guard");
+      equal(outcome.ok, false, "a dismissed guard must not report success");
+      if (before !== undefined) {
+        equal(await submissionCount(ctx), before, "submissions after a dismissed guard");
+      }
+    },
+  },
+  {
+    id: "dialogs/an-accepted-guard-commits-once",
+    group: "dialogs",
+    title: "accepting the exact question the user approved commits, once",
+    requires: ["dialogGuard"],
+    async run(ctx) {
+      const url = defined(ctx.fixture.pages.guardedSubmit, "a guarded submit page");
+      const message = defined(ctx.fixture.values.guardMessage, "the guard's message");
+      const before = await submissionCount(ctx);
+      const observation = await ctx.open(url);
+      const target = elementRefOf(ctx.find(observation, ctx.fixture.labels.submitButton));
+
+      // A different question is never the approved one, whoever wrote it.
+      const wrong = await ctx.submit({
+        target,
+        intent: "submit-form",
+        dialog: { accept: true, expectedMessage: `${message} (not what was approved)` },
+      });
+      equal(defined(wrong.dialog, "the guard").handled, "dismissed", "a mismatched guard");
+      if (before !== undefined) {
+        equal(await submissionCount(ctx), before, "submissions after a mismatched guard");
+      }
+
+      const fresh = await ctx.open(url);
+      const again = elementRefOf(ctx.find(fresh, ctx.fixture.labels.submitButton));
+      const outcome = await ctx.submit({
+        target: again,
+        intent: "submit-form",
+        dialog: { accept: true, expectedMessage: message },
+      });
+      equal(defined(outcome.dialog, "the guard").handled, "accepted", "the approved guard");
+      expectStatus(outcome, ["completed"], "an accepted guarded commitment");
+      if (before !== undefined) {
+        equal(await submissionCount(ctx), before + 1, "submissions after an accepted guard");
+      }
     },
   },
 ];

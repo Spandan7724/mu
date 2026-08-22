@@ -11,16 +11,17 @@ import {
   type ActionSnapshot,
   actionTargets,
   type BrowserAction,
+  type BrowserDialog,
   type BrowserDownload,
   blockedOutcome,
   completedOutcome,
+  type DialogAcceptance,
   downloadDetails,
   failedOutcome,
   type NavigateRequest,
   type ObserveRequest,
   type SubmitRequest,
   staleOutcome,
-  takeoverOutcome,
   type UploadRequest,
   unknownOutcome,
   type WaitRequest,
@@ -59,7 +60,12 @@ import type { BrowserFrame, BrowserTab, TabOutcome, TabRequest } from "../../con
 import type { TakeoverReason } from "../../contracts/takeover.ts";
 import type { BrowserDriverOwnership } from "../factory.ts";
 import { imageOf, type McpSidecar, type McpToolResult, textOf } from "./protocol.ts";
-import { parseSidecarResponse, parseTabList, type SidecarResponse } from "./response.ts";
+import {
+  parseDialogState,
+  parseSidecarResponse,
+  parseTabList,
+  type SidecarResponse,
+} from "./response.ts";
 import { classifyRisks, commitmentIntent, isCredentialControl } from "./risk.ts";
 import { assertSupportedServer } from "./sidecar.ts";
 import { parseSnapshot, type SnapshotNode, structuralSignature } from "./snapshot.ts";
@@ -645,6 +651,34 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     return { basename };
   };
 
+  /**
+   * Answers a dialog inside the action that raised it. A modal blocks every later
+   * sidecar call, so it can never be left pending for a caller to decide about; the
+   * decision has to have been made in advance. Acceptance is honoured only when the
+   * page asked the question the approval was given for.
+   */
+  const answerDialog = async (
+    response: SidecarResponse,
+    acceptance: DialogAcceptance | undefined,
+    signal: AbortSignal,
+  ): Promise<BrowserDialog | undefined> => {
+    const raised =
+      response.modalState === undefined ? undefined : parseDialogState(response.modalState);
+    if (raised === undefined) return undefined;
+    const accept = acceptance?.accept === true && acceptance.expectedMessage === raised.message;
+    await call(
+      "browser_handle_dialog",
+      {
+        accept,
+        ...(accept && acceptance?.promptText !== undefined
+          ? { promptText: acceptance.promptText }
+          : {}),
+      },
+      signal,
+    ).catch(() => undefined);
+    return { ...raised, handled: accept ? "accepted" : "dismissed" };
+  };
+
   const afterAction = async (
     tabId: string,
     signal: AbortSignal,
@@ -962,19 +996,22 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       }
 
       const settled = outcome as { message: string; response?: SidecarResponse };
-      const modal = settled.response?.modalState;
       const { tab: updated } = await afterAction(found.page.tab.id, signal);
       const after = resultOf(updated);
       const navigation = navigationOf(before, after);
       const download = settled.response === undefined ? undefined : downloadOf(settled.response);
-      if (modal !== undefined && /dialog/i.test(modal)) {
-        // A page dialog is handled rather than hung on, and the user is told the
-        // page interrupted the run.
-        await call("browser_handle_dialog", { accept: false }, signal).catch(() => undefined);
-        return takeoverOutcome({
+      // `browser_act` never passes an acceptance: agreeing to a page's question is a
+      // commitment, and commitments go through submit() (BD12).
+      const raised =
+        settled.response === undefined
+          ? undefined
+          : await answerDialog(settled.response, undefined, signal);
+      if (raised !== undefined) {
+        return blockedOutcome({
           message: `"${label}" raised a browser dialog; it was dismissed and the tab is still attached.`,
           before,
           after: resultOf((await afterAction(found.page.tab.id, signal)).tab),
+          dialog: raised,
         });
       }
       return completedOutcome({
@@ -1010,8 +1047,13 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           before,
         });
       }
+      let clicked: SidecarResponse;
       try {
-        await call("browser_click", { target: node.ref as string, element: label }, signal);
+        clicked = await call(
+          "browser_click",
+          { target: node.ref as string, element: label },
+          signal,
+        );
       } catch (error) {
         // BD18: the click reached the page. Whether the server acted on it cannot
         // be established, so it is reported once and never retried.
@@ -1019,6 +1061,28 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         return unknownOutcome({
           message: `The submission was sent but no confirmation came back (${reason}). Re-observe the page before deciding anything; do not send it again.`,
           before,
+        });
+      }
+
+      const answered = await answerDialog(clicked, request.dialog, signal);
+      if (answered?.handled === "dismissed") {
+        const { tab: updated } = await afterAction(page.tab.id, signal);
+        const after = resultOf(updated);
+        // The page moved anyway, so dismissing did not stop it and Mu cannot tell
+        // what reached the server. That is BD18's case, not a clean refusal.
+        if (after.url !== before.url) {
+          return unknownOutcome({
+            message: `"${label}" raised a dialog that was dismissed, and the page navigated regardless. Check the site before doing anything else; do not send it again.`,
+            before,
+            after,
+            dialog: answered,
+          });
+        }
+        return blockedOutcome({
+          message: `"${label}" asked for confirmation first, and it was dismissed. The page did not move, so nothing was submitted.`,
+          before,
+          after,
+          dialog: answered,
         });
       }
       let after: ActionResultSnapshot;
@@ -1036,6 +1100,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
               "The submission was sent and the response never finished arriving. Check the site before doing anything else; do not send it again.",
             before,
             after,
+            ...(answered === undefined ? {} : { dialog: answered }),
           });
         }
         confirmation = settledPage.nodes
@@ -1048,12 +1113,14 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           message:
             "The submission was sent but the page could not be re-observed afterwards. Check the site before doing anything else; do not send it again.",
           before,
+          ...(answered === undefined ? {} : { dialog: answered }),
         });
       }
       return completedOutcome({
         message: `Submitted "${label}".`,
         before,
         after,
+        ...(answered === undefined ? {} : { dialog: answered }),
         receiptCandidate: {
           kind: request.intent,
           url: after.url,

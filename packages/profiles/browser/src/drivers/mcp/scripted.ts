@@ -87,8 +87,12 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
   let launched = false;
   let current = 0;
   let closed = false;
-  let dialog: string | undefined;
+  let dialog: { kind: string; message: string } | undefined;
   let fileChooser: string | undefined;
+  // A commitment whose page raised a confirmation first, and the control whose guard
+  // has already been accepted. A commitment happens only once its guard is answered.
+  let pendingCommit: { tab: ScriptedTab; found: RefEntry } | undefined;
+  let acceptedGuard: string | undefined;
   let injected: BrowserDriverError | undefined;
   const submissions: FakeSubmissionRecord[] = [];
   const uploads: string[] = [];
@@ -211,7 +215,10 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         // real browser keeps its modal state.
         ...(dialog === undefined
           ? []
-          : ["### Modal state", `- [Dialog "${dialog}"]: handle it before continuing`]),
+          : [
+              "### Modal state",
+              `- ["${dialog.kind}" dialog with message "${dialog.message}"]: can be handled by the "browser_handle_dialog" tool`,
+            ]),
         ...extra,
       ].join("\n"),
     );
@@ -330,12 +337,12 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
       return snapshotResponse(tab());
     }
     if (behavior?.kind === "dialog") {
-      dialog = behavior.message;
+      dialog = { kind: behavior.dialogKind, message: behavior.message };
       return text(
         [
           pageSection(entry),
           "### Modal state",
-          `- [Dialog "${behavior.message}"]: can be handled by the "browser_handle_dialog" tool`,
+          `- ["${behavior.dialogKind}" dialog with message "${behavior.message}"]: can be handled by the "browser_handle_dialog" tool`,
         ].join("\n"),
       );
     }
@@ -350,6 +357,20 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
       );
     }
     if (behavior?.kind === "commit") {
+      if (behavior.guard !== undefined && acceptedGuard !== spec.ref) {
+        // The page asks before it commits. Nothing is sent until the dialog is
+        // accepted; dismissing it leaves the page exactly where it was.
+        pendingCommit = { tab: entry, found };
+        dialog = { kind: behavior.guard.dialogKind, message: behavior.guard.message };
+        return text(
+          [
+            pageSection(entry),
+            "### Modal state",
+            `- ["${behavior.guard.dialogKind}" dialog with message "${behavior.guard.message}"]: can be handled by the "browser_handle_dialog" tool`,
+          ].join("\n"),
+        );
+      }
+      acceptedGuard = undefined;
       recordSubmission(entry);
       goTo(entry, behavior.resultUrl);
       if (behavior.confirmation === "unknown") {
@@ -540,6 +561,12 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
       }
       case "browser_handle_dialog": {
         dialog = undefined;
+        const guarded = pendingCommit;
+        pendingCommit = undefined;
+        if (guarded !== undefined && args.accept === true) {
+          acceptedGuard = guarded.found.spec.ref;
+          return clickOutcome(guarded.tab, guarded.found);
+        }
         return snapshotResponse(tab());
       }
       case "browser_close": {
@@ -547,6 +574,8 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         launched = false;
         current = 0;
         dialog = undefined;
+        pendingCommit = undefined;
+        acceptedGuard = undefined;
         fileChooser = undefined;
         return text("### Result");
       }

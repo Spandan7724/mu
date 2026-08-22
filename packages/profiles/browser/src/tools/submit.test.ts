@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { BrowserElement } from "../contracts/observation.ts";
 import { elementRefId } from "../contracts/primitives.ts";
-import { FAKE_LABELS, FAKE_ORIGIN, FAKE_PAGE_URLS } from "../drivers/fake/site.ts";
+import {
+  FAKE_GUARD_MESSAGE,
+  FAKE_LABELS,
+  FAKE_ORIGIN,
+  FAKE_PAGE_URLS,
+} from "../drivers/fake/site.ts";
 import { browserActTool } from "./act.ts";
 import { createHarness, type Harness, resultText } from "./harness.ts";
 import { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
@@ -107,6 +112,49 @@ describe("browser_submit", () => {
     await on(harness, FAKE_PAGE_URLS.form);
     const result = await submit.execute("c1", { target, intent: "submit-form" }, signal());
     expect(result.isError).toBe(true);
+    await harness.shutdown();
+  });
+
+  test("a page that asks its own question is not answered by approving the commitment", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const { submit, target } = await submitOnce(harness, FAKE_PAGE_URLS.guardedSubmit);
+    const result = await submit.execute("c1", { target, intent: "submit-form" }, signal());
+    const text = resultText(result);
+    // The model has to be able to read the question to decide whether to ask about it.
+    expect(text).toContain(FAKE_GUARD_MESSAGE);
+    expect(text).toContain("dismissed");
+    expect(harness.driver.submissions()).toHaveLength(0);
+    await harness.shutdown();
+  });
+
+  test("accepting the approved question commits, and the card shows the question", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const { submit, target } = await submitOnce(harness, FAKE_PAGE_URLS.guardedSubmit);
+    const args = {
+      target,
+      intent: "submit-form" as const,
+      acceptDialog: { message: FAKE_GUARD_MESSAGE },
+    };
+    const details = await submit.permissionDetails?.(args as never);
+    const lines = (details?.preview as { lines: string[] } | undefined)?.lines ?? [];
+    expect(lines.join("\n")).toContain(FAKE_GUARD_MESSAGE);
+
+    const text = resultText(await submit.execute("c1", args, signal()));
+    expect(text).toContain("confirmed");
+    expect(harness.driver.submissions()).toHaveLength(1);
+    await harness.shutdown();
+  });
+
+  test("a question other than the approved one is dismissed, not answered", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const { submit, target } = await submitOnce(harness, FAKE_PAGE_URLS.guardedSubmit);
+    const result = await submit.execute(
+      "c1",
+      { target, intent: "submit-form", acceptDialog: { message: "Send an empty application?" } },
+      signal(),
+    );
+    expect(resultText(result)).toContain("dismissed");
+    expect(harness.driver.submissions()).toHaveLength(0);
     await harness.shutdown();
   });
 

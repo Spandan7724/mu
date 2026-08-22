@@ -8,6 +8,7 @@ import type { AuthorizedDocument } from "../../contracts/documents.ts";
 import { authorizedDocumentId } from "../../contracts/primitives.ts";
 import {
   FAKE_FRAME_ORIGIN,
+  FAKE_GUARD_MESSAGE,
   FAKE_LABELS,
   FAKE_ORIGIN,
   FAKE_PAGE_URLS,
@@ -30,6 +31,7 @@ export interface FakeDriverFixture {
     | "slow"
     | "submit"
     | "unknownSubmit"
+    | "guardedSubmit"
     | "credentials",
     string
   >;
@@ -47,7 +49,13 @@ export interface FakeDriverFixture {
     string
   >;
   values: Record<
-    "text" | "selectOption" | "slowText" | "confirmationText" | "downloadBasename" | "secretMarker",
+    | "text"
+    | "selectOption"
+    | "slowText"
+    | "confirmationText"
+    | "downloadBasename"
+    | "secretMarker"
+    | "guardMessage",
     string
   >;
   crossOriginFrameOrigin?: string | undefined;
@@ -69,10 +77,11 @@ export const FAKE_DRIVER_FIXTURE: FakeDriverFixture = {
     slow: FAKE_PAGE_URLS.slow,
     submit: FAKE_PAGE_URLS.submit,
     unknownSubmit: FAKE_PAGE_URLS.unknownSubmit,
+    guardedSubmit: FAKE_PAGE_URLS.guardedSubmit,
     credentials: FAKE_PAGE_URLS.credentials,
   },
   labels: { ...FAKE_LABELS },
-  values: { ...FAKE_VALUES },
+  values: { ...FAKE_VALUES, guardMessage: FAKE_GUARD_MESSAGE },
   crossOriginFrameOrigin: FAKE_FRAME_ORIGIN,
 };
 
@@ -90,6 +99,7 @@ export const FAKE_DRIVER_CAPABILITIES = {
   crashSimulation: true,
   reconnect: true,
   submissionLedger: true,
+  dialogGuard: true,
 } as const;
 
 export function fakeUploadDocument(): AuthorizedDocument {

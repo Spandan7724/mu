@@ -127,16 +127,58 @@ export function actionDisclosesValue(action: BrowserAction): boolean {
   return action.kind === "fill" || action.kind === "type" || action.kind === "select";
 }
 
+/**
+ * A dialog the page raised while an action was in flight. It is never left pending: a
+ * modal blocks every subsequent call, so a driver answers it within the action that
+ * raised it and reports what it answered here. `message` is the page's own words and is
+ * therefore untrusted — the question is written by whoever wrote the page.
+ */
+export interface BrowserDialog {
+  // "unknown" when the browser announced a modal it did not classify. Guessing a kind
+  // would be worse than saying so: the caller decides what to do about a dialog by
+  // reading its message anyway.
+  kind: "alert" | "confirm" | "prompt" | "beforeunload" | "unknown";
+  message: string;
+  handled: "dismissed" | "accepted";
+}
+
+export const browserDialogSchema = z.strictObject({
+  kind: z.enum(["alert", "confirm", "prompt", "beforeunload", "unknown"]),
+  message: z.string().max(BROWSER_LIMITS.maxSummaryChars),
+  handled: z.enum(["dismissed", "accepted"]),
+});
+
+/**
+ * Accepting a dialog is pre-authorized, never decided after the fact: by the time a
+ * caller could react, the modal is already blocking the connection. `expectedMessage`
+ * is the text the user was shown when they approved — a driver that meets a different
+ * message dismisses instead, so acceptance can never be moved onto a question nobody
+ * read.
+ */
+export interface DialogAcceptance {
+  accept: true;
+  expectedMessage: string;
+  promptText?: string | undefined;
+}
+
+export const dialogAcceptanceSchema = z.strictObject({
+  accept: z.literal(true),
+  expectedMessage: z.string().min(1).max(BROWSER_LIMITS.maxSummaryChars),
+  promptText: z.string().max(BROWSER_LIMITS.maxElementTextChars).optional(),
+});
+
 export interface SubmitRequest {
   target: BrowserElementRef;
   intent: SubmitIntent;
   expectedOutcome?: string | undefined;
+  dialog?: DialogAcceptance | undefined;
 }
 
 export const submitRequestSchema = z.strictObject({
   target: browserElementRefSchema,
   intent: submitIntentSchema,
   expectedOutcome: z.string().max(BROWSER_LIMITS.maxSummaryChars).optional(),
+  dialog: dialogAcceptanceSchema.optional(),
 });
 
 // BD16: ids only. The model never names a path, and a path-shaped id is rejected
@@ -234,6 +276,7 @@ export interface ActionOutcome {
   after?: ActionResultSnapshot | undefined;
   navigation?: ActionNavigation | undefined;
   receiptCandidate?: ReceiptCandidate | undefined;
+  dialog?: BrowserDialog | undefined;
   details?: JsonValue | undefined;
 }
 
@@ -288,6 +331,7 @@ export const actionOutcomeSchema = z
       })
       .optional(),
     receiptCandidate: receiptCandidateSchema.optional(),
+    dialog: browserDialogSchema.optional(),
     details: jsonValueSchema.optional(),
   })
   .superRefine((outcome, ctx) => {
@@ -308,6 +352,7 @@ export interface ActionOutcomeInit {
   after?: ActionResultSnapshot | undefined;
   navigation?: ActionNavigation | undefined;
   receiptCandidate?: ReceiptCandidate | undefined;
+  dialog?: BrowserDialog | undefined;
   details?: JsonValue | undefined;
 }
 
@@ -320,6 +365,7 @@ function outcome(status: ActionStatus, init: ActionOutcomeInit): ActionOutcome {
     ...(init.after === undefined ? {} : { after: init.after }),
     ...(init.navigation === undefined ? {} : { navigation: init.navigation }),
     ...(init.receiptCandidate === undefined ? {} : { receiptCandidate: init.receiptCandidate }),
+    ...(init.dialog === undefined ? {} : { dialog: init.dialog }),
     ...(init.details === undefined ? {} : { details: init.details }),
   };
 }

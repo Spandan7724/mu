@@ -158,6 +158,18 @@ export function outcomeText(outcome: ActionOutcome): string {
   } else if (outcome.after !== undefined && outcome.after.url !== outcome.before.url) {
     lines.push(`The page is now at ${outcome.after.url}.`);
   }
+  if (outcome.dialog !== undefined) {
+    const dialog = outcome.dialog;
+    lines.push(
+      `The page raised a ${dialog.kind} dialog, which was ${dialog.handled}. It asked:`,
+      untrusted(dialog.message, "page-text").toString(),
+    );
+    if (dialog.handled === "dismissed" && dialog.kind !== "alert") {
+      lines.push(
+        "Nothing was agreed to. A dialog is answered only when the user approves that answer in advance, so ask before treating this as done.",
+      );
+    }
+  }
   const download = readDownloadDetails(outcome.details);
   if (download !== undefined) {
     // Metadata only, deliberately. The bytes are untrusted, stay in the private artifact

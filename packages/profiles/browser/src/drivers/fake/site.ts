@@ -2,7 +2,7 @@
 // page is a list of semantic controls plus the behaviour a control triggers, which
 // is exactly the surface `BrowserDriver` exposes. Every later lane can script one
 // of these instead of standing up a browser.
-import type { BrowserDownload } from "../../contracts/actions.ts";
+import type { BrowserDialog, BrowserDownload } from "../../contracts/actions.ts";
 import type { SubmitIntent } from "../../contracts/intent.ts";
 import type { BrowserElementOption, BrowserRisk } from "../../contracts/observation.ts";
 
@@ -17,7 +17,7 @@ export const FAKE_SCREENSHOT_PNG =
 
 export type FakeBehavior =
   | { kind: "open-tab"; url: string }
-  | { kind: "dialog"; message: string }
+  | { kind: "dialog"; dialogKind: BrowserDialog["kind"]; message: string }
   | { kind: "download"; download: BrowserDownload }
   | {
       kind: "commit";
@@ -28,6 +28,10 @@ export type FakeBehavior =
       resultUrl: string;
       confirmationText?: string;
       externalId?: string;
+      // A confirm() the page raises before it will commit. Dismissing it leaves the
+      // commitment undone, so this is the fixture's proof that acceptance is a
+      // decision and not a formality.
+      guard?: { dialogKind: BrowserDialog["kind"]; message: string };
     };
 
 export interface FakeElementSpec {
@@ -104,6 +108,7 @@ export const FAKE_PAGE_URLS = {
   slow: url("/slow"),
   submit: url("/submit"),
   submitted: url("/submit/received"),
+  guardedSubmit: url("/submit/guarded"),
   unknownSubmit: url("/submit/ambiguous"),
   unknownSubmitted: url("/submit/ambiguous/pending"),
   credentials: url("/login"),
@@ -116,11 +121,13 @@ export const FAKE_LABELS = {
   fileField: "Resume",
   submitButton: "Submit application",
   popupTrigger: "Open in a new tab",
-  dialogTrigger: "Confirm",
+  dialogTrigger: "Show a notice",
   downloadTrigger: "Download offer",
   passwordField: "Password",
   scrollTarget: "Details",
 } as const;
+
+export const FAKE_GUARD_MESSAGE = "This will send your application. Continue?";
 
 export const FAKE_VALUES = {
   text: "Ada Lovelace",
@@ -264,7 +271,7 @@ export function defaultFakeSite(): FakeSite {
           role: "button",
           name: FAKE_LABELS.dialogTrigger,
           label: FAKE_LABELS.dialogTrigger,
-          behavior: { kind: "dialog", message: "Are you sure?" },
+          behavior: { kind: "dialog", dialogKind: "alert", message: "Your session expires soon." },
         },
       ],
     },
@@ -376,6 +383,31 @@ export function defaultFakeSite(): FakeSite {
             resultUrl: FAKE_PAGE_URLS.submitted,
             confirmationText: FAKE_VALUES.confirmationText,
             externalId: "APP-4711",
+          },
+        },
+      ],
+    },
+    {
+      url: FAKE_PAGE_URLS.guardedSubmit,
+      title: "Review and submit, with a confirmation",
+      summary: "A completed application whose submit control asks before it sends.",
+      elements: [
+        textbox("g1", FAKE_LABELS.textField),
+        {
+          ref: "g2",
+          role: "button",
+          name: FAKE_LABELS.submitButton,
+          label: FAKE_LABELS.submitButton,
+          inputType: "submit",
+          risk: ["submit"],
+          behavior: {
+            kind: "commit",
+            intent: "submit-form",
+            confirmation: "confirmed",
+            resultUrl: FAKE_PAGE_URLS.submitted,
+            confirmationText: FAKE_VALUES.confirmationText,
+            externalId: "APP-4712",
+            guard: { dialogKind: "confirm", message: FAKE_GUARD_MESSAGE },
           },
         },
       ],

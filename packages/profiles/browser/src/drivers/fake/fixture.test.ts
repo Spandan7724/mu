@@ -10,9 +10,11 @@ const capabilities: Readonly<Record<DriverCapability, boolean>> = FAKE_DRIVER_CA
 
 describe("the fake fixture still satisfies the conformance harness's own types", () => {
   test("every page, label and value the harness needs is present", () => {
-    for (const url of Object.values(fixture.pages)) expect(url.startsWith("https://")).toBe(true);
+    for (const url of Object.values(fixture.pages)) expect(url?.startsWith("https://")).toBe(true);
     for (const label of Object.values(fixture.labels)) expect(label.length).toBeGreaterThan(0);
-    for (const value of Object.values(fixture.values)) expect(value.length).toBeGreaterThan(0);
+    for (const value of Object.values(fixture.values)) {
+      expect((value ?? "").length).toBeGreaterThan(0);
+    }
     expect(fixture.crossOriginFrameOrigin).not.toBe(fixture.origin);
   });
 
@@ -28,6 +30,7 @@ describe("the fake fixture still satisfies the conformance harness's own types",
       "crashSimulation",
       "reconnect",
       "submissionLedger",
+      "dialogGuard",
     ];
     expect(Object.keys(capabilities).sort()).toEqual([...known].sort());
     expect(Object.values(capabilities).every(Boolean)).toBe(true);

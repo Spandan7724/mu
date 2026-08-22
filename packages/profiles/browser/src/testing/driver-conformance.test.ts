@@ -34,6 +34,7 @@ const fixture: DriverContractFixture = {
     slow: `${ORIGIN}/slow`,
     submit: `${ORIGIN}/submit`,
     unknownSubmit: `${ORIGIN}/submit/ambiguous`,
+    guardedSubmit: `${ORIGIN}/submit/guarded`,
     credentials: `${ORIGIN}/login`,
   },
   labels: {
@@ -55,6 +56,7 @@ const fixture: DriverContractFixture = {
     confirmationText: "Your application was received.",
     downloadBasename: "offer.pdf",
     secretMarker: "sekrit-marker-value",
+    guardMessage: "This will send your application. Continue?",
   },
   crossOriginFrameOrigin: "http://127.0.0.1:8932",
 };
@@ -70,6 +72,7 @@ const ALL_CAPABILITIES: DriverCapability[] = [
   "crashSimulation",
   "reconnect",
   "submissionLedger",
+  "dialogGuard",
 ];
 
 // A driver that answers nothing. It exists to prove that every case in the suite

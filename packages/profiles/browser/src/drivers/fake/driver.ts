@@ -12,6 +12,7 @@ import {
   type ActionSnapshot,
   actionTargets,
   type BrowserAction,
+  type BrowserDialog,
   blockedOutcome,
   completedOutcome,
   downloadDetails,
@@ -20,7 +21,6 @@ import {
   type ObserveRequest,
   type SubmitRequest,
   staleOutcome,
-  takeoverOutcome,
   type UploadRequest,
   unknownOutcome,
   type WaitRequest,
@@ -485,10 +485,13 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       return ok({ message: `Opened "${label}" in a new tab.`, before, after: resultOf(tab) });
     }
     if (behavior?.kind === "dialog") {
-      return takeoverOutcome({
+      // Dismissed, never accepted: agreeing to a page's question is a commitment, and
+      // browser_act cannot reach a commitment (BD12).
+      return blockedOutcome({
         message: `"${label}" raised a browser dialog; it was dismissed and the tab is still attached.`,
         before,
         after: resultOf(tab),
+        dialog: { kind: behavior.dialogKind, message: behavior.message, handled: "dismissed" },
       });
     }
     if (behavior?.kind === "download") {
@@ -670,6 +673,27 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
           before,
         });
       }
+      const guard = behavior.guard;
+      let answered: BrowserDialog | undefined;
+      if (guard !== undefined) {
+        const accepted =
+          request.dialog?.accept === true && request.dialog.expectedMessage === guard.message;
+        answered = {
+          kind: guard.dialogKind,
+          message: guard.message,
+          handled: accepted ? "accepted" : "dismissed",
+        };
+        if (!accepted) {
+          // Dismissing the guard leaves the page exactly as it was. Nothing was sent,
+          // so this is a plain block and not an unproven outcome.
+          return blockedOutcome({
+            message: `"${spec.label ?? spec.ref}" asked for confirmation first, and it was dismissed. Nothing was submitted.`,
+            before,
+            after: resultOf(tab),
+            dialog: answered,
+          });
+        }
+      }
       recordSubmission(tab);
       goTo(tab, behavior.resultUrl);
       const after = resultOf(tab);
@@ -681,12 +705,14 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
             "The submission was sent but no confirmation was returned. Re-observe the page before deciding anything; do not send it again.",
           before,
           after,
+          ...(answered === undefined ? {} : { dialog: answered }),
         });
       }
       return completedOutcome({
         message: `Submitted "${spec.label ?? spec.ref}".`,
         before,
         after,
+        ...(answered === undefined ? {} : { dialog: answered }),
         receiptCandidate: {
           kind: behavior.intent,
           url: after.url,

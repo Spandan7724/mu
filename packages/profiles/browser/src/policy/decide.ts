@@ -309,7 +309,18 @@ export function decideSubmitRequest(
 
   const scope = scopeForIntent(request.intent);
   const pattern = submitPattern(observation.origin, request.intent, element);
-  return permission(state, [scope], pattern, `${request.intent} on ${pattern}`);
+  const outcome = permission(state, [scope], pattern, `${request.intent} on ${pattern}`);
+  if (request.dialog === undefined || outcome.kind !== "allow") return outcome;
+  // A pre-authorized commitment still does not carry an answer to a question the page
+  // asks in the middle of it. The dialog is written by the page, so no earlier grant
+  // can have covered its words: accepting one is always the user's own decision.
+  return {
+    kind: "ask",
+    scopes: outcome.scopes,
+    pattern: outcome.pattern,
+    description: `${request.intent} on ${pattern}, accepting the page's confirmation dialog`,
+    reasons: ["the page asks its own question before it will commit"],
+  };
 }
 
 export interface UploadDecisionInput {

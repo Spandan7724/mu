@@ -1,3 +1,5 @@
+import type { BrowserDialog } from "../../contracts/actions.ts";
+
 // Playwright MCP answers every tool call with one markdown document. Only the
 // sections named here are ever read; the rest — the generated Playwright source,
 // the console log link, the saved-snapshot link — is discarded before anything
@@ -125,4 +127,22 @@ export function parseJsonResult(response: SidecarResponse): unknown {
   } catch {
     return undefined;
   }
+}
+
+// Playwright announces a modal as `["confirm" dialog with message "…"]: can be handled
+// by the "browser_handle_dialog" tool`. The kind and the message are read separately so
+// an unrecognized announcement still yields the page's words rather than nothing.
+const DIALOG_KIND = /\b(alert|confirm|prompt|beforeunload)\b/i;
+const DIALOG_MESSAGE = /\bmessage\s+"([\s\S]*?)"(?=\s*\]|\s*:|\s*$)/i;
+
+export function parseDialogState(
+  modalState: string,
+): { kind: BrowserDialog["kind"]; message: string } | undefined {
+  if (!/dialog/i.test(modalState)) return undefined;
+  const kind = DIALOG_KIND.exec(modalState)?.[1]?.toLowerCase();
+  const message = DIALOG_MESSAGE.exec(modalState)?.[1];
+  return {
+    kind: (kind as BrowserDialog["kind"] | undefined) ?? "unknown",
+    message: message ?? modalState,
+  };
 }
