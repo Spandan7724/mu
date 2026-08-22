@@ -99,12 +99,13 @@ describe("browserProfile", () => {
         "browser_navigate",
         "browser_observe",
         BROWSER_STATUS_TOOL,
+        "browser_submit",
         "browser_tabs",
         "browser_takeover",
         "browser_wait",
       ]);
       // B5 and B8 surfaces must not appear before their milestones land.
-      for (const later of ["browser_upload", "browser_submit", "browser_pointer"]) {
+      for (const later of ["browser_upload", "browser_pointer"]) {
         expect(profile.toolset.some((tool) => tool.name === later)).toBe(false);
       }
       expect(profile.promptFor("anthropic/claude-opus-5")[0]?.text).toContain("mu-browser");
