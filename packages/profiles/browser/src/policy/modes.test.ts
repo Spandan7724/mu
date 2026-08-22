@@ -11,7 +11,7 @@ import {
   findFullAccessRules,
   isGrantActive,
 } from "./modes.ts";
-import { actPattern, submitPattern } from "./scopes.ts";
+import { actPattern, NEVER_AUTO_ALLOWED_SCOPES, submitPattern } from "./scopes.ts";
 
 const ORIGIN = "https://jobs.example.com";
 
@@ -20,12 +20,50 @@ function decide(input: Parameters<typeof evaluateBrowserPermission>[0]) {
 }
 
 describe("permission modes", () => {
-  test("BD13 provides exactly three modes and no full-access mode", () => {
+  // BD13 names three modes. `read-only` is additionally offered because it is strictly
+  // more restrictive than any of them — it narrows authority, so it is not the kind of
+  // expansion SECURITY §9 requires a new decision for.
+  test("provides BD13's three modes plus read-only, and no full-access mode", () => {
     expect(BROWSER_PERMISSION_MODES).toEqual([
+      "read-only",
       "confirm-submission",
       "confirm-every-write",
       "autonomous-submit",
     ]);
+  });
+
+  // SECURITY §9: there is no global full-access mode in v1. Guarded here because the
+  // coding product has one and copying its convention into this domain would mean
+  // unprompted purchases, sends and deletions on the user's signed-in accounts.
+  test("no mode grants a blanket allow over every scope", () => {
+    for (const mode of BROWSER_PERMISSION_MODES) {
+      for (const scope of NEVER_AUTO_ALLOWED_SCOPES) {
+        expect(
+          decide({
+            mode,
+            scopes: [scope],
+            pattern: "https://shop.example.com Buy",
+            originApproved: true,
+          }),
+        ).not.toBe("allow");
+      }
+    }
+  });
+
+  test("read-only denies every write and every commitment", () => {
+    for (const scope of ["browser:interact", "browser:disclose", "browser:upload"] as const) {
+      expect(
+        decide({ mode: "read-only", scopes: [scope], pattern: "*", originApproved: true }),
+      ).toBe("deny");
+    }
+    expect(
+      decide({
+        mode: "read-only",
+        scopes: ["browser:observe"],
+        pattern: "*",
+        originApproved: true,
+      }),
+    ).toBe("allow");
   });
 
   test("confirm-submission allows reversible interaction and asks before commitment", () => {

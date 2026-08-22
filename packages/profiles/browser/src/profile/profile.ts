@@ -20,7 +20,7 @@ import {
   DEFAULT_BROWSER_PERMISSION_MODE,
 } from "./permissions.ts";
 import { browserPrompt } from "./prompt.ts";
-import { browserPlaceholderToolset } from "./tools.ts";
+import { browserToolset } from "./tools.ts";
 
 export const BROWSER_PROFILE_NAME = "browser";
 
@@ -66,9 +66,15 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
 
   const environment: SessionEnvironment = browserEnvironment({ options: resolved, dataRoot });
 
+  const { tools } = browserToolset({
+    runtime,
+    allowedOrigins: resolved.allowedOrigins ?? [],
+    mode: DEFAULT_BROWSER_PERMISSION_MODE,
+  });
+
   return {
     name: BROWSER_PROFILE_NAME,
-    toolset: browserPlaceholderToolset(runtime),
+    toolset: tools,
     promptFor: browserPrompt,
     permissionDefaults: BROWSER_PERMISSION_DEFAULTS,
     permissionModes: BROWSER_PERMISSION_MODES,

@@ -33,7 +33,7 @@ const denyEveryCommitment: PermissionRule[] = [
 
 export const BROWSER_PERMISSION_MODES: PermissionMode[] = [
   {
-    id: "confirm-submit",
+    id: "confirm-submission",
     label: "confirm submit",
     description: "Browse and fill freely; ask before anything that commits.",
     rules: [
@@ -82,13 +82,12 @@ export const BROWSER_PERMISSION_MODES: PermissionMode[] = [
       })),
     ],
   },
-  {
-    id: "yolo",
-    label: "full access",
-    description: "Allow every browser action without asking, including commitments.",
-    tone: "unrestricted",
-    rules: [{ permission: "*", pattern: "*", action: "allow" }],
-  },
 ];
 
-export const DEFAULT_BROWSER_PERMISSION_MODE = "confirm-submit";
+// There is deliberately no global full-access mode. SECURITY.md §9: expanding the
+// pre-authorized set requires a new BD entry and a security review, and v1 has none.
+// The coding product's `yolo` does not translate here — an unprompted file edit is
+// recoverable, an unprompted purchase, send or deletion on the user's signed-in
+// account is not.
+
+export const DEFAULT_BROWSER_PERMISSION_MODE = "confirm-submission";
