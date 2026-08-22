@@ -5,6 +5,8 @@
 // event or a session entry (SECURITY §11).
 
 export interface SidecarResponse {
+  // An inline image block, when the call was a screenshot. Never a path.
+  image?: { mimeType: string; data: string } | undefined;
   url?: string | undefined;
   title?: string | undefined;
   snapshot?: string | undefined;
