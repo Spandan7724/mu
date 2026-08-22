@@ -172,6 +172,18 @@ interface ToolState {
   partialJson: string;
 }
 
+function mergeToolName(current: string, incoming: string, knownNames: ReadonlySet<string>): string {
+  if (!current) return incoming;
+  // Some OpenAI-compatible servers repeat the complete function name in
+  // multiple streaming chunks instead of sending it once or as fragments.
+  if (knownNames.has(current) && (incoming === current || incoming.startsWith(current))) {
+    return current;
+  }
+  if (incoming.startsWith(current)) return incoming;
+  if (current.endsWith(incoming)) return current;
+  return current + incoming;
+}
+
 function usageNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -204,6 +216,7 @@ export function streamOpenAICompletions(
     let textIndex = -1;
     let thinkingIndex = -1;
     const tools = new Map<number, ToolState>();
+    const knownToolNames = new Set(ctx.tools?.map((tool) => tool.name) ?? []);
     const responseBody = response.body as ReadableStream<Uint8Array>;
 
     for await (const sse of iterateSse(responseBody, opts?.signal)) {
@@ -283,7 +296,9 @@ export function streamOpenAICompletions(
         const block = output.content[state.contentIndex];
         if (block?.type !== "toolCall") continue;
         if (typeof toolDelta.id === "string") block.id = toolDelta.id;
-        if (typeof fn.name === "string" && fn.name) block.name += fn.name;
+        if (typeof fn.name === "string" && fn.name) {
+          block.name = mergeToolName(block.name, fn.name, knownToolNames);
+        }
         if (typeof fn.arguments === "string") {
           state.partialJson += fn.arguments;
           block.arguments = salvageToolArgs(state.partialJson);

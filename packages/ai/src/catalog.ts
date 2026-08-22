@@ -1,5 +1,10 @@
 import data from "./models.json" with { type: "json" };
-import { builtinProviderConfigs, modelApi, providerEnvVars } from "./provider-config.ts";
+import {
+  builtinProviderConfigs,
+  modelApi,
+  providerConfig,
+  providerEnvVars,
+} from "./provider-config.ts";
 import { providers as registeredProviders } from "./registry.ts";
 import type { Credential, LlmApi, ModelInfo, Provider } from "./types.ts";
 
@@ -462,6 +467,7 @@ export function modelRef(model: ModelInfo): string {
 
 export function providerHasCredentials(provider: string, env = process.env): boolean {
   if (provider === "openai-codex") return false;
+  if (providerConfig(provider)?.auth === "none") return true;
   const variables = providerEnvVars(provider);
   return variables.length === 0 || variables.some((variable) => Boolean(env[variable]));
 }

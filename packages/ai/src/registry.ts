@@ -2,6 +2,7 @@ import { builtinProviderConfigs, modelApi } from "./provider-config.ts";
 import { anthropic } from "./providers/anthropic.ts";
 import { gemini } from "./providers/gemini.ts";
 import { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
+import { llamaCpp } from "./providers/llama-cpp.ts";
 import { openai, openaiCodex } from "./providers/openai.ts";
 import { streamOpenAICompletions } from "./providers/openai-completions.ts";
 import type { Provider } from "./types.ts";
@@ -11,6 +12,7 @@ const direct = new Map<string, Provider>([
   [openai.id, openai],
   [openaiCodex.id, openaiCodex],
   [gemini.id, gemini],
+  [llamaCpp.id, llamaCpp],
 ]);
 
 function builtinProvider(id: string): Provider {

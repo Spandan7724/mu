@@ -218,6 +218,7 @@ describe("credential-aware default model", () => {
     expect(providerHasCredentials("openai", { OPENAI_API_KEY: "x" })).toBe(true);
     expect(providerHasCredentials("openai", {})).toBe(false);
     expect(providerHasCredentials("openai-codex", { OPENAI_API_KEY: "x" })).toBe(false);
+    expect(providerHasCredentials("llama-cpp", {})).toBe(true);
     // An unknown/custom provider is not gated on a key we do not know about.
     expect(providerHasCredentials("custom", {})).toBe(true);
   });

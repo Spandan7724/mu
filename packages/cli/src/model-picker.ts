@@ -1,7 +1,7 @@
-import { type ExtensionHost, listModels, type ModelInfo } from "mu";
+import { type ExtensionHost, listModels, type ModelInfo, providerConfig } from "mu";
 import { accountLoginProviders } from "./login.ts";
 
-export type ModelCredentialSource = "apiKey" | "oauth" | "extension";
+export type ModelCredentialSource = "apiKey" | "oauth" | "extension" | "local";
 
 export interface ModelPickerItem {
   label: string;
@@ -14,7 +14,12 @@ export function availableModels(
 ): ModelInfo[] {
   const models = new Map<string, ModelInfo>(
     listModels()
-      .filter((model) => !authenticatedProviders || authenticatedProviders.has(model.provider))
+      .filter(
+        (model) =>
+          !authenticatedProviders ||
+          authenticatedProviders.has(model.provider) ||
+          providerConfig(model.provider)?.auth === "none",
+      )
       .map((model) => [`${model.provider}/${model.id}`, model] as const),
   );
   for (const [ref, model] of extensions.models) models.set(ref, model);
@@ -28,7 +33,9 @@ export function modelPickerDescription(model: ModelInfo, source: ModelCredential
         "account")
       : source === "apiKey"
         ? "API key"
-        : "extension";
+        : source === "local"
+          ? "local server"
+          : "extension";
   return model.name ? `${model.name} · ${authentication}` : authentication;
 }
 
@@ -41,7 +48,8 @@ export function modelPickerItems(
     const credential = credentials[model.provider];
     const source: ModelCredentialSource = extensions.models.has(label)
       ? "extension"
-      : (credential?.type ?? "apiKey");
+      : (credential?.type ??
+        (providerConfig(model.provider)?.auth === "none" ? "local" : "apiKey"));
     return {
       label,
       description: modelPickerDescription(model, source),

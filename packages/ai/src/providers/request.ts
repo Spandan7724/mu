@@ -26,6 +26,9 @@ export async function resolveProviderCredential(
     return resolved;
   }
   const apiKey = opts?.apiKey ?? envValue(providerEnvVars(model.provider));
+  if (!apiKey && providerConfig(model.provider)?.auth === "none") {
+    return { type: "apiKey", apiKey: "" };
+  }
   if (!apiKey) {
     const variables = providerEnvVars(model.provider);
     const setup =
@@ -71,6 +74,10 @@ function bedrockBaseUrl(): string {
 
 export function resolvedBaseUrl(model: ModelInfo, opts?: StreamOpts): string {
   if (opts?.baseUrl) return trimSlash(opts.baseUrl);
+  if (model.provider === "llama-cpp" && process.env.LLAMA_CPP_BASE_URL) {
+    const configured = trimSlash(process.env.LLAMA_CPP_BASE_URL);
+    return configured.endsWith("/v1") ? configured : `${configured}/v1`;
+  }
   if (model.provider.startsWith("cloudflare-")) {
     const base = cloudflareBaseUrl(model);
     if (base) return trimSlash(base);
@@ -103,6 +110,7 @@ export function credentialHeaders(
 ): Record<string, string> {
   const config = providerConfig(model.provider);
   const base = { ...config?.headers, ...model.headers };
+  if (config?.auth === "none" && credential.type === "apiKey" && !credential.apiKey) return base;
   if (credential.type === "oauth") {
     return {
       ...base,

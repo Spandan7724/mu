@@ -50,6 +50,10 @@ providers authenticated through `/login`; `openai-codex/*` rows use the ChatGPT 
 `openai/*` rows use a saved API key. Both OpenAI routes default to GPT-5.6 Sol. See the
 project repository for configuration, SDK, and development documentation.
 
+Local `llama-server` models are available under `llama-cpp/<alias>` without a login. Mu
+uses `http://127.0.0.1:8000` by default and discovers the alias exposed by `/v1/models`;
+set `LLAMA_CPP_BASE_URL` for another address and `LLAMA_CPP_API_KEY` for a secured server.
+
 Interactive runs are saved by working-directory scope under `~/.mu/sessions`; use
 `/resume` to choose one or `mu --resume <session-id>` to continue it directly. Mu prints
 the direct resume command when an interactive session closes. Use `/new` to clear the

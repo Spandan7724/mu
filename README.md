@@ -86,6 +86,30 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
+### Local llama.cpp models
+
+Mu discovers the model currently loaded by `llama-server` through its OpenAI-compatible
+API. The default address is `http://127.0.0.1:8000`, so a server launched with an alias can
+be selected directly:
+
+```sh
+./build/bin/llama-server \
+  -hf ornith-ai/Ornith-1.5-9B-GGUF:Q4_K_M \
+  --alias ornith-1.5-9b \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --jinja
+
+mu --model llama-cpp/ornith-1.5-9b
+```
+
+With the server running, `/model` also lists its loaded alias as a local model. Set
+`LLAMA_CPP_BASE_URL` when the server uses another address; either the server root or its
+`/v1` URL is accepted. If `llama-server` was started with an API key, set
+`LLAMA_CPP_API_KEY`. Tool calling requires a compatible chat template and `--jinja`; see
+the [official llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+and [function-calling guide](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md).
+
 Run `mu agents` to manage several sessions whose worker processes survive closing the
 viewer. Managed sessions commit the initiating prompt before contacting the provider and
 commit every completed assistant/tool turn before starting the next one. If a supervisor,

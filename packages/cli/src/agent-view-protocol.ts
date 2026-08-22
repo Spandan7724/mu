@@ -25,6 +25,7 @@ export const MANAGED_ENVIRONMENT_KEYS = [
     "CLOUDFLARE_GATEWAY_ID",
     "GCLOUD_PROJECT",
     "GOOGLE_CLOUD_LOCATION",
+    "LLAMA_CPP_BASE_URL",
     ...[...builtinProviderConfigs.values()].flatMap((provider) => provider.env),
   ]),
 ] as readonly string[];

@@ -81,7 +81,8 @@ export async function resolveCliModel(
   if (
     model &&
     (authenticatedProviders.length > 0
-      ? authenticatedProviders.includes(model.provider)
+      ? authenticatedProviders.includes(model.provider) ||
+        providerHasCredentials(model.provider, env)
       : providerHasCredentials(model.provider, env))
   ) {
     return configured;
