@@ -616,6 +616,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       phase = "connecting";
       severed = undefined;
       approvalRequired = false;
+      // BD27: a new connection mints new tab identity and new revisions, so no
+      // reference taken before a reconnect can survive it.
+      tabs = [];
+      activeTabId = undefined;
       try {
         assertSupportedServer(sidecar.serverIdentity());
         // The first tool call is what actually opens or attaches the browser.
