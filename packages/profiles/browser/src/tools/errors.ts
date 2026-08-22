@@ -2,8 +2,8 @@
 // reaches the model leaves it with a next move — observe again, wait, request takeover,
 // ask the user — never a bare protocol string.
 import {
-  type BrowserDriverErrorCode,
   BrowserDriverError,
+  type BrowserDriverErrorCode,
   isBrowserDriverError,
 } from "../contracts/driver.ts";
 

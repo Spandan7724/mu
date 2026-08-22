@@ -14,9 +14,9 @@ import {
   type BrowserElement,
   type BrowserElementRef,
   type BrowserObservation,
+  elementRefOf,
   type ObservationRevision,
   type RefValidity,
-  elementRefOf,
   refValidity,
   refValidityMessage,
 } from "../contracts/observation.ts";
@@ -25,7 +25,7 @@ import type { TakeoverState } from "../contracts/takeover.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
 import { type InjectionFinding, scanObservation } from "../policy/untrusted.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
-import { elementSignature, observationDigest, OBSERVATION_BUDGET } from "./observation.ts";
+import { elementSignature, OBSERVATION_BUDGET, observationDigest } from "./observation.ts";
 
 export interface ObservationTarget {
   element: BrowserElement;
@@ -123,7 +123,10 @@ export class BrowserToolSession {
   async observe(request: ObserveRequest, signal: AbortSignal): Promise<ObservationRecord> {
     const bounded: ObserveRequest = {
       ...request,
-      maxNodes: Math.min(request.maxNodes ?? OBSERVATION_BUDGET.maxElements, OBSERVATION_BUDGET.maxElements),
+      maxNodes: Math.min(
+        request.maxNodes ?? OBSERVATION_BUDGET.maxElements,
+        OBSERVATION_BUDGET.maxElements,
+      ),
       maxTextChars: Math.min(
         request.maxTextChars ?? OBSERVATION_BUDGET.maxTextChars,
         OBSERVATION_BUDGET.maxTextChars,
