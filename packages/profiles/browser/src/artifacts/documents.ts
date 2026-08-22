@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
-import { basename, extname, isAbsolute } from "node:path";
+import { chmod, copyFile, mkdir, stat } from "node:fs/promises";
+import { basename, extname, isAbsolute, join } from "node:path";
 import {
   type AuthorizedDocument,
   type AuthorizedDocumentSummary,
@@ -100,11 +100,41 @@ export interface DocumentUsePolicy {
 }
 
 export interface AuthorizeDocumentOptions {
+  /**
+   * Copy the file into this directory and authorize the copy instead of the original.
+   *
+   * The browser bridge enforces file-access roots: it refuses to attach any path outside
+   * the directories it was started with, so an ordinary `~/Documents/resume.pdf` cannot
+   * be uploaded at all. Staging brings the exact authorized bytes inside that boundary
+   * without widening it — the alternative, unrestricted file access, would also unblock
+   * `file://` navigation and is never acceptable.
+   *
+   * The original is never modified, and the copy is private (0600 inside a 0700 parent).
+   */
+  stageInto?: string | undefined;
   purposes?: readonly DocumentPurpose[] | undefined;
   id?: string | undefined;
   maxBytes?: number | undefined;
   extractedText?: string | undefined;
   now?: (() => number) | undefined;
+}
+
+/**
+ * The staged copy lives under its own id, so two files sharing a basename cannot collide
+ * and a staged path can always be traced back to exactly one authorization.
+ */
+async function stageDocument(
+  source: string,
+  id: string,
+  name: string,
+  root: string,
+): Promise<string> {
+  const directory = join(root, id);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const staged = join(directory, name);
+  await copyFile(source, staged);
+  await chmod(staged, 0o600);
+  return staged;
 }
 
 export function documentIdForPath(path: string): AuthorizedDocumentId {
@@ -166,12 +196,17 @@ export async function authorizeDocument(
     );
   }
   const name = basename(path);
+  // Derived from the path the user actually authorized, so re-authorizing the same file
+  // is idempotent whether or not it is staged.
+  const id =
+    options.id === undefined
+      ? documentIdForPath(path)
+      : authorizedDocumentIdSchema.parse(options.id);
+  const stored =
+    options.stageInto === undefined ? path : await stageDocument(path, id, name, options.stageInto);
   const document: AuthorizedDocument = {
-    id:
-      options.id === undefined
-        ? documentIdForPath(path)
-        : authorizedDocumentIdSchema.parse(options.id),
-    path,
+    id,
+    path: stored,
     basename: name,
     mimeType: mimeTypeForBasename(name),
     bytes: stats.size,
@@ -184,6 +219,8 @@ export async function authorizeDocument(
 }
 
 export interface AuthorizedDocumentStoreOptions {
+  /** Staging root; see `AuthorizeDocumentOptions.stageInto`. */
+  stageInto?: string | undefined;
   maxDocuments?: number | undefined;
   policy?: DocumentUsePolicy | undefined;
   now?: (() => number) | undefined;
@@ -196,11 +233,13 @@ export class AuthorizedDocumentStore {
   private readonly maxDocuments: number;
   private readonly policy: DocumentUsePolicy;
   private readonly now: () => number;
+  private readonly stageInto: string | undefined;
 
   constructor(options: AuthorizedDocumentStoreOptions = {}) {
     this.maxDocuments = options.maxDocuments ?? DOCUMENT_LIMITS.maxDocuments;
     this.policy = options.policy ?? {};
     this.now = options.now ?? Date.now;
+    this.stageInto = options.stageInto;
   }
 
   get size(): number {
@@ -214,6 +253,7 @@ export class AuthorizedDocumentStore {
     const document = await authorizeDocument(path, {
       now: this.now,
       maxBytes: this.policy.maxBytes ?? DOCUMENT_LIMITS.maxUploadBytes,
+      ...(this.stageInto === undefined ? {} : { stageInto: this.stageInto }),
       ...options,
     });
     this.add(document);

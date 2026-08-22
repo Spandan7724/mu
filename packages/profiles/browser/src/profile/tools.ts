@@ -5,6 +5,7 @@
 // minted, revised and invalidated in a single place. `browser_status` remains beside them
 // because a session has to be able to say what it is connected to without touching a page.
 import { type AnyTool, textResult } from "@mu/core";
+import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
 import { connectionSummary } from "../contracts/connection.ts";
 import { isBrowserDriverError } from "../contracts/driver.ts";
 import type { FactLookup } from "../data/facts.ts";
@@ -74,6 +75,8 @@ export interface BrowserToolsetOptions {
   allowedOrigins?: readonly string[] | undefined;
   mode?: BrowserPermissionMode | undefined;
   facts?: FactLookup | undefined;
+  /** Present only when the user authorized documents; without it there is no upload tool. */
+  documents?: AuthorizedDocumentStore | undefined;
   /** Set when the user has approved plaintext disclosure for this task. */
   allowInsecureDisclosure?: boolean | undefined;
 }
@@ -102,7 +105,11 @@ export function browserToolset(options: BrowserToolsetOptions): BrowserToolset {
     mode: options.mode ?? "confirm-submission",
   };
   const session = new BrowserToolSession({ runtime: options.runtime, policy });
-  const context = { session, ...(options.facts === undefined ? {} : { facts: options.facts }) };
+  const context = {
+    session,
+    ...(options.facts === undefined ? {} : { facts: options.facts }),
+    ...(options.documents === undefined ? {} : { documents: options.documents }),
+  };
   return {
     tools: [browserStatusTool(options.runtime), ...buildBrowserToolset(context)],
     session,

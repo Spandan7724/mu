@@ -37,6 +37,15 @@ export function browserArtifactsDir(home = homedir()): string {
   return join(browserDataDir(home), "artifacts");
 }
 
+/**
+ * Where authorized documents are staged. The browser bridge refuses to attach a file from
+ * outside the roots it was started with, so an upload has to come from inside Mu's own
+ * data root — the alternative, unrestricted file access, would also unblock `file://`.
+ */
+export function browserDocumentsDir(home = homedir()): string {
+  return join(browserDataDir(home), "documents");
+}
+
 export function browserLogsDir(home = homedir()): string {
   return join(browserDataDir(home), "logs");
 }
@@ -48,6 +57,7 @@ export function browserDataLayout(home = homedir()): Record<string, string> {
     sessions: browserSessionsDir(home),
     profiles: browserProfilesDir(home),
     artifacts: browserArtifactsDir(home),
+    documents: browserDocumentsDir(home),
     logs: browserLogsDir(home),
   };
 }
@@ -61,6 +71,7 @@ export async function ensureBrowserDataRoot(home = homedir()): Promise<string> {
     browserSessionsDir(home),
     browserProfilesDir(home),
     browserArtifactsDir(home),
+    browserDocumentsDir(home),
     browserLogsDir(home),
   ]) {
     await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });

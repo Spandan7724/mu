@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { authorizedDocumentId } from "../contracts/primitives.ts";
@@ -223,5 +223,81 @@ describe("authorized document store", () => {
     await store.authorize(resumePath);
     const result = await store.resolveForPurpose(resolve(resumePath), "reference");
     expect(result.ok).toBe(false);
+  });
+});
+
+// The browser bridge refuses to attach a file from outside the roots it was started
+// with, so an ordinary ~/Documents/resume.pdf cannot be uploaded at all. Staging brings
+// the authorized bytes inside that boundary instead of widening it.
+describe("staging an authorized document", () => {
+  test("authorizes a private copy inside the staging root, leaving the original alone", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mu-doc-src-"));
+    const staged = await mkdtemp(join(tmpdir(), "mu-doc-stage-"));
+    const original = join(source, "resume.pdf");
+    await writeFile(original, "%PDF-1.4 synthetic");
+
+    const store = new AuthorizedDocumentStore({ stageInto: staged });
+    const document = await store.authorize(original, { purposes: ["upload"] });
+    const resolved = await store.resolveForPurpose(document.id, "upload");
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+
+    expect(resolved.document.path.startsWith(staged)).toBe(true);
+    expect(resolved.document.path.startsWith(source)).toBe(false);
+    expect(resolved.document.basename).toBe("resume.pdf");
+    expect(await readFile(resolved.document.path, "utf8")).toBe("%PDF-1.4 synthetic");
+    // The original is the user's file; authorization never modifies or moves it.
+    expect(await readFile(original, "utf8")).toBe("%PDF-1.4 synthetic");
+  });
+
+  test("the staged copy is private", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mu-doc-src-"));
+    const staged = await mkdtemp(join(tmpdir(), "mu-doc-stage-"));
+    const original = join(source, "resume.pdf");
+    await writeFile(original, "x");
+    const store = new AuthorizedDocumentStore({ stageInto: staged });
+    const document = await store.authorize(original);
+    const mode = (await stat(store.path(document.id))).mode & 0o777;
+    // Windows has no POSIX mode bits, so only assert where they mean something.
+    if (process.platform !== "win32") expect(mode).toBe(0o600);
+  });
+
+  test("two files sharing a basename cannot collide", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mu-doc-src-"));
+    const staged = await mkdtemp(join(tmpdir(), "mu-doc-stage-"));
+    const a = join(source, "a");
+    const b = join(source, "b");
+    await mkdir(a, { recursive: true });
+    await mkdir(b, { recursive: true });
+    await writeFile(join(a, "resume.pdf"), "first");
+    await writeFile(join(b, "resume.pdf"), "second");
+
+    const store = new AuthorizedDocumentStore({ stageInto: staged });
+    const first = await store.authorize(join(a, "resume.pdf"));
+    const second = await store.authorize(join(b, "resume.pdf"));
+    expect(first.id).not.toBe(second.id);
+    expect(await readFile(store.path(first.id), "utf8")).toBe("first");
+    expect(await readFile(store.path(second.id), "utf8")).toBe("second");
+  });
+
+  test("re-authorizing the same file is idempotent", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mu-doc-src-"));
+    const staged = await mkdtemp(join(tmpdir(), "mu-doc-stage-"));
+    const original = join(source, "resume.pdf");
+    await writeFile(original, "x");
+    const store = new AuthorizedDocumentStore({ stageInto: staged });
+    const first = await store.authorize(original);
+    const second = await store.authorize(original);
+    expect(second.id).toBe(first.id);
+    expect(store.size).toBe(1);
+  });
+
+  test("without a staging root the original path is authorized unchanged", async () => {
+    const source = await mkdtemp(join(tmpdir(), "mu-doc-src-"));
+    const original = join(source, "resume.pdf");
+    await writeFile(original, "x");
+    const store = new AuthorizedDocumentStore();
+    const document = await store.authorize(original);
+    expect(store.path(document.id)).toBe(original);
   });
 });

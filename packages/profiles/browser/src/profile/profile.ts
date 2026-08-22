@@ -1,7 +1,9 @@
 // ARCHITECTURE §3. Async because it validates configuration, prepares private
 // storage and constructs the runtime that owns the connection.
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AgentMessage, Profile, SessionEnvironment } from "@mu/core";
+import { AuthorizedDocumentStore } from "../artifacts/documents.ts";
 import { browserCommands } from "../commands/index.ts";
 import type { BrowserCarryover } from "../contracts/carryover.ts";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
@@ -66,10 +68,26 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
 
   const environment: SessionEnvironment = browserEnvironment({ options: resolved, dataRoot });
 
+  // Documents the user named on the command line. Each is staged inside Mu's own root:
+  // the browser bridge refuses to attach a file from anywhere else, and the flag that
+  // would lift that restriction also unblocks `file://`.
+  const documents = new AuthorizedDocumentStore({ stageInto: join(dataRoot, "documents") });
+  for (const path of resolved.documents) {
+    try {
+      await documents.authorize(path, { purposes: ["reference", "upload"] });
+    } catch (error) {
+      // A document the user asked for and did not get must be visible, not silent.
+      diagnostics.push(
+        `could not authorize ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   const { tools } = browserToolset({
     runtime,
     allowedOrigins: resolved.allowedOrigins ?? [],
     mode: DEFAULT_BROWSER_PERMISSION_MODE,
+    ...(documents.size > 0 ? { documents } : {}),
   });
 
   return {
