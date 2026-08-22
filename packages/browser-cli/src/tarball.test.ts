@@ -80,6 +80,10 @@ describe.skipIf(skip)("the browser tarball", () => {
       "THIRD_PARTY_LICENSES.txt",
       "dist/index.js",
       "dist/mu-browser.js",
+      "docs/PERMISSIONS.md",
+      "docs/PRIVACY.md",
+      "docs/SETUP.md",
+      "docs/TROUBLESHOOTING.md",
       "package.json",
     ]);
     expect(browser.entries.some((entry) => entry.startsWith("dist/types/"))).toBe(true);

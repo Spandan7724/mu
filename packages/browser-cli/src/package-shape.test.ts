@@ -28,6 +28,7 @@ describe("published package shape", () => {
       "dist/index.js",
       "dist/types",
       "README.md",
+      "docs",
       "LICENSE",
       "THIRD_PARTY_LICENSES.txt",
     ]);
