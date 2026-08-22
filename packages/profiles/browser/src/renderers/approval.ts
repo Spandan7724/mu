@@ -7,8 +7,8 @@
 // owns the mapping in one place, including the clamp that stops a caller asking for
 // authority the card does not offer (SECURITY §9).
 import { z } from "zod";
-import { assertJsonSerializable, BROWSER_LIMITS } from "../contracts/json.ts";
 import { submitIntentSchema } from "../contracts/intent.ts";
+import { assertJsonSerializable, BROWSER_LIMITS } from "../contracts/json.ts";
 import type { TakeoverReason } from "../contracts/takeover.ts";
 import { BROWSER_SCOPES } from "../policy/scopes.ts";
 import {
@@ -39,12 +39,7 @@ const approvalDocumentSchema = z.strictObject({
   sha256Prefix: z.string().min(1).max(64),
 });
 
-export const browserApprovalChoiceSchema = z.enum([
-  "review",
-  "allow-once",
-  "allow-task",
-  "deny",
-]);
+export const browserApprovalChoiceSchema = z.enum(["review", "allow-once", "allow-task", "deny"]);
 
 export const browserApprovalRequestSchema = z
   .strictObject({
@@ -142,11 +137,7 @@ export function browserApprovalRequest(
   assertJsonSerializable(request, "browser approval request");
   // A structured event travels further than a terminal line, so the same gate
   // applies to it: a withheld value must not ride out on the wire either.
-  assertNoSecretInLines(
-    [JSON.stringify(request)],
-    card.redactValues,
-    "a browser approval request",
-  );
+  assertNoSecretInLines([JSON.stringify(request)], card.redactValues, "a browser approval request");
   return parsed.data;
 }
 
@@ -199,7 +190,12 @@ export function resolveApprovalReply(
   reply: BrowserApprovalReply,
 ): ApprovalResolution {
   if (reply.outcome === "deny") {
-    return { outcome: "deny", remember: false, applied: "deny", message: "denied; nothing was sent" };
+    return {
+      outcome: "deny",
+      remember: false,
+      applied: "deny",
+      message: "denied; nothing was sent",
+    };
   }
   if (reply.outcome === "review") {
     if (!cardOffersChoice(card, "review")) {

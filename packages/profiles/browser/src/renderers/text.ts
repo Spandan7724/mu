@@ -37,10 +37,12 @@ export function joinParts(parts: readonly (string | undefined)[]): string {
  * escape sequence would reach the terminal as chrome the profile never wrote.
  */
 export function flatten(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim();
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: page text arrives with them; removing them is the point
+  const stripped = value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ");
+  return stripped.replace(/\s+/g, " ").trim();
 }
 
-export function clampLine(value: string, max = RENDER_LIMITS.maxLineChars): string {
+export function clampLine(value: string, max: number = RENDER_LIMITS.maxLineChars): string {
   const flat = flatten(value);
   return flat.length > max ? `${flat.slice(0, Math.max(1, max - 1))}…` : flat;
 }
@@ -48,7 +50,7 @@ export function clampLine(value: string, max = RENDER_LIMITS.maxLineChars): stri
 /** `… +N more` rather than a silent truncation (STYLES.md: truncation is honest). */
 export function boundedList(
   values: readonly string[],
-  max = RENDER_LIMITS.maxListItems,
+  max: number = RENDER_LIMITS.maxListItems,
 ): string[] {
   if (values.length <= max) return values.map((value) => clampLine(value));
   const shown = values.slice(0, max).map((value) => clampLine(value));

@@ -186,7 +186,10 @@ export function approvalField(input: {
   };
 }
 
-export function fieldFromFact(fact: ApplicantFact, label?: string): BrowserApprovalField | undefined {
+export function fieldFromFact(
+  fact: ApplicantFact,
+  label?: string,
+): BrowserApprovalField | undefined {
   const provenance =
     fact.source.kind === "document"
       ? `from ${fact.source.documentId}`
@@ -238,7 +241,10 @@ export function buildApprovalCard(input: ApprovalCardInput): BrowserApprovalCard
   const fields = (input.fields ?? []).filter(
     (field): field is BrowserApprovalField => field !== undefined,
   );
-  const incompleteReasons = [...(input.incompleteReasons ?? []), ...(input.origin === undefined ? origin.warnings.slice(0, 1) : [])];
+  const incompleteReasons = [
+    ...(input.incompleteReasons ?? []),
+    ...(input.origin === undefined ? origin.warnings.slice(0, 1) : []),
+  ];
   const previewComplete = incompleteReasons.length === 0;
   const neverAuto = input.scopes.some((scope) => NEVER_AUTO_ALLOWED_SCOPES.includes(scope));
   const offersTaskScope = previewComplete && !neverAuto;
@@ -460,7 +466,10 @@ export function submitApprovalCard(input: SubmitCardInput): BrowserApprovalCard 
 
   return buildApprovalCard({
     kind: "submit",
-    action: joinParts([INTENT_ACTION[input.intent], label === undefined ? undefined : `· "${label}"`]),
+    action: joinParts([
+      INTENT_ACTION[input.intent],
+      label === undefined ? undefined : `· "${label}"`,
+    ]),
     scopes: input.scopes,
     pattern: input.pattern,
     ...(input.observation.origin === undefined ? {} : { origin: input.observation.origin }),
@@ -534,9 +543,7 @@ export function renderApprovalCard(card: BrowserApprovalCard): string[] {
   if (!card.previewComplete) {
     lines.push("preview incomplete · this action cannot be allowed for the whole task");
   }
-  lines.push(
-    joinParts(card.choices.map((choice) => `[${choice.key}] ${choice.label}`)),
-  );
+  lines.push(joinParts(card.choices.map((choice) => `[${choice.key}] ${choice.label}`)));
   for (const choice of card.choices) {
     lines.push(`  ${joinParts([choice.label, choice.detail])}`);
   }
