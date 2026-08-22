@@ -12,6 +12,7 @@ import {
 } from "@mu/cli-runtime";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import type { BrowserProfile } from "@mu/profile-browser/profile";
+import { Terminal } from "@mu/tui";
 import { ExtensionHost, FileSessionStore } from "mu";
 import { browserDoctorChecks, runBrowserDoctor } from "./doctor.ts";
 import {
@@ -323,10 +324,16 @@ describe("the interactive surface", () => {
       return true;
     }) as typeof process.stderr.write;
     try {
-      // Bun's test runner has no TTY, so this is the interactive entry point's
-      // first branch — enough to prove the branding comes from this descriptor.
+      // A non-tty terminal forces the interactive entry point's first branch —
+      // enough to prove the branding comes from this descriptor.
       const product = createBrowserProduct({ home: await tempHome() });
-      expect(await runInteractive(product, parseArgs([], product))).toBe(2);
+      const terminal = new Terminal({
+        write: () => {},
+        columns: 80,
+        rows: 24,
+        isTty: false,
+      });
+      expect(await runInteractive(product, parseArgs([], product), { terminal })).toBe(2);
     } finally {
       process.stderr.write = write;
     }

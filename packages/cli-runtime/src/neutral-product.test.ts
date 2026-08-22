@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { Terminal } from "@mu/tui";
 import { ExtensionHost, FileSessionStore } from "mu";
 import { parseArgs } from "./args.ts";
 import { EXIT, runHeadless } from "./headless.ts";
@@ -123,9 +124,15 @@ describe("a non-coding product composes every runtime surface", () => {
       return true;
     }) as typeof process.stderr.write;
     try {
-      // Bun's test runner has no TTY, so this is the interactive entry point's
-      // first branch — enough to prove branding reaches it from the descriptor.
-      const code = await runInteractive(product, parseArgs([], product));
+      // A non-tty terminal forces the interactive entry point's first branch —
+      // enough to prove branding reaches it from the descriptor.
+      const terminal = new Terminal({
+        write: () => {},
+        columns: 80,
+        rows: 24,
+        isTty: false,
+      });
+      const code = await runInteractive(product, parseArgs([], product), { terminal });
       expect(code).toBe(2);
     } finally {
       process.stderr.write = write;

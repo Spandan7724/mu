@@ -284,7 +284,7 @@ const variants: Variant[] = [
       out.push(...agentCell(OPENING, ctx));
       const rail = dim(GLYPHS.rule);
       const node = (cell: Cell, last: boolean) => [
-        MARGIN + dim(last ? "╰─" : "├─") + ` ${headText(cell)}`,
+        `${MARGIN + dim(last ? "╰─" : "├─")} ${headText(cell)}`,
         ...outputOf(cell).map((line) => `${MARGIN}${last ? "  " : rail} ${dim(`  ${line}`)}`),
       ];
       out.push(MARGIN + rail);

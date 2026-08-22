@@ -91,10 +91,10 @@ const row = (gutter: string, body: string) => MARGIN + gutter + body;
 const composerRule = () => MARGIN + dim("─".repeat(Math.max(0, width - MARGIN.length * 2)));
 
 const contextBefore = () => [
-  row(RULE(), read("read") + " " + path("packages/tui/src/registry.ts") + dim(" · 409 lines")),
+  row(RULE(), `${read("read")} ${path("packages/tui/src/registry.ts")}${dim(" · 409 lines")}`),
 ];
 const contextAfter = () => [
-  row(RULE(), mutate("edited") + " " + path("packages/tui/src/cells.ts") + dim(" · +48 −0")),
+  row(RULE(), `${mutate("edited")} ${path("packages/tui/src/cells.ts")}${dim(" · +48 −0")}`),
 ];
 
 const footer = () => [
@@ -111,7 +111,7 @@ const frame = (pinned: string[], spinnerRow?: string) => [
   composerRule(),
   ...pinned,
   ...(pinned.length > 0 ? [composerRule()] : []),
-  MARGIN + accent(GLYPHS.userMarker) + " " + dim("_"),
+  `${MARGIN + accent(GLYPHS.userMarker)} ${dim("_")}`,
   composerRule(),
   ...(spinnerRow ? [spinnerRow] : []),
   ...footer(),
@@ -209,7 +209,7 @@ const variants: Variant[] = [
     render: () => [
       header(PLAN),
       ...PLAN.map((t, i) =>
-        row(RULE(), dim(String(i + 1).padStart(2)) + ` ${paintMark(t.status)} ${paintText(t)}`),
+        row(RULE(), `${dim(String(i + 1).padStart(2))} ${paintMark(t.status)} ${paintText(t)}`),
       ),
     ],
   },
@@ -260,7 +260,7 @@ const variants: Variant[] = [
     title: "meter in the header",
     note: "the whole plan compressed into one glyph per task, list underneath",
     render: () => [
-      row(RULE(), mutate("plan") + " " + meter(PLAN) + dim(` ${GLYPHS.separator} ${counts(PLAN)}`)),
+      row(RULE(), `${mutate("plan")} ${meter(PLAN)}${dim(` ${GLYPHS.separator} ${counts(PLAN)}`)}`),
       ...PLAN.map((t) => row(RULE(), `${paintMark(t.status)} ${paintText(t)}`)),
     ],
   },
@@ -313,7 +313,7 @@ const variants: Variant[] = [
     note: "one row: how many tasks, how far in, what is live",
     render: () => [
       ...contextBefore(),
-      row(RULE(), mutate("plan") + " " + meter(PLAN) + "  " + active(PLAN)),
+      row(RULE(), `${mutate("plan")} ${meter(PLAN)}  ${active(PLAN)}`),
       ...contextAfter(),
     ],
   },
@@ -338,15 +338,15 @@ const variants: Variant[] = [
   {
     title: "pinned meter strip",
     note: "not a transcript cell at all — one always-current row above the composer",
-    render: () => frame([MARGIN + mutate("plan") + "  " + meter(PLAN) + "  " + active(PLAN)]),
+    render: () => frame([`${MARGIN + mutate("plan")}  ${meter(PLAN)}  ${active(PLAN)}`]),
   },
   {
     title: "pinned two rows",
     note: "meter and counts on top, the live task hanging under it",
     render: () =>
       frame([
-        MARGIN + mutate("plan") + "  " + meter(PLAN) + dim(`  ${counts(PLAN)}`),
-        MARGIN + "      " + accent(GLYPHS.userMarker) + " " + active(PLAN),
+        `${MARGIN + mutate("plan")}  ${meter(PLAN)}${dim(`  ${counts(PLAN)}`)}`,
+        `${MARGIN}      ${accent(GLYPHS.userMarker)} ${active(PLAN)}`,
       ]),
   },
   {
@@ -379,7 +379,7 @@ const variants: Variant[] = [
       ...contextAfter(),
       "",
       composerRule(),
-      MARGIN + accent(GLYPHS.userMarker) + " " + dim("_"),
+      `${MARGIN + accent(GLYPHS.userMarker)} ${dim("_")}`,
       composerRule(),
       MARGIN + dim("~/code/mu"),
       MARGIN +

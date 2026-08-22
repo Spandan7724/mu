@@ -66,6 +66,10 @@ export interface InteractiveOptions {
   agentOptions?: AgentOptions;
   modelCatalog?: ModelCatalog | undefined;
   ownership?: SessionOwnershipGuard | undefined;
+  // Overrides the real process stdio, so tests can exercise both branches of
+  // the tty check without depending on whether the test runner itself has a
+  // controlling terminal.
+  terminal?: Terminal;
 }
 
 export function renderDiffCommand(
@@ -244,7 +248,7 @@ export async function runInteractive<Options>(
   const cwd = process.cwd();
   const prefix = diagnosticPrefix(product);
   const modelCatalog = options.modelCatalog;
-  const terminal = new Terminal();
+  const terminal = options.terminal ?? new Terminal();
   if (!terminal.isTty) {
     process.stderr.write(`${prefix}not a terminal — use -p for headless mode\n`);
     return 2;
