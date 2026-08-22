@@ -3,6 +3,7 @@
 // all — not its value, not a truncated value, not a screenshot of the page holding it.
 import type { ToolResultContent } from "@mu/ai";
 import type { ActionOutcome } from "../contracts/actions.ts";
+import { readDownloadDetails } from "../contracts/actions.ts";
 import {
   type BrowserElement,
   type BrowserObservation,
@@ -156,6 +157,15 @@ export function outcomeText(outcome: ActionOutcome): string {
     );
   } else if (outcome.after !== undefined && outcome.after.url !== outcome.before.url) {
     lines.push(`The page is now at ${outcome.after.url}.`);
+  }
+  const download = readDownloadDetails(outcome.details);
+  if (download !== undefined) {
+    // Metadata only, deliberately. The bytes are untrusted, stay in the private artifact
+    // root, are never executed, and their location is never model-visible.
+    const size = download.bytes === undefined ? "" : ` · ${download.bytes} bytes`;
+    const type = download.mimeType === undefined ? "" : ` · ${download.mimeType}`;
+    lines.push(`The page downloaded ${download.basename}${type}${size}.`);
+    lines.push("Mu holds the file privately; it is not opened, run, or readable from here.");
   }
   if (outcome.status === "unknown") {
     lines.push(
