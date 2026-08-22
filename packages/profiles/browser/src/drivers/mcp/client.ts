@@ -20,7 +20,6 @@ import type {
   McpServerIdentity,
   McpSidecar,
   McpSidecarLauncher,
-  McpSidecarSpec,
   McpToolResult,
 } from "./protocol.ts";
 
@@ -40,7 +39,9 @@ interface SdkClient {
 
 interface SdkModule {
   Client: new (info: { name: string; version: string }) => SdkClient;
-  StdioClientTransport: new (options: Record<string, unknown>) => {
+  StdioClientTransport: new (
+    options: Record<string, unknown>,
+  ) => {
     stderr?: { on(event: "data", listener: (chunk: unknown) => void): void } | undefined;
     close(): Promise<void>;
   };

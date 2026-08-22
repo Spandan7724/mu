@@ -82,7 +82,6 @@ export function parseSidecarResponse(text: string): SidecarResponse {
       if (download?.[1] !== undefined) response.downloads.push(download[1].trim());
       const link = LINK.exec(line);
       if (link?.[1] !== undefined) response.savedPaths.push(link[1]);
-      continue;
     }
   }
 

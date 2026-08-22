@@ -10,19 +10,19 @@ import {
   type ActionResultSnapshot,
   type ActionSnapshot,
   actionTargets,
-  blockedOutcome,
   type BrowserAction,
   type BrowserDownload,
+  blockedOutcome,
   completedOutcome,
   downloadDetails,
   failedOutcome,
   type NavigateRequest,
   type ObserveRequest,
-  staleOutcome,
   type SubmitRequest,
+  staleOutcome,
   takeoverOutcome,
-  unknownOutcome,
   type UploadRequest,
+  unknownOutcome,
   type WaitRequest,
 } from "../../contracts/actions.ts";
 import type {
@@ -48,7 +48,12 @@ import {
   refValidity,
   refValidityMessage,
 } from "../../contracts/observation.ts";
-import { elementRefId, isPathShaped, isWebUrl, normalizeOrigin } from "../../contracts/primitives.ts";
+import {
+  elementRefId,
+  isPathShaped,
+  isWebUrl,
+  normalizeOrigin,
+} from "../../contracts/primitives.ts";
 import { REDACTED } from "../../contracts/secret.ts";
 import type { BrowserFrame, BrowserTab, TabOutcome, TabRequest } from "../../contracts/tabs.ts";
 import type { TakeoverReason } from "../../contracts/takeover.ts";
@@ -56,8 +61,8 @@ import type { BrowserDriverOwnership } from "../factory.ts";
 import { imageOf, type McpSidecar, type McpToolResult, textOf } from "./protocol.ts";
 import { parseSidecarResponse, parseTabList, type SidecarResponse } from "./response.ts";
 import { classifyRisks, commitmentIntent, isCredentialControl } from "./risk.ts";
-import { parseSnapshot, type SnapshotNode, structuralSignature } from "./snapshot.ts";
 import { assertSupportedServer } from "./sidecar.ts";
+import { parseSnapshot, type SnapshotNode, structuralSignature } from "./snapshot.ts";
 
 const DEFAULT_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 100;
@@ -277,7 +282,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     activeTabId =
       current === undefined
         ? next[0]?.id
-        : next.find((tab) => tab.index === current.index)?.id ?? next[0]?.id;
+        : (next.find((tab) => tab.index === current.index)?.id ?? next[0]?.id);
     return next;
   };
 
@@ -290,7 +295,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     return found;
   };
 
-  const ensureActive = async (tabId: string | undefined, signal: AbortSignal): Promise<TabState> => {
+  const ensureActive = async (
+    tabId: string | undefined,
+    signal: AbortSignal,
+  ): Promise<TabState> => {
     if (tabId === undefined || tabId === activeTabId) return tabById(tabId);
     const target = tabs.find((tab) => tab.id === tabId);
     if (!target) throw new BrowserDriverError("not-connected", `no controlled tab ${tabId}`);
@@ -435,11 +443,16 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
   ): Promise<BrowserObservation> => {
     const frames = frameList(page.nodes, page.url);
     const frameIds = new Set(frames.map((frame) => frame.id));
-    const referenced = page.nodes.filter((node) => node.ref !== undefined && node.role !== "iframe");
+    const referenced = page.nodes.filter(
+      (node) => node.ref !== undefined && node.role !== "iframe",
+    );
     const all = referenced.map((node) =>
       withCheckedDefault(elementFor(node, page.tab, frameIds), node),
     );
-    const maxNodes = Math.min(request.maxNodes ?? BROWSER_LIMITS.maxElements, BROWSER_LIMITS.maxElements);
+    const maxNodes = Math.min(
+      request.maxNodes ?? BROWSER_LIMITS.maxElements,
+      BROWSER_LIMITS.maxElements,
+    );
     const elements = all.slice(0, maxNodes);
     const risks = [...new Set(elements.flatMap((element) => element.risk ?? []))];
     const full = elements
@@ -806,11 +819,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
             outcome = { message: `"${label}" was already ${wanted ? "checked" : "unchecked"}.` };
             break;
           }
-          const response = await call(
-            "browser_click",
-            { target: ref, element: label },
-            signal,
-          );
+          const response = await call("browser_click", { target: ref, element: label }, signal);
           outcome = {
             message: `${wanted ? "Checked" : "Unchecked"} "${label}".`,
             response,
@@ -993,7 +1002,11 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         paths.push(document.path);
         basenames.push(document.basename);
       }
-      const opened = await call("browser_click", { target: node.ref as string, element: label }, signal);
+      const opened = await call(
+        "browser_click",
+        { target: node.ref as string, element: label },
+        signal,
+      );
       if (opened.modalState === undefined || !/file chooser/i.test(opened.modalState)) {
         return blockedOutcome({ message: `"${label}" is not a file input.`, before });
       }
@@ -1084,12 +1097,17 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           return listed(true, `${current.length} controlled tab(s).`);
         }
         case "open": {
-          if (tabs.length >= BROWSER_LIMITS.maxTabs) return listed(false, "Too many controlled tabs.");
+          if (tabs.length >= BROWSER_LIMITS.maxTabs)
+            return listed(false, "Too many controlled tabs.");
           const url = request.url;
           if (url !== undefined && !isWebUrl(url)) {
             return listed(false, "Only http(s) URLs may be opened.");
           }
-          await call("browser_tabs", { action: "new", ...(url === undefined ? {} : { url }) }, signal);
+          await call(
+            "browser_tabs",
+            { action: "new", ...(url === undefined ? {} : { url }) },
+            signal,
+          );
           await listTabs(signal);
           return listed(true, "Opened a tab.");
         }

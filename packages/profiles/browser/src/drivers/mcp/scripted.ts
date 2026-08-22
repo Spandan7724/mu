@@ -136,7 +136,10 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
     const map = new Map<string, RefEntry>();
     const counters = new Map<string, number>();
     for (const spec of page.elements) {
-      const frameIndex = spec.frameId === undefined ? undefined : frames.findIndex((frame) => frame.id === spec.frameId) + 1;
+      const frameIndex =
+        spec.frameId === undefined
+          ? undefined
+          : frames.findIndex((frame) => frame.id === spec.frameId) + 1;
       const prefix = frameIndex === undefined || frameIndex <= 0 ? "" : `f${frameIndex}`;
       const next = (counters.get(prefix) ?? 0) + 1;
       counters.set(prefix, next);
@@ -151,7 +154,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
   const findRef = (entry: ScriptedTab, ref: string): RefEntry | undefined =>
     refsOf(pageOf(entry)).get(ref);
 
-  const valueOf = (entry: ScriptedTab, spec: FakeElementSpec): string | undefined => {
+  const currentValue = (entry: ScriptedTab, spec: FakeElementSpec): string | undefined => {
     if (spec.secretValue !== undefined) return spec.secretValue;
     return entry.values.get(spec.ref) ?? spec.value;
   };
@@ -172,7 +175,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
       if (spec.disabled === true) attributes.push("[disabled]");
       if (entry.focused === spec.ref) attributes.push("[active]");
       attributes.push(`[ref=${ref}]`);
-      const value = valueOf(entry, spec);
+      const value = currentValue(entry, spec);
       const name = spec.name ?? spec.label;
       const head = `  - ${spec.role ?? "generic"}${name === undefined ? "" : ` ${quote(name)}`} ${attributes.join(" ")}`;
       const chosen = entry.selected.get(spec.ref);
@@ -204,6 +207,11 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         "```yaml",
         renderSnapshot(entry),
         "```",
+        // A raised dialog stays in the response until it is handled, exactly as a
+        // real browser keeps its modal state.
+        ...(dialog === undefined
+          ? []
+          : ["### Modal state", `- [Dialog "${dialog}"]: handle it before continuing`]),
         ...extra,
       ].join("\n"),
     );
@@ -310,7 +318,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         [
           pageSection(entry),
           "### Modal state",
-          "- [File chooser]: can be handled by the \"browser_file_upload\" tool",
+          '- [File chooser]: can be handled by the "browser_file_upload" tool',
         ].join("\n"),
       );
     }
@@ -395,7 +403,10 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         if (action === "select") {
           const index = Number(args.index);
           if (!Number.isInteger(index) || index < 0 || index >= tabs.length) {
-            throw new BrowserDriverError("unsupported", `Tab index ${String(args.index)} not found`);
+            throw new BrowserDriverError(
+              "unsupported",
+              `Tab index ${String(args.index)} not found`,
+            );
           }
           current = index;
           return tabList();
@@ -452,7 +463,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         const value = String(args.text ?? "");
         entry.values.set(
           found.spec.ref,
-          args.slowly === true ? `${valueOf(entry, found.spec) ?? ""}${value}` : value,
+          args.slowly === true ? `${currentValue(entry, found.spec) ?? ""}${value}` : value,
         );
         entry.focused = found.spec.ref;
         return snapshotResponse(entry);
@@ -482,7 +493,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         if (focused !== undefined && key.length === 1) {
           const spec = pageOf(entry).elements.find((element) => element.ref === focused);
           if (spec && (spec.role === "textbox" || spec.inputType === "text")) {
-            entry.values.set(focused, `${valueOf(entry, spec) ?? ""}${key}`);
+            entry.values.set(focused, `${currentValue(entry, spec) ?? ""}${key}`);
           }
         }
         return snapshotResponse(entry);

@@ -3,8 +3,8 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserFamily } from "../../contracts/connection.ts";
-import { BrowserDriverError } from "../../contracts/driver.ts";
 import type { AuthorizedDocument } from "../../contracts/documents.ts";
+import { BrowserDriverError } from "../../contracts/driver.ts";
 import { browserArtifactsDir, DIRECTORY_MODE } from "../../profile/data.ts";
 import type { ExtensionFactoryOptions, ExtensionSidecar } from "../extension.ts";
 import { extensionFactory } from "../extension.ts";
@@ -16,12 +16,12 @@ import { createMcpBrowserDriver, type McpBrowserDriver } from "./driver.ts";
 import type { McpSidecar, McpSidecarLauncher } from "./protocol.ts";
 import {
   assertSupportedServer,
-  discoverBrowserExecutable,
   type DiscoverBrowserOptions,
+  discoverBrowserExecutable,
   extensionSidecarArgs,
   persistentSidecarArgs,
-  resolveSidecar,
   type ResolveSidecarOptions,
+  resolveSidecar,
   SIDECAR_RUNTIME_ENV,
   sidecarSpec,
 } from "./sidecar.ts";
@@ -116,6 +116,7 @@ export function persistentDriver(
 export interface McpExtensionOptions extends McpModeOptions {
   platform?: string | undefined;
   env?: Record<string, string | undefined> | undefined;
+  exists?: ((path: string) => boolean) | undefined;
 }
 
 export function mcpExtensionSidecar(
@@ -129,6 +130,7 @@ export function mcpExtensionSidecar(
       runtime: resolution.runtime,
       ...(options.platform === undefined ? {} : { platform: options.platform }),
       ...(options.env === undefined ? {} : { env: options.env }),
+      ...(options.exists === undefined ? {} : { exists: options.exists }),
     });
     if (!verdict.supported) {
       throw new BrowserDriverError("unsupported", verdict.reason ?? "unsupported topology");
@@ -194,6 +196,7 @@ export function mcpExtensionDriverFactory(options: McpExtensionOptions = {}): Br
       return extensionTopology({
         ...(runtime === undefined ? {} : { runtime }),
         ...(options.platform === undefined ? {} : { platform: options.platform }),
+        ...(options.exists === undefined ? {} : { exists: options.exists }),
         env,
       }).supported;
     },

@@ -32,14 +32,14 @@ const NAME = /^\s*"((?:[^"\\]|\\.)*)"/;
 const ATTRIBUTE = /^\s*\[([A-Za-z][A-Za-z0-9_-]*)(?:=([^\]]*))?\]/;
 const FRAME_REF = /^(f\d+)e\d+$/;
 
-function unescape(value: string): string {
+function unquoteEscapes(value: string): string {
   return value.replace(/\\(.)/g, "$1");
 }
 
 function stripQuotes(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return unescape(trimmed.slice(1, -1));
+    return unquoteEscapes(trimmed.slice(1, -1));
   }
   return trimmed;
 }
@@ -61,7 +61,7 @@ function parseLine(raw: string): ParsedLine | undefined {
   let name: string | undefined;
   const named = NAME.exec(rest);
   if (named?.[1] !== undefined) {
-    name = unescape(named[1]);
+    name = unquoteEscapes(named[1]);
     rest = rest.slice(named[0].length);
   }
 

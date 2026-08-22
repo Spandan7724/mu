@@ -18,7 +18,7 @@ const SNAPSHOT_RESPONSE = [
   "  - generic [ref=e4]:",
   "    - generic [ref=e5]: Plain text",
   '    - textbox "Plain text" [ref=e6]: Ada Lovelace',
-  '    - generic [ref=e17]: Password',
+  "    - generic [ref=e17]: Password",
   '    - textbox "Password" [ref=e18]',
   '    - combobox "Size" [ref=e22]:',
   '      - option "Select a size"',
@@ -124,7 +124,9 @@ describe("accessibility snapshot parsing", () => {
   });
 
   test("frame-prefixed refs carry their frame", () => {
-    const framed = parseSnapshot(['- iframe [ref=e5]:', '  - textbox "Name" [ref=f1e2]'].join("\n"));
+    const framed = parseSnapshot(
+      ["- iframe [ref=e5]:", '  - textbox "Name" [ref=f1e2]'].join("\n"),
+    );
     expect(framed.find((node) => node.ref === "f1e2")?.framePrefix).toBe("f1");
     expect(framed.find((node) => node.ref === "e5")?.framePrefix).toBeUndefined();
   });

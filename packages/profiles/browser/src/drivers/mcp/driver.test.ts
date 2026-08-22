@@ -3,16 +3,26 @@
 // launched, so CI stays deterministic; the live-browser run of the identical
 // suite lives in `live.test.ts` behind an env flag.
 import { describe, expect, test } from "bun:test";
-import { elementRefOf } from "../../contracts/observation.ts";
 import { BrowserDriverError } from "../../contracts/driver.ts";
+import { elementRefOf } from "../../contracts/observation.ts";
 import { BrowserSecret } from "../../contracts/secret.ts";
 import type { DriverContractSetup } from "../../testing/conformance-types.ts";
 import {
   registerBrowserDriverContract,
   runBrowserDriverContract,
 } from "../../testing/driver-conformance.ts";
-import { FAKE_DRIVER_CAPABILITIES, FAKE_DRIVER_FIXTURE, fakeUploadDocument } from "../fake/fixture.ts";
-import { defaultFakeSite, FAKE_LABELS, FAKE_PAGE_URLS, FAKE_VALUES, fakeSite } from "../fake/site.ts";
+import {
+  FAKE_DRIVER_CAPABILITIES,
+  FAKE_DRIVER_FIXTURE,
+  fakeUploadDocument,
+} from "../fake/fixture.ts";
+import {
+  defaultFakeSite,
+  FAKE_LABELS,
+  FAKE_PAGE_URLS,
+  FAKE_VALUES,
+  fakeSite,
+} from "../fake/site.ts";
 import { createMcpBrowserDriver, type McpBrowserDriver } from "./driver.ts";
 import { createScriptedSidecar, type ScriptedSidecar } from "./scripted.ts";
 
@@ -48,14 +58,18 @@ registerBrowserDriverContract({ describe, test }, contractSetup("extension"));
 describe("both modes run the same suite and reach the same verdict", () => {
   test("persistent mode passes every case, with nothing skipped", async () => {
     const report = await runBrowserDriverContract(contractSetup("persistent"));
-    expect(report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`)).toEqual([]);
+    expect(
+      report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`),
+    ).toEqual([]);
     expect(report.skipped).toBe(0);
     expect(report.passed).toBe(report.results.length);
   }, 120_000);
 
   test("extension mode passes every case, with nothing skipped", async () => {
     const report = await runBrowserDriverContract(contractSetup("extension"));
-    expect(report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`)).toEqual([]);
+    expect(
+      report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`),
+    ).toEqual([]);
     expect(report.skipped).toBe(0);
     expect(report.passed).toBe(report.results.length);
   }, 120_000);
