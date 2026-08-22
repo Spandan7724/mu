@@ -5,7 +5,7 @@
 // the user already installed (BD28) and the version is the one that was pinned.
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join } from "node:path";
 import { BrowserDriverError } from "../../contracts/driver.ts";
 import type { McpServerIdentity, McpSidecarSpec } from "./protocol.ts";
 
@@ -38,6 +38,12 @@ export function assertSupportedServer(identity: McpServerIdentity | undefined): 
   }
 }
 
+// The sidecar may run on a different operating system from Mu (BD26), so "absolute"
+// is judged for either: a POSIX root, a Windows drive, or a UNC share.
+function isAbsoluteOnAnyPlatform(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
+
 export interface SidecarResolution {
   cli: string;
   runtime: string;
@@ -67,7 +73,7 @@ export function resolveSidecar(options: ResolveSidecarOptions = {}): SidecarReso
   const runtime = options.runtime ?? env[SIDECAR_RUNTIME_ENV] ?? process.execPath;
   const configured = env[SIDECAR_CLI_ENV];
   if (configured !== undefined && configured.length > 0) {
-    if (!isAbsolute(configured)) {
+    if (!isAbsoluteOnAnyPlatform(configured)) {
       throw new BrowserDriverError(
         "unsupported",
         `${SIDECAR_CLI_ENV} must be an absolute path to ${PINNED_SIDECAR_PACKAGE}/cli.js`,

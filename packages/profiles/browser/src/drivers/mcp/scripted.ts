@@ -283,6 +283,8 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
             height: VIEWPORT.height,
             scrollX: entry.scrollX,
             scrollY: entry.scrollY,
+            readyState: "complete",
+            frameUrls: (pageOf(entry).frames ?? []).map((frame) => frame.url),
           }),
         ].join("\n"),
       );

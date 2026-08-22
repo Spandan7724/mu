@@ -13,6 +13,7 @@
 //   bun test packages/profiles/browser/src/drivers/mcp/live.test.ts
 import { describe, expect, test } from "bun:test";
 import { readdir } from "node:fs/promises";
+import { authorizedDocumentId } from "../../contracts/primitives.ts";
 import type { DriverContractSetup } from "../../testing/conformance-types.ts";
 import {
   registerBrowserDriverContract,
@@ -29,7 +30,7 @@ const LIVE = process.env.MU_BROWSER_LIVE === "1";
 interface LiveFixtureHandle {
   url: string;
   crossOrigin: { url: string };
-  recorder: { all(): readonly { path: string }[] };
+  recorder: { all(): readonly { path: string }[]; clear(): void };
   stop(): Promise<void>;
 }
 
@@ -37,7 +38,7 @@ interface LiveFixtureHandle {
 // a dependency of the shipped profile, so it must not be a compile-time import.
 async function startLiveFixture(): Promise<LiveFixtureHandle> {
   const here = new URL(".", import.meta.url);
-  const specifier = new URL("../../../../browser-fixture/src/index.ts", here).href;
+  const specifier = new URL("../../../../../browser-fixture/src/index.ts", here).href;
   const module = (await import(specifier)) as {
     startFixture: () => Promise<LiveFixtureHandle>;
   };
@@ -71,6 +72,23 @@ if (!LIVE) {
   });
 } else {
   const outputDir = process.env.MU_BROWSER_LIVE_OUTPUT ?? "";
+  // An already-authorized document, named by the path the sidecar's own operating
+  // system can open. Without one the upload cases are reported skipped rather than
+  // passed on a path translation Mu cannot make (BD26).
+  const uploadPath = process.env.MU_BROWSER_LIVE_UPLOAD;
+  const uploadDocument =
+    uploadPath === undefined
+      ? undefined
+      : {
+          id: authorizedDocumentId("doc-live-resume"),
+          path: uploadPath,
+          basename: uploadPath.split(/[/\\]/).pop() ?? "resume.pdf",
+          mimeType: "application/pdf",
+          bytes: 1_024,
+          sha256: "c".repeat(64),
+          purposes: ["upload" as const],
+          addedAt: 1_700_000_000_000,
+        };
   const fixture = await startLiveFixture();
   const contract = liveContractFixture({
     origin: fixture.url,
@@ -87,18 +105,18 @@ if (!LIVE) {
         mode: "persistent",
         browser: "chrome",
         ownership: "owned",
+        landingUrl: contract.pages.blank,
+        ...(uploadDocument === undefined ? {} : { documents: [uploadDocument] }),
       });
     },
     connectOptions: { mode: "persistent", browser: "chrome" },
     fixture: contract as never,
+    ...(uploadDocument === undefined ? {} : { uploadDocument }),
     capabilities: {
       history: true,
       popups: true,
       dialogs: true,
-      // The sidecar runs on the browser's operating system (BD26), so a document
-      // path Mu holds is not a path the sidecar can open. Reported skipped rather
-      // than passed on a translation Mu cannot make honestly.
-      fileUpload: false,
+      fileUpload: uploadDocument !== undefined,
       downloads: true,
       crossOriginFrames: true,
       screenshots: true,
@@ -107,6 +125,9 @@ if (!LIVE) {
       submissionLedger: true,
     },
     simulateConnectionLoss: async (driver) => (driver as McpBrowserDriver).sever(),
+    // One fixture serves every case, so its ledger is cleared between them.
+    // Without this a case counting submissions would count earlier cases' too.
+    resetFixture: async () => fixture.recorder.clear(),
     readSubmissions: async () =>
       fixture.recorder.all().map((entry) => ({ path: entry.path, fields: {}, files: [] })),
     teardown: async () => {

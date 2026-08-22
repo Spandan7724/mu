@@ -88,6 +88,10 @@ export interface McpBrowserDriverOptions {
   browser: BrowserFamily;
   ownership: BrowserDriverOwnership;
   documents?: readonly AuthorizedDocument[] | undefined;
+  // Where a freshly launched Mu-owned browser is put. Chrome's own new-tab page
+  // fetches remote content into the Mu profile and is not a page Mu chose, so an
+  // owned browser never starts there.
+  landingUrl?: string | undefined;
   now?: (() => number) | undefined;
   // Present only so the conformance harness can drive the same suite against a
   // deliberately severed connection. Nothing in the product calls it.
@@ -101,6 +105,11 @@ interface TabState {
   title: string;
   revision: number;
   signature: string;
+  // What this driver attached to a file input on the page currently loaded here.
+  // Playwright's accessibility snapshot does not report a file input's selection,
+  // and the model must still be able to see what is attached before submitting.
+  // Basenames only, and dropped the moment the page changes.
+  attachments: Map<string, string>;
 }
 
 interface PageState {
@@ -260,6 +269,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           revisionSeq += 1;
           match.revision = revisionSeq;
           match.signature = "";
+          match.attachments.clear();
         }
         match.index = tab.index;
         match.url = tab.url;
@@ -275,6 +285,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         title: tab.title,
         revision: revisionSeq,
         signature: "",
+        attachments: new Map(),
       };
     });
     tabs = next;
@@ -322,20 +333,30 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       tab.revision = revisionSeq;
       tab.signature = signature;
     }
+    if (tab.url !== url) tab.attachments.clear();
     tab.url = url;
     tab.title = title;
     return { tab, nodes, url, title, response };
   };
 
-  const frameList = (nodes: readonly SnapshotNode[], pageUrl: string): BrowserFrame[] => {
+  // The snapshot names frames but not their URLs, and a frame's own origin is what
+  // origin policy turns on, so the URLs come from the page metadata read alongside
+  // the viewport. Frames the top document cannot enumerate keep the page URL and
+  // are not claimed to be cross-origin.
+  const frameList = (
+    nodes: readonly SnapshotNode[],
+    pageUrl: string,
+    frameUrls: readonly string[],
+  ): BrowserFrame[] => {
     const origin = normalizeOrigin(pageUrl);
     const frames = new Map<string, BrowserFrame>();
     let sequence = 0;
     for (const node of nodes) {
       if (node.role !== "iframe") continue;
       sequence += 1;
-      const url = node.value ?? node.attributes.url;
-      const frameUrl = typeof url === "string" ? url : pageUrl;
+      const declared = node.value ?? node.attributes.url;
+      const candidate = typeof declared === "string" ? declared : frameUrls[sequence - 1];
+      const frameUrl = typeof candidate === "string" && candidate.length > 0 ? candidate : pageUrl;
       const frameOrigin = normalizeOrigin(frameUrl);
       const id = `f${sequence}`;
       frames.set(id, {
@@ -357,6 +378,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
 
   const elementFor = (node: SnapshotNode, tab: TabState, frameIds: Set<string>): BrowserElement => {
     const inputType = INPUT_TYPES[node.role];
+    const attached = node.ref === undefined ? undefined : tab.attachments.get(node.ref);
     const credential = isCredentialControl({ role: node.role, name: node.name, inputType });
     const risks = classifyRisks({
       role: node.role,
@@ -381,15 +403,19 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       // BD14: a credential field's value is never observed, whatever the page shows.
       ...(credential
         ? { value: REDACTED }
-        : node.value === undefined
+        : (node.value ?? attached) === undefined
           ? {}
-          : { value: bounded(node.value, 2_000) }),
+          : { value: bounded((node.value ?? attached) as string, 2_000) }),
       ...(checked === undefined
         ? {}
         : { checked: checked === "mixed" ? ("mixed" as const) : true }),
       ...(node.attributes.selected === undefined ? {} : { selected: true }),
       ...(node.attributes.disabled === undefined ? {} : { disabled: true }),
-      ...(inputType === undefined ? {} : { inputType: credential ? "password" : inputType }),
+      ...(inputType === undefined
+        ? attached === undefined
+          ? {}
+          : { inputType: "file" }
+        : { inputType: credential ? "password" : inputType }),
       ...(credential || options.length === 0 ? {} : { options }),
       ...(risks.length === 0 ? {} : { risk: risks }),
     };
@@ -403,19 +429,39 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     return { ...element, checked: false };
   };
 
-  const viewportOf = async (
-    signal: AbortSignal,
-  ): Promise<{ width: number; height: number; scrollX: number; scrollY: number }> => {
-    const fallback = { width: 0, height: 0, scrollX: 0, scrollY: 0 };
+  interface PageMetadata {
+    width: number;
+    height: number;
+    scrollX: number;
+    scrollY: number;
+    // "complete" only once the response finished. A commitment that leaves the
+    // document short of it is an outcome Mu cannot establish (BD18).
+    readyState: string;
+    frameUrls: string[];
+  }
+
+  const PAGE_METADATA_FUNCTION =
+    "() => ({ width: window.innerWidth, height: window.innerHeight," +
+    " scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY)," +
+    " readyState: document.readyState," +
+    " frameUrls: Array.prototype.map.call(document.querySelectorAll('iframe')," +
+    " function (f) { return f.src ? String(f.src) : ''; }) })";
+
+  const pageMetadata = async (signal: AbortSignal): Promise<PageMetadata> => {
+    const fallback: PageMetadata = {
+      width: 0,
+      height: 0,
+      scrollX: 0,
+      scrollY: 0,
+      readyState: "unknown",
+      frameUrls: [],
+    };
     try {
       // A constant, adapter-authored expression. No page content and no model
       // input reaches it, and `browser_evaluate` is never model-visible.
       const response = await call(
         "browser_evaluate",
-        {
-          function:
-            "() => ({ width: window.innerWidth, height: window.innerHeight, scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) })",
-        },
+        { function: PAGE_METADATA_FUNCTION },
         signal,
         10_000,
       );
@@ -429,6 +475,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         height: read("height"),
         scrollX: read("scrollX"),
         scrollY: read("scrollY"),
+        readyState: typeof parsed.readyState === "string" ? parsed.readyState : "unknown",
+        frameUrls: Array.isArray(parsed.frameUrls)
+          ? parsed.frameUrls.filter((entry): entry is string => typeof entry === "string")
+          : [],
       };
     } catch (error) {
       if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
@@ -441,7 +491,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     request: ObserveRequest,
     signal: AbortSignal,
   ): Promise<BrowserObservation> => {
-    const frames = frameList(page.nodes, page.url);
+    const metadata = await pageMetadata(signal);
+    const frames = frameList(page.nodes, page.url, metadata.frameUrls);
     const frameIds = new Set(frames.map((frame) => frame.id));
     const referenced = page.nodes.filter(
       (node) => node.ref !== undefined && node.role !== "iframe",
@@ -469,7 +520,12 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const nodesOmitted = all.length - elements.length;
     const textCharsOmitted = full.length - snapshot.length;
     const origin = normalizeOrigin(page.url);
-    const viewport = await viewportOf(signal);
+    const viewport = {
+      width: metadata.width,
+      height: metadata.height,
+      scrollX: metadata.scrollX,
+      scrollY: metadata.scrollY,
+    };
     const credentialPage = elements.some((element) => element.inputType === "password");
     const wantsImage = request.screenshot === "viewport" || request.screenshot === "full-page";
     let screenshot: BrowserObservation["screenshot"];
@@ -643,6 +699,27 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         }
         if (listed.length === 0) {
           throw new BrowserDriverError("connection-lost", "the browser reported no usable tab");
+        }
+        const landing = options.landingUrl;
+        if (
+          options.ownership === "owned" &&
+          landing !== undefined &&
+          isWebUrl(landing) &&
+          !isWebUrl(listed.find((tab) => tab.id === activeTabId)?.url ?? "")
+        ) {
+          // A freshly launched browser can abort the first navigation while it is
+          // still settling. Retrying a landing page is safe — it commits nothing —
+          // and failing to reach it is not a reason to refuse the connection.
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              await call("browser_navigate", { url: landing }, signal);
+              break;
+            } catch (error) {
+              if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
+              if (attempt === 1) break;
+            }
+          }
+          await listTabs(signal);
         }
       } catch (error) {
         phase = "disconnected";
@@ -949,6 +1026,18 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       try {
         const { tab: updated, page: settledPage } = await afterAction(page.tab.id, signal);
         after = resultOf(updated);
+        const state = await pageMetadata(signal);
+        // BD18: the request reached the server and the response never finished.
+        // That is not a failure and not a success; it is an outcome Mu cannot
+        // establish, so it is reported once and never retried.
+        if (state.readyState !== "complete" && state.readyState !== "unknown") {
+          return unknownOutcome({
+            message:
+              "The submission was sent and the response never finished arriving. Check the site before doing anything else; do not send it again.",
+            before,
+            after,
+          });
+        }
         confirmation = settledPage.nodes
           .map((entry) => entry.value ?? entry.name ?? "")
           .filter((text) => text.length > 0)
@@ -1010,8 +1099,22 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       if (opened.modalState === undefined || !/file chooser/i.test(opened.modalState)) {
         return blockedOutcome({ message: `"${label}" is not a file input.`, before });
       }
-      await call("browser_file_upload", { paths }, signal);
+      try {
+        await call("browser_file_upload", { paths }, signal);
+      } catch (error) {
+        if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
+        // An open file chooser blocks every other tool, so it is cancelled before
+        // the failure is reported. The bridge's own message names the local path
+        // and is deliberately not carried into the outcome.
+        await call("browser_file_upload", {}, signal).catch(() => undefined);
+        return blockedOutcome({
+          message: `The browser refused to attach ${basenames.join(", ")}. An authorized document must live inside Mu's own document root.`,
+          before,
+        });
+      }
+      page.tab.attachments.set(node.ref as string, basenames.join(", "));
       const { tab: updated } = await afterAction(page.tab.id, signal);
+      updated.attachments.set(node.ref as string, basenames.join(", "));
       return completedOutcome({
         message: `Attached ${basenames.join(", ")}.`,
         before,
@@ -1038,7 +1141,11 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         try {
           await call("browser_wait_for", { text: request.value }, signal, timeoutMs);
         } catch (error) {
-          if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
+          // Only the caller's cancellation is a cancellation. The deadline this
+          // method set for itself is a timeout, reported on the page.
+          if (error instanceof BrowserDriverError && error.code === "aborted" && signal.aborted) {
+            throw error;
+          }
           const { tab: updated } = await afterAction(tab.id, signal).catch(() => ({ tab }));
           return failedOutcome({
             message: `Timed out waiting for ${request.condition}.`,
@@ -1122,7 +1229,18 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         case "close": {
           const target = tabs.find((tab) => tab.id === request.tabId);
           if (!target) return listed(false, `No controlled tab ${request.tabId}.`);
+          const survivors = tabs.filter((tab) => tab.id !== target.id);
           await call("browser_tabs", { action: "close", index: target.index }, signal);
+          // ARCHITECTURE §13: losing the last controlled tab ends the connection.
+          // A browser that opens a replacement page of its own is not an
+          // invitation to adopt it.
+          if (survivors.length === 0) {
+            tabs = [];
+            activeTabId = undefined;
+            phase = "disconnected";
+            message = "the last attached tab was closed";
+            return listed(true, `Closed ${request.tabId}.`);
+          }
           try {
             await listTabs(signal);
           } catch (error) {
@@ -1130,8 +1248,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
             tabs = [];
             activeTabId = undefined;
           }
-          // ARCHITECTURE §13: losing the last attached tab ends the connection
-          // rather than adopting an unrelated one.
           if (tabs.length === 0) {
             phase = "disconnected";
             message = "the last attached tab was closed";

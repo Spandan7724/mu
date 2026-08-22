@@ -53,7 +53,10 @@ function parseLine(raw: string): ParsedLine | undefined {
   const line = LINE.exec(raw.replace(/\t/g, "  "));
   if (!line) return undefined;
   const depth = (line[1] ?? "").length;
-  let rest = line[2] ?? "";
+  // A node whose text contains ": " is emitted as a single-quoted YAML scalar.
+  let rest = (line[2] ?? "").replace(/^'(.*)'$/s, (_match, body: string) =>
+    body.replace(/''/g, "'"),
+  );
   const role = ROLE.exec(rest);
   if (!role?.[1]) return undefined;
   rest = rest.slice(role[1].length);

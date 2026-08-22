@@ -29,10 +29,12 @@ export function liveContractFixture(origins: LiveFixtureOrigins): LiveContractFi
     origin: origins.origin,
     pages: {
       blank: at("/"),
-      form: at("/fields/all"),
+      // A form with a text field, a select and a toggle, and deliberately no
+      // password field: a page carrying one is never screenshotted.
+      form: at("/apply"),
       // Long enough to scroll, and carrying a switch that can be hovered and
       // clicked without committing anything.
-      dynamic: at("/apply"),
+      dynamic: at("/fields/all"),
       popup: at("/dialogs"),
       dialog: at("/dialogs"),
       upload: at("/uploads"),
@@ -48,20 +50,20 @@ export function liveContractFixture(origins: LiveFixtureOrigins): LiveContractFi
       credentials: at("/auth/login"),
     },
     labels: {
-      textField: "Plain text",
-      select: "Size",
-      checkbox: "Send me updates",
+      textField: "First name",
+      select: "Country",
+      checkbox: "Open to relocation",
       fileField: "Document",
       submitButton: "Submit",
       popupTrigger: "Open in a new tab",
       dialogTrigger: "Show confirm",
       downloadTrigger: "ada-testwell-resume.pdf",
       passwordField: "Password",
-      scrollTarget: "Open to relocation",
+      scrollTarget: "Enable notifications",
     },
     values: {
       text: "Ada Lovelace",
-      selectOption: "Medium",
+      selectOption: "India",
       slowText: "Slow page",
       confirmationText: "Application received.",
       downloadBasename: "ada-testwell-resume.pdf",
