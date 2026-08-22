@@ -9,6 +9,26 @@ export * from "./takeover.ts";
 export * from "./text.ts";
 
 import type { ToolRenderer } from "@mu/core";
+import { BROWSER_STATUS_TOOL } from "../profile/tools.ts";
 import { browserToolRenderers } from "./cells.ts";
 
-export const browserRenderers: Record<string, ToolRenderer> = browserToolRenderers;
+/**
+ * What the profile registers today. The cells for `browser_observe`, `browser_act`,
+ * `browser_submit` and the rest exist in `browserToolRenderers`, but registering a
+ * renderer for a tool the toolset does not yet expose would claim a surface the
+ * product does not have. The integration gate widens this as the tools land, with
+ * `browserRenderersFor`.
+ */
+export const browserRenderers: Record<string, ToolRenderer> = {
+  [BROWSER_STATUS_TOOL]: browserToolRenderers[BROWSER_STATUS_TOOL] as ToolRenderer,
+};
+
+/** The renderers for exactly the tools a toolset actually registers. */
+export function browserRenderersFor(toolNames: readonly string[]): Record<string, ToolRenderer> {
+  const renderers: Record<string, ToolRenderer> = {};
+  for (const name of toolNames) {
+    const renderer = browserToolRenderers[name];
+    if (renderer !== undefined) renderers[name] = renderer;
+  }
+  return renderers;
+}
