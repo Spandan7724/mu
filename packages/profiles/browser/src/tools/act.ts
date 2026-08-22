@@ -11,6 +11,7 @@ import {
 } from "../contracts/observation.ts";
 import { REDACTED } from "../contracts/secret.ts";
 import { factValueText } from "../data/facts.ts";
+import { decideActRequest } from "../policy/decide.ts";
 import { actPattern, type BrowserScope, scopesForAction } from "../policy/scopes.ts";
 import type { BrowserToolContext, BrowserToolDetails } from "./context.ts";
 import { toolErrorText } from "./errors.ts";
@@ -200,11 +201,31 @@ function previewValue(element: BrowserElement | undefined, value: string, fact?:
 export function browserActTool(context: BrowserToolContext) {
   const { session } = context;
 
-  const scopeOf = (args: Args): BrowserScope => {
-    const element = elementFor(session.record(), args);
-    const scopes = scopesForAction(toAction(args, args.value ?? ""), element);
-    return SCOPE_ORDER.find((scope) => scopes.includes(scope)) ?? "browser:interact";
+  const recordFor = (args: Args) => session.record(args.target?.tabId ?? args.destination?.tabId);
+
+  // The permission the harness asks about is the one policy would name. Deriving it from
+  // `decideActRequest` rather than from the action alone is what makes a cross-origin
+  // frame ask about *its* origin instead of about an ordinary interaction.
+  const projection = (args: Args): { scope: BrowserScope; pattern: string } => {
+    const record = recordFor(args);
+    const element = elementFor(record, args);
+    const fallback = {
+      scope:
+        SCOPE_ORDER.find((scope) =>
+          scopesForAction(toAction(args, args.value ?? ""), element).includes(scope),
+        ) ?? ("browser:interact" as BrowserScope),
+      pattern: actPattern(record?.observation.origin, element),
+    };
+    if (record === undefined) return fallback;
+    const decision = decideActRequest(session.policy, {
+      action: toAction(args, args.value ?? ""),
+      observation: record.observation,
+    });
+    if (decision.kind !== "allow" && decision.kind !== "ask") return fallback;
+    return { scope: decision.scopes[0] ?? fallback.scope, pattern: decision.pattern };
   };
+
+  const scopeOf = (args: Args): BrowserScope => projection(args).scope;
 
   return tool({
     name: BROWSER_ACT_TOOL,
@@ -215,10 +236,9 @@ export function browserActTool(context: BrowserToolContext) {
     isConcurrencySafe: () => false,
     changesState: true,
     permissionScope: scopeOf,
-    permissionPattern: (args) =>
-      actPattern(session.record()?.observation.origin, elementFor(session.record(), args)),
+    permissionPattern: (args) => projection(args).pattern,
     permissionDetails: (args): ToolPermissionDetails => {
-      const record = session.record();
+      const record = recordFor(args);
       const element = elementFor(record, args);
       const resolved = resolveValue(context, args);
       const value = "error" in resolved ? undefined : resolved.value;
@@ -257,7 +277,7 @@ export function browserActTool(context: BrowserToolContext) {
           signal,
           ...(resolved.disclosure !== undefined
             ? { disclosure: resolved.disclosure }
-            : disclosesPersonalData(elementFor(session.record(), args))
+            : disclosesPersonalData(elementFor(recordFor(args), args))
               ? // A personal value with no authorized fact behind it still discloses;
                 // the disclosure decision is what asks about it (TOOLS.md).
                 { disclosure: { sensitivity: "personal" as const } }
