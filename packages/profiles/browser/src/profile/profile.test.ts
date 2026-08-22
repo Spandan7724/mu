@@ -104,6 +104,9 @@ describe("browserProfile", () => {
       expect(profile.commands?.map((command) => command.name).sort()).toEqual([
         "browser",
         "disconnect",
+        "documents",
+        "profile",
+        "receipt",
         "resume-browser",
         "tabs",
         "takeover",
