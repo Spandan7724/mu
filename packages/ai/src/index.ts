@@ -25,6 +25,7 @@ export {
 export { anthropic, streamAnthropic } from "./providers/anthropic.ts";
 export { gemini, streamGemini } from "./providers/gemini.ts";
 export { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
+export { discoverLlamaCppModels, llamaCpp } from "./providers/llama-cpp.ts";
 export {
   discoverOpenAICodexModels,
   openai,

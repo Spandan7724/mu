@@ -15,6 +15,7 @@ export {
   discoverModels,
   findModel,
   listModels,
+  providerConfig,
   providerHasCredentials,
   refreshModels,
   registerModels,

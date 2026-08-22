@@ -55,6 +55,7 @@ describe("built-in LLM providers", () => {
       "groq",
       "huggingface",
       "kimi-coding",
+      "llama-cpp",
       "minimax",
       "mistral",
       "moonshotai",
@@ -112,6 +113,12 @@ describe("built-in LLM providers", () => {
       baseUrl: "https://api.fireworks.ai/inference/v1",
     });
     expect(findModel("not-built-in/model")).toBeUndefined();
+    expect(findModel("llama-cpp/ornith-1.5-9b")).toMatchObject({
+      provider: "llama-cpp",
+      id: "ornith-1.5-9b",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8000/v1",
+    });
   });
 
   test("streams an OpenAI-compatible coding-plan model", async () => {

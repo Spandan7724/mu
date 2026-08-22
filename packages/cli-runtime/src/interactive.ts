@@ -27,6 +27,7 @@ import {
   type MarkdownCommandRun,
   type PermissionMode,
   type PermissionModeTone,
+  providerConfig,
   readAuthFile,
   removeStoredCredential,
   saveApiKey,
@@ -438,7 +439,12 @@ export async function runInteractive<Options>(
             label: ref,
             description: modelPickerDescription(
               model,
-              credential?.type ?? (extensions.models.has(ref) ? "extension" : "apiKey"),
+              credential?.type ??
+                (extensions.models.has(ref)
+                  ? "extension"
+                  : providerConfig(model.provider)?.auth === "none"
+                    ? "local"
+                    : "apiKey"),
             ),
           };
         }),

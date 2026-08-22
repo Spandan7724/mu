@@ -6,7 +6,7 @@ export interface BuiltinProviderConfig {
   api: LlmApi;
   baseUrl?: string;
   env: string[];
-  auth?: "bearer" | "anthropic" | "google" | "azure" | "cloudflare";
+  auth?: "bearer" | "anthropic" | "google" | "azure" | "cloudflare" | "none";
   headers?: Record<string, string>;
 }
 
@@ -117,6 +117,14 @@ const configs: BuiltinProviderConfig[] = [
     env: ["KIMI_API_KEY"],
     auth: "anthropic",
     headers: { "user-agent": "KimiCLI/1.5" },
+  },
+  {
+    id: "llama-cpp",
+    name: "llama.cpp",
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1:8000/v1",
+    env: ["LLAMA_CPP_API_KEY"],
+    auth: "none",
   },
   {
     id: "minimax",
