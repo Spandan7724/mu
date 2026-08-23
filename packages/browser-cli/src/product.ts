@@ -214,6 +214,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
       "                           where screenshots, downloads and receipts are kept",
     ],
     permissionModes: BROWSER_PERMISSION_MODES.map((mode) => mode.id),
+    allowAll: "refused here: this product ships no full-access mode",
   },
   data: {
     configFile: (home) => browserConfigPath(home),

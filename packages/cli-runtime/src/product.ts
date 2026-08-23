@@ -53,6 +53,9 @@ export interface ProductHelp {
   // what a product's modes are called, so an omitted list prints no enumeration
   // rather than another product's vocabulary.
   permissionModes?: readonly string[];
+  // What `--allow-all` does here. A product with no full-access mode refuses the
+  // flag, so describing it as an alias for one would be false for that product.
+  allowAll?: string;
 }
 
 // Neutral flags the runtime already parsed, handed to the product so it can

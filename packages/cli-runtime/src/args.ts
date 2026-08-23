@@ -166,7 +166,7 @@ export function helpText(
     ...(product.help?.permissionModes === undefined
       ? []
       : [`                           ${product.help.permissionModes.join(" | ")}`]),
-    "      --allow-all          alias for --permission-mode yolo",
+    `      --allow-all          ${product.help?.allowAll ?? "alias for --permission-mode yolo"}`,
     "      --no-instructions    disable global and project instruction loading",
     ...(product.help?.options ?? []),
     "  -h, --help               show this help",
