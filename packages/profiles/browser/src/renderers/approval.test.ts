@@ -9,7 +9,7 @@ import {
   parseBrowserApprovalReply,
   resolveApprovalReply,
 } from "./approval.ts";
-import { fieldFromFact, interactApprovalCard, submitApprovalCard } from "./card.ts";
+import { approvalField, fieldFromFact, interactApprovalCard, submitApprovalCard } from "./card.ts";
 
 const observation = sampleObservation();
 const submitElement = observation.elements[1];
@@ -115,6 +115,39 @@ describe("no secret reaches a structured request", () => {
     );
     expect(JSON.stringify(request)).not.toContain("Password");
     expect(request.suppressedFieldCount).toBe(1);
+  });
+
+  // The text preview scrubs generic secret shapes for every line via `safeLines`
+  // (renderers/text.ts), regardless of the caller's own redactValues. The structured
+  // form is the same event on the wire — a headless caller, an RPC client or the
+  // permission_asked payload sees it instead of the rendered text — so a value that
+  // was never explicitly declared sensitive still must not survive there unscrubbed.
+  test("a card-number-shaped value in a non-withheld field is scrubbed in the wire form too", () => {
+    const field = approvalField({
+      label: "Note",
+      sensitivity: "personal",
+      value: "card 4111 1111 1111 1111 on file",
+    });
+    expect(field?.withheld).toBe(false);
+    const card = interactApprovalCard({
+      scopes: ["browser:disclose"],
+      pattern: `${SAMPLE_ORIGIN} note`,
+      observation,
+      element: observation.elements[0],
+      actionVerb: "fill",
+      fields: [field],
+    });
+    const request = browserApprovalRequest(card, "req-7");
+    expect(request.fields[0]?.value).not.toContain("4111 1111 1111 1111");
+    expect(JSON.stringify(request)).not.toContain("4111 1111 1111 1111");
+  });
+
+  test("a bearer token smuggled into a warning is scrubbed in the wire form too", () => {
+    const card = submitCard({
+      reasons: ["the page said: authorization: Bearer abcdef0123456789"],
+    });
+    const request = browserApprovalRequest(card, "req-8");
+    expect(JSON.stringify(request.warnings)).not.toContain("abcdef0123456789");
   });
 });
 

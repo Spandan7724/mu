@@ -7,6 +7,7 @@
 // owns the mapping in one place, including the clamp that stops a caller asking for
 // authority the card does not offer (SECURITY §9).
 import { z } from "zod";
+import { redactText } from "../artifacts/redaction.ts";
 import { submitIntentSchema } from "../contracts/intent.ts";
 import { assertJsonSerializable, BROWSER_LIMITS } from "../contracts/json.ts";
 import type { TakeoverReason } from "../contracts/takeover.ts";
@@ -102,31 +103,38 @@ export function browserApprovalRequest(
   requestId: string,
 ): BrowserApprovalRequest {
   const preview = renderApprovalCard(card);
+  // `renderApprovalCard`'s text preview passes every line through `safeLines`, which
+  // scrubs the generic secret shapes (a token, a bearer header, a card number) on top
+  // of the caller's own redactValues. This structured form is the same event on the
+  // wire — a headless caller, an RPC client or the permission_asked payload sees it
+  // instead of the text — so every string field gets the identical scrub rather than
+  // only the ones already withheld by sensitivity.
+  const redact = (value: string) => redactText(value, card.redactValues);
   const request = {
     version: BROWSER_APPROVAL_VERSION as typeof BROWSER_APPROVAL_VERSION,
     requestId,
     kind: card.kind,
-    action: card.action,
+    action: redact(card.action),
     origin: card.origin,
-    ...(card.url === undefined ? {} : { url: card.url }),
-    ...(card.title === undefined ? {} : { title: card.title }),
+    ...(card.url === undefined ? {} : { url: redact(card.url) }),
+    ...(card.title === undefined ? {} : { title: redact(card.title) }),
     scopes: [...card.scopes],
     pattern: card.pattern,
     ...(card.intent === undefined ? {} : { intent: card.intent }),
     reversibility: card.reversibility,
     fields: card.fields.map((field) => ({
-      label: field.label,
+      label: redact(field.label),
       sensitivity: field.sensitivity,
-      ...(field.value === undefined ? {} : { value: field.value }),
+      ...(field.value === undefined ? {} : { value: redact(field.value) }),
       withheld: field.withheld,
-      ...(field.provenance === undefined ? {} : { provenance: field.provenance }),
+      ...(field.provenance === undefined ? {} : { provenance: redact(field.provenance) }),
     })),
     suppressedFieldCount: card.suppressedFieldCount,
     documents: card.documents.map((document) => ({ ...document })),
-    warnings: [...card.warnings],
+    warnings: card.warnings.map(redact),
     choices: card.choices.map((choice) => choice.id),
     previewComplete: card.previewComplete,
-    incompleteReasons: [...card.incompleteReasons],
+    incompleteReasons: card.incompleteReasons.map(redact),
     offersTaskScope: card.offersTaskScope,
     preview,
   };
