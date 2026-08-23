@@ -3,15 +3,19 @@
 // can pre-authorize a form submission without also pre-authorizing a purchase.
 import type { PermissionMode, PermissionRule } from "@mu/core";
 import { AUTONOMOUS_SUBMIT_INTENTS, permissionScopeForIntent } from "../contracts/intent.ts";
+import type { BrowserScope } from "../policy/scopes.ts";
 
+// These are projections of BROWSER_SCOPES, not names of their own. A rule naming a
+// scope no tool ever produces matches nothing and silently falls through to the
+// catch-all ask — which is exactly what `act: "browser:act"` did.
 export const BROWSER_PERMISSION_SCOPES = {
   observe: "browser:observe",
   navigate: "browser:navigate",
-  act: "browser:act",
+  act: "browser:interact",
   upload: "browser:upload",
   takeover: "browser:takeover",
   disclose: "browser:disclose",
-} as const;
+} as const satisfies Record<string, BrowserScope>;
 
 export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "*", pattern: "*", action: "ask" },

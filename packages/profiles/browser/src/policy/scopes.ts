@@ -6,6 +6,7 @@ import { type ActionRiskClass, classifyElement } from "./risk.ts";
 // TOOLS.md's permission projections. Every browser tool call resolves to one of these.
 export const BROWSER_SCOPES = [
   "browser:observe",
+  "browser:takeover",
   "browser:navigate",
   "browser:new-origin",
   "browser:interact",

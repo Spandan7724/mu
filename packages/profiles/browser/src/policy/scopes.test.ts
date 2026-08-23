@@ -19,9 +19,10 @@ import {
 const ORIGIN = "https://jobs.example.com";
 
 describe("scope vocabulary", () => {
-  test("the twelve scopes in TOOLS.md exist and nothing else does", () => {
+  test("the scopes in TOOLS.md exist and nothing else does", () => {
     expect([...BROWSER_SCOPES]).toEqual([
       "browser:observe",
+      "browser:takeover",
       "browser:navigate",
       "browser:new-origin",
       "browser:interact",
