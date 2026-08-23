@@ -155,9 +155,25 @@ export function discoverBrowserExecutable(
       // An unreadable candidate is simply not a candidate.
     }
   }
+  // A sibling browser being installed is the common case — "chrome is missing" while
+  // chromium sits right there is a dead end the user has to guess their way out of.
+  const siblings = ["chrome", "chromium", "edge"].filter((other) => {
+    if (other === browser) return false;
+    return browserExecutableCandidates(other, platform).some((candidate) => {
+      try {
+        return exists(candidate);
+      } catch {
+        return false;
+      }
+    });
+  });
   throw new BrowserDriverError(
     "unsupported",
-    `no installed ${browser} was found${candidates.length === 0 ? "" : ` at ${candidates.join(", ")}`}. Install it, or set ${BROWSER_EXECUTABLE_ENV} to its path. Mu does not download browsers.`,
+    `no installed ${browser} was found${candidates.length === 0 ? "" : ` at ${candidates.join(", ")}`}.` +
+      (siblings.length === 0
+        ? ` Install it, or set ${BROWSER_EXECUTABLE_ENV} to its path.`
+        : ` You do have ${siblings.join(" and ")} installed — pass --browser ${siblings[0]} to use it, or set ${BROWSER_EXECUTABLE_ENV} to a path.`) +
+      " Mu does not download browsers.",
   );
 }
 

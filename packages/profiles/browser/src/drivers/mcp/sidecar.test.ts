@@ -194,3 +194,30 @@ describe("extension topology (BD26)", () => {
     );
   });
 });
+
+describe("a missing browser names one you actually have", () => {
+  const installed = (paths: string[]) => (path: string) => paths.includes(path);
+
+  test("chromium being installed is said out loud when chrome is asked for", () => {
+    try {
+      discoverBrowserExecutable("chrome", {
+        platform: "linux",
+        env: {},
+        exists: installed(["/usr/bin/chromium-browser"]),
+      });
+      throw new Error("expected a refusal");
+    } catch (error) {
+      expect(String(error)).toContain("--browser chromium");
+    }
+  });
+
+  test("with nothing installed it says how to install rather than what to pass", () => {
+    try {
+      discoverBrowserExecutable("chrome", { platform: "linux", env: {}, exists: () => false });
+      throw new Error("expected a refusal");
+    } catch (error) {
+      expect(String(error)).toContain("Install it");
+      expect(String(error)).not.toContain("--browser");
+    }
+  });
+});
