@@ -232,3 +232,74 @@ describe("the audit trail", () => {
     }
   });
 });
+
+describe("a reference survives the page moving around it", () => {
+  const banner = (ref: string): FakeElementSpec => ({
+    ref,
+    role: "button",
+    name: "Accept cookies",
+    label: "Accept cookies",
+  });
+
+  async function open(page: ReturnType<typeof mutablePage>) {
+    const harness = createHarness({
+      allowedOrigins: [FAKE_ORIGIN],
+      site: { origin: FAKE_ORIGIN, landingUrl: page.url, pages: page.pages },
+    });
+    await harness.runtime.use(
+      (driver) => driver.navigate({ kind: "url", url: page.url }, signal()),
+      signal(),
+    );
+    return harness;
+  }
+
+  const refTo = (harness: Awaited<ReturnType<typeof open>>, label: string) => {
+    const element = harness.session
+      .record()
+      ?.observation.elements.find((entry) => entry.label === label);
+    if (element === undefined) throw new Error(`no control labelled ${label}`);
+    return { ref: element.ref, revision: element.revision, tabId: element.tabId };
+  };
+
+  // The case that made the product unusable on a real site: a banner appears, every
+  // index below it shifts, and a reference to an untouched control dies.
+  test("an unrelated control appearing does not kill a reference", async () => {
+    const page = mutablePage([textbox("e1", "Full name"), textbox("e2", "Email")]);
+    const harness = await open(page);
+    await harness.session.observe({}, signal());
+    const email = refTo(harness, "Email");
+
+    page.set([banner("e9"), textbox("e1", "Full name"), textbox("e2", "Email")]);
+    const after = await harness.session.observe({}, signal());
+
+    expect(after.revision).not.toBe(email.revision);
+    const resolved = harness.session.resolve(email, after);
+    expect(resolved.kind).toBe("resolved");
+    await harness.shutdown();
+  });
+
+  test("the control itself changing still kills the reference", async () => {
+    const page = mutablePage([textbox("e1", "Full name"), textbox("e2", "Email")]);
+    const harness = await open(page);
+    await harness.session.observe({}, signal());
+    const email = refTo(harness, "Email");
+
+    page.set([textbox("e1", "Full name"), textbox("e2", "Work email")]);
+    const after = await harness.session.observe({}, signal());
+    expect(harness.session.resolve(email, after).kind).toBe("stale");
+    await harness.shutdown();
+  });
+
+  test("a control replaced by a different node at the same place is not the same control", async () => {
+    const page = mutablePage([textbox("e1", "Full name"), textbox("e2", "Email")]);
+    const harness = await open(page);
+    await harness.session.observe({}, signal());
+    const email = refTo(harness, "Email");
+
+    // Same label, different underlying node: the driver ref is what catches this.
+    page.set([textbox("e1", "Full name"), textbox("e7", "Email")]);
+    const after = await harness.session.observe({}, signal());
+    expect(harness.session.resolve(email, after).kind).toBe("stale");
+    await harness.shutdown();
+  });
+});

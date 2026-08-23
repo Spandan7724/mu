@@ -25,13 +25,20 @@ import type { TakeoverState } from "../contracts/takeover.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
 import { type InjectionFinding, scanObservation } from "../policy/untrusted.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
-import { elementSignature, OBSERVATION_BUDGET, observationDigest } from "./observation.ts";
+import {
+  elementIdentity,
+  elementSignature,
+  OBSERVATION_BUDGET,
+  observationDigest,
+} from "./observation.ts";
 
 export interface ObservationTarget {
   element: BrowserElement;
   /** The reference the driver understands. Never model-facing. */
   driverRef: BrowserElementRef;
   signature: string;
+  /** Position-independent, so an unrelated change elsewhere does not kill this ref. */
+  identity: string;
 }
 
 export interface ObservationRecord {
@@ -41,7 +48,7 @@ export interface ObservationRecord {
   observation: BrowserObservation;
   digest: string;
   targets: ReadonlyMap<string, ObservationTarget>;
-  /** Signatures as of the revision that minted these refs, for the identity check. */
+  /** Identities as of the revision that minted these refs, for the identity check. */
   minted: ReadonlyMap<string, string>;
   injections: InjectionFinding[];
   observedAt: number;
@@ -148,9 +155,23 @@ export class BrowserToolSession {
     const minted = new Map<string, string>();
     const elements: BrowserElement[] = [];
 
+    // A ref survives a page change when the same underlying node is still there,
+    // unchanged. Both halves are required: the driver's own ref proves it is the same
+    // node, and the identity proves the node did not become something else. Matching on
+    // the whole-page digest instead meant every ref died whenever anything moved.
+    const carried = new Map<string, string>();
+    for (const [ref, target] of prior?.targets ?? []) {
+      carried.set(`${target.driverRef.ref}\u0000${target.identity}`, ref);
+    }
+    const claimed = new Set<string>();
+
     raw.elements.forEach((element, index) => {
-      const priorElement = unchanged ? prior.observation.elements[index] : undefined;
-      const ref = priorElement?.ref ?? this.#mintRef();
+      const identity = elementIdentity(element);
+      const driverRef = elementRefOf(element);
+      const carriedRef = carried.get(`${driverRef.ref}\u0000${identity}`);
+      const ref =
+        carriedRef !== undefined && !claimed.has(carriedRef) ? carriedRef : this.#mintRef();
+      claimed.add(ref);
       const signature = elementSignature(element, index);
       const projected: BrowserElement = {
         ...element,
@@ -159,8 +180,8 @@ export class BrowserToolSession {
         tabId,
       };
       elements.push(projected);
-      targets.set(ref, { element: projected, driverRef: elementRefOf(element), signature });
-      minted.set(ref, unchanged ? (prior.minted.get(ref) ?? signature) : signature);
+      targets.set(ref, { element: projected, driverRef, signature, identity });
+      minted.set(ref, identity);
     });
 
     const observation: BrowserObservation = { ...raw, revision, elements };
@@ -187,15 +208,34 @@ export class BrowserToolSession {
    * a different control — the case the fixture's `/stale` page is built to catch.
    */
   resolve(ref: BrowserElementRef, record: ObservationRecord): TargetResolution {
-    const validity = refValidity(ref, record.observation);
-    if (validity !== "current") {
+    // Deliberately not `refValidity`: that demands the page's revision be untouched,
+    // which on a live page it almost never is. What actually has to hold is that this
+    // reference still names the same control — checked below against the identity it
+    // was minted with. A reference claiming a revision the session never issued is
+    // still refused, because nothing legitimate produces one.
+    if (ref.tabId !== record.observation.tab.id) {
+      return { kind: "stale", validity: "wrong-tab", message: refValidityMessage("wrong-tab") };
+    }
+    if (ref.revision > record.observation.revision) {
+      return {
+        kind: "stale",
+        validity: "unknown",
+        message: refValidityMessage("unknown"),
+      };
+    }
+    if (ref.frameId !== undefined && !record.observation.frames.some((f) => f.id === ref.frameId)) {
+      const validity = "unknown-frame" as const;
       return { kind: "stale", validity, message: refValidityMessage(validity) };
     }
     const target = record.targets.get(ref.ref);
     if (target === undefined) {
-      return { kind: "stale", validity: "unknown", message: refValidityMessage("unknown") };
+      return {
+        kind: "stale",
+        validity: "stale-revision",
+        message: refValidityMessage("stale-revision"),
+      };
     }
-    if (record.minted.get(ref.ref) !== target.signature) {
+    if (record.minted.get(ref.ref) !== target.identity) {
       return {
         kind: "stale",
         validity: "unknown",
