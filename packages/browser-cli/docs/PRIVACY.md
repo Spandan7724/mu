@@ -16,16 +16,13 @@ simply have no effect there).
   logs/           reserved for redacted operational logs
 ```
 
-**In this build, only `sessions/` and `documents/` are actually written to.**
-`--document` staging works today; screenshot capture, receipt writing, downloaded-file
-handling, and operational logging are fully specified and unit-tested, but nothing in
-this release's `browser_submit` or connection path calls them yet, the same way
-`extension` and `persistent` connections aren't wired to a real browser yet (see
-[SETUP.md](./SETUP.md#current-build-status)). `artifacts/`, `profiles/`, and `logs/`
-are created (empty) and will start filling in as that lands. The rest of this
-document — the receipt format, the retention bounds — describes that design, so you
-know what to expect and can rely on it not changing shape later; treat every claim
-below as "once populated," except where it says otherwise.
+**In this build, `artifacts/` and `logs/` are created but not yet written to.**
+Session history, `--document` staging and owned browser profiles all work today.
+Screenshot capture, receipt writing and operational logging are fully specified and
+unit-tested, but no shipped code path calls them yet, so those two directories stay
+empty. The rest of this document — the receipt format, the retention bounds —
+describes that design, so you know what to expect and can rely on it not changing
+shape later; treat those claims as "once populated," except where it says otherwise.
 
 ## What never reaches disk, a log, or the model at all
 
@@ -73,11 +70,11 @@ observations and downloads, each pruned on its own bound (below); empty in this 
 (see the note above). When a download does occur today, only metadata about it (name,
 size, MIME type) is surfaced in the conversation — the file's bytes are never read
 back to the model — but that metadata is not yet also written to
-`artifacts/downloads/`.
+`artifacts/downloads/`. The sidecar's own scratch output is pinned inside this root
+rather than the directory you started `mu-browser` from.
 
-**`profiles/`** — only populated in `persistent` connection mode, which is not wired
-to a real browser in this build (see [SETUP.md](./SETUP.md#current-build-status)).
-Once it is: a Chrome/Edge/Chromium user-data directory Mu owns outright, under its own
+**`profiles/`** — only populated in `persistent` connection mode: a
+Chrome/Edge/Chromium user-data directory Mu owns outright, under its own
 name (`profiles/<name>/`, `default` unless you pass `--browser-profile`) — never a
 path into your own browser's profile directory. An `owner.json` lock file records
 which running `mu-browser` process currently holds it, so two sessions cannot drive

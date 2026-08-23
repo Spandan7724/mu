@@ -39,21 +39,20 @@ A few things hold regardless of mode:
 
 ## `--allow-all`
 
-`--allow-all` (and its cousin `--permission-mode yolo`, which the coding product
-recognizes) is a flag shared across every Mu product, not something the browser
-profile customizes. On `mu-browser` it does exactly what it says: it installs a
-blanket "allow everything" rule that overrides every mode's asks, **including
-purchases, deletions, consent, and account changes**. It does not add a `yolo` mode to
-this product's four — there is no such mode here — but the flag bypasses the
-permission engine regardless of which modes a profile defines.
+`--allow-all` is an alias for a product's full-access permission mode. **This product
+does not have one**, so the flag is refused rather than honoured:
 
-What it does *not* bypass: page-observed credential fields are still never captured
-(that happens before permission checks run at all), and `browser_takeover` for
-login/MFA/CAPTCHA still triggers. But every ask-level prompt this document describes
-above, including for an irreversible commitment, is silenced. Avoid `--allow-all` on
-this product; use `--permission-mode autonomous-submit` if you want form-fill-and-
-submit without per-step prompts; it keeps the commitment categories that matter most
-un-bypassable.
+```
+$ mu-browser --allow-all
+Unknown permission mode "yolo" for profile "browser". Available modes: ...
+```
+
+That is deliberate. A blanket allow would silence the ask on purchases, deletions,
+consent and account changes, which is exactly what this product's permission model
+exists to prevent. If you want form-filling and submission without a prompt at every
+step, use `--permission-mode autonomous-submit`: it pre-authorizes ordinary form
+submission and sending for the task's own origins, and keeps every other commitment
+category asking.
 
 ## Origins
 

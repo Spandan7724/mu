@@ -42,12 +42,8 @@ mu-browser --fake-browser      # a deterministic in-memory browser, for developm
 Shutting down detaches from a browser Mu attached to; it closes only a browser Mu
 launched itself.
 
-**In this build, only `--fake-browser` actually runs a session.** `extension` and
-`persistent` are real, fully-specified modes in the code, but connecting through
-either one currently fails with a clear message rather than a live connection —
-`mu-browser doctor` reports both as unavailable and says why. See
-[docs/SETUP.md](./docs/SETUP.md#current-build-status) for what each mode does once
-that lands.
+`mu-browser doctor` reports which of the three this machine can reach, and names the
+environment variable to set when it cannot. See [docs/SETUP.md](./docs/SETUP.md).
 
 ## The permission model
 

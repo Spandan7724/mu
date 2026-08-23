@@ -6,7 +6,6 @@ this build can reach.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `--connection extension` or `--connection persistent` fails immediately with "...is not part of this build yet" | Neither mode is wired to a real browser in this release; only `--fake-browser` runs a session today. | Use `--fake-browser`, or track decision BD25 for the release that enables real connections. See [SETUP.md](./SETUP.md#current-build-status). |
 | "the browser is still waiting for the Playwright extension connection to be approved" | You did not click Allow in the browser (or it timed out) when `mu-browser` asked to attach. | Approve the connection in the browser, then retry. |
 | Extension connection times out after ~90 seconds and never completes, specifically under WSL | The extension relay was started on the wrong side of the WSL boundary — it must run on the same OS as the browser. | Set `MU_BROWSER_MCP_RUNTIME` / `MU_BROWSER_MCP_CLI` to the Windows-side paths, or switch to `--connection persistent`. See [SETUP.md](./SETUP.md#running-from-wsl). |
 | "another Mu browser (pid ..., started ...) already owns \<profile dir\>" | A second `mu-browser --connection persistent` tried to use the same `--browser-profile` name while an earlier session is still holding it. | Close the earlier session, or pass a different `--browser-profile` name. |

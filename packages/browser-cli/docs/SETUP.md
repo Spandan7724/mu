@@ -8,8 +8,8 @@ mu-browser doctor    # read-only check: no network call, no browser launched
 ```
 
 `mu-browser doctor` reports the data root it will use and which connection modes the
-installed build can reach. An unavailable mode is reported as a note, not a broken
-install — see "Connection modes" below for what that means today.
+installed build can reach. A mode it cannot reach is a note naming what to fix, not a
+broken install.
 
 ## Connection modes
 
@@ -21,24 +21,15 @@ install — see "Connection modes" below for what that means today.
 | `persistent` | Launches a browser Mu owns outright, under a profile directory in `~/.mu/browser/profiles`. Never your everyday browser profile. Can run `--headless`. |
 | `fake` (alias `--fake-browser`) | A deterministic in-memory browser: no real site, no network. For trying the product, development, and CI. |
 
-### Current build status
+### What `doctor` tells you
 
-**In this build, `extension` and `persistent` are not wired to a real browser yet.**
-Choosing either one fails immediately with a clear message pointing at the tracking
-decision, rather than hanging or pretending to connect — `mu-browser doctor` reports
-both as unavailable for the same reason. The only connection that runs a session
-today is `--fake-browser`:
+`mu-browser doctor` resolves the Playwright bridge, checks whether the extension relay
+can reach a browser from where Mu is running, and looks for an installed Chrome-family
+executable — all without a network call or a launched browser. A mode it cannot reach
+is reported as a note naming the environment variable that fixes it, not as a broken
+install.
 
-```bash
-mu-browser --fake-browser -p "describe the current page"
-```
-
-Everything else in this document about `extension` and `persistent` — the approval
-flow, the profile layout, headless — describes what each mode does by design, for
-when that wiring lands; none of it is something you can exercise against a real site
-in this release.
-
-### Extension mode, once enabled
+### Extension mode
 
 You will need the Playwright browser extension installed in Chrome, Edge, or
 Chromium, and a copy of that browser already running. The first time a session needs
