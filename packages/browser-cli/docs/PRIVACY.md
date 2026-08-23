@@ -16,13 +16,12 @@ simply have no effect there).
   logs/           reserved for redacted operational logs
 ```
 
-**In this build, `artifacts/` and `logs/` are created but not yet written to.**
-Session history, `--document` staging and owned browser profiles all work today.
-Screenshot capture, receipt writing and operational logging are fully specified and
-unit-tested, but no shipped code path calls them yet, so those two directories stay
-empty. The rest of this document — the receipt format, the retention bounds —
-describes that design, so you know what to expect and can rely on it not changing
-shape later; treat those claims as "once populated," except where it says otherwise.
+**In this build, `logs/` is created but not yet written to.** Session history,
+`--document` staging, owned browser profiles and commitment receipts all work today; a
+receipt is written under `artifacts/receipts/` every time a submission, send, purchase,
+deletion, consent or account change actually happens, and the path is reported back in
+the conversation. Screenshot capture and operational logging are fully specified and
+unit-tested but not yet called by a shipped code path.
 
 ## What never reaches disk, a log, or the model at all
 
@@ -65,9 +64,9 @@ original at the moment it is used; if the source changed since authorization, Mu
 refuses to use the stale copy. Limits: 25 MB per file, 100 authorized documents per
 session.
 
-**`artifacts/`** — the designed home for screenshots, receipts, and metadata about
-observations and downloads, each pruned on its own bound (below); empty in this build
-(see the note above). When a download does occur today, only metadata about it (name,
+**`artifacts/`** — receipts (written today, under `receipts/`), plus the designed home
+for screenshots and metadata about observations and downloads, each pruned on its own
+bound (below). When a download does occur today, only metadata about it (name,
 size, MIME type) is surfaced in the conversation — the file's bytes are never read
 back to the model — but that metadata is not yet also written to
 `artifacts/downloads/`. The sidecar's own scratch output is pinned inside this root

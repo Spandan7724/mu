@@ -15,6 +15,7 @@ import type { BrowserPermissionMode } from "../policy/modes.ts";
 import { createOriginPolicy } from "../policy/origin.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
 import { phaseSummary } from "../runtime/state.ts";
+import type { BrowserReceiptSink } from "../tools/context.ts";
 import { browserToolset as buildBrowserToolset } from "../tools/index.ts";
 import { BrowserToolSession } from "../tools/session.ts";
 import { BROWSER_PERMISSION_SCOPES } from "./permissions.ts";
@@ -79,6 +80,8 @@ export interface BrowserToolsetOptions {
   documents?: AuthorizedDocumentStore | undefined;
   /** Set when the user has approved plaintext disclosure for this task. */
   allowInsecureDisclosure?: boolean | undefined;
+  /** Where a commitment's receipt is written. Without it, nothing durable is kept. */
+  receipts?: BrowserReceiptSink | undefined;
 }
 
 export interface BrowserToolset {
@@ -109,6 +112,7 @@ export function browserToolset(options: BrowserToolsetOptions): BrowserToolset {
     session,
     ...(options.facts === undefined ? {} : { facts: options.facts }),
     ...(options.documents === undefined ? {} : { documents: options.documents }),
+    ...(options.receipts === undefined ? {} : { receipts: options.receipts }),
   };
   return {
     tools: [browserStatusTool(options.runtime), ...buildBrowserToolset(context)],

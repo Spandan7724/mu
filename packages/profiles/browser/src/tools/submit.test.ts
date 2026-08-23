@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BrowserArtifactStore } from "../artifacts/store.ts";
 import type { BrowserElement } from "../contracts/observation.ts";
 import { elementRefId } from "../contracts/primitives.ts";
 import {
@@ -12,6 +16,11 @@ import { createHarness, type Harness, resultText } from "./harness.ts";
 import { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 
 const signal = () => new AbortController().signal;
+
+async function receiptSink() {
+  const root = await mkdtemp(join(tmpdir(), "mu-receipts-"));
+  return { root, store: new BrowserArtifactStore({ root }), sessionId: "sess-1" };
+}
 
 async function on(harness: Harness, url: string): Promise<void> {
   await harness.runtime.use((driver) => driver.navigate({ kind: "url", url }, signal()), signal());
@@ -155,6 +164,48 @@ describe("browser_submit", () => {
     );
     expect(resultText(result)).toContain("dismissed");
     expect(harness.driver.submissions()).toHaveLength(0);
+    await harness.shutdown();
+  });
+
+  test("a commitment leaves a receipt on disk, and the model is told where", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const sink = await receiptSink();
+    await on(harness, FAKE_PAGE_URLS.submit);
+    const target = refOf(elementNamed(harness, FAKE_LABELS.submitButton));
+    const submit = browserSubmitTool({ session: harness.session, receipts: sink });
+
+    const text = resultText(
+      await submit.execute("c1", { target, intent: "submit-form" }, signal()),
+    );
+    expect(text).toContain("Receipt: receipts/");
+
+    const written = await readdir(join(sink.root, "receipts"));
+    expect(written).toHaveLength(1);
+    const receipt = await Bun.file(join(sink.root, "receipts", written[0] as string)).json();
+    expect(receipt.status).toBe("confirmed");
+    expect(receipt.intent).toBe("submit-form");
+    expect(receipt.origin).toBe(FAKE_ORIGIN);
+    await rm(sink.root, { recursive: true, force: true });
+    await harness.shutdown();
+  });
+
+  // A commitment that cannot be receipted is still a commitment; hiding it would be
+  // the exact dishonesty the receipt exists to prevent.
+  test("a receipt that cannot be written does not turn into a failed commitment", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const sink = await receiptSink();
+    await rm(sink.root, { recursive: true, force: true });
+    await on(harness, FAKE_PAGE_URLS.submit);
+    const target = refOf(elementNamed(harness, FAKE_LABELS.submitButton));
+    const submit = browserSubmitTool({
+      session: harness.session,
+      receipts: { ...sink, store: new BrowserArtifactStore({ root: "/proc/mu-not-writable" }) },
+    });
+
+    const result = await submit.execute("c1", { target, intent: "submit-form" }, signal());
+    expect(result.isError).toBeUndefined();
+    expect(resultText(result)).toContain("confirmed");
+    expect(resultText(result)).toContain("not written");
     await harness.shutdown();
   });
 

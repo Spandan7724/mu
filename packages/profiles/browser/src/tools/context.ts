@@ -1,7 +1,22 @@
 // What the browser toolset is built from. The tools own no state: everything durable
 // lives in the session's reference ledger, and everything decidable lives in policy.
+import type { BrowserArtifactStore } from "../artifacts/store.ts";
+import type { DisclosureRecord } from "../contracts/disclosure.ts";
 import type { FactLookup } from "../data/facts.ts";
 import type { BrowserToolSession } from "./session.ts";
+
+/**
+ * Where a commitment's receipt is written, when the profile configured a private
+ * artifact root. Without it a commitment still happens and is still reported — the
+ * receipt is the durable record, not the safety mechanism.
+ */
+export interface BrowserReceiptSink {
+  sessionId: string;
+  store: BrowserArtifactStore;
+  taskId?: string | undefined;
+  // Read at write time: what was disclosed is only fully known once the form is filled.
+  disclosures?: (() => readonly DisclosureRecord[]) | undefined;
+}
 
 export interface BrowserToolContext {
   session: BrowserToolSession;
@@ -11,6 +26,7 @@ export interface BrowserToolContext {
    * permission is what asks about it.
    */
   facts?: FactLookup | undefined;
+  receipts?: BrowserReceiptSink | undefined;
 }
 
 /** Details attached to a tool result for renderers and the session log. Serializable. */

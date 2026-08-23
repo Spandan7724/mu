@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 // ARCHITECTURE §3. Async because it validates configuration, prepares private
 // storage and constructs the runtime that owns the connection.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, Profile, SessionEnvironment } from "@mu/core";
 import { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import { BrowserArtifactStore } from "../artifacts/store.ts";
 import { browserCommands } from "../commands/index.ts";
 import type { BrowserCarryover } from "../contracts/carryover.ts";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
@@ -91,6 +93,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     allowedOrigins: resolved.allowedOrigins ?? [],
     mode: DEFAULT_BROWSER_PERMISSION_MODE,
     ...(documents.size > 0 ? { documents } : {}),
+    receipts: {
+      // One profile is built per Mu session, so this identifies the session that
+      // produced the receipt without the profile having to reach for the agent's id.
+      sessionId: randomUUID(),
+      store: new BrowserArtifactStore({ root: join(dataRoot, "artifacts") }),
+    },
   });
 
   return {
