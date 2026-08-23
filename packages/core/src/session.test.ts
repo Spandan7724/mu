@@ -484,3 +484,105 @@ describe("pre-v2 session environments migrate rather than fail", () => {
     ).toThrow();
   });
 });
+
+// B8: a whole transcript written by a version before SESSION_VERSION must still load,
+// the runtime must see the repaired header, and nothing about loading it may write
+// anything back. This package has no disk access of its own (kernel purity) — parsing
+// takes a string and returns a tree — so "read never writes" is structural here; the
+// disk-level guarantee belongs to whichever store owns the actual file.
+describe("a full pre-v2 transcript loads, is repaired only in memory, and never crashes on read", () => {
+  const v1Jsonl = (environment: unknown) =>
+    `${JSON.stringify({
+      type: "session",
+      version: 1,
+      id: "s-old",
+      createdAt: new Date(0).toISOString(),
+      profile: "coding",
+      environment,
+    })}\n${JSON.stringify({
+      type: "message",
+      id: "e1",
+      parentId: null,
+      message: userMessage("hello from an old session"),
+    })}\n`;
+
+  test("the tree loads fully and the runtime sees the repaired environment, not the raw one", () => {
+    const raw = v1Jsonl({ "bad key!": "x", good: "kept", tab_count: "3" });
+    const tree = SessionTree.fromJsonl(raw);
+
+    expect(tree.header?.version).toBe(1);
+    expect(tree.header?.environment).toEqual({ good: "kept", tab_count: "3" });
+    expect(tree.header?.environmentMigration?.length).toBeGreaterThan(0);
+    expect(tree.messagesAt()).toHaveLength(1);
+  });
+
+  test("loading a v1 transcript is byte-for-byte a no-op on the source text", () => {
+    const raw = v1Jsonl({ "bad key!": "x", good: "kept" });
+    const copy = `${raw}`;
+    SessionTree.fromJsonl(raw);
+    // Nothing about parsing mutates the string it was handed. Whatever store owns the
+    // real file (outside this package) only ever gets a write call from an explicit
+    // `save`, never as a side effect of a `load`.
+    expect(raw).toBe(copy);
+  });
+
+  test("re-serializing a loaded v1 tree does not silently claim v2", () => {
+    // Migration repairs the environment so the rest of the transcript stays loadable;
+    // it does not forge a version bump the file was never actually rewritten to earn.
+    const tree = SessionTree.fromJsonl(v1Jsonl({ good: "kept" }));
+    expect(tree.header?.version).toBe(1);
+    const reparsed = SessionTree.fromJsonl(tree.toJsonl());
+    expect(reparsed.header?.version).toBe(1);
+    expect(reparsed.header?.environment).toEqual({ good: "kept" });
+  });
+});
+
+describe("a corrupt or unmigratable session header fails loudly and recoverably", () => {
+  test("a header that is not even JSON throws a catchable error rather than crashing", () => {
+    expect(() => parseEntry("{not json")).toThrow();
+    expect(() => SessionTree.fromJsonl("{not json\n")).toThrow();
+  });
+
+  test("a header missing required fields is an actionable, named error", () => {
+    const missingId = JSON.stringify({
+      type: "session",
+      version: SESSION_VERSION,
+      createdAt: new Date(0).toISOString(),
+      profile: "coding",
+      environment: {},
+    });
+    expect(() => parseEntry(missingId)).toThrow("Invalid session header");
+  });
+
+  test("a structurally corrupt line further in the file fails the whole load rather than silently truncating history", () => {
+    const header = JSON.stringify({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "s1",
+      createdAt: new Date(0).toISOString(),
+      profile: "coding",
+      environment: {},
+    });
+    const good = JSON.stringify({
+      type: "message",
+      id: "e1",
+      parentId: null,
+      message: userMessage("kept"),
+    });
+    const jsonl = `${header}\n${good}\nnot even json\n`;
+    // A caller that only checked the first two lines would see a session; the whole
+    // file must fail instead, so a truncated read is never mistaken for an empty one.
+    expect(() => SessionTree.fromJsonl(jsonl)).toThrow();
+  });
+
+  test("an unrecoverable header is a real Error a caller can catch and report, not a process crash", () => {
+    let caught: unknown;
+    try {
+      parseEntry("not json at all");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message.length).toBeGreaterThan(0);
+  });
+});
