@@ -15,6 +15,7 @@ import { decideActRequest } from "../policy/decide.ts";
 import { actPattern, type BrowserScope, scopesForAction } from "../policy/scopes.ts";
 import type { BrowserToolContext, BrowserToolDetails } from "./context.ts";
 import { toolErrorText } from "./errors.ts";
+import { KEY_NAMES, normalizeKey } from "./keys.ts";
 import { type DisclosureContext, disclosesPersonalData, prepareAction } from "./pipeline.ts";
 import { observationFacts, observationHeadline, observationText, outcomeText } from "./render.ts";
 import type { ObservationRecord } from "./session.ts";
@@ -47,7 +48,14 @@ const schema = z
       .max(BROWSER_LIMITS.maxOptionsPerElement)
       .optional()
       .describe("Option values to choose, for select."),
-    key: z.string().min(1).max(64).optional().describe("A key name, for press."),
+    key: z
+      .string()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe(
+        `A key name, for press: ${KEY_NAMES.join(", ")}, a single character, or a combination such as Control+a.`,
+      ),
     deltaX: z.number().int().optional(),
     deltaY: z.number().int().optional(),
     source: browserElementRefSchema.optional().describe("What to drag."),
@@ -81,9 +89,15 @@ const schema = z
       case "select":
         if (args.values === undefined) issue("values", "select needs at least one option value");
         break;
-      case "press":
-        if (args.key === undefined) issue("key", "press needs a key name");
+      case "press": {
+        if (args.key === undefined) {
+          issue("key", "press needs a key name");
+          break;
+        }
+        const normalized = normalizeKey(args.key);
+        if (!normalized.ok) issue("key", normalized.message ?? "unrecognized key name");
         break;
+      }
       case "drag":
         if (args.source === undefined) issue("source", "drag needs a source reference");
         if (args.destination === undefined) {
@@ -159,7 +173,7 @@ function toAction(args: Args, value: string): BrowserAction {
     case "press":
       return {
         kind: "press",
-        key: args.key as string,
+        key: normalizeKey(args.key as string).key,
         ...(args.target === undefined ? {} : { target: args.target }),
       };
     case "hover":
