@@ -6,6 +6,7 @@ import {
   browserExecutableCandidates,
   discoverBrowserExecutable,
   extensionSidecarArgs,
+  isSnapConfined,
   PINNED_SERVER_VERSION,
   PINNED_SIDECAR_VERSION,
   persistentSidecarArgs,
@@ -219,5 +220,26 @@ describe("a missing browser names one you actually have", () => {
       expect(String(error)).toContain("Install it");
       expect(String(error)).not.toContain("--browser");
     }
+  });
+});
+
+describe("a snap-packaged browser is recognized", () => {
+  // Measured against the chromium snap: its /tmp is a private namespace, so a file
+  // Playwright stages there is invisible to the host process that copies it out.
+  test("a path inside the snap tree is confined", () => {
+    expect(isSnapConfined("/snap/bin/chromium")).toBe(true);
+  });
+
+  test("a distro wrapper that hands off to the snap is confined", () => {
+    const wrapper = "#!/bin/sh\nif ! [ -x /snap/bin/chromium ]; then\n exit 1\nfi\n";
+    expect(isSnapConfined("/usr/bin/chromium-browser", () => wrapper)).toBe(true);
+  });
+
+  test("an ordinary binary is not", () => {
+    expect(
+      isSnapConfined("/usr/bin/google-chrome", () => {
+        throw new Error("binary, not text");
+      }),
+    ).toBe(false);
   });
 });

@@ -5,10 +5,12 @@ import {
   BROWSER_EXECUTABLE_ENV,
   discoverBrowserExecutable,
   extensionTopology,
+  isSnapConfined,
   PINNED_SIDECAR_VERSION,
   persistentTopology,
   resolveSidecar,
   SIDECAR_CLI_ENV,
+  SNAP_DOWNLOAD_WARNING,
 } from "@mu/profile-browser/drivers";
 import { browserDataLayout } from "@mu/profile-browser/profile";
 import { BROWSER_COMMAND } from "./product.ts";
@@ -82,7 +84,8 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
         // Already actionable on its own; appending the override hint would be wrong,
         // because pointing the variable somewhere else is not what fixes it.
         if (!verdict.supported) return { ok: false, detail: verdict.reason ?? "unsupported" };
-        return { ok: true, detail: `${browser} at ${executablePath}` };
+        const confined = isSnapConfined(executablePath) ? ` — ${SNAP_DOWNLOAD_WARNING}` : "";
+        return { ok: true, detail: `${browser} at ${executablePath}${confined}` };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { ok: false, detail: `${message} (set ${BROWSER_EXECUTABLE_ENV} to override)` };

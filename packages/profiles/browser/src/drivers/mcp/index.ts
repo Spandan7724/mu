@@ -40,6 +40,7 @@ export {
   browserExecutableCandidates,
   discoverBrowserExecutable,
   extensionSidecarArgs,
+  isSnapConfined,
   PINNED_SERVER_VERSION,
   PINNED_SIDECAR_PACKAGE,
   PINNED_SIDECAR_VERSION,
@@ -47,6 +48,7 @@ export {
   resolveSidecar,
   SIDECAR_CLI_ENV,
   SIDECAR_RUNTIME_ENV,
+  SNAP_DOWNLOAD_WARNING,
   sidecarSpec,
   UPDATE_INSTRUCTIONS,
 } from "./sidecar.ts";

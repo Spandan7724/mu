@@ -3,7 +3,7 @@
 // BD31 is binding here: no `npx`, no `latest`, no runtime code download, no
 // silent upgrade, and no automatic browser-binary download. The executable is one
 // the user already installed (BD28) and the version is the one that was pinned.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { BrowserDriverError } from "../../contracts/driver.ts";
@@ -236,3 +236,24 @@ export function sidecarSpec(
 ): McpSidecarSpec {
   return { runtime: resolution.runtime, cli: resolution.cli, args, ...extra };
 }
+
+/**
+ * Whether this browser is snap-packaged. Measured consequence: a snap runs with a
+ * private `/tmp`, and Playwright stages a download there before copying it out from
+ * the host side — which cannot see into that namespace, so every download fails with
+ * ENOENT. Everything else about the browser works, so this is worth saying plainly
+ * rather than refusing over.
+ */
+export function isSnapConfined(executablePath: string, read?: (path: string) => string): boolean {
+  if (executablePath.startsWith("/snap/")) return true;
+  const readFile = read ?? ((path: string) => readFileSync(path, "utf8"));
+  try {
+    // A distro wrapper is a small shell script that hands off to the snap.
+    return /\/snap\/bin\/|snap run /.test(readFile(executablePath).slice(0, 4_096));
+  } catch {
+    return false;
+  }
+}
+
+export const SNAP_DOWNLOAD_WARNING =
+  "this is the snap build, which runs with its own private /tmp. Downloads cannot be handed back to Mu from inside it and will fail; everything else works. Use a non-snap browser if you need downloads.";

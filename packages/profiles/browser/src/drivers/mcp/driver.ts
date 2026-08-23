@@ -997,10 +997,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       }
 
       const settled = outcome as { message: string; response?: SidecarResponse };
-      const { tab: updated } = await afterAction(found.page.tab.id, signal);
-      const after = resultOf(updated);
-      const navigation = navigationOf(before, after);
-      const download = settled.response === undefined ? undefined : downloadOf(settled.response);
+
+      // Answered before anything else is asked of the browser. While a modal is open
+      // every other tool refuses — `browser_snapshot` included — so re-observing first
+      // fails on the snapshot instead of dealing with the dialog that caused it.
       // `browser_act` never passes an acceptance: agreeing to a page's question is a
       // commitment, and commitments go through submit() (BD12).
       const raised =
@@ -1015,6 +1015,11 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           dialog: raised,
         });
       }
+
+      const { tab: updated } = await afterAction(found.page.tab.id, signal);
+      const after = resultOf(updated);
+      const navigation = navigationOf(before, after);
+      const download = settled.response === undefined ? undefined : downloadOf(settled.response);
       return completedOutcome({
         message: settled.message,
         before,
