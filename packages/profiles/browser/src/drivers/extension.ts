@@ -8,6 +8,7 @@
 // this factory takes the sidecar as an injected seam. Nothing here downloads,
 // spawns `npx`, or resolves a package at runtime.
 
+import type { AuthorizedDocument } from "../contracts/documents.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
 import { BrowserDriverError } from "../contracts/driver.ts";
 import type { BrowserSecret } from "../contracts/secret.ts";
@@ -29,6 +30,8 @@ export interface ExtensionSidecarRequest {
   // sidecar and is never written to disk, a log, an event or a session by anything
   // in this module.
   token?: BrowserSecret | undefined;
+  // What the sidecar may attach to a file input, authorized by the runtime.
+  documents?: readonly AuthorizedDocument[] | undefined;
   signal: AbortSignal;
 }
 
@@ -72,6 +75,7 @@ export function extensionFactory(options: ExtensionFactoryOptions): BrowserDrive
       ...(factoryOptions.extensionToken === undefined
         ? {}
         : { token: factoryOptions.extensionToken }),
+      ...(factoryOptions.documents === undefined ? {} : { documents: factoryOptions.documents }),
       signal,
     });
     return {

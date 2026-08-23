@@ -59,7 +59,7 @@ export function mcpPersistentLaunch(
   options: McpModeOptions = {},
 ): PersistentProfileFactoryOptions["launch"] {
   const launcher = options.launcher ?? stdioSidecarLauncher;
-  return async ({ userDataDir, browser, headless, signal }) => {
+  return async ({ userDataDir, browser, headless, documents, signal }) => {
     const outputDir = await privateOutputDir(options);
     const resolution = resolveSidecar(options.resolve);
     const executablePath = discoverBrowserExecutable(browser, options.discover);
@@ -86,7 +86,10 @@ export function mcpPersistentLaunch(
       ),
       signal,
     );
-    return persistentDriver(sidecar, browser as BrowserFamily, options);
+    return persistentDriver(sidecar, browser as BrowserFamily, {
+      ...options,
+      ...(documents === undefined ? {} : { documents }),
+    });
   };
 }
 
@@ -123,7 +126,8 @@ export function mcpExtensionSidecar(
   options: McpExtensionOptions = {},
 ): ExtensionFactoryOptions["startSidecar"] {
   const launcher = options.launcher ?? stdioSidecarLauncher;
-  return async ({ browser, token, signal }): Promise<ExtensionSidecar> => {
+  return async ({ browser, token, documents, signal }): Promise<ExtensionSidecar> => {
+    const attachable = documents ?? options.documents;
     const outputDir = await privateOutputDir(options);
     const resolution = resolveSidecar(options.resolve);
     const verdict = extensionTopology({
@@ -163,7 +167,7 @@ export function mcpExtensionSidecar(
       mode: "extension",
       browser: browser as BrowserFamily,
       ownership: "attached",
-      ...(options.documents === undefined ? {} : { documents: options.documents }),
+      ...(attachable === undefined ? {} : { documents: attachable }),
     });
     return {
       driver,

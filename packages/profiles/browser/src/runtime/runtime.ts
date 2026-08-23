@@ -9,6 +9,7 @@ import type {
   BrowserFamily,
 } from "../contracts/connection.ts";
 import { connectionSummary } from "../contracts/connection.ts";
+import type { AuthorizedDocument } from "../contracts/documents.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
 import { BrowserDriverError, isBrowserDriverError } from "../contracts/driver.ts";
 import type { BrowserObservation } from "../contracts/observation.ts";
@@ -32,6 +33,9 @@ export interface BrowserRuntimeOptions {
   headless?: boolean | undefined;
   userDataDir?: string | undefined;
   extensionToken?: BrowserSecret | undefined;
+  // Read at connect time rather than construction: the profile authorizes the
+  // user's documents after it builds the runtime.
+  documents?: (() => readonly AuthorizedDocument[]) | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -139,6 +143,9 @@ export class BrowserRuntime implements ProfileRuntime {
             ...(this.options.extensionToken === undefined
               ? {}
               : { extensionToken: this.options.extensionToken }),
+            ...(this.options.documents === undefined
+              ? {}
+              : { documents: this.options.documents() }),
           },
           linked.signal,
         ));

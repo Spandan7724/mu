@@ -56,8 +56,15 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     }
   }
 
+  // Documents the user named on the command line. Each is staged inside Mu's own root:
+  // the browser bridge refuses to attach a file from anywhere else, and the flag that
+  // would lift that restriction also unblocks `file://`.
+  const documents = new AuthorizedDocumentStore({ stageInto: join(dataRoot, "documents") });
+
   const runtime = new BrowserRuntime({
     factory: options.factory ?? unconfiguredFactory,
+    // Read on connect: authorization happens after this runtime is built.
+    documents: () => documents.entries(),
     connection: resolved.connection,
     browser: resolved.browser,
     dataRoot,
@@ -68,10 +75,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
 
   const environment: SessionEnvironment = browserEnvironment({ options: resolved, dataRoot });
 
-  // Documents the user named on the command line. Each is staged inside Mu's own root:
-  // the browser bridge refuses to attach a file from anywhere else, and the flag that
-  // would lift that restriction also unblocks `file://`.
-  const documents = new AuthorizedDocumentStore({ stageInto: join(dataRoot, "documents") });
   for (const path of resolved.documents) {
     try {
       await documents.authorize(path, { purposes: ["reference", "upload"] });

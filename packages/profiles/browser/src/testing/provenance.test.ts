@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ApplicantFact, ApplicantPolicy } from "../contracts/applicant.ts";
 import type { BrowserElement } from "../contracts/observation.ts";
-import { elementRefId } from "../contracts/primitives.ts";
 import { createFactStore, type FactCandidate } from "../data/facts.ts";
 import { ingestDocument } from "../data/ingest.ts";
 import { type LayeredFact, mergeFacts } from "../data/merge.ts";

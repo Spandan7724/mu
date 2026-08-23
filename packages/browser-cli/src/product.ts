@@ -129,7 +129,7 @@ export function browserProfileOptionsFrom(
     ...(product.allowedOrigins.length > 0 ? { allowedOrigins: [...product.allowedOrigins] } : {}),
     ...(product.applicantProfile ? { applicantProfile: product.applicantProfile } : {}),
     ...(product.artifactRoot ? { artifactRoot: product.artifactRoot } : {}),
-    factory: driverFactoryFor(choice),
+    factory: driverFactoryFor(choice, home),
   };
 }
 

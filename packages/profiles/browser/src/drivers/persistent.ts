@@ -4,6 +4,7 @@
 // exclusive lock on that directory before anything is launched.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { AuthorizedDocument } from "../contracts/documents.ts";
 import { BrowserDriverError } from "../contracts/driver.ts";
 import type { BrowserDriverFactory, BrowserDriverHandle } from "./factory.ts";
 
@@ -23,6 +24,7 @@ export interface PersistentProfileFactoryOptions {
     userDataDir: string;
     browser: string;
     headless: boolean;
+    documents?: readonly AuthorizedDocument[] | undefined;
     signal: AbortSignal;
   }) => Promise<{ driver: BrowserDriverHandle["driver"]; close: () => Promise<void> }>;
   pid?: number;
@@ -112,6 +114,7 @@ export function persistentProfileFactory(
         userDataDir: directory,
         browser: factoryOptions.browser,
         headless: factoryOptions.headless === true,
+        ...(factoryOptions.documents === undefined ? {} : { documents: factoryOptions.documents }),
         signal,
       });
     } catch (error) {

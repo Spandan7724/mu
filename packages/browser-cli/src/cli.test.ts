@@ -133,6 +133,7 @@ describe("doctor", () => {
     const modes = checks.filter((check) => !check.name.startsWith("data "));
     expect(modes.map((check) => check.name)).toEqual([
       "deterministic fake browser",
+      "Playwright MCP sidecar",
       "existing-browser bridge",
       "Mu-owned browser",
     ]);

@@ -1,8 +1,15 @@
 // `mu-browser doctor`. Read-only environment checks, no network, no browser
 // launched, nothing downloaded (PACKAGING §Installation Experience).
 import { stat } from "node:fs/promises";
+import {
+  BROWSER_EXECUTABLE_ENV,
+  discoverBrowserExecutable,
+  extensionTopology,
+  PINNED_SIDECAR_VERSION,
+  resolveSidecar,
+  SIDECAR_CLI_ENV,
+} from "@mu/profile-browser/drivers";
 import { browserDataLayout } from "@mu/profile-browser/profile";
-import { UNAVAILABLE_EXTENSION, UNAVAILABLE_PERSISTENT } from "./drivers.ts";
 import { BROWSER_COMMAND } from "./product.ts";
 
 export interface DoctorIo {
@@ -35,8 +42,52 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
     ok: true,
     detail: `available — ${BROWSER_COMMAND} --fake-browser`,
   });
-  checks.push({ name: "existing-browser bridge", ok: false, detail: UNAVAILABLE_EXTENSION });
-  checks.push({ name: "Mu-owned browser", ok: false, detail: UNAVAILABLE_PERSISTENT });
+  // Read-only: resolving a path and reading env vars. Nothing is spawned here.
+  let runtime: string | undefined;
+  try {
+    const resolution = resolveSidecar({ resolveFrom: [import.meta.url] });
+    runtime = resolution.runtime;
+    checks.push({
+      name: "Playwright MCP sidecar",
+      ok: true,
+      detail: `${resolution.cli} (expects ${PINNED_SIDECAR_VERSION}), run by ${resolution.runtime}`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "Playwright MCP sidecar",
+      ok: false,
+      detail: `${error instanceof Error ? error.message : String(error)} (set ${SIDECAR_CLI_ENV} to override)`,
+    });
+  }
+
+  const topology = extensionTopology(runtime === undefined ? {} : { runtime });
+  checks.push({
+    name: "existing-browser bridge",
+    ok: topology.supported,
+    detail: topology.supported
+      ? "the sidecar can reach the browser from here; the browser will ask you to approve the connection"
+      : (topology.reason ?? "unsupported topology"),
+  });
+
+  // A stable check name whatever is installed, so a report reads the same everywhere.
+  const found = ["chrome", "edge", "chromium"].reduce<
+    { ok: true; detail: string } | { ok: false; detail: string }
+  >(
+    (best, browser) => {
+      if (best.ok) return best;
+      try {
+        return { ok: true, detail: `${browser} at ${discoverBrowserExecutable(browser)}` };
+      } catch (error) {
+        return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+      }
+    },
+    { ok: false, detail: "no chrome-family browser was looked for" },
+  );
+  checks.push({
+    name: "Mu-owned browser",
+    ok: found.ok,
+    detail: found.ok ? found.detail : `${found.detail} (set ${BROWSER_EXECUTABLE_ENV} to override)`,
+  });
   return checks;
 }
 

@@ -291,6 +291,15 @@ export class AuthorizedDocumentStore {
     return document === undefined ? undefined : documentSummary(document);
   }
 
+  /**
+   * Every authorized document, paths included. Same trust level as `path()`: it is
+   * how the runtime tells a driver which files it may attach, and it is never
+   * reachable from a tool argument or anything the model can produce.
+   */
+  entries(): AuthorizedDocument[] {
+    return [...this.documents.values()];
+  }
+
   ids(): AuthorizedDocumentId[] {
     return [...this.documents.values()].map((document) => document.id);
   }
