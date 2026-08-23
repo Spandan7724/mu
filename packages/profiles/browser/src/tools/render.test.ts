@@ -5,6 +5,7 @@
 // even when a value reaches these functions despite the schema layer that should
 // have stripped it first.
 import { describe, expect, test } from "bun:test";
+import type { BrowserElement } from "../contracts/observation.ts";
 import { elementRefId } from "../contracts/primitives.ts";
 import { REDACTED } from "../contracts/secret.ts";
 import { FAKE_LABELS, FAKE_ORIGIN, FAKE_PAGE_URLS, FAKE_VALUES } from "../drivers/fake/site.ts";
@@ -20,11 +21,11 @@ async function on(harness: Harness, url: string): Promise<void> {
   await harness.session.observe({}, signal());
 }
 
-function refOf(element: { ref: string; revision: number; tabId: string }) {
+function refOf(element: BrowserElement) {
   return { ref: element.ref, revision: element.revision, tabId: element.tabId };
 }
 
-function elementNamed(harness: Harness, name: string) {
+function elementNamed(harness: Harness, name: string): BrowserElement {
   const found = harness.session
     .record()
     ?.observation.elements.find((element) => element.name === name || element.label === name);
