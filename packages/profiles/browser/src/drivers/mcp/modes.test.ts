@@ -15,6 +15,7 @@ import {
 import type { McpSidecar, McpSidecarSpec } from "./protocol.ts";
 import { createScriptedSidecar } from "./scripted.ts";
 import { PINNED_SERVER_VERSION, SIDECAR_CLI_ENV, SIDECAR_RUNTIME_ENV } from "./sidecar.ts";
+import { persistentTopology } from "./topology.ts";
 
 const temporaries: string[] = [];
 
@@ -269,5 +270,29 @@ describe("extension mode attaches and detaches (BD26/BD27/BD29)", () => {
     );
     expect(isBrowserDriverError(error) && error.code).toBe("protocol-mismatch");
     expect(PINNED_SERVER_VERSION).not.toBe("0.0.0");
+  });
+});
+
+describe("a Mu-owned browser is launched by the OS Mu runs on", () => {
+  const WINDOWS_CHROME = "/mnt/c/Program Files/Google/Chrome/Application/chrome.exe";
+
+  // Measured: the browser starts, reports that remote debugging pipe file descriptors
+  // are not supported, and dies. Refusing up front beats launching something that dies.
+  test("a Windows browser is refused from linux rather than launched", () => {
+    const verdict = persistentTopology({ executablePath: WINDOWS_CHROME, platform: "linux" });
+    expect(verdict.supported).toBe(false);
+    expect(verdict.reason).toContain("operating system Mu is running on");
+  });
+
+  test("the same browser is fine when Mu is the one on Windows", () => {
+    expect(
+      persistentTopology({ executablePath: WINDOWS_CHROME, platform: "win32" }).supported,
+    ).toBe(true);
+  });
+
+  test("a native browser is never refused", () => {
+    expect(
+      persistentTopology({ executablePath: "/usr/bin/google-chrome", platform: "linux" }).supported,
+    ).toBe(true);
   });
 });

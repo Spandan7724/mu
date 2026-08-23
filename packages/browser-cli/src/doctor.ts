@@ -6,6 +6,7 @@ import {
   discoverBrowserExecutable,
   extensionTopology,
   PINNED_SIDECAR_VERSION,
+  persistentTopology,
   resolveSidecar,
   SIDECAR_CLI_ENV,
 } from "@mu/profile-browser/drivers";
@@ -76,9 +77,15 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
     (best, browser) => {
       if (best.ok) return best;
       try {
-        return { ok: true, detail: `${browser} at ${discoverBrowserExecutable(browser)}` };
+        const executablePath = discoverBrowserExecutable(browser);
+        const verdict = persistentTopology({ executablePath });
+        // Already actionable on its own; appending the override hint would be wrong,
+        // because pointing the variable somewhere else is not what fixes it.
+        if (!verdict.supported) return { ok: false, detail: verdict.reason ?? "unsupported" };
+        return { ok: true, detail: `${browser} at ${executablePath}` };
       } catch (error) {
-        return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+        const message = error instanceof Error ? error.message : String(error);
+        return { ok: false, detail: `${message} (set ${BROWSER_EXECUTABLE_ENV} to override)` };
       }
     },
     { ok: false, detail: "no chrome-family browser was looked for" },
@@ -86,7 +93,7 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
   checks.push({
     name: "Mu-owned browser",
     ok: found.ok,
-    detail: found.ok ? found.detail : `${found.detail} (set ${BROWSER_EXECUTABLE_ENV} to override)`,
+    detail: found.detail,
   });
   return checks;
 }

@@ -25,7 +25,7 @@ import {
   SIDECAR_RUNTIME_ENV,
   sidecarSpec,
 } from "./sidecar.ts";
-import { extensionTopology } from "./topology.ts";
+import { extensionTopology, persistentTopology } from "./topology.ts";
 
 export const EXTENSION_TOKEN_ENV = "PLAYWRIGHT_MCP_EXTENSION_TOKEN";
 
@@ -63,6 +63,14 @@ export function mcpPersistentLaunch(
     const outputDir = await privateOutputDir(options);
     const resolution = resolveSidecar(options.resolve);
     const executablePath = discoverBrowserExecutable(browser, options.discover);
+    const verdict = persistentTopology({
+      executablePath,
+      ...(options.discover?.platform === undefined ? {} : { platform: options.discover.platform }),
+      ...(options.discover?.env === undefined ? {} : { env: options.discover.env }),
+    });
+    if (!verdict.supported) {
+      throw new BrowserDriverError("unsupported", verdict.reason ?? "unsupported topology");
+    }
     const sidecar = await launcher(
       sidecarSpec(
         resolution,
