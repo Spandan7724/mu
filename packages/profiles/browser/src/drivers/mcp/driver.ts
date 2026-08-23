@@ -65,6 +65,7 @@ import {
   parseSidecarResponse,
   parseTabList,
   type SidecarResponse,
+  sidecarErrorMessage,
 } from "./response.ts";
 import { classifyRisks, commitmentIntent, isCredentialControl } from "./risk.ts";
 import { assertSupportedServer } from "./sidecar.ts";
@@ -246,7 +247,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           "approve the Playwright extension connection in your browser, then connect again",
         );
       }
-      throw new BrowserDriverError("unsupported", bounded(text, 2_000));
+      throw new BrowserDriverError("unsupported", bounded(sidecarErrorMessage(text), 2_000));
     }
     // Only the parsed fields travel onwards. Any saved-output path the sidecar
     // mentioned stays behind in `savedPaths`, where nothing reads it.

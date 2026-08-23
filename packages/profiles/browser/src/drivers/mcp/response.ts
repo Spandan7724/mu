@@ -146,3 +146,19 @@ export function parseDialogState(
     message: message ?? modalState,
   };
 }
+
+/**
+ * The useful sentence out of a sidecar failure. Its answer is a markdown document that
+ * ends with a `Browser logs:` dump containing the full launch argv — which carries the
+ * profile directory, so passing it through verbatim would put a filesystem path in a
+ * model-visible message (SECURITY §11) and bury the actual cause under a screen of noise.
+ */
+export function sidecarErrorMessage(text: string): string {
+  const body = text.replace(/^###\s+Error\s*/i, "");
+  const stopAt = body.search(/^\s*(Browser logs:|Call log:|<launching>)/im);
+  const useful = (stopAt === -1 ? body : body.slice(0, stopAt))
+    .split("\n")
+    .map((line) => line.replace(/^Error:\s*/i, "").trim())
+    .filter((line) => line.length > 0);
+  return useful.length === 0 ? "the browser rejected the request" : useful.join(" ");
+}

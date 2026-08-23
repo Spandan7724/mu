@@ -2,7 +2,7 @@
 // a live Chrome 151 session against the loopback fixture. They are what keeps the
 // parser honest when no browser is present.
 import { describe, expect, test } from "bun:test";
-import { parseSidecarResponse, parseTabList } from "./response.ts";
+import { parseSidecarResponse, parseTabList, sidecarErrorMessage } from "./response.ts";
 import { parseSnapshot, structuralSignature } from "./snapshot.ts";
 
 const SNAPSHOT_RESPONSE = [
@@ -147,5 +147,32 @@ describe("accessibility snapshot parsing", () => {
       ),
     );
     expect(structuralSignature(relabelled)).not.toBe(before);
+  });
+});
+
+describe("a sidecar failure reaches the model as a sentence, not a log dump", () => {
+  const REAL = `### Error
+Error: Target page, context or browser has been closed
+Browser logs:
+
+<launching> /usr/bin/chromium --user-data-dir=/home/someone/.mu/browser/profiles/default about:blank
+[pid=405570][err] [0823/144126.026:ERROR:chrome_main_delegate.cc:1101] Remote debugging pipe`;
+
+  test("the cause survives and the launch argv does not", () => {
+    const message = sidecarErrorMessage(REAL);
+    expect(message).toBe("Target page, context or browser has been closed");
+    // SECURITY §11: the argv carries the profile directory.
+    expect(message).not.toContain("/home/someone");
+    expect(message).not.toContain("--user-data-dir");
+  });
+
+  test("a call log is cut off the same way", () => {
+    expect(
+      sidecarErrorMessage("### Error\nError: locator resolved to 2 elements\nCall log:\n  - x"),
+    ).toBe("locator resolved to 2 elements");
+  });
+
+  test("an empty body still says something", () => {
+    expect(sidecarErrorMessage("### Error\n")).toContain("rejected the request");
   });
 });
