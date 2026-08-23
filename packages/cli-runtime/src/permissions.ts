@@ -1,5 +1,9 @@
 import type { PermissionMode, PermissionRule, Profile } from "mu";
 
+// The mode `--allow-all` selects. A profile that does not declare it has no
+// full-access mode, and the flag must fail rather than invent one.
+export const FULL_ACCESS_MODE = "yolo";
+
 export function permissionModeFor(
   profile: Profile,
   requested?: string,

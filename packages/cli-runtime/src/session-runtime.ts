@@ -15,7 +15,12 @@ import {
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
-import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import {
+  FULL_ACCESS_MODE,
+  nextPermissionMode,
+  permissionModeFor,
+  rulesForPermissionMode,
+} from "./permissions.ts";
 import type { ProductDescriptor } from "./product.ts";
 import { sessionStoreForProfile } from "./profiles.ts";
 
@@ -98,14 +103,16 @@ export async function createCliSessionRuntime<Options>(
   const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
   let activePermissionMode: PermissionMode | undefined;
   if (profile) {
-    activePermissionMode = options.allowAll
-      ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
-      : permissionModeFor(profile, options.permissionMode);
+    // --allow-all is an alias for the profile's full-access mode, and nothing more.
+    // It used to append a wildcard allow of its own, which meant a product that
+    // deliberately ships no full-access mode still got one through this flag.
+    activePermissionMode = permissionModeFor(
+      profile,
+      options.allowAll ? FULL_ACCESS_MODE : options.permissionMode,
+    );
     resolved = {
       ...resolved,
-      permissions: options.allowAll
-        ? [...basePermissions, { permission: "*", pattern: "*", action: "allow" }]
-        : rulesForPermissionMode(basePermissions, activePermissionMode),
+      permissions: rulesForPermissionMode(basePermissions, activePermissionMode),
     };
   } else if (options.permissionMode) {
     throw new Error("--permission-mode requires a profile with permission modes");

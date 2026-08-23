@@ -184,7 +184,15 @@ describe("a browser session runs end to end against the fake driver", () => {
     ]);
     const { out, io } = sink();
     const args = parseArgs(
-      ["-p", "check the browser", "--fake-browser", "--model", "fake/fake-1", "--allow-all"],
+      [
+        "-p",
+        "check the browser",
+        "--fake-browser",
+        "--model",
+        "fake/fake-1",
+        "--permission-mode",
+        "read-only",
+      ],
       product,
     );
 
@@ -206,6 +214,26 @@ describe("a browser session runs end to end against the fake driver", () => {
       connection: "extension",
       browser: "chrome",
     });
+  });
+
+  // SECURITY §9: this product deliberately ships no full-access mode. The flag used
+  // to append a wildcard allow of its own, which handed one out anyway.
+  test("--allow-all is refused rather than granting a mode this product does not have", async () => {
+    const product = createBrowserProduct({ home: await tempHome() });
+    const args = parseArgs(
+      ["-p", "check the browser", "--fake-browser", "--model", "fake/fake-1", "--allow-all"],
+      product,
+    );
+    const { out, io } = sink();
+    expect(
+      await runHeadless(
+        product,
+        args,
+        { provider: new FakeProvider([]), extensions: await fakeModelHost() },
+        io,
+      ),
+    ).not.toBe(EXIT.done);
+    expect(out.join("")).not.toContain("the browser is ready");
   });
 
   test("a saved browser session resumes with the same product and profile identity", async () => {
