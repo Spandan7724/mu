@@ -241,11 +241,13 @@ describe("browserProfile", () => {
   test("the environment is bounded, browser-specific and free of secrets", async () => {
     const home = await tempHome();
     try {
+      const resume = join(home, "resume.pdf");
+      await writeFile(resume, "%PDF-1.4 resume");
       const profile = await browserProfile({
         home,
         factory: fakeFactory(),
         allowedOrigins: ["https://jobs.example.com"],
-        documents: ["/documents/resume.pdf"],
+        workspaceRoot: home,
       });
       const environment = await profile.environment?.();
       expect(() => normalizeSessionEnvironment(environment)).not.toThrow();
@@ -255,10 +257,20 @@ describe("browserProfile", () => {
         browser: "chrome",
         headless: "false",
         documents: "1",
+        fileScope: "direct uploadable files in the launch directory",
         allowedOrigins: "https://jobs.example.com",
       });
       // A document path is a runtime detail; only its count is session metadata.
       expect(JSON.stringify(environment)).not.toContain("resume.pdf");
+      const context = (await profile.contextMessages?.()) ?? [];
+      const rendered = JSON.stringify(
+        context.find(
+          (message) => message.role === "custom" && message.customType === "browser-documents",
+        ),
+      );
+      expect(rendered).toContain("name=resume.pdf");
+      expect(rendered).toContain("id=doc-");
+      expect(rendered).not.toContain(home);
       await profile.runtime.shutdown();
     } finally {
       await rm(home, { recursive: true, force: true });

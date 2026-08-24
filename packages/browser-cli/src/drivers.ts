@@ -17,8 +17,8 @@ export function driverFactoryFor(
   choice: BrowserConnectionChoice,
   home?: string,
 ): BrowserDriverFactory {
-  // Authorized documents reach the driver from the runtime at connect time, not
-  // from here: the user's --document paths are not authorized yet at this point.
+  // Workspace documents reach the driver from the runtime at connect time, after
+  // the profile has admitted and snapshotted eligible files from the launch directory.
   //
   // `resolveFrom` is this file deliberately. This package declares the sidecar
   // dependency, so in a workspace it is installed next to *this* package, not next

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, mkdir, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, join } from "node:path";
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, stat } from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import {
   type AuthorizedDocument,
   type AuthorizedDocumentSummary,
@@ -53,6 +53,51 @@ export const DEFAULT_UPLOAD_MIME_TYPES: readonly string[] = [
   "image/png",
   "image/jpeg",
 ];
+
+export interface WorkspaceDocumentDiscovery {
+  paths: string[];
+  problems: { path: string; message: string }[];
+}
+
+/**
+ * Admit only ordinary, direct files from the launch directory. The directory is
+ * canonicalized, hidden entries and unsupported types are ignored, and symlinks
+ * are excluded even when they point back inside the directory. This keeps cwd a
+ * simple capability boundary rather than turning it into an implicit recursive
+ * filesystem search.
+ */
+export async function discoverWorkspaceDocuments(
+  root: string,
+  limit: number = DOCUMENT_LIMITS.maxDocuments,
+): Promise<WorkspaceDocumentDiscovery> {
+  const canonicalRoot = await realpath(resolve(root));
+  const entries = (await readdir(canonicalRoot, { withFileTypes: true })).sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+  const candidates: string[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || !entry.isFile()) continue;
+    if (!DEFAULT_UPLOAD_MIME_TYPES.includes(mimeTypeForBasename(entry.name))) continue;
+    const path = join(canonicalRoot, entry.name);
+    // Re-check after readdir and canonicalize the file. A replaced entry or a
+    // symlink must not turn the launch directory into authority over its target.
+    const stats = await lstat(path);
+    if (!stats.isFile()) continue;
+    const canonicalPath = await realpath(path);
+    if (dirname(canonicalPath) !== canonicalRoot) continue;
+    candidates.push(canonicalPath);
+  }
+  if (candidates.length <= limit) return { paths: candidates, problems: [] };
+  return {
+    paths: candidates.slice(0, limit),
+    problems: [
+      {
+        path: basename(canonicalRoot),
+        message: `found ${candidates.length} uploadable files; only the first ${limit} are available`,
+      },
+    ],
+  };
+}
 
 export type DocumentRejectionReason =
   | "invalid-id"

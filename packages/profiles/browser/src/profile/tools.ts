@@ -76,7 +76,7 @@ export interface BrowserToolsetOptions {
   allowedOrigins?: readonly string[] | undefined;
   mode?: BrowserPermissionMode | undefined;
   facts?: FactLookup | undefined;
-  /** Present only when the user authorized documents; without it there is no upload tool. */
+  /** Present only when the session has admitted documents; without it there is no upload tool. */
   documents?: AuthorizedDocumentStore | undefined;
   /** Set when the user has approved plaintext disclosure for this task. */
   allowInsecureDisclosure?: boolean | undefined;

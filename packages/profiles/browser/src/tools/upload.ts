@@ -37,9 +37,7 @@ const schema = z
       .array(authorizedDocumentIdSchema)
       .min(1)
       .max(20)
-      .describe(
-        "Ids of documents the user already authorized for upload. Never a filesystem path.",
-      ),
+      .describe("Ids from the session's launch-directory document set. Never a filesystem path."),
   })
   .strict();
 
@@ -90,7 +88,7 @@ export function browserUploadTool(context: BrowserUploadToolContext) {
   return tool({
     name: BROWSER_UPLOAD_TOOL,
     description:
-      "Attach authorized documents to a file input, by document id. You never name or see a filesystem path — ids come only from documents the user already authorized for upload. This does not submit the form; use browser_submit for that once the form is ready.",
+      "Attach a document from the launch directory to a file input, by document id. You never name or see a filesystem path — use only ids listed in the session context. This does not submit the form; use browser_submit for that once the form is ready.",
     inputSchema: schema,
     executionMode: "sequential",
     isConcurrencySafe: () => false,

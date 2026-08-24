@@ -4,6 +4,7 @@
 // grow, a token, or anything derived from page content.
 import { type AgentMessage, customMessage, type SessionEnvironment } from "@mu/core";
 import { redactFactValue } from "../contracts/applicant.ts";
+import type { AuthorizedDocumentSummary } from "../contracts/documents.ts";
 import type { FactStore } from "../data/facts.ts";
 import { factValueText } from "../data/facts.ts";
 import { classifyNavigationUrl } from "../policy/origin.ts";
@@ -16,6 +17,7 @@ const MAX_LISTED_ORIGINS = 20;
 export interface BrowserEnvironmentInput {
   options: ResolvedBrowserProfileOptions;
   dataRoot: string;
+  documentCount?: number;
   platform?: string;
 }
 
@@ -29,7 +31,10 @@ export function browserEnvironment(input: BrowserEnvironmentInput): SessionEnvir
     headless: String(options.headless),
     dataRoot: input.dataRoot,
     platform: input.platform ?? process.platform,
-    documents: String(options.documents.length),
+    documents: String(input.documentCount ?? options.documents.length),
+    ...(options.workspaceRoot === undefined
+      ? {}
+      : { fileScope: "direct uploadable files in the launch directory" }),
     allowedOrigins:
       options.allowedOrigins.length === 0
         ? "none beyond the task's own origin"
@@ -55,6 +60,21 @@ export function connectionMessage(description: string, mode: string): AgentMessa
     mode === "extension"
       ? `The browser connection is ${description}. It is not open yet: the user approves the tab in their browser the first time you need it.`
       : `The browser connection is ${description}. Mu owns this browser and will close it when the session ends.`,
+  );
+}
+
+export function documentsMessage(documents: readonly AuthorizedDocumentSummary[]): AgentMessage {
+  return customMessage(
+    "browser-documents",
+    documents.length === 0
+      ? "No uploadable files are available in the launch directory. Do not claim that a local file can be used."
+      : [
+          "Files available from the launch directory. Upload only by the listed id; paths outside this set are unavailable.",
+          ...documents.map(
+            (document) =>
+              `id=${document.id} | name=${document.basename} | type=${document.mimeType} | bytes=${document.bytes}`,
+          ),
+        ].join("\n"),
   );
 }
 

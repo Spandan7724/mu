@@ -70,9 +70,10 @@ list.
 
 ## Documents
 
-`--document <path>` (repeatable) authorizes one local file for the agent to reference
-or upload. Only an authorized document's logical id is ever visible to the model —
-never a filesystem path. Uploading it follows the same write permission as any other
-change to a page: it asks under `confirm-submission` and `confirm-every-write`, is
-refused outright under `read-only`, and is allowed without asking under
-`autonomous-submit`. See [PRIVACY.md](./PRIVACY.md) for where the file goes on disk.
+Supported direct files in the directory where the session starts are available for
+reference or upload. Subdirectories, hidden files, symlinks, unsupported types, and
+paths outside that directory are excluded. Only a file's logical id and bounded
+metadata are visible to the model—never a filesystem path. Uploading follows the same
+write permission as any other page change: it asks under `confirm-submission` and
+`confirm-every-write`, is refused under `read-only`, and is allowed without asking
+under `autonomous-submit`. See [PRIVACY.md](./PRIVACY.md) for the private snapshot.

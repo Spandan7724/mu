@@ -11,6 +11,30 @@ mu-browser doctor    # read-only check: no network call, no browser launched
 installed build can reach. A mode it cannot reach is a note naming what to fix, not a
 broken install.
 
+## Local files
+
+The directory where you start `mu-browser` is the session's local-file boundary. Put
+documents you want it to upload directly in that directory, then start the session
+there:
+
+```bash
+cd ~/job-application
+mu-browser --connection persistent --browser chromium
+```
+
+Mu automatically admits up to 100 supported direct files, 25 MB each. It does not
+walk subdirectories and ignores hidden files, symlinks, executables, source code, and
+unsupported types. The model receives only each admitted file's basename, type, size,
+and opaque document id—never its filesystem path. `/documents` shows the exact set.
+
+For a workspace checkout, running the development entry point by absolute path keeps
+the file boundary at your current directory:
+
+```bash
+cd ~/job-application
+bun /path/to/mu/packages/browser-cli/src/main.ts --connection persistent --browser chromium
+```
+
 ## Connection modes
 
 `--connection <mode>` selects how `mu-browser` reaches a browser. There are three:

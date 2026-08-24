@@ -30,7 +30,6 @@ export interface BrowserProductOptions {
   browser?: "chrome" | "edge" | "chromium" | undefined;
   browserProfile?: string | undefined;
   headless: boolean;
-  documents: string[];
   allowedOrigins: string[];
   applicantProfile?: string | undefined;
   artifactRoot?: string | undefined;
@@ -42,7 +41,7 @@ const CONNECTIONS: BrowserConnectionChoice[] = ["extension", "persistent", "fake
 const BROWSERS = ["chrome", "edge", "chromium"] as const;
 
 export function emptyBrowserProductOptions(): BrowserProductOptions {
-  return { headless: false, documents: [], allowedOrigins: [] };
+  return { headless: false, allowedOrigins: [] };
 }
 
 function parseBrowserArgs(
@@ -81,8 +80,9 @@ function parseBrowserArgs(
         else options.browserProfile = value;
         break;
       case "--document":
-        if (!value) errors.push("--document requires a path");
-        else options.documents.push(value);
+        errors.push(
+          "--document was removed; put the file directly in the directory where mu-browser starts",
+        );
         break;
       case "--allow-origin":
         if (!value) errors.push("--allow-origin requires an origin");
@@ -114,6 +114,7 @@ function parseBrowserArgs(
 export function browserProfileOptionsFrom(
   options: BrowserProductOptions | undefined,
   home?: string,
+  cwd?: string,
 ): BrowserProfileOptions {
   const product = options ?? emptyBrowserProductOptions();
   const choice = product.connection ?? DEFAULT_CONNECTION;
@@ -125,7 +126,7 @@ export function browserProfileOptionsFrom(
     browser: product.browser ?? DEFAULT_BROWSER,
     ...(product.headless ? { headless: true } : {}),
     ...(product.browserProfile ? { userDataDir: product.browserProfile } : {}),
-    ...(product.documents.length > 0 ? { documents: [...product.documents] } : {}),
+    ...(cwd === undefined ? {} : { workspaceRoot: cwd }),
     ...(product.allowedOrigins.length > 0 ? { allowedOrigins: [...product.allowedOrigins] } : {}),
     ...(product.applicantProfile ? { applicantProfile: product.applicantProfile } : {}),
     ...(product.artifactRoot ? { artifactRoot: product.artifactRoot } : {}),
@@ -143,7 +144,7 @@ export async function resolveBrowserProfile(
   if (name !== DEFAULT_BROWSER_PROFILE) {
     throw new Error(`Unknown profile "${name}". mu-browser ships the "browser" profile.`);
   }
-  return browserProfile(browserProfileOptionsFrom(request.options, home));
+  return browserProfile(browserProfileOptionsFrom(request.options, home, request.cwd));
 }
 
 export function browserDiagnostics(home?: string): string[] {
@@ -190,6 +191,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
     "--browser-profile": 1,
     "--fake-browser": 0,
     "--headless": 0,
+    // Consumed only to return an actionable migration error. It grants nothing.
     "--document": 1,
     "--allow-origin": 1,
     "--applicant-profile": 1,
@@ -205,7 +207,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
       "                           Mu-owned profile to use with --connection persistent",
       "      --fake-browser       alias for --connection fake, a deterministic in-memory browser",
       "      --headless           run the Mu-owned browser without a window (persistent only)",
-      "      --document <path>    authorize one local document for upload (repeatable)",
+      "                           uploadable files come from the launch directory",
       "      --allow-origin <origin>",
       "                           approve an origin beyond the task's own (repeatable)",
       "      --applicant-profile <path>",
@@ -222,8 +224,8 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
     sessionRoot: (home) => browserSessionsDir(home),
   },
   renderers: browserRenderers,
-  // No direct shell and no file mentions: this product has no shell, and a
-  // browser session is not rooted in a directory to mention files from.
+  // No direct shell. The browser profile receives cwd as a file-access boundary,
+  // but paths remain runtime-only and are never rendered as @-mentions.
   diagnostics: () => browserDiagnostics(undefined),
   transcriptPrefix: BROWSER_COMMAND,
   terminalTitle: (_context: ProductLaunchContext) => BROWSER_COMMAND,

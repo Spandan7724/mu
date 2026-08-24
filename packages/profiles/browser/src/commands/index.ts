@@ -208,12 +208,12 @@ export function browserCommands(context: BrowserCommandsOptions): Command[] {
     const load = await sources.documents();
     if (load.documents.length === 0 && load.problems.length === 0) {
       return lines([
-        "No documents are authorized for this session.",
-        "Authorize one with --document <absolute path>; Mu never browses for files itself.",
+        "No uploadable documents were found in the launch directory.",
+        "Put the file directly in that directory and start a new session.",
       ]);
     }
     return lines([
-      countLabel(load.documents.length, "authorized document"),
+      countLabel(load.documents.length, "launch-directory document"),
       ...load.documents.map((document) =>
         joinParts([
           document.id,
@@ -225,7 +225,7 @@ export function browserCommands(context: BrowserCommandsOptions): Command[] {
         ]),
       ),
       ...load.problems.map((problem) =>
-        joinParts(["not authorized", problem.path, problem.message]),
+        joinParts(["not available", problem.path, problem.message]),
       ),
       "The model sees these ids and this metadata; it never sees a path.",
     ]);

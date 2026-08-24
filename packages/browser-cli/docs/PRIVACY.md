@@ -11,13 +11,13 @@ simply have no effect there).
   models.json     cached model catalog — 0600
   sessions/       session transcripts (conversation + tool calls), one per session
   profiles/       Mu-owned Chrome/Edge/Chromium profiles, only in persistent mode
-  documents/      staged copies of files you authorized with --document
+  documents/      private snapshots of eligible launch-directory files
   artifacts/      screenshots, receipts, and download/observation metadata
   logs/           reserved for redacted operational logs
 ```
 
 **In this build, `logs/` is created but not yet written to.** Session history,
-`--document` staging, owned browser profiles and commitment receipts all work today; a
+launch-directory snapshots, owned browser profiles and commitment receipts all work today; a
 receipt is written under `artifacts/receipts/` every time a submission, send, purchase,
 deletion, consent or account change actually happens, and the path is reported back in
 the conversation. Screenshot capture and operational logging are fully specified and
@@ -53,16 +53,17 @@ before it is recorded, so it does not appear here either. There is no separate
 retention bound on this directory today; it grows with your usage the way a chat log
 would, and removing it is a plain `rm`.
 
-**`documents/`** — when you pass `--document <path>`, Mu copies that exact file into
-`documents/<id>/<basename>` (`0600` inside a `0700` parent) and authorizes the copy,
-not the original. Your original file is never modified or moved. Copying is required
+**`documents/`** — at startup, Mu copies each eligible direct file from the launch
+directory into `documents/<id>/<basename>` (`0600` inside a `0700` parent) and uses
+the copy, not the original. Your original file is never modified or moved. Hidden
+files, subdirectories, symlinks, unsupported types, and paths outside the launch
+directory are not admitted. Copying is required
 because the browser bridge refuses to attach a path outside the roots it was started
 with, and the alternative — letting Mu's browser tools reach arbitrary paths on your
 filesystem — would also make `file://` navigation reachable from the page, which is a
-line the product does not cross. A staged copy is re-hashed against the byte-for-byte
-original at the moment it is used; if the source changed since authorization, Mu
-refuses to use the stale copy. Limits: 25 MB per file, 100 authorized documents per
-session.
+line the product does not cross. The private snapshot is hashed at admission and again
+before use; if its bytes changed, Mu refuses it. Limits: 25 MB per file, 100 documents
+per session.
 
 **`artifacts/`** — receipts (written today, under `receipts/`), plus the designed home
 for screenshots and metadata about observations and downloads, each pruned on its own

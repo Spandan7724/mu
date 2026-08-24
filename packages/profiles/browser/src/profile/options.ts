@@ -1,6 +1,7 @@
 // ARCHITECTURE §3. The defaults are the safe ones: the extension bridge (so the
 // user approves a visible tab rather than Mu launching something), no origin
-// approved beyond the task's, and nothing pre-authorized for upload.
+// approved beyond the task's. The product supplies a launch-directory file boundary;
+// embedders can still provide a finite exact document set directly.
 import { z } from "zod";
 import type { BrowserConnectionMode, BrowserFamily } from "../contracts/connection.ts";
 import { normalizeOrigin } from "../contracts/primitives.ts";
@@ -14,6 +15,8 @@ export interface BrowserProfileOptions {
   // a path to one of the user's own browser profiles (BD7).
   userDataDir?: string;
   documents?: string[];
+  /** Product-supplied launch directory. Direct files here form the local-file boundary. */
+  workspaceRoot?: string;
   applicantProfile?: string;
   allowedOrigins?: string[];
   artifactRoot?: string;
@@ -70,6 +73,7 @@ export interface ResolvedBrowserProfileOptions {
   headless: boolean;
   userDataDir: string | undefined;
   documents: string[];
+  workspaceRoot: string | undefined;
   applicantProfile: string | undefined;
   allowedOrigins: string[];
   artifactRoot: string | undefined;
@@ -82,7 +86,7 @@ export const DEFAULT_BROWSER: BrowserFamily = "chrome";
 export function resolveBrowserProfileOptions(
   options: BrowserProfileOptions = {},
 ): ResolvedBrowserProfileOptions {
-  const { home, dataRoot, factory, extensionToken, ...declared } = options;
+  const { home, dataRoot, factory, extensionToken, workspaceRoot, ...declared } = options;
   void home;
   void dataRoot;
   void factory;
@@ -97,6 +101,7 @@ export function resolveBrowserProfileOptions(
     headless: parsed.headless ?? false,
     userDataDir: connection === "persistent" ? (parsed.userDataDir ?? "default") : undefined,
     documents: [...(parsed.documents ?? [])],
+    workspaceRoot,
     applicantProfile: parsed.applicantProfile,
     // Deduplicated and normalized, so a rule can never be widened by writing the
     // same origin two different ways.

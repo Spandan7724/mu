@@ -31,6 +31,12 @@ mu-browser --fake-browser      # a deterministic in-memory browser, for developm
 
 `mu-browser --help` lists every flag.
 
+The directory you launch `mu-browser` from is its local-file boundary. Supported
+direct files there (PDF, office/text documents, and common images) are available for
+upload by opaque id. Subdirectories, hidden files, symlinks, unsupported types, and
+every path outside that directory are excluded. Run the command from the directory
+that contains the files needed for the task.
+
 ## Connection modes
 
 | Mode | What it does |
@@ -73,7 +79,7 @@ exists for this product — and full details, including a warning about what
   config.json     model/provider configuration, private
   sessions/       session transcripts
   profiles/       browser profiles Mu owns (persistent mode only)
-  documents/      staged copies of files authorized with --document
+  documents/      private snapshots of eligible launch-directory files
   artifacts/      screenshots, receipts, and observation/download metadata
   logs/           reserved for operational logs, unused in this build
 ```

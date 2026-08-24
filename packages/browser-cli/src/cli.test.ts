@@ -61,30 +61,28 @@ describe("argv", () => {
       "--fake-browser",
       "--allow-origin",
       "https://jobs.example.com",
-      "--document",
-      "/documents/resume.pdf",
     ]);
     expect(args.errors).toEqual([]);
     expect(args.mode).toBe("headless");
     expect(args.prompt).toBe("open the form");
     expect(args.product.connection).toBe("fake");
     expect(args.product.allowedOrigins).toEqual(["https://jobs.example.com"]);
-    expect(args.product.documents).toEqual(["/documents/resume.pdf"]);
   });
 
-  test("repeatable flags accumulate rather than replacing", () => {
+  test("repeatable origin flags accumulate rather than replacing", () => {
     const args = parse([
       "--allow-origin",
       "https://a.example.com",
       "--allow-origin",
       "https://b.example.com",
-      "--document",
-      "/a.pdf",
-      "--document",
-      "/b.pdf",
     ]);
     expect(args.product.allowedOrigins).toHaveLength(2);
-    expect(args.product.documents).toHaveLength(2);
+  });
+
+  test("the removed document flag is not accepted", () => {
+    expect(parse(["--document", "/documents/resume.pdf"]).errors.join(" ")).toContain(
+      "--document was removed",
+    );
   });
 
   test("an unsupported connection choice is refused with the choices spelled out", () => {
@@ -156,6 +154,11 @@ describe("profile selection", () => {
     });
     expect(options.connection).toBe("extension");
     expect(options.factory).toBeDefined();
+  });
+
+  test("the launch directory becomes the profile's workspace boundary", () => {
+    const options = browserProfileOptionsFrom(emptyBrowserProductOptions(), undefined, "/work/job");
+    expect(options.workspaceRoot).toBe("/work/job");
   });
 
   test("a profile this product does not ship is refused rather than substituted", async () => {
@@ -313,6 +316,7 @@ describe("a browser session runs end to end against the fake driver", () => {
       "browser_submit",
       "browser_tabs",
       "browser_takeover",
+      "browser_upload",
       "browser_wait",
     ]);
     const commands = runtime.commands.list().map((command) => command.name);

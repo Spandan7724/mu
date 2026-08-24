@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { authorizedDocumentId } from "../contracts/primitives.ts";
@@ -8,6 +8,7 @@ import {
   authorizeDocument,
   DOCUMENT_LIMITS,
   DocumentAuthorizationError,
+  discoverWorkspaceDocuments,
   documentIdForPath,
   mimeTypeForBasename,
 } from "./documents.ts";
@@ -32,6 +33,32 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
+});
+
+describe("launch-directory discovery", () => {
+  test("admits only supported direct ordinary files", async () => {
+    await writeFile(join(root, "photo.jpg"), "jpeg");
+    await writeFile(join(root, ".hidden.pdf"), "hidden");
+    await writeFile(join(root, "script.ts"), "code");
+    await mkdir(join(root, "nested"));
+    await writeFile(join(root, "nested", "nested.pdf"), "nested");
+    await symlink(resumePath, join(root, "linked.pdf"));
+
+    const discovered = await discoverWorkspaceDocuments(root);
+
+    expect(discovered.paths.map((path) => path.slice(root.length + 1))).toEqual([
+      "photo.jpg",
+      "resume.pdf",
+    ]);
+    expect(discovered.problems).toEqual([]);
+  });
+
+  test("is bounded and reports truncation", async () => {
+    await writeFile(join(root, "second.txt"), "second");
+    const discovered = await discoverWorkspaceDocuments(root, 1);
+    expect(discovered.paths).toHaveLength(1);
+    expect(discovered.problems[0]?.message).toContain("only the first 1");
+  });
 });
 
 describe("document authorization", () => {

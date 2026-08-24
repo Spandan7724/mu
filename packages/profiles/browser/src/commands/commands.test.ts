@@ -188,11 +188,11 @@ describe("/disconnect ends access without deleting browser data", () => {
   });
 });
 
-describe("/documents answers from the authorized set", () => {
-  test("with nothing authorized it says how to authorize one", async () => {
+describe("/documents answers from the launch-directory set", () => {
+  test("with nothing available it says where files come from", async () => {
     const message = await harness().run("documents");
-    expect(message).toContain("No documents are authorized");
-    expect(message).toContain("--document");
+    expect(message).toContain("No uploadable documents");
+    expect(message).toContain("launch directory");
   });
 
   test("it names the id, type, size and digest, and never a path", async () => {
@@ -222,7 +222,7 @@ describe("/documents answers from the authorized set", () => {
       },
     });
     const message = await app.run("documents");
-    expect(message).toContain("not authorized");
+    expect(message).toContain("not available");
     expect(message).toContain("no file at missing.pdf");
   });
 

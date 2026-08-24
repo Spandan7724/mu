@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AgentMessage, customMessage, type Profile, type SessionEnvironment } from "@mu/core";
-import { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import { AuthorizedDocumentStore, discoverWorkspaceDocuments } from "../artifacts/documents.ts";
 import { BrowserArtifactStore } from "../artifacts/store.ts";
 import { applicantSource, browserCommands } from "../commands/index.ts";
 import type { BrowserCarryover } from "../contracts/carryover.ts";
@@ -20,6 +20,7 @@ import {
   applicantFactsMessage,
   browserEnvironment,
   connectionMessage,
+  documentsMessage,
   environmentMessage,
   taskUrlsFromMessages,
 } from "./environment.ts";
@@ -72,10 +73,24 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     }
   }
 
-  // Documents the user named on the command line. Each is staged inside Mu's own root:
-  // the browser bridge refuses to attach a file from anywhere else, and the flag that
-  // would lift that restriction also unblocks `file://`.
+  // Eligible direct files in the launch directory are the product's local-file
+  // capability. They are snapshotted inside Mu's root so later edits cannot silently
+  // change the bytes the user made available, and so the browser bridge never receives
+  // broad filesystem access.
   const documents = new AuthorizedDocumentStore({ stageInto: join(dataRoot, "documents") });
+  const documentProblems: { path: string; message: string }[] = [];
+  const documentPaths = [...resolved.documents];
+  if (resolved.workspaceRoot !== undefined) {
+    try {
+      const discovered = await discoverWorkspaceDocuments(resolved.workspaceRoot);
+      documentPaths.push(...discovered.paths);
+      documentProblems.push(...discovered.problems);
+    } catch (error) {
+      diagnostics.push(
+        `could not inspect the launch directory: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   const runtime = new BrowserRuntime({
     factory: options.factory ?? unconfiguredFactory,
@@ -89,9 +104,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     ...(resolved.extensionToken === undefined ? {} : { extensionToken: resolved.extensionToken }),
   });
 
-  const environment: SessionEnvironment = browserEnvironment({ options: resolved, dataRoot });
-
-  for (const path of resolved.documents) {
+  for (const path of [...new Set(documentPaths)]) {
     try {
       await documents.authorize(path, { purposes: ["reference", "upload"] });
     } catch (error) {
@@ -101,6 +114,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       );
     }
   }
+
+  const environment: SessionEnvironment = browserEnvironment({
+    options: resolved,
+    dataRoot,
+    documentCount: documents.size,
+  });
 
   const loadApplicant = applicantSource(resolved.applicantProfile);
   const applicant = await loadApplicant();
@@ -135,12 +154,19 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       runtime,
       options: resolved,
       dataRoot,
-      sources: { applicant: loadApplicant },
+      sources: {
+        applicant: loadApplicant,
+        documents: async () => ({
+          documents: documents.summaries(),
+          problems: [...documentProblems],
+        }),
+      },
     }),
     environment: () => environment,
     contextMessages: (): AgentMessage[] => [
       environmentMessage(environment),
       connectionMessage(runtime.description, resolved.connection),
+      documentsMessage(documents.summaries()),
       ...(applicant.facts === undefined ? [] : [applicantFactsMessage(applicant.facts)]),
     ],
     refreshContext: (messages): AgentMessage[] => {
