@@ -95,6 +95,16 @@ describe("observation", () => {
     expect(browserObservationSchema.safeParse(observation).success).toBe(false);
   });
 
+  test("a screenshot cannot be both attached and reported omitted", () => {
+    const observation = sampleObservation({
+      screenshot: { mimeType: "image/png", data: "aGk=", evictable: true },
+      screenshotOmitted: "too-large",
+    });
+    expect(issues(observation)).toContain(
+      "an observation cannot attach and omit the same screenshot",
+    );
+  });
+
   test("unknown keys are rejected so nothing rides along inside an observation", () => {
     expect(
       browserObservationSchema.safeParse({ ...sampleObservation(), cookies: "session=1" }).success,

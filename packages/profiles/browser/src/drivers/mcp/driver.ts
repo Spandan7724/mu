@@ -48,6 +48,7 @@ import {
   COMMITMENT_RISKS,
   refValidity,
   refValidityMessage,
+  type ScreenshotOmissionReason,
 } from "../../contracts/observation.ts";
 import {
   elementRefId,
@@ -74,10 +75,14 @@ import {
   prioritizeSnapshotNodes,
   type SnapshotNode,
   structuralSignature,
+  type VisibleControlHint,
 } from "./snapshot.ts";
 
 const DEFAULT_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 100;
+const SCROLL_SETTLE_POLL_MS = 200;
+const SCROLL_MIN_SETTLE_MS = 600;
+const SCROLL_MAX_SETTLE_MS = 1_200;
 const APPROVAL_HINT = /waiting for (?:incoming )?extension|extension connection|connect.html/i;
 
 // Roles whose accessible value the snapshot reports, mapped to the input type the
@@ -450,25 +455,156 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     // document short of it is an outcome Mu cannot establish (BD18).
     readyState: string;
     frameUrls: string[];
-    visibleLabels: string[];
+    visibleControls: VisibleControlHint[];
+    visibleFramePrefixes: string[];
   }
 
-  const PAGE_METADATA_FUNCTION =
-    "() => ({ width: window.innerWidth, height: window.innerHeight," +
-    " scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY)," +
-    " readyState: document.readyState," +
-    " frameUrls: Array.prototype.map.call(document.querySelectorAll('iframe')," +
-    " function (f) { return f.src ? String(f.src) : ''; })," +
-    " visibleLabels: Array.prototype.slice.call(document.querySelectorAll(" +
-    "'a,button,input,select,textarea,[role=button],[role=link],[role=textbox]," +
-    "[role=combobox],[role=checkbox],[role=radio],[role=tab],h1,h2,h3,h4,h5,h6'))" +
-    ".filter(function (e) { var r = e.getBoundingClientRect();" +
-    " var s = window.getComputedStyle(e); return r.width > 0 && r.height > 0 &&" +
-    " r.bottom > 0 && r.right > 0 && r.top < window.innerHeight &&" +
-    " r.left < window.innerWidth && s.display !== 'none' && s.visibility !== 'hidden'; })" +
-    ".slice(0, 500).map(function (e) { return String(e.getAttribute('aria-label') ||" +
-    " e.getAttribute('placeholder') || e.getAttribute('title') || e.innerText ||" +
-    " e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500); }) })";
+  const PAGE_METADATA_FUNCTION = String.raw`() => {
+    const selector =
+      "a,button,input,select,textarea,[role],h1,h2,h3,h4,h5,h6,summary,details";
+    const viewport = {
+      left: 0,
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+    };
+    const visibleFramePrefixes = [];
+    const frameUrls = [];
+    const occurrences = new Map();
+    const visibleControls = [];
+    let rootsVisited = 0;
+    let frameSequence = 0;
+
+    const intersects = (rect, clip) =>
+      rect.right > clip.left &&
+      rect.bottom > clip.top &&
+      rect.left < clip.right &&
+      rect.top < clip.bottom;
+    const globalRect = (element, context) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left + context.offsetX,
+        top: rect.top + context.offsetY,
+        right: rect.right + context.offsetX,
+        bottom: rect.bottom + context.offsetY,
+      };
+    };
+    const rendered = (element) => {
+      const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style?.display !== "none" &&
+        style?.visibility !== "hidden" &&
+        style?.opacity !== "0" &&
+        element.closest('[aria-hidden="true"]') === null
+      );
+    };
+    const roleOf = (element) => {
+      const explicit = element.getAttribute("role")?.trim().toLowerCase();
+      if (explicit) return explicit;
+      const tag = element.tagName.toLowerCase();
+      if (tag === "a") return "link";
+      if (tag === "button" || tag === "summary") return "button";
+      if (/^h[1-6]$/.test(tag)) return "heading";
+      if (tag === "textarea") return "textbox";
+      if (tag === "select") return element.hasAttribute("multiple") ? "listbox" : "combobox";
+      if (tag === "input") {
+        const type = (element.getAttribute("type") ?? "text").toLowerCase();
+        if (type === "checkbox" || type === "radio") return type;
+        if (type === "range") return "slider";
+        if (["button", "submit", "reset", "image"].includes(type)) return "button";
+        if (type === "search") return "searchbox";
+        return "textbox";
+      }
+      return tag === "details" ? "group" : "generic";
+    };
+    const labelOf = (element) => {
+      const labels = Array.from(element.labels ?? [])
+        .map((label) => label.textContent ?? "")
+        .join(" ");
+      return String(
+        element.getAttribute("aria-label") ||
+          labels ||
+          element.getAttribute("alt") ||
+          element.getAttribute("placeholder") ||
+          element.getAttribute("title") ||
+          element.innerText ||
+          element.textContent ||
+          "",
+      )
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 500);
+    };
+
+    const recordControl = (element, context) => {
+      if (!rendered(element)) return;
+      const role = roleOf(element);
+      const label = labelOf(element);
+      if (!label) return;
+      const key = (context.framePrefix ?? "") + "\\u0000" + role + "\\u0000" + label.toLowerCase();
+      const occurrence = occurrences.get(key) ?? 0;
+      occurrences.set(key, occurrence + 1);
+      if (!intersects(globalRect(element, context), context.clip)) return;
+      if (visibleControls.length < 500) {
+        visibleControls.push({
+          role,
+          label,
+          occurrence,
+          ...(context.framePrefix ? { framePrefix: context.framePrefix } : {}),
+        });
+      }
+    };
+    const visitRoot = (root, context) => {
+      rootsVisited += 1;
+      if (rootsVisited > 100) return;
+      for (const element of Array.from(root.querySelectorAll("*"))) {
+        if (element.matches(selector)) recordControl(element, context);
+        const shadow = element.shadowRoot;
+        if (shadow) visitRoot(shadow, context);
+        if (element.tagName.toLowerCase() !== "iframe") continue;
+        const frame = element;
+        frameSequence += 1;
+        const framePrefix = "f" + frameSequence;
+        const rect = globalRect(frame, context);
+        const clip = {
+          left: Math.max(context.clip.left, rect.left),
+          top: Math.max(context.clip.top, rect.top),
+          right: Math.min(context.clip.right, rect.right),
+          bottom: Math.min(context.clip.bottom, rect.bottom),
+        };
+        frameUrls.push(frame.src || "");
+        if (intersects(rect, context.clip)) visibleFramePrefixes.push(framePrefix);
+        try {
+          const child = frame.contentDocument;
+          if (child) {
+            visitRoot(child, {
+              offsetX: rect.left,
+              offsetY: rect.top,
+              clip,
+              framePrefix,
+            });
+          }
+        } catch {
+          // Cross-origin frames cannot expose DOM geometry. Their visible frame prefix
+          // still lets Mu prioritize the referenced accessibility subtree as a unit.
+        }
+      }
+    };
+    visitRoot(document, { offsetX: 0, offsetY: 0, clip: viewport });
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollX: Math.round(window.scrollX),
+      scrollY: Math.round(window.scrollY),
+      readyState: document.readyState,
+      frameUrls,
+      visibleControls,
+      visibleFramePrefixes,
+    };
+  }`;
 
   const pageMetadata = async (signal: AbortSignal): Promise<PageMetadata> => {
     const fallback: PageMetadata = {
@@ -478,11 +614,12 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       scrollY: 0,
       readyState: "unknown",
       frameUrls: [],
-      visibleLabels: [],
+      visibleControls: [],
+      visibleFramePrefixes: [],
     };
     try {
-      // A constant, adapter-authored expression. No page content and no model
-      // input reaches it, and `browser_evaluate` is never model-visible.
+      // A constant, adapter-authored expression. No model input reaches it;
+      // page labels are used only to order the model-visible snapshot.
       const response = await call(
         "browser_evaluate",
         { function: PAGE_METADATA_FUNCTION },
@@ -503,11 +640,34 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         frameUrls: Array.isArray(parsed.frameUrls)
           ? parsed.frameUrls.filter((entry): entry is string => typeof entry === "string")
           : [],
-        visibleLabels: Array.isArray(parsed.visibleLabels)
-          ? parsed.visibleLabels
+        visibleControls: Array.isArray(parsed.visibleControls)
+          ? parsed.visibleControls.flatMap((entry): VisibleControlHint[] => {
+              if (typeof entry !== "object" || entry === null) return [];
+              const value = entry as Record<string, unknown>;
+              if (
+                typeof value.role !== "string" ||
+                typeof value.label !== "string" ||
+                typeof value.occurrence !== "number"
+              ) {
+                return [];
+              }
+              return [
+                {
+                  role: value.role.slice(0, 64),
+                  label: value.label.slice(0, 500),
+                  occurrence: Math.max(0, Math.trunc(value.occurrence)),
+                  ...(typeof value.framePrefix === "string"
+                    ? { framePrefix: value.framePrefix.slice(0, 32) }
+                    : {}),
+                },
+              ];
+            })
+          : [],
+        visibleFramePrefixes: Array.isArray(parsed.visibleFramePrefixes)
+          ? parsed.visibleFramePrefixes
               .filter((entry): entry is string => typeof entry === "string")
-              .slice(0, 500)
-              .map((entry) => entry.slice(0, 500))
+              .slice(0, 100)
+              .map((entry) => entry.slice(0, 32))
           : [],
       };
     } catch (error) {
@@ -527,7 +687,11 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const referenced = page.nodes.filter(
       (node) => node.ref !== undefined && node.role !== "iframe",
     );
-    const ordered = prioritizeSnapshotNodes(referenced, metadata.visibleLabels);
+    const ordered = prioritizeSnapshotNodes(
+      referenced,
+      metadata.visibleControls,
+      metadata.visibleFramePrefixes,
+    );
     const all = ordered.map((node) =>
       withCheckedDefault(elementFor(node, page.tab, frameIds), node),
     );
@@ -560,20 +724,25 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const credentialPage = all.some((element) => element.inputType === "password");
     const wantsImage = request.screenshot === "viewport" || request.screenshot === "full-page";
     let screenshot: BrowserObservation["screenshot"];
+    let screenshotOmitted: ScreenshotOmissionReason | undefined;
     // SECURITY §11: a credential page is never captured, so no rendered password
     // field can be carried in an artifact.
-    if (wantsImage && !credentialPage) {
+    if (wantsImage && credentialPage) {
+      screenshotOmitted = "credential";
+    } else if (wantsImage) {
       const shot = await call(
         "browser_take_screenshot",
         { scale: "css", ...(request.screenshot === "full-page" ? { fullPage: true } : {}) },
         signal,
       );
       const image = shot.image;
-      if (
-        image !== undefined &&
-        (image.mimeType === "image/png" || image.mimeType === "image/jpeg") &&
-        image.data.length <= BROWSER_LIMITS.maxScreenshotBase64Chars
-      ) {
+      if (image === undefined) {
+        screenshotOmitted = "unavailable";
+      } else if (image.mimeType !== "image/png" && image.mimeType !== "image/jpeg") {
+        screenshotOmitted = "unsupported-format";
+      } else if (image.data.length > BROWSER_LIMITS.maxScreenshotBase64Chars) {
+        screenshotOmitted = "too-large";
+      } else {
         screenshot = { mimeType: image.mimeType, data: image.data, evictable: true };
       }
     }
@@ -595,6 +764,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       elements,
       risks,
       ...(screenshot === undefined ? {} : { screenshot }),
+      ...(screenshotOmitted === undefined ? {} : { screenshotOmitted }),
       ...(nodesOmitted > 0 || textCharsOmitted > 0
         ? { truncated: { nodesOmitted, textCharsOmitted } }
         : {}),
@@ -712,6 +882,38 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const page = await readPage(tabs.some((tab) => tab.id === tabId) ? tabId : undefined, signal);
     await observationFor(page, {}, signal);
     return { tab: page.tab, page };
+  };
+
+  const afterScroll = async (
+    tabId: string,
+    signal: AbortSignal,
+  ): Promise<{ tab: TabState; page: PageState }> => {
+    // Settlement is wall-clock behavior. Do not use the injectable receipt clock:
+    // tests and embedders may intentionally keep that clock fixed.
+    const started = Date.now();
+    const deadline = started + SCROLL_MAX_SETTLE_MS;
+    let previousSignature: string | undefined;
+    let latest = await afterAction(tabId, signal);
+    for (;;) {
+      const signature = latest.tab.signature;
+      const stable = previousSignature !== undefined && signature === previousSignature;
+      const currentTime = Date.now();
+      if ((stable && currentTime - started >= SCROLL_MIN_SETTLE_MS) || currentTime >= deadline) {
+        return latest;
+      }
+      previousSignature = signature;
+      await sleep(SCROLL_SETTLE_POLL_MS, signal);
+      latest = await afterAction(tabId, signal);
+    }
+  };
+
+  const scrollMovement = (response: SidecarResponse): boolean | undefined => {
+    try {
+      const value = JSON.parse(response.result ?? "{}") as Record<string, unknown>;
+      return typeof value.moved === "boolean" ? value.moved : undefined;
+    } catch {
+      return undefined;
+    }
   };
 
   const afterSubmission = async (
@@ -939,18 +1141,31 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       if (targets.length === 0) {
         const tab = await ensureActive(undefined, signal);
         const before = snapshotOf(tab);
+        let moved: boolean | undefined;
         if (request.kind === "scroll") {
-          await call(
+          const response = await call(
             "browser_evaluate",
             {
-              function: `() => { window.scrollBy(${Math.trunc(request.deltaX)}, ${Math.trunc(request.deltaY)}); }`,
+              function: `() => { const beforeX = window.scrollX; const beforeY = window.scrollY; window.scrollBy(${Math.trunc(request.deltaX)}, ${Math.trunc(request.deltaY)}); return { moved: window.scrollX !== beforeX || window.scrollY !== beforeY, beforeX, beforeY, afterX: window.scrollX, afterY: window.scrollY }; }`,
             },
             signal,
           );
+          moved = scrollMovement(response);
         } else if (request.kind === "press") {
           await call("browser_press_key", { key: request.key }, signal);
         }
-        const { tab: updated } = await afterAction(tab.id, signal);
+        const { tab: updated } =
+          request.kind === "scroll" && moved !== false
+            ? await afterScroll(tab.id, signal)
+            : await afterAction(tab.id, signal);
+        if (request.kind === "scroll" && moved === false) {
+          return failedOutcome({
+            message:
+              "The page viewport did not move. It may already be at that edge, or a nested container may be the scrollable surface.",
+            before,
+            after: resultOf(updated),
+          });
+        }
         return completedOutcome({
           message: request.kind === "scroll" ? "Scrolled." : "Sent the key to the page.",
           before,
@@ -979,6 +1194,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       const ref = found.node.ref as string;
       const label = found.element.label ?? found.element.name ?? ref;
       let outcome: { message: string; response?: SidecarResponse } | undefined;
+      let scrollDidMove: boolean | undefined;
       switch (request.kind) {
         case "fill":
         case "type": {
@@ -1043,10 +1259,11 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
             {
               target: ref,
               element: label,
-              function: `(element) => { element.scrollBy(${Math.trunc(request.deltaX)}, ${Math.trunc(request.deltaY)}); window.scrollBy(${Math.trunc(request.deltaX)}, ${Math.trunc(request.deltaY)}); }`,
+              function: `(element) => { const beforeX = element.scrollLeft; const beforeY = element.scrollTop; element.scrollBy(${Math.trunc(request.deltaX)}, ${Math.trunc(request.deltaY)}); return { moved: element.scrollLeft !== beforeX || element.scrollTop !== beforeY, beforeX, beforeY, afterX: element.scrollLeft, afterY: element.scrollTop }; }`,
             },
             signal,
           );
+          scrollDidMove = scrollMovement(response);
           outcome = { message: "Scrolled.", response };
           break;
         }
@@ -1100,8 +1317,18 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         });
       }
 
-      const { tab: updated } = await afterAction(found.page.tab.id, signal);
+      const { tab: updated } =
+        request.kind === "scroll" && scrollDidMove !== false
+          ? await afterScroll(found.page.tab.id, signal)
+          : await afterAction(found.page.tab.id, signal);
       const after = resultOf(updated);
+      if (request.kind === "scroll" && scrollDidMove === false) {
+        return failedOutcome({
+          message: `"${label}" did not scroll. It may already be at that edge or may not be a scrollable container; omit target to scroll the page viewport.`,
+          before,
+          after,
+        });
+      }
       const navigation = navigationOf(before, after);
       const download = settled.response === undefined ? undefined : downloadOf(settled.response);
       return completedOutcome({

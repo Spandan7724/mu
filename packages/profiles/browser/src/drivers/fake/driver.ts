@@ -320,6 +320,9 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
             },
           }
         : {}),
+      ...(wantsImage && page.credential === true
+        ? { screenshotOmitted: "credential" as const }
+        : {}),
       ...(nodesOmitted > 0 || textCharsOmitted > 0
         ? { truncated: { nodesOmitted, textCharsOmitted } }
         : {}),

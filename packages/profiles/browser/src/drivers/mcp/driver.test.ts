@@ -4,6 +4,7 @@
 // suite lives in `live.test.ts` behind an env flag.
 import { describe, expect, test } from "bun:test";
 import { BrowserDriverError } from "../../contracts/driver.ts";
+import { BROWSER_LIMITS } from "../../contracts/json.ts";
 import { elementRefOf } from "../../contracts/observation.ts";
 import { BrowserSecret } from "../../contracts/secret.ts";
 import type { DriverContractSetup } from "../../testing/conformance-types.ts";
@@ -265,7 +266,12 @@ describe("observation discipline", () => {
                   scrollY: 24_000,
                   readyState: "complete",
                   frameUrls: [],
-                  visibleLabels: ["Model 241", "Model 242", "Model 243"],
+                  visibleControls: [
+                    { role: "link", label: "Model 241", occurrence: 0 },
+                    { role: "link", label: "Model 242", occurrence: 0 },
+                    { role: "link", label: "Model 243", occurrence: 0 },
+                  ],
+                  visibleFramePrefixes: [],
                 })}`,
               },
             ],
@@ -294,7 +300,87 @@ describe("observation discipline", () => {
     expect(password?.value).toBe("[redacted]");
     expect(observation.risks).toContain("password");
     expect(observation.screenshot).toBeUndefined();
+    expect(observation.screenshotOmitted).toBe("credential");
     expect(JSON.stringify(observation)).not.toContain(FAKE_VALUES.secretMarker);
+  });
+
+  test("a requested screenshot reports every non-credential omission reason", async () => {
+    const cases = [
+      { reason: "unavailable", content: [{ type: "text", text: "no image" }] },
+      {
+        reason: "unsupported-format",
+        content: [{ type: "image", mimeType: "image/webp", data: "AA==" }],
+      },
+      {
+        reason: "too-large",
+        content: [
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: "a".repeat(BROWSER_LIMITS.maxScreenshotBase64Chars + 1),
+          },
+        ],
+      },
+    ] as const;
+    for (const fixture of cases) {
+      const inner = createScriptedSidecar();
+      const sidecar: ScriptedSidecar = {
+        ...inner,
+        callTool: async (name, args, options) =>
+          name === "browser_take_screenshot"
+            ? { content: [...fixture.content] }
+            : inner.callTool(name, args, options),
+      };
+      const { driver, signal } = await connected("persistent", sidecar);
+      const observation = await driver.observe({ screenshot: "viewport" }, signal);
+      expect(observation.screenshot).toBeUndefined();
+      expect(observation.screenshotOmitted).toBe(fixture.reason);
+      await driver.disconnect();
+    }
+  });
+
+  test("targeted scrolling moves only the container, not the page viewport", async () => {
+    const { driver, signal } = await connected();
+    await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.dynamic }, signal);
+    const before = await driver.observe({}, signal);
+    const target = before.elements.find((element) => element.label === FAKE_LABELS.scrollTarget);
+    const outcome = await driver.act(
+      { kind: "scroll", target: elementRefOf(target as never), deltaX: 0, deltaY: 400 },
+      signal,
+    );
+    const after = await driver.observe({}, signal);
+    expect(outcome.status).toBe("completed");
+    expect(after.viewport.scrollY).toBe(before.viewport.scrollY);
+  });
+
+  test("a page scroll that cannot move reports failure instead of claiming success", async () => {
+    const { driver, signal } = await connected();
+    await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.blank }, signal);
+    const outcome = await driver.act({ kind: "scroll", deltaX: 0, deltaY: 400 }, signal);
+    expect(outcome.status).toBe("failed");
+    expect(outcome.message).toContain("did not move");
+  });
+
+  test("a successful scroll waits for consecutive post-scroll snapshots", async () => {
+    let afterScrollSnapshots = 0;
+    let scrolling = false;
+    const inner = createScriptedSidecar();
+    const sidecar: ScriptedSidecar = {
+      ...inner,
+      callTool: async (name, args, options) => {
+        if (name === "browser_evaluate" && String(args.function).includes("window.scrollBy")) {
+          scrolling = true;
+        } else if (scrolling && name === "browser_snapshot") {
+          afterScrollSnapshots += 1;
+        }
+        return inner.callTool(name, args, options);
+      },
+    };
+    const { driver, signal } = await connected("persistent", sidecar);
+    await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.dynamic }, signal);
+    const outcome = await driver.act({ kind: "scroll", deltaX: 0, deltaY: 400 }, signal);
+    expect(outcome.status).toBe("completed");
+    expect(afterScrollSnapshots).toBeGreaterThanOrEqual(2);
   });
 
   test("a page change advances the revision; typing into a field does not", async () => {

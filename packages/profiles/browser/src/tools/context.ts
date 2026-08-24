@@ -42,7 +42,7 @@ export type BrowserToolDetails =
       frames: number;
       risks: string[];
       injections: number;
-      screenshot: "attached" | "suppressed" | "none";
+      screenshot: "attached" | "suppressed" | "unavailable" | "none";
       truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;
     }
   | {

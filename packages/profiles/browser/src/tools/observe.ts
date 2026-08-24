@@ -45,11 +45,15 @@ export function observationDetails(record: ObservationRecord): BrowserToolDetail
     risks: [...observation.risks],
     injections: record.injections.length,
     screenshot:
-      observation.screenshot === undefined
-        ? "none"
-        : screenshotSuppressed(observation)
-          ? "suppressed"
-          : "attached",
+      observation.screenshotOmitted === "credential"
+        ? "suppressed"
+        : observation.screenshotOmitted !== undefined
+          ? "unavailable"
+          : observation.screenshot === undefined
+            ? "none"
+            : screenshotSuppressed(observation)
+              ? "suppressed"
+              : "attached",
     ...(observation.truncated === undefined ? {} : { truncated: observation.truncated }),
   };
 }
@@ -87,7 +91,23 @@ export function browserObserveTool(context: BrowserToolContext) {
           outcome: "observed",
         });
         const suppressed =
-          record.observation.screenshot !== undefined && screenshotSuppressed(record.observation);
+          record.observation.screenshotOmitted === "credential" ||
+          (record.observation.screenshot !== undefined && screenshotSuppressed(record.observation));
+        const screenshotNotice = (() => {
+          if (suppressed) {
+            return "no screenshot: this page holds a credential-entry control and is never captured";
+          }
+          switch (record.observation.screenshotOmitted) {
+            case "too-large":
+              return "no screenshot: the captured image exceeded Mu's size limit";
+            case "unsupported-format":
+              return "no screenshot: the browser returned an unsupported image format";
+            case "unavailable":
+              return "no screenshot: the browser did not return an image";
+            default:
+              return undefined;
+          }
+        })();
         return {
           content: [
             {
@@ -95,9 +115,7 @@ export function browserObserveTool(context: BrowserToolContext) {
               text: [
                 observationHeadline(record),
                 ...observationFacts(record),
-                ...(suppressed
-                  ? ["no screenshot: this page holds a credential control and is never captured"]
-                  : []),
+                ...(screenshotNotice === undefined ? [] : [screenshotNotice]),
                 "",
                 observationText(record, {
                   ...(args.focus === undefined ? {} : { focus: args.focus }),

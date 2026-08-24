@@ -45,6 +45,7 @@ interface ScriptedTab {
   values: Map<string, string>;
   checked: Map<string, boolean>;
   selected: Map<string, string[]>;
+  elementScrolls: Map<string, { x: number; y: number }>;
   focused?: string | undefined;
 }
 
@@ -106,6 +107,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
     values: new Map(),
     checked: new Map(),
     selected: new Map(),
+    elementScrolls: new Map(),
   });
 
   // The browser opens on the first call and stays open. Closing its last page
@@ -236,6 +238,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
       entry.values = new Map();
       entry.checked = new Map();
       entry.selected = new Map();
+      entry.elementScrolls = new Map();
       entry.scrollX = 0;
       entry.scrollY = 0;
       return;
@@ -245,6 +248,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
     entry.values = new Map();
     entry.checked = new Map();
     entry.selected = new Map();
+    entry.elementScrolls = new Map();
     entry.scrollX = 0;
     entry.scrollY = 0;
     entry.focused = undefined;
@@ -292,20 +296,47 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
             scrollY: entry.scrollY,
             readyState: "complete",
             frameUrls: (pageOf(entry).frames ?? []).map((frame) => frame.url),
-            visibleLabels: [],
+            visibleControls: [],
+            visibleFramePrefixes: [],
           }),
         ].join("\n"),
       );
     }
     if (/scrollBy/.test(fn)) {
       const [deltaX = 0, deltaY = 0] = numbers(fn);
+      if (target !== undefined) {
+        const before = entry.elementScrolls.get(target) ?? { x: 0, y: 0 };
+        const after = {
+          x: Math.max(0, before.x + deltaX),
+          y: Math.max(0, before.y + deltaY),
+        };
+        entry.elementScrolls.set(target, after);
+        return text(
+          `### Result\n${JSON.stringify({
+            moved: after.x !== before.x || after.y !== before.y,
+            beforeX: before.x,
+            beforeY: before.y,
+            afterX: after.x,
+            afterY: after.y,
+          })}`,
+        );
+      }
+      const before = { x: entry.scrollX, y: entry.scrollY };
       const height = pageOf(entry).contentHeight ?? VIEWPORT.height;
       entry.scrollX = Math.max(0, entry.scrollX + deltaX);
       entry.scrollY = Math.min(
         Math.max(0, height - VIEWPORT.height),
         Math.max(0, entry.scrollY + deltaY),
       );
-      return text("### Result\nundefined");
+      return text(
+        `### Result\n${JSON.stringify({
+          moved: entry.scrollX !== before.x || entry.scrollY !== before.y,
+          beforeX: before.x,
+          beforeY: before.y,
+          afterX: entry.scrollX,
+          afterY: entry.scrollY,
+        })}`,
+      );
     }
     if (/history\.forward/.test(fn)) {
       if (entry.historyIndex + 1 < entry.history.length) entry.historyIndex += 1;

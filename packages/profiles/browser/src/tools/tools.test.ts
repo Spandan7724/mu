@@ -79,6 +79,7 @@ describe("browser_observe", () => {
       const text = resultText(result);
       expect(text).not.toContain(FAKE_VALUES.secretMarker);
       expect(text).toContain(REDACTED);
+      expect(text).toContain("credential-entry control");
       expect(result.content.some((block) => block.type === "image")).toBe(false);
     } finally {
       await harness.shutdown();

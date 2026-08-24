@@ -180,6 +180,12 @@ export interface BrowserScreenshot {
   evictable: true;
 }
 
+export type ScreenshotOmissionReason =
+  | "credential"
+  | "too-large"
+  | "unsupported-format"
+  | "unavailable";
+
 export interface BrowserObservation {
   connectionId: string;
   tab: BrowserTab;
@@ -195,6 +201,7 @@ export interface BrowserObservation {
   elements: BrowserElement[];
   risks: BrowserRisk[];
   screenshot?: BrowserScreenshot | undefined;
+  screenshotOmitted?: ScreenshotOmissionReason | undefined;
   truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;
 }
 
@@ -225,6 +232,9 @@ export const browserObservationSchema = z
         evictable: z.literal(true),
       })
       .optional(),
+    screenshotOmitted: z
+      .enum(["credential", "too-large", "unsupported-format", "unavailable"])
+      .optional(),
     truncated: z
       .strictObject({
         nodesOmitted: z.number().int().nonnegative(),
@@ -233,6 +243,13 @@ export const browserObservationSchema = z
       .optional(),
   })
   .superRefine((observation, ctx) => {
+    if (observation.screenshot !== undefined && observation.screenshotOmitted !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["screenshotOmitted"],
+        message: "an observation cannot attach and omit the same screenshot",
+      });
+    }
     const frameIds = new Set(observation.frames.map((frame) => frame.id));
     const refs = new Set<string>();
     observation.elements.forEach((element, index) => {

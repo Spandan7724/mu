@@ -1,10 +1,4 @@
-import {
-  defaultModelId,
-  type ExtensionHost,
-  listModels,
-  type ModelInfo,
-  providerConfig,
-} from "mu";
+import { defaultModelId, type ExtensionHost, listModels, type ModelInfo, providerConfig } from "mu";
 import { accountLoginProviders } from "./login.ts";
 
 export type ModelCredentialSource = "apiKey" | "oauth" | "extension" | "local";
