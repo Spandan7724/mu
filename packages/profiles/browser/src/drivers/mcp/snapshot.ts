@@ -130,6 +130,54 @@ export function parseSnapshot(yaml: string): SnapshotNode[] {
   return nodes;
 }
 
+function comparableLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function labelContainsWholeName(label: string, name: string): boolean {
+  const at = label.indexOf(name);
+  if (at < 0) return false;
+  const before = at === 0 ? "" : (label[at - 1] ?? "");
+  const after = at + name.length >= label.length ? "" : (label[at + name.length] ?? "");
+  return (before === "" || /[^a-z0-9]/.test(before)) && (after === "" || /[^a-z0-9]/.test(after));
+}
+
+/**
+ * Accessibility snapshots are document-ordered even after the viewport scrolls. Use
+ * bounded, visible DOM labels only to choose which already-referenced nodes fit in the
+ * observation budget; refs and all action identity still come from Playwright's snapshot.
+ */
+export function prioritizeSnapshotNodes(
+  nodes: readonly SnapshotNode[],
+  visibleLabels: readonly string[],
+): SnapshotNode[] {
+  const visible = visibleLabels.map(comparableLabel).filter((label) => label.length > 0);
+  if (visible.length === 0) return [...nodes];
+
+  const ranked = nodes.map((node, index) => {
+    const name = node.name === undefined ? "" : comparableLabel(node.name);
+    const visibleIndex =
+      name.length < 2
+        ? -1
+        : visible.findIndex(
+            (label) =>
+              label === name ||
+              (name.length >= 4 && labelContainsWholeName(label, name)) ||
+              (label.length >= 4 && labelContainsWholeName(name, label)),
+          );
+    return { node, index, visibleIndex };
+  });
+  return ranked
+    .sort((a, b) => {
+      const aVisible = a.visibleIndex >= 0;
+      const bVisible = b.visibleIndex >= 0;
+      if (aVisible !== bVisible) return aVisible ? -1 : 1;
+      if (aVisible && a.visibleIndex !== b.visibleIndex) return a.visibleIndex - b.visibleIndex;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.node);
+}
+
 // The signature a page revision is keyed on. Values are excluded deliberately:
 // typing into a field must not invalidate the reference that was just used, while
 // a control appearing, moving or being relabelled must (BD9).

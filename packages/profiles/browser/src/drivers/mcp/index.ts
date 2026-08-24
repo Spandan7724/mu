@@ -53,6 +53,11 @@ export {
   UPDATE_INSTRUCTIONS,
 } from "./sidecar.ts";
 export type { SnapshotNode, SnapshotOption } from "./snapshot.ts";
-export { parseSnapshot, structuralSignature, textSnapshot } from "./snapshot.ts";
+export {
+  parseSnapshot,
+  prioritizeSnapshotNodes,
+  structuralSignature,
+  textSnapshot,
+} from "./snapshot.ts";
 export type { TopologyEnvironment, TopologyVerdict } from "./topology.ts";
 export { extensionTopology, isWsl, persistentTopology } from "./topology.ts";

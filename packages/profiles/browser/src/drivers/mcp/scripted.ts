@@ -292,6 +292,7 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
             scrollY: entry.scrollY,
             readyState: "complete",
             frameUrls: (pageOf(entry).frames ?? []).map((frame) => frame.url),
+            visibleLabels: [],
           }),
         ].join("\n"),
       );

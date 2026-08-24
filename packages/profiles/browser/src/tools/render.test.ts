@@ -185,4 +185,38 @@ describe("screenshotSuppressed", () => {
     });
     expect(suppressed).toBe(false);
   });
+
+  test("a sign-in navigation link does not suppress an otherwise safe screenshot", () => {
+    const suppressed = screenshotSuppressed({
+      connectionId: "c",
+      tab: {
+        id: "t",
+        title: "Models",
+        url: "https://example.com/models",
+        origin: "https://example.com",
+        active: true,
+        attached: true,
+      },
+      revision: 1,
+      observedAt: 0,
+      title: "Models",
+      url: "https://example.com/models",
+      origin: "https://example.com",
+      viewport: { width: 1280, height: 720, scrollX: 0, scrollY: 800 },
+      frames: [],
+      summary: "Models",
+      snapshot: "Sign in",
+      elements: [
+        sampleElement({
+          ref: elementRefId("e1"),
+          role: "link",
+          label: "Sign in",
+          inputType: undefined,
+          risk: ["authentication"],
+        }),
+      ],
+      risks: ["authentication"],
+    });
+    expect(suppressed).toBe(false);
+  });
 });

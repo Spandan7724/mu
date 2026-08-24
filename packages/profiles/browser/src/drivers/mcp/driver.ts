@@ -69,7 +69,12 @@ import {
 } from "./response.ts";
 import { classifyRisks, commitmentIntent, isCredentialControl } from "./risk.ts";
 import { assertSupportedServer } from "./sidecar.ts";
-import { parseSnapshot, type SnapshotNode, structuralSignature } from "./snapshot.ts";
+import {
+  parseSnapshot,
+  prioritizeSnapshotNodes,
+  type SnapshotNode,
+  structuralSignature,
+} from "./snapshot.ts";
 
 const DEFAULT_WAIT_MS = 5_000;
 const SETTLE_POLL_MS = 100;
@@ -445,6 +450,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     // document short of it is an outcome Mu cannot establish (BD18).
     readyState: string;
     frameUrls: string[];
+    visibleLabels: string[];
   }
 
   const PAGE_METADATA_FUNCTION =
@@ -452,7 +458,17 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     " scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY)," +
     " readyState: document.readyState," +
     " frameUrls: Array.prototype.map.call(document.querySelectorAll('iframe')," +
-    " function (f) { return f.src ? String(f.src) : ''; }) })";
+    " function (f) { return f.src ? String(f.src) : ''; })," +
+    " visibleLabels: Array.prototype.slice.call(document.querySelectorAll(" +
+    "'a,button,input,select,textarea,[role=button],[role=link],[role=textbox]," +
+    "[role=combobox],[role=checkbox],[role=radio],[role=tab],h1,h2,h3,h4,h5,h6'))" +
+    ".filter(function (e) { var r = e.getBoundingClientRect();" +
+    " var s = window.getComputedStyle(e); return r.width > 0 && r.height > 0 &&" +
+    " r.bottom > 0 && r.right > 0 && r.top < window.innerHeight &&" +
+    " r.left < window.innerWidth && s.display !== 'none' && s.visibility !== 'hidden'; })" +
+    ".slice(0, 500).map(function (e) { return String(e.getAttribute('aria-label') ||" +
+    " e.getAttribute('placeholder') || e.getAttribute('title') || e.innerText ||" +
+    " e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 500); }) })";
 
   const pageMetadata = async (signal: AbortSignal): Promise<PageMetadata> => {
     const fallback: PageMetadata = {
@@ -462,6 +478,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       scrollY: 0,
       readyState: "unknown",
       frameUrls: [],
+      visibleLabels: [],
     };
     try {
       // A constant, adapter-authored expression. No page content and no model
@@ -486,6 +503,12 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         frameUrls: Array.isArray(parsed.frameUrls)
           ? parsed.frameUrls.filter((entry): entry is string => typeof entry === "string")
           : [],
+        visibleLabels: Array.isArray(parsed.visibleLabels)
+          ? parsed.visibleLabels
+              .filter((entry): entry is string => typeof entry === "string")
+              .slice(0, 500)
+              .map((entry) => entry.slice(0, 500))
+          : [],
       };
     } catch (error) {
       if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
@@ -504,7 +527,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const referenced = page.nodes.filter(
       (node) => node.ref !== undefined && node.role !== "iframe",
     );
-    const all = referenced.map((node) =>
+    const ordered = prioritizeSnapshotNodes(referenced, metadata.visibleLabels);
+    const all = ordered.map((node) =>
       withCheckedDefault(elementFor(node, page.tab, frameIds), node),
     );
     const maxNodes = Math.min(
@@ -533,7 +557,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       scrollX: metadata.scrollX,
       scrollY: metadata.scrollY,
     };
-    const credentialPage = elements.some((element) => element.inputType === "password");
+    const credentialPage = all.some((element) => element.inputType === "password");
     const wantsImage = request.screenshot === "viewport" || request.screenshot === "full-page";
     let screenshot: BrowserObservation["screenshot"];
     // SECURITY §11: a credential page is never captured, so no rendered password

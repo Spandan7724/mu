@@ -3,7 +3,7 @@
 // parser honest when no browser is present.
 import { describe, expect, test } from "bun:test";
 import { parseSidecarResponse, parseTabList, sidecarErrorMessage } from "./response.ts";
-import { parseSnapshot, structuralSignature } from "./snapshot.ts";
+import { parseSnapshot, prioritizeSnapshotNodes, structuralSignature } from "./snapshot.ts";
 
 const SNAPSHOT_RESPONSE = [
   "### Page",
@@ -147,6 +147,20 @@ describe("accessibility snapshot parsing", () => {
       ),
     );
     expect(structuralSignature(relabelled)).not.toBe(before);
+  });
+
+  test("visible controls move ahead of an oversized document without changing their refs", () => {
+    const many = Array.from({ length: 300 }, (_, index) =>
+      parseSnapshot(`- link "Model ${index + 1}" [ref=e${index + 1}]`),
+    ).flat();
+    const ordered = prioritizeSnapshotNodes(many, ["Model 241", "Model 242", "Model 243"]);
+    expect(ordered.slice(0, 3).map((node) => node.name)).toEqual([
+      "Model 241",
+      "Model 242",
+      "Model 243",
+    ]);
+    expect(ordered.slice(0, 3).map((node) => node.ref)).toEqual(["e241", "e242", "e243"]);
+    expect(many[0]?.name).toBe("Model 1");
   });
 });
 

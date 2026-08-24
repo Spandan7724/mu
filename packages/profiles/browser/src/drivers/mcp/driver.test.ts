@@ -231,6 +231,59 @@ describe("the raw tool surface stays behind the adapter", () => {
 });
 
 describe("observation discipline", () => {
+  test("an oversized page prioritizes controls in the viewport before applying maxNodes", async () => {
+    const url = "https://fake.mu-browser.test/oversized";
+    const site = fakeSite(
+      [
+        {
+          url,
+          title: "Oversized models",
+          summary: "A model catalog larger than one observation.",
+          elements: Array.from({ length: 300 }, (_, index) => ({
+            ref: `model-${index + 1}`,
+            role: "link",
+            name: `Model ${index + 1}`,
+            label: `Model ${index + 1}`,
+          })),
+        },
+      ],
+      url,
+    );
+    const inner = createScriptedSidecar({ site });
+    const sidecar: ScriptedSidecar = {
+      ...inner,
+      callTool: async (name, args, options) => {
+        if (name === "browser_evaluate" && String(args.function).includes("window.innerWidth")) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `### Result\n${JSON.stringify({
+                  width: 1280,
+                  height: 720,
+                  scrollX: 0,
+                  scrollY: 24_000,
+                  readyState: "complete",
+                  frameUrls: [],
+                  visibleLabels: ["Model 241", "Model 242", "Model 243"],
+                })}`,
+              },
+            ],
+          };
+        }
+        return inner.callTool(name, args, options);
+      },
+    };
+    const { driver, signal } = await connected("persistent", sidecar);
+    const observation = await driver.observe({ maxNodes: 20 }, signal);
+    expect(observation.elements.slice(0, 3).map((element) => element.label)).toEqual([
+      "Model 241",
+      "Model 242",
+      "Model 243",
+    ]);
+    expect(observation.truncated?.nodesOmitted).toBe(281);
+  });
+
   test("a credential value on the page is never observed and never screenshotted", async () => {
     const { driver, signal } = await connected();
     await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.credentials }, signal);

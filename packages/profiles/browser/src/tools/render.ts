@@ -14,12 +14,17 @@ import { describeInjection, untrusted } from "../policy/untrusted.ts";
 import { elementCaption, OBSERVATION_BUDGET, rankElements } from "./observation.ts";
 import type { ObservationRecord } from "./session.ts";
 
-const CREDENTIAL_RISKS = new Set(["password", "authentication", "captcha"]);
+const SCREENSHOT_BLOCKING_RISKS = new Set(["password", "captcha"]);
+const CREDENTIAL_ENTRY_ROLES = new Set(["textbox", "searchbox", "combobox"]);
 
-/** SECURITY §11: a page that holds a credential control is never captured. */
+/** SECURITY §11: credential entry is never captured; a navigation link named Sign in is safe. */
 export function screenshotSuppressed(observation: BrowserObservation): boolean {
-  if (observation.risks.some((risk) => CREDENTIAL_RISKS.has(risk))) return true;
-  return observation.elements.some((element) => isCredentialElement(element));
+  if (observation.risks.some((risk) => SCREENSHOT_BLOCKING_RISKS.has(risk))) return true;
+  return observation.elements.some(
+    (element) =>
+      isCredentialElement(element) &&
+      (element.inputType !== undefined || CREDENTIAL_ENTRY_ROLES.has(element.role ?? "")),
+  );
 }
 
 function clip(value: string, max: number): string {
