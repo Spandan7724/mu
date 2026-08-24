@@ -304,3 +304,35 @@ describe("disclosure boundary", () => {
     expect(decideDisclosure(policy(), { url: TASK, sensitivity: "personal" }).kind).toBe("ask");
   });
 });
+
+describe("loopback is a secure context, the way the web platform means it", () => {
+  const secure = (url: string) => {
+    const check = classifyNavigationUrl(url);
+    return check.ok ? check.secure : undefined;
+  };
+
+  // Not a concession for tests: a local server is the ordinary case for a fixture, a
+  // dev build, or an internal tool, and traffic there never reaches a network.
+  test("loopback in every spelling counts as secure", () => {
+    for (const url of [
+      "http://127.0.0.1:8080/apply",
+      "http://127.5.6.7/apply",
+      "http://localhost:3000/apply",
+      "http://app.localhost/apply",
+      "http://[::1]:9000/apply",
+    ]) {
+      expect({ url, secure: secure(url) }).toEqual({ url, secure: true });
+    }
+  });
+
+  test("plaintext to anywhere else is still insecure", () => {
+    for (const url of [
+      "http://jobs.example.com/apply",
+      "http://127.0.0.1.example.com/apply",
+      "http://localhost.example.com/apply",
+      "http://192.168.1.10/apply",
+    ]) {
+      expect({ url, secure: secure(url) }).toEqual({ url, secure: false });
+    }
+  });
+});

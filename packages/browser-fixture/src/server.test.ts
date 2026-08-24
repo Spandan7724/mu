@@ -513,3 +513,22 @@ describe("job application flow", () => {
     expect(response.headers.get("location")).toBe("/apply");
   });
 });
+
+describe("an untouched file input is not an upload", () => {
+  // A real Chromium posts an optional file input the user never filled as a part with
+  // no filename. The fixture used to assume the empty string and crashed the request.
+  test("a zero-byte part with no filename is ignored, not recorded and not fatal", async () => {
+    const handle = await startFixture();
+    try {
+      const body = new FormData();
+      body.set("first_name", "Ada");
+      body.set("cover_letter", new File([], ""));
+      const response = await fetch(`${handle.url}/apply/step/1`, { method: "POST", body });
+      expect(response.status).not.toBe(500);
+      const recorded = handle.recorder.all();
+      expect(recorded.flatMap((entry) => entry.files)).toEqual([]);
+    } finally {
+      await handle.stop();
+    }
+  });
+});

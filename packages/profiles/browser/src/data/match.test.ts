@@ -31,6 +31,30 @@ function facts() {
 }
 
 describe("well-marked fields", () => {
+  test("recognizes a hiring-country work authorization select", () => {
+    const store = facts();
+    store.add({
+      field: "work_authorization",
+      value: "yes",
+      source: { kind: "user" },
+      confidence: "exact",
+      id: "fact-auth",
+    });
+    const match = matchElement(
+      element({
+        role: "combobox",
+        inputType: "select-one",
+        label: "Are you authorized to work in the hiring country? *",
+        required: true,
+        options: [{ label: "Yes" }, { label: "No" }],
+      }),
+      store,
+    );
+
+    expect(match.field).toBe("work_authorization");
+    expect(match.status).toBe("matched");
+  });
+
   test("a labelled field matches its fact and explains why", () => {
     const match = matchElement(element({ label: "Email address", inputType: "email" }), facts());
     expect(match.status).toBe("matched");
@@ -170,5 +194,41 @@ describe("the apply form", () => {
       expect(match.confidence).toBeGreaterThanOrEqual(0);
       expect(match.confidence).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("a dropdown is a presentation choice, not a different field", () => {
+  const control = (label: string, inputType: string) =>
+    element({
+      ref: elementRefId(`e${label.replace(/[^a-z]/gi, "")}`),
+      label,
+      inputType,
+      role: "combobox",
+    });
+  const recognize = (label: string, inputType = "select-one") =>
+    matchElements([control(label, inputType)], facts())[0];
+
+  // The live failure this exists for: every real application form renders Country as
+  // a select, and the select penalty put it under the recognition threshold, so the
+  // control could never be filled from a profile at all.
+  test("a select is recognized as the field its label names", () => {
+    for (const [label, field] of [
+      ["Country *", "country"],
+      ["City", "city"],
+      ["Notice period", "notice_period"],
+    ] as const) {
+      const match = recognize(label);
+      expect({
+        label,
+        field: match?.field,
+        unrecognized: match?.status === "unrecognized",
+      }).toEqual({ label, field, unrecognized: false });
+    }
+  });
+
+  // The penalty still has to do its job where the type really does disagree.
+  test("a date input labelled Email is still penalized below the threshold", () => {
+    const match = recognize("Email address", "date");
+    expect(match?.status).toBe("unrecognized");
   });
 });

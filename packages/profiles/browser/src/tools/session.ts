@@ -17,7 +17,6 @@ import {
   elementRefOf,
   type ObservationRevision,
   type RefValidity,
-  refValidity,
   refValidityMessage,
 } from "../contracts/observation.ts";
 import { elementRefId } from "../contracts/primitives.ts";

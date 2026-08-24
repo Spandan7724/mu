@@ -175,8 +175,11 @@ describe("browser_upload", () => {
         signal(),
       );
 
-      expect(result.isError).toBe(true);
-      expect(resultText(result)).toContain("does not accept files");
+      // The driver is what settles this: it opens the control and requires a real
+      // file chooser, which a text field never raises. It reports a blocked outcome
+      // rather than an error, and nothing is attached either way.
+      expect(resultText(result)).toContain("not a file input");
+      expect(harness.driver.submissions()).toHaveLength(0);
     } finally {
       await harness.shutdown();
     }

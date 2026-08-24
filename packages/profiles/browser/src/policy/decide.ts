@@ -24,7 +24,12 @@ import {
   isOriginAllowed,
   type OriginPolicy,
 } from "./origin.ts";
-import { classifyElement, gateGenericAction, validateSubmitIntent } from "./risk.ts";
+import {
+  classifyElement,
+  gateGenericAction,
+  isCommitmentClass,
+  validateSubmitIntent,
+} from "./risk.ts";
 import {
   actPattern,
   type BrowserScope,
@@ -343,10 +348,22 @@ export function decideUploadRequest(
   const frame = frameOutcome(state, element, input.observation);
   if (frame !== undefined) return frame;
 
-  if (!classifyElement(element).risks.includes("file-upload")) {
-    return deny("this control does not accept files; observe again and target the file input");
+  // A real browser exposes `<input type=file>` as an ordinary button, so the
+  // `file-upload` marker is only ever present in a synthetic observation. Denying
+  // without it made `browser_upload` impossible against an actual browser — the whole
+  // point of the tool. What can be checked here is that this is not a commitment
+  // control; whether it accepts files is settled by the driver, which opens it and
+  // requires a real file chooser rather than guessing from a label.
+  const classification = classifyElement(element);
+  if (isCommitmentClass(classification.riskClass)) {
+    return deny("a document is never attached through a control that commits");
   }
+  const marked = classification.risks.includes("file-upload");
 
   const pattern = uploadPattern(input.observation.origin, input.basenames.join(" "));
-  return permission(state, ["browser:upload"], pattern, `upload ${pattern}`);
+  return permission(state, ["browser:upload"], pattern, `upload ${pattern}`, [], {
+    // An unmarked control might not be a file input at all, so it asks rather than
+    // going through on a guess.
+    ...(marked ? {} : { unknownRisk: true }),
+  });
 }

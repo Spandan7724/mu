@@ -80,7 +80,21 @@ export function classifyNavigationUrl(raw: string): NavigationUrlCheck {
       message: "navigation target has no usable web origin",
     };
   }
-  return { ok: true, url: parsed.href, origin, secure: parsed.protocol === "https:" };
+  return { ok: true, url: parsed.href, origin, secure: isSecureTransport(parsed) };
+}
+
+/**
+ * A secure context in the web platform's own sense, which is what "plaintext" has to
+ * mean here. Loopback is trustworthy because the traffic never reaches a network
+ * there is anything to intercept on — browsers reached the same conclusion, and a
+ * product that disagreed could not be used against a local server at all.
+ */
+function isSecureTransport(url: URL): boolean {
+  if (url.protocol === "https:") return true;
+  const host = url.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "[::1]" || host === "::1") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 // SECURITY §6: common identity providers are enterable only through an approved login

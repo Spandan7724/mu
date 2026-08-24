@@ -1413,7 +1413,7 @@ export class Agent {
       seeded.length === 0 && this.options.initialMessages ? this.options.initialMessages : [];
     for (const message of initial) this.tree.appendMessage(message);
     const refreshed =
-      (await this.options.refreshContext?.([...seeded, ...initial], {
+      (await this.options.refreshContext?.([...seeded, ...initial, promptMessage], {
         sessionId: this._sessionId,
       })) ?? [];
     for (const message of refreshed) this.tree.appendMessage(message);

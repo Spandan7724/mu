@@ -62,7 +62,7 @@ describe("the sidecar writes only into Mu's private artifact root (SECURITY §11
     expect(sidecarOutputDir({ home }).startsWith(process.cwd())).toBe(false);
   });
 
-  test("persistent mode pins --output-dir and the sidecar's own cwd to that root", async () => {
+  test("persistent mode pins output under the private root and can reach staged documents", async () => {
     const home = await scratch();
     const { recorded, launcher } = recorder();
     const launch = mcpPersistentLaunch({
@@ -80,16 +80,14 @@ describe("the sidecar writes only into Mu's private artifact root (SECURITY §11
     const spec = recorded.specs[0] as McpSidecarSpec;
     const expected = join(browserArtifactsDir(home), "sidecar");
     expect(spec.args[spec.args.indexOf("--output-dir") + 1]).toBe(expected);
-    // Even a default the sidecar picks for itself cannot escape: its working
-    // directory is the private root, so `.playwright-mcp/` lands there.
-    expect(spec.cwd).toBe(expected);
+    expect(spec.cwd).toBe(join(home, ".mu", "browser"));
     // And the directory really exists, private, before the helper is started.
     const mode = (await stat(expected)).mode & 0o777;
     expect(mode).toBe(0o700);
     await launched.close();
   });
 
-  test("extension mode pins the same root", async () => {
+  test("extension mode uses the same private output and document root", async () => {
     const home = await scratch();
     const { recorded, launcher } = recorder();
     const start = mcpExtensionSidecar({
@@ -104,7 +102,7 @@ describe("the sidecar writes only into Mu's private artifact root (SECURITY §11
     const spec = recorded.specs[0] as McpSidecarSpec;
     const expected = join(browserArtifactsDir(home), "sidecar");
     expect(spec.args[spec.args.indexOf("--output-dir") + 1]).toBe(expected);
-    expect(spec.cwd).toBe(expected);
+    expect(spec.cwd).toBe(join(home, ".mu", "browser"));
     await sidecar.exit();
   });
 

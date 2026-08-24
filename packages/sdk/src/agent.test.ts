@@ -890,6 +890,7 @@ describe("session persistence", () => {
     ]);
     let revision = "one";
     const refreshContext = (messages: import("@mu/core").AgentMessage[]) => {
+      expect(messages.at(-1)?.role).toBe("user");
       const type = `instructions-${revision}`;
       return messages.some((message) => message.role === "custom" && message.customType === type)
         ? []

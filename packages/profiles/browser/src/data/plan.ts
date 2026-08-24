@@ -1,6 +1,10 @@
 import type { ApplicantFact, ApplicantPolicy } from "../contracts/applicant.ts";
 import { factAllowsOrigin } from "../contracts/applicant.ts";
-import type { BrowserElement, BrowserElementRef } from "../contracts/observation.ts";
+import type {
+  BrowserElement,
+  BrowserElementOption,
+  BrowserElementRef,
+} from "../contracts/observation.ts";
 import { normalizeOrigin } from "../contracts/primitives.ts";
 import { type FactLookup, type FactProvenance, factValueText } from "./facts.ts";
 import { fieldLabel } from "./fields.ts";
@@ -60,18 +64,32 @@ function fillFromFact(
   facts: FactLookup,
   grounding: FillGrounding,
   reason: string,
+  options?: readonly BrowserElementOption[],
 ): FillPlanEntry {
+  const factText = factValueText(fact.value);
+  const presented = options?.find(
+    (option) =>
+      normalizeOption(option.label) === normalizeOption(factText) ||
+      (option.value !== undefined && normalizeOption(option.value) === normalizeOption(factText)),
+  );
   return {
     ref: match.ref,
     label: match.label,
     field: match.field ?? fact.field,
-    text: factValueText(fact.value),
+    // Selects are driven with the page's presented vocabulary. The underlying fact and
+    // provenance remain canonical (`yes`), while a label-only accessibility tree may
+    // require the exact visible spelling (`Yes`).
+    text: presented?.value ?? presented?.label ?? factText,
     grounding,
     factId: fact.id,
     provenance: facts.trace(fact),
     confidence: match.confidence,
     reason,
   };
+}
+
+function normalizeOption(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 /**
@@ -153,7 +171,16 @@ export function planFill(input: PlanInput): FillPlan {
             skipped.push(skip(match, "origin-scoped", `${field} is not disclosable to ${origin}`));
             break;
           }
-          fills.push(fillFromFact(match, decision.fact, input.facts, "policy", decision.reason));
+          fills.push(
+            fillFromFact(
+              match,
+              decision.fact,
+              input.facts,
+              "policy",
+              decision.reason,
+              elementOptions(input.elements, match.ref),
+            ),
+          );
           break;
         case "decline":
           fills.push({
@@ -208,7 +235,16 @@ export function planFill(input: PlanInput): FillPlan {
       ask(match, "missing", `the only source for ${fieldLabel(field)} is an uncertain extraction`);
       continue;
     }
-    fills.push(fillFromFact(match, fact, input.facts, "fact", match.reason));
+    fills.push(
+      fillFromFact(
+        match,
+        fact,
+        input.facts,
+        "fact",
+        match.reason,
+        elementOptions(input.elements, match.ref),
+      ),
+    );
   }
 
   return {

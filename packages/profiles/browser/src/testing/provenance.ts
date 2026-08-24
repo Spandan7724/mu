@@ -64,9 +64,14 @@ export interface ProvenanceReport {
 
 export interface ProvenanceInput {
   submission: ReceivedSubmission;
-  plan: FillPlan;
-  /** The page as Mu saw it, which is what says whether a value was already there. */
-  observation: BrowserObservation;
+  /**
+   * Every plan and every observation the form was filled across. A multi-step form
+   * posts step one's answers from step three's page, so attributing against only the
+   * page that carried the submit button would call most of the application invented.
+   */
+  plan: FillPlan | readonly FillPlan[];
+  /** The pages as Mu saw them, which is what says whether a value was already there. */
+  observation: BrowserObservation | readonly BrowserObservation[];
   answers?: readonly TypedAnswer[] | undefined;
   documents?: readonly AuthorizedDocument[] | undefined;
 }
@@ -83,17 +88,26 @@ function elementKeys(element: BrowserElement): string[] {
  * error by itself — hidden inputs are never observed — but it does mean the value can
  * only be the page's own.
  */
-function elementFor(name: string, observation: BrowserObservation): BrowserElement | undefined {
-  return observation.elements.find((element) => elementKeys(element).includes(name));
+function elementFor(
+  name: string,
+  observations: readonly BrowserObservation[],
+): BrowserElement | undefined {
+  for (const observation of observations) {
+    const found = observation.elements.find((element) => elementKeys(element).includes(name));
+    if (found !== undefined) return found;
+  }
+  return undefined;
 }
 
 function planSource(
   element: BrowserElement | undefined,
   value: string,
-  plan: FillPlan,
+  plans: readonly FillPlan[],
 ): ValueSource | undefined {
   if (element === undefined) return undefined;
-  const fill = plan.fills.find((entry) => entry.ref.ref === element.ref && entry.text === value);
+  const fill = plans
+    .flatMap((plan) => plan.fills)
+    .find((entry) => entry.ref.ref === element.ref && entry.text === value);
   if (fill === undefined) return undefined;
   return {
     kind: "plan",
@@ -104,16 +118,20 @@ function planSource(
 }
 
 export function verifyProvenance(input: ProvenanceInput): ProvenanceReport {
-  const { submission, plan, observation } = input;
+  const { submission } = input;
+  const plans = Array.isArray(input.plan) ? input.plan : [input.plan as FillPlan];
+  const observations = Array.isArray(input.observation)
+    ? input.observation
+    : [input.observation as BrowserObservation];
   const answers = input.answers ?? [];
   const documents = input.documents ?? [];
   const problems: string[] = [];
 
   const values = submission.fields.map((field): AttributedValue => {
     if (field.value.length === 0) return { name: field.name, source: { kind: "empty" } };
-    const element = elementFor(field.name, observation);
+    const element = elementFor(field.name, observations);
 
-    const planned = planSource(element, field.value, plan);
+    const planned = planSource(element, field.value, plans);
     if (planned !== undefined) return { name: field.name, source: planned };
 
     const names = element === undefined ? [field.name] : [...elementKeys(element), field.name];

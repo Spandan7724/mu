@@ -3,16 +3,26 @@ import { randomUUID } from "node:crypto";
 // storage and constructs the runtime that owns the connection.
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, Profile, SessionEnvironment } from "@mu/core";
+import { type AgentMessage, customMessage, type Profile, type SessionEnvironment } from "@mu/core";
 import { AuthorizedDocumentStore } from "../artifacts/documents.ts";
 import { BrowserArtifactStore } from "../artifacts/store.ts";
-import { browserCommands } from "../commands/index.ts";
+import { applicantSource, browserCommands } from "../commands/index.ts";
 import type { BrowserCarryover } from "../contracts/carryover.ts";
+import type { FactStore } from "../data/facts.ts";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
+import { taskAuthority } from "../policy/authority.ts";
+import { withApprovedOrigin } from "../policy/origin.ts";
 import { browserRenderers } from "../renderers/index.ts";
 import { BrowserRuntime } from "../runtime/runtime.ts";
+import type { BrowserToolSession } from "../tools/session.ts";
 import { browserDataDir, ensureBrowserDataRoot } from "./data.ts";
-import { browserEnvironment, connectionMessage, environmentMessage } from "./environment.ts";
+import {
+  applicantFactsMessage,
+  browserEnvironment,
+  connectionMessage,
+  environmentMessage,
+  taskUrlsFromMessages,
+} from "./environment.ts";
 import {
   type BrowserProfileOptions,
   type ResolvedBrowserProfileOptions,
@@ -30,6 +40,10 @@ export const BROWSER_PROFILE_NAME = "browser";
 
 export interface BrowserProfile extends Profile {
   runtime: BrowserRuntime;
+  session: BrowserToolSession;
+  facts?: FactStore | undefined;
+  documents: AuthorizedDocumentStore;
+  artifacts: BrowserArtifactStore;
   options: ResolvedBrowserProfileOptions;
   dataRoot: string;
 }
@@ -88,16 +102,24 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     }
   }
 
-  const { tools } = browserToolset({
+  const loadApplicant = applicantSource(resolved.applicantProfile);
+  const applicant = await loadApplicant();
+  if (applicant.problem !== undefined) {
+    diagnostics.push(`could not load applicant profile: ${applicant.problem}`);
+  }
+
+  const artifacts = new BrowserArtifactStore({ root: join(dataRoot, "artifacts") });
+  const { tools, session } = browserToolset({
     runtime,
     allowedOrigins: resolved.allowedOrigins ?? [],
     mode: DEFAULT_BROWSER_PERMISSION_MODE,
+    ...(applicant.facts === undefined ? {} : { facts: applicant.facts }),
     ...(documents.size > 0 ? { documents } : {}),
     receipts: {
       // One profile is built per Mu session, so this identifies the session that
       // produced the receipt without the profile having to reach for the agent's id.
       sessionId: randomUUID(),
-      store: new BrowserArtifactStore({ root: join(dataRoot, "artifacts") }),
+      store: artifacts,
     },
   });
 
@@ -109,12 +131,43 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     permissionModes: BROWSER_PERMISSION_MODES,
     defaultPermissionMode: DEFAULT_BROWSER_PERMISSION_MODE,
     renderers: browserRenderers,
-    commands: browserCommands({ runtime, options: resolved, dataRoot }),
+    commands: browserCommands({
+      runtime,
+      options: resolved,
+      dataRoot,
+      sources: { applicant: loadApplicant },
+    }),
     environment: () => environment,
     contextMessages: (): AgentMessage[] => [
       environmentMessage(environment),
       connectionMessage(runtime.description, resolved.connection),
+      ...(applicant.facts === undefined ? [] : [applicantFactsMessage(applicant.facts)]),
     ],
+    refreshContext: (messages): AgentMessage[] => {
+      let origins = session.policy.origins;
+      const added: string[] = [];
+      for (const url of taskUrlsFromMessages(messages)) {
+        const next = withApprovedOrigin(
+          origins,
+          url,
+          taskAuthority({ reason: "origin explicitly named in the user's task" }),
+        );
+        if (next !== origins) {
+          origins = next;
+          added.push(new URL(url).origin);
+        }
+      }
+      if (added.length === 0) return [];
+      session.setPolicy({ ...session.policy, origins });
+      return [
+        customMessage(
+          "browser-task-origins",
+          `The user explicitly named these task origins, so they are authorized for navigation: ${[
+            ...new Set(added),
+          ].join(", ")}`,
+        ),
+      ];
+    },
     diagnostics,
     // What compaction must not lose: where the browser is, what was already done
     // to the page, and what is still owed. Labels, ids and origins only — no
@@ -123,7 +176,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       const state = runtime.status();
       return {
         connection: { mode: state.mode, browser: state.browser, phase: state.phase },
-        allowedOrigins: [...resolved.allowedOrigins],
+        allowedOrigins: [...session.policy.origins.allowed],
         completedSteps: [],
         outstandingSteps: [],
         filledFields: [],
@@ -138,6 +191,10 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     // deleted record cannot be rolled back, and claiming otherwise would make
     // /undo a lie (BD17).
     runtime,
+    session,
+    ...(applicant.facts === undefined ? {} : { facts: applicant.facts }),
+    documents,
+    artifacts,
     options: resolved,
     dataRoot,
   };

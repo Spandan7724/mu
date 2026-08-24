@@ -226,6 +226,7 @@ export const CANONICAL_FIELDS: readonly CanonicalField[] = [
       "employment eligibility",
       "legal status",
       "are you legally authorized to work",
+      "are you authorized to work in the hiring country",
     ],
     inputTypes: [],
     extractable: false,

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { BrowserFamily } from "../../contracts/connection.ts";
 import type { AuthorizedDocument } from "../../contracts/documents.ts";
 import { BrowserDriverError } from "../../contracts/driver.ts";
-import { browserArtifactsDir, DIRECTORY_MODE } from "../../profile/data.ts";
+import { browserArtifactsDir, browserDataDir, DIRECTORY_MODE } from "../../profile/data.ts";
 import type { ExtensionFactoryOptions, ExtensionSidecar } from "../extension.ts";
 import { extensionFactory } from "../extension.ts";
 import type { BrowserDriverFactory } from "../factory.ts";
@@ -55,6 +55,20 @@ async function privateOutputDir(options: McpModeOptions): Promise<string> {
   return directory;
 }
 
+/**
+ * The sidecar's working directory, and with it the root it will accept a file from.
+ * `@playwright/mcp` refuses `browser_file_upload` for any path outside its output dir
+ * or its cwd, so pointing cwd at the output dir alone put Mu's own staged documents
+ * out of reach and made every upload fail. Mu's data root is the smallest directory
+ * that contains both, it is already 0700, and the escape hatch that would lift the
+ * restriction entirely also unblocks `file://` — so it is never used.
+ */
+async function sidecarCwd(options: McpModeOptions): Promise<string> {
+  const root = browserDataDir(options.home);
+  await mkdir(root, { recursive: true, mode: DIRECTORY_MODE });
+  return root;
+}
+
 export function mcpPersistentLaunch(
   options: McpModeOptions = {},
 ): PersistentProfileFactoryOptions["launch"] {
@@ -83,9 +97,7 @@ export function mcpPersistentLaunch(
           ...(options.viewport === undefined ? {} : { viewport: options.viewport }),
         }),
         {
-          // The sidecar's own working directory is the private output root, so
-          // even a default it decides for itself cannot escape into the user's cwd.
-          cwd: outputDir,
+          cwd: await sidecarCwd(options),
           ...(options.startupTimeoutMs === undefined
             ? {}
             : { startupTimeoutMs: options.startupTimeoutMs }),
@@ -156,7 +168,7 @@ export function mcpExtensionSidecar(
           ...(options.viewport === undefined ? {} : { viewport: options.viewport }),
         }),
         {
-          cwd: outputDir,
+          cwd: await sidecarCwd(options),
           // BD27: a token is an advanced opt-in credential. It is handed to the
           // helper through its environment rather than its argv, which would put
           // it in every process listing, and it is never written anywhere by Mu.

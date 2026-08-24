@@ -3,6 +3,10 @@
 // a short, resumable fact — never a document path, an origin list that a page can
 // grow, a token, or anything derived from page content.
 import { type AgentMessage, customMessage, type SessionEnvironment } from "@mu/core";
+import { redactFactValue } from "../contracts/applicant.ts";
+import type { FactStore } from "../data/facts.ts";
+import { factValueText } from "../data/facts.ts";
+import { classifyNavigationUrl } from "../policy/origin.ts";
 import type { ResolvedBrowserProfileOptions } from "./options.ts";
 
 // Kept well inside SESSION_ENVIRONMENT_LIMITS.maxValueLength so a long allow-list
@@ -52,4 +56,46 @@ export function connectionMessage(description: string, mode: string): AgentMessa
       ? `The browser connection is ${description}. It is not open yet: the user approves the tab in their browser the first time you need it.`
       : `The browser connection is ${description}. Mu owns this browser and will close it when the session ends.`,
   );
+}
+
+export function applicantFactsMessage(facts: FactStore): AgentMessage {
+  const entries = facts.all().map((fact) => {
+    const value = redactFactValue(fact);
+    const rendered =
+      fact.sensitivity === "sensitive" ? "[withheld; use factId]" : factValueText(value);
+    return [
+      `id=${fact.id}`,
+      `field=${fact.field}`,
+      `value=${rendered}`,
+      `sensitivity=${fact.sensitivity}`,
+      `confidence=${fact.confidence}`,
+      `source=${fact.source.kind}`,
+    ].join(" | ");
+  });
+  return customMessage(
+    "browser-applicant-facts",
+    [
+      "Authorized applicant facts. Use factId when entering one; do not invent a missing value.",
+      ...entries,
+    ].join("\n"),
+  );
+}
+
+function textBlocks(message: AgentMessage): string[] {
+  if (message.role !== "user") return [];
+  return message.content.flatMap((block) => (block.type === "text" ? [block.text] : []));
+}
+
+export function taskUrlsFromMessages(messages: readonly AgentMessage[]): string[] {
+  const urls: string[] = [];
+  for (const text of messages.flatMap(textBlocks)) {
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+      let candidate = match[0].replace(/[),.;!?\]}]+$/g, "");
+      const check = classifyNavigationUrl(candidate);
+      if (!check.ok) continue;
+      candidate = check.url;
+      if (!urls.includes(candidate)) urls.push(candidate);
+    }
+  }
+  return urls;
 }

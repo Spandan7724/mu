@@ -108,6 +108,17 @@ describe("every submitted value traces to a source", () => {
     expect(auth?.reason).toContain("policy");
   });
 
+  test("a canonical policy value uses the page's exact label when options expose no values", () => {
+    const controls = applyFormElements().map((control) =>
+      control.ref === elementRefId("e-workauth")
+        ? { ...control, options: [{ label: "Yes" }, { label: "No" }] }
+        : control,
+    );
+    const { plan: filled } = plan(POLICY, controls);
+
+    expect(filled.fills.find((fill) => fill.field === "work_authorization")?.text).toBe("Yes");
+  });
+
   test("the plan is JSON-serializable", () => {
     expect(findSerializationViolations(plan().plan)).toHaveLength(0);
   });

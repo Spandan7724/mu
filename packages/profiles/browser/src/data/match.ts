@@ -20,6 +20,16 @@ import {
 // threshold is the line between "grounded" and "guessed".
 export const MATCH_CONFIDENCE_THRESHOLD = 0.6;
 
+/**
+ * Input types that say nothing about which field a control is. A dropdown is a
+ * presentation choice — country, city, notice period and work authorization are all
+ * routinely rendered as one — so penalising a field for being a select made every such
+ * control unrecognizable, and no application form with a country dropdown could be
+ * filled at all. A genuine contradiction, like a date input labelled "Email", still
+ * costs the match half its score.
+ */
+const NEUTRAL_INPUT_TYPES = new Set(["text", "search", "select-one", "select-multiple"]);
+
 // Anything closer than this to the leader is not a second choice, it is an ambiguity.
 const AMBIGUITY_MARGIN = 0.05;
 
@@ -128,7 +138,7 @@ function scoreAgainst(
     if (field.inputTypes.includes(inputType)) {
       score = Math.min(1, score + 0.1);
       evidence.push(`input type "${inputType}" agrees`);
-    } else if (inputType !== "text" && inputType !== "search") {
+    } else if (!NEUTRAL_INPUT_TYPES.has(inputType)) {
       score *= 0.5;
       evidence.push(`input type "${inputType}" contradicts this field`);
     }

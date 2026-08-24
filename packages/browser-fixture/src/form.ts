@@ -6,8 +6,8 @@ export type ParsedForm = {
   values: Record<string, string[]>;
 };
 
-function basenameOf(rawFilename: string): string {
-  const normalized = rawFilename.replace(/\\/g, "/");
+function basenameOf(rawFilename: string | undefined): string {
+  const normalized = (rawFilename ?? "").replace(/\\/g, "/");
   const last = normalized.split("/").pop() ?? "";
   return last === "" ? "unnamed" : last;
 }
@@ -17,7 +17,7 @@ async function describeFile(field: string, file: File): Promise<RecordedFile> {
   return {
     field,
     basename: basenameOf(file.name),
-    rawFilename: file.name,
+    rawFilename: file.name ?? "",
     mimeType: file.type || "application/octet-stream",
     bytes: bytes.byteLength,
     sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
@@ -39,8 +39,10 @@ export async function parseForm(req: Request): Promise<ParsedForm> {
       continue;
     }
     const file = value as File;
-    // Empty file inputs still arrive as a zero-byte part; they are not a real upload.
-    if (file.size === 0 && file.name === "") continue;
+    // A file input the user left alone still posts a part. A real browser sends it
+    // with no filename at all — not the empty string this once assumed — so the test
+    // has to be on the bytes, which is the only thing that makes it an upload.
+    if (file.size === 0) continue;
     files.push(await describeFile(name, file));
   }
   const values: Record<string, string[]> = {};

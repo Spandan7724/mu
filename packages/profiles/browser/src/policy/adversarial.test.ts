@@ -382,11 +382,23 @@ describe("threat: an attachment path traverses outside the authorized file", () 
     }
   });
 
-  test("uploading through a control that does not accept files is denied", () => {
+  // A real browser exposes a file input as a plain button, so policy cannot tell one
+  // from an ordinary control and must not pretend to. An unmarked control asks; the
+  // driver then opens it and refuses anything that does not raise a file chooser.
+  test("uploading through an unmarked control asks rather than going through", () => {
     const outcome = decideUploadRequest(state(), {
       target: nameField,
       basenames: ["resume.pdf"],
       observation: withElements([nameField]),
+    });
+    expect(outcome.kind).toBe("ask");
+  });
+
+  test("uploading through a control that commits is denied outright", () => {
+    const outcome = decideUploadRequest(state(), {
+      target: submitButton,
+      basenames: ["resume.pdf"],
+      observation: withElements([submitButton]),
     });
     expect(outcome.kind).toBe("deny");
   });
