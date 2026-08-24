@@ -126,4 +126,68 @@ describe("llama.cpp provider", () => {
       { type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
     ]);
   });
+
+  test("removes large nested string bounds that llama.cpp cannot compile to grammar", async () => {
+    const model: ModelInfo = {
+      provider: "llama-cpp",
+      id: "ornith-1.5-9b",
+      api: "openai-completions",
+      baseUrl: "http://127.0.0.1:8000/v1",
+      contextWindow: 131_072,
+      maxOutput: 32_768,
+      modalities: ["text"],
+      pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    const inputSchema = {
+      type: "object",
+      properties: {
+        dialog: {
+          type: "object",
+          properties: {
+            message: { type: "string", minLength: 1, maxLength: 4_000 },
+            answer: { type: "string", maxLength: 2_000 },
+            short: { type: "string", maxLength: 128 },
+          },
+        },
+      },
+    };
+    let requestBody: Record<string, unknown> = {};
+
+    await llamaCpp
+      .stream(
+        model,
+        {
+          messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+          tools: [{ name: "browser_submit", description: "Submit", inputSchema }],
+        },
+        {
+          fetch: (async (_input, init) => {
+            requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            return new Response(
+              'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+              { headers: { "content-type": "text/event-stream" } },
+            );
+          }) as typeof fetch,
+        },
+      )
+      .result();
+
+    const tools = requestBody.tools as Array<{
+      function: { parameters: Record<string, unknown> };
+    }>;
+    expect(tools[0]?.function.parameters).toEqual({
+      type: "object",
+      properties: {
+        dialog: {
+          type: "object",
+          properties: {
+            message: { type: "string", minLength: 1 },
+            answer: { type: "string" },
+            short: { type: "string", maxLength: 128 },
+          },
+        },
+      },
+    });
+    expect(inputSchema.properties.dialog.properties.message.maxLength).toBe(4_000);
+  });
 });

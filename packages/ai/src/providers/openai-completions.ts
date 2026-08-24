@@ -136,6 +136,24 @@ function addThinking(body: Json, model: ModelInfo, level: ThinkingLevel | undefi
   if (enabled(level)) body.reasoning_effort = level;
 }
 
+// llama.cpp's JSON-Schema-to-GBNF converter currently emits grammar that its own
+// parser rejects for nested string maxLength values >= 2000. Browser tools have
+// several such fields. Mu still validates the original schema before executing a
+// tool; this only removes the problematic constraint from llama.cpp's wire copy.
+function llamaCppToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const normalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (typeof value !== "object" || value === null) return value;
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "maxLength" && typeof child === "number" && child >= 2_000) continue;
+      result[key] = normalize(child);
+    }
+    return result;
+  };
+  return normalize(schema) as Record<string, unknown>;
+}
+
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
   const body: Json = {
     model: model.id,
@@ -150,7 +168,8 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: tool.inputSchema,
+        parameters:
+          model.provider === "llama-cpp" ? llamaCppToolSchema(tool.inputSchema) : tool.inputSchema,
       },
     }));
     body.tool_choice = "auto";
