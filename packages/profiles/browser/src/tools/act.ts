@@ -40,7 +40,11 @@ const text = z.string().max(BROWSER_LIMITS.maxElementTextChars);
 const schema = z
   .object({
     action: z.enum(ACTIONS),
-    target: browserElementRefSchema.optional().describe("A reference from the latest observation."),
+    target: browserElementRefSchema
+      .optional()
+      .describe(
+        "A reference from the latest observation. Omit for page scrolling; provide only to scroll a specific nested container.",
+      ),
     value: text.optional().describe("The text to enter, for fill and type."),
     values: z
       .array(text)
@@ -244,7 +248,7 @@ export function browserActTool(context: BrowserToolContext) {
   return tool({
     name: BROWSER_ACT_TOOL,
     description:
-      "Interact with one control on the page: click, fill, type, select, check, uncheck, press a key, hover, scroll or drag. Targets a reference from the latest observation. This tool never submits, sends, purchases, deletes, consents or changes an account — those go through browser_submit.",
+      "Interact with one control on the page: click, fill, type, select, check, uncheck, press a key, hover, scroll or drag. For ordinary page scrolling, omit target and set deltaY; use a target only for a specific nested scroll container. Other actions target a reference from the latest observation. This tool never submits, sends, purchases, deletes, consents or changes an account — those go through browser_submit.",
     inputSchema: schema,
     executionMode: "sequential",
     isConcurrencySafe: () => false,
@@ -299,6 +303,10 @@ export function browserActTool(context: BrowserToolContext) {
         });
 
         if (prepared.kind === "refused") {
+          const message =
+            args.action === "scroll" && args.target !== undefined && prepared.reason === "stale"
+              ? `${prepared.message} To scroll the page viewport, retry browser_act with action "scroll", deltaY, and no target.`
+              : prepared.message;
           session.note({
             tool: BROWSER_ACT_TOOL,
             action: args.action,
@@ -310,9 +318,9 @@ export function browserActTool(context: BrowserToolContext) {
                   revision: prepared.record.revision,
                 }),
             outcome: prepared.reason,
-            detail: prepared.message,
+            detail: message,
           });
-          return { content: [{ type: "text", text: prepared.message }], isError: true };
+          return { content: [{ type: "text", text: message }], isError: true };
         }
 
         const outcome = await session.use((driver) => driver.act(prepared.request, signal), signal);

@@ -43,6 +43,7 @@ interface SdkModule {
     options: Record<string, unknown>,
   ) => {
     stderr?: { on(event: "data", listener: (chunk: unknown) => void): void } | undefined;
+    send(message: unknown): Promise<void>;
     close(): Promise<void>;
   };
   getDefaultEnvironment(): Record<string, string>;
@@ -66,6 +67,26 @@ async function loadSdk(): Promise<SdkModule> {
 export function mcpSdk(): Promise<SdkModule> {
   cached ??= loadSdk();
   return cached;
+}
+
+interface WritableTransport {
+  send(message: unknown): Promise<void>;
+}
+
+/**
+ * The MCP SDK attaches one `drain` listener per backpressured stdio write. Calls and
+ * cancellation notifications can otherwise overlap and trip Node's listener warning
+ * on Windows. One ordered writer is enough for JSON-RPC and bounds that listener count.
+ */
+export function serializeTransportWrites<T extends WritableTransport>(transport: T): T {
+  const send = transport.send.bind(transport);
+  let tail = Promise.resolve();
+  transport.send = (message: unknown) => {
+    const pending = tail.then(() => send(message));
+    tail = pending.catch(() => {});
+    return pending;
+  };
+  return transport;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -126,13 +147,15 @@ export const stdioSidecarLauncher: McpSidecarLauncher = async (spec, signal) => 
     );
   });
 
-  const transport = new sdk.StdioClientTransport({
-    command: spec.runtime,
-    args: [spec.cli, ...spec.args],
-    env: { ...sdk.getDefaultEnvironment(), ...(spec.env ?? {}) },
-    ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
-    stderr: "pipe",
-  });
+  const transport = serializeTransportWrites(
+    new sdk.StdioClientTransport({
+      command: spec.runtime,
+      args: [spec.cli, ...spec.args],
+      env: { ...sdk.getDefaultEnvironment(), ...(spec.env ?? {}) },
+      ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
+      stderr: "pipe",
+    }),
+  );
   const diagnostics: string[] = [];
   transport.stderr?.on("data", (chunk) => {
     const text = String(chunk).trim();

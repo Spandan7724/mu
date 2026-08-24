@@ -266,6 +266,39 @@ describe("browser_tabs", () => {
 });
 
 describe("browser_act", () => {
+  test("advertises and performs targetless page scrolling", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    try {
+      await on(harness, FAKE_PAGE_URLS.dynamic);
+      const act = browserActTool({ session: harness.session });
+      expect(act.description).toContain("omit target");
+      expect(JSON.stringify(act.inputSchema)).toContain("Omit for page scrolling");
+
+      const result = await act.execute("c1", { action: "scroll", deltaY: 800 }, signal());
+      expect(result.isError).not.toBe(true);
+      expect(resultText(result)).toContain("Scrolled");
+      expect(harness.session.record()?.observation.viewport.scrollY).toBe(800);
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  test("a stale targeted scroll tells the model to retry without a target", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    try {
+      await on(harness, FAKE_PAGE_URLS.dynamic);
+      const act = browserActTool({ session: harness.session });
+      const target = refOf(elementNamed(harness, FAKE_LABELS.scrollTarget));
+      harness.session.invalidate(target.tabId);
+
+      const result = await act.execute("c1", { action: "scroll", target, deltaY: 800 }, signal());
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toContain('action "scroll", deltaY, and no target');
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
   test("it fills, selects and checks, and reports what the page then showed", async () => {
     const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
     try {
