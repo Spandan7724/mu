@@ -197,6 +197,46 @@ describe("evidence from a driver outcome", () => {
     expect(classifyCommitOutcome(evidence).status).toBe("confirmed");
   });
 
+  test("confirmation text plus a disappeared submitted form corroborate", () => {
+    const evidence = commitEvidenceFromOutcome(
+      sampleActionOutcome({
+        details: { formDisappeared: true },
+        receiptCandidate: {
+          kind: "submit-form",
+          url: CONFIRMATION_URL,
+          title: "Received",
+          confirmationText: "Application received",
+        },
+      }),
+    );
+
+    expect(evidence.confirmation).toContainEqual({ kind: "form-disappeared" });
+    expect(classifyCommitOutcome(evidence).status).toBe("confirmed");
+  });
+
+  test("an explicit post-submit failure outranks weak confirmation signals", () => {
+    const evidence = commitEvidenceFromOutcome(
+      sampleActionOutcome({
+        details: {
+          formDisappeared: true,
+          failureText: "We could not submit your application.",
+        },
+        navigation: { from: SAMPLE_URL, to: CONFIRMATION_URL },
+        receiptCandidate: {
+          kind: "submit-form",
+          url: CONFIRMATION_URL,
+          title: "Application not submitted",
+        },
+      }),
+    );
+
+    expect(evidence.failure).toContainEqual({
+      kind: "error-text",
+      detail: "We could not submit your application.",
+    });
+    expect(classifyCommitOutcome(evidence).status).toBe("failed");
+  });
+
   test("a blocked or stale action never counts as an interaction", () => {
     for (const status of ["blocked", "stale", "takeover"] as const) {
       const evidence = commitEvidenceFromOutcome(

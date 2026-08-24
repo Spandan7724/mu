@@ -99,7 +99,12 @@ export function classifyCommitOutcome(evidence: CommitEvidence): CommitClassific
       ...base,
     };
   }
-  if (isSufficientConfirmation(confirmation)) {
+  const strongConfirmation = confirmation.some(
+    (item) =>
+      (item.kind === "external-id" && item.value.length > 0) ||
+      (item.kind === "deterministic-response" && item.ok),
+  );
+  if (strongConfirmation) {
     const externalId = firstExternalId(confirmation);
     return {
       status: "confirmed",
@@ -120,10 +125,21 @@ export function classifyCommitOutcome(evidence: CommitEvidence): CommitClassific
   if (evidence.lost !== undefined) {
     return { status: "unknown", reason: `confirmation was lost (${evidence.lost})`, ...base };
   }
+  // A post-interaction semantic error state outranks weak page-authored signals such
+  // as navigation and disappearance. Otherwise any rejected form POST that renders an
+  // error page would look confirmed. Strong evidence above still wins when a stale
+  // alert happens to coexist with a real external id or deterministic response.
   if (failure.length > 0) {
     return {
       status: "failed",
       reason: failure[0]?.detail ?? "the site reported a failure",
+      ...base,
+    };
+  }
+  if (isSufficientConfirmation(confirmation)) {
+    return {
+      status: "confirmed",
+      reason: "the site produced sufficient confirmation",
       ...base,
     };
   }
@@ -195,10 +211,22 @@ export function commitEvidenceFromOutcome(
       to: outcome.navigation.to,
     });
   }
+  const details =
+    typeof outcome.details === "object" &&
+    outcome.details !== null &&
+    !Array.isArray(outcome.details)
+      ? outcome.details
+      : undefined;
+  if (details?.formDisappeared === true) {
+    confirmation.push({ kind: "form-disappeared" });
+  }
   const lost = extra.lost ?? (outcome.status === "unknown" ? "driver-uncertain" : undefined);
   const failure: FailureEvidence[] = [...(extra.failure ?? [])];
   if (outcome.status === "failed") {
     failure.push({ kind: "error-text", detail: outcome.message });
+  }
+  if (typeof details?.failureText === "string" && details.failureText.length > 0) {
+    failure.push({ kind: "error-text", detail: details.failureText });
   }
   return {
     interactionOccurred: outcome.status === "completed" || outcome.status === "unknown",

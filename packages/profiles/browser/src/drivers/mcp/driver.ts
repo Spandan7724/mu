@@ -690,6 +690,66 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     return { tab: page.tab, page };
   };
 
+  const afterSubmission = async (
+    tabId: string,
+    target: SnapshotNode,
+    fromUrl: string,
+    signal: AbortSignal,
+  ): Promise<{ tab: TabState; page: PageState }> => {
+    const targetStillExists = (page: PageState): boolean =>
+      page.nodes.some(
+        (entry) =>
+          entry.ref === target.ref && entry.role === target.role && entry.name === target.name,
+      );
+    const deadline = now() + 5_000;
+    for (;;) {
+      const settled = await afterAction(tabId, signal);
+      if (settled.tab.url !== fromUrl || !targetStillExists(settled.page)) {
+        return settled;
+      }
+      if (now() >= deadline) return settled;
+      await sleep(SETTLE_POLL_MS, signal);
+    }
+  };
+
+  const FAILURE_LANGUAGE =
+    /\b(?:could not|cannot|can't|did not|didn't|failed|failure|error|invalid|rejected|unable|not submitted|no application was created|try again)\b/i;
+
+  const failureAlertText = (
+    beforeNodes: readonly SnapshotNode[],
+    afterPage: PageState,
+  ): string | undefined => {
+    const beforeAlerts = new Set(
+      beforeNodes
+        .filter((entry) => entry.role === "alert")
+        .map((entry) => `${entry.ref ?? ""}\u0000${entry.name ?? ""}\u0000${entry.value ?? ""}`),
+    );
+    const alerts = afterPage.nodes.filter(
+      (entry) =>
+        entry.role === "alert" &&
+        !beforeAlerts.has(`${entry.ref ?? ""}\u0000${entry.name ?? ""}\u0000${entry.value ?? ""}`),
+    );
+    for (const alert of alerts) {
+      const belongsToAlert = (entry: SnapshotNode): boolean => {
+        for (
+          let current: SnapshotNode | undefined = entry;
+          current !== undefined;
+          current = current.parent
+        ) {
+          if (current === alert) return true;
+        }
+        return false;
+      };
+      const text = afterPage.nodes
+        .filter(belongsToAlert)
+        .flatMap((entry) => [entry.name, entry.value])
+        .filter((entry): entry is string => entry !== undefined && entry.length > 0)
+        .join(" ");
+      if (FAILURE_LANGUAGE.test(text)) return bounded(text, BROWSER_LIMITS.maxSummaryChars);
+    }
+    return undefined;
+  };
+
   const settle = async (
     tab: TabState,
     fromUrl: string,
@@ -1093,9 +1153,20 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       }
       let after: ActionResultSnapshot;
       let confirmation: string | undefined;
+      let formDisappeared = false;
+      let failureText: string | undefined;
       try {
-        const { tab: updated, page: settledPage } = await afterAction(page.tab.id, signal);
+        const { tab: updated, page: settledPage } = await afterSubmission(
+          page.tab.id,
+          node,
+          before.url,
+          signal,
+        );
         after = resultOf(updated);
+        formDisappeared = !settledPage.nodes.some(
+          (entry) => entry.ref === node.ref && entry.role === node.role && entry.name === node.name,
+        );
+        failureText = failureAlertText(page.nodes, settledPage);
         const state = await pageMetadata(signal);
         // BD18: the request reached the server and the response never finished.
         // That is not a failure and not a success; it is an outcome Mu cannot
@@ -1122,10 +1193,20 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           ...(answered === undefined ? {} : { dialog: answered }),
         });
       }
+      const navigation = navigationOf(before, after);
       return completedOutcome({
         message: `Submitted "${label}".`,
         before,
         after,
+        ...(navigation === undefined ? {} : { navigation }),
+        ...(formDisappeared || failureText !== undefined
+          ? {
+              details: {
+                ...(formDisappeared ? { formDisappeared: true } : {}),
+                ...(failureText === undefined ? {} : { failureText }),
+              },
+            }
+          : {}),
         ...(answered === undefined ? {} : { dialog: answered }),
         receiptCandidate: {
           kind: request.intent,

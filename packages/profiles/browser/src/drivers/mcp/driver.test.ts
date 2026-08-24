@@ -261,6 +261,23 @@ describe("observation discipline", () => {
 });
 
 describe("commitment routing", () => {
+  test("a confirmed submit carries its post-submit navigation as evidence", async () => {
+    const { driver, signal } = await connected();
+    await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.submit }, signal);
+    const observation = await driver.observe({}, signal);
+    const button = observation.elements.find(
+      (element) => element.label === FAKE_LABELS.submitButton,
+    );
+    const outcome = await driver.submit(
+      { target: elementRefOf(button as never), intent: "submit-form" },
+      signal,
+    );
+
+    expect(outcome.navigation?.from).toBe(observation.url);
+    expect(outcome.navigation?.to).not.toBe(observation.url);
+    expect(outcome.details).toMatchObject({ formDisappeared: true });
+  });
+
   test("a generic click on a submitter is blocked and names the submit path", async () => {
     const { driver, sidecar, signal } = await connected();
     await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.submit }, signal);
@@ -306,6 +323,25 @@ describe("commitment routing", () => {
     expect(outcome.status).toBe("unknown");
     expect(outcome.ok).toBe(false);
     expect(sidecar.submissions()).toHaveLength(1);
+  });
+
+  test("a new semantic rejection alert is carried as failure evidence", async () => {
+    const { driver, signal } = await connected();
+    await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.failedSubmit }, signal);
+    const observation = await driver.observe({}, signal);
+    const button = observation.elements.find(
+      (element) => element.label === FAKE_LABELS.submitButton,
+    );
+    const outcome = await driver.submit(
+      { target: elementRefOf(button as never), intent: "submit-form" },
+      signal,
+    );
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.details).toMatchObject({
+      formDisappeared: true,
+      failureText: "We could not submit your application. No application was created.",
+    });
   });
 });
 

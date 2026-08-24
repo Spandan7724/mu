@@ -12,6 +12,7 @@ import { outcomeRoutes } from "./routes/outcomes.ts";
 import { spaPrefixRoutes, spaRoutes } from "./routes/spa.ts";
 import { staleRoutes } from "./routes/stale.ts";
 import { takeoverRoutes } from "./routes/takeover.ts";
+import { taskRoutes } from "./routes/tasks.ts";
 import { uploadRoutes } from "./routes/uploads.ts";
 import { SessionStore } from "./session.ts";
 import type { FixtureOptions, FixtureOrigin, FixtureSecrets } from "./types.ts";
@@ -57,6 +58,7 @@ function buildRoutes(): RouteTable {
     uploadRoutes,
     flakyRoutes,
     staleRoutes,
+    taskRoutes,
     takeoverRoutes,
     adversarialRoutes,
     outcomeRoutes,

@@ -353,6 +353,9 @@ cross origin ${esc(ctx.origins.secondary)}.</p>
 <li><a href="/auth/login">Takeover simulations</a></li>
 <li><a href="/adversarial">Adversarial pages</a></li>
 <li><a href="/outcome/confirmed">Post-submit outcomes</a></li>
+<li><a href="/tasks/research">Research and multi-tab comparison</a></li>
+<li><a href="/tasks/schedule">Scheduling</a></li>
+<li><a href="/tasks/account">Account settings</a></li>
 </ul>`,
     }),
 

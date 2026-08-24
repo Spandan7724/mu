@@ -532,3 +532,37 @@ describe("an untouched file input is not an upload", () => {
     }
   });
 });
+
+describe("broader task fixtures", () => {
+  test("research pages expose stable comparison facts without recording a write", async () => {
+    const comparison = await (await fetch(`${fixture.url}/tasks/research`)).text();
+    expect(comparison).toContain("Atlas");
+    expect(comparison).toContain("Beacon");
+    expect(comparison).toContain("USD 12");
+    expect(await (await fetch(`${fixture.url}/tasks/research/beacon`)).text()).toContain(
+      "One-hour response",
+    );
+    expect(fixture.recorder.all()).toEqual([]);
+  });
+
+  test("scheduling and account changes use the common commitment recorder", async () => {
+    const schedule = new FormData();
+    schedule.set("interview_date", "2026-10-15");
+    schedule.set("time_slot", "14:00Z");
+    await fetch(`${fixture.url}/tasks/schedule`, { method: "POST", body: schedule });
+
+    const account = new FormData();
+    account.set("time_zone", "Asia/Kolkata");
+    account.set("weekly_digest", "yes");
+    await fetch(`${fixture.url}/tasks/account`, { method: "POST", body: account });
+
+    expect(fixture.recorder.only("/tasks/schedule").values).toMatchObject({
+      interview_date: ["2026-10-15"],
+      time_slot: ["14:00Z"],
+    });
+    expect(fixture.recorder.only("/tasks/account").values).toEqual({
+      time_zone: ["Asia/Kolkata"],
+      weekly_digest: ["yes"],
+    });
+  });
+});

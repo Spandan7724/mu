@@ -13,6 +13,7 @@
 import type { ToolResult } from "@mu/core";
 import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import type { AuthorizedDocument } from "../contracts/documents.ts";
+import type { SubmitIntent } from "../contracts/intent.ts";
 import type { BrowserElement, BrowserObservation } from "../contracts/observation.ts";
 import type { AuthorizedDocumentId } from "../contracts/primitives.ts";
 import type { FactLookup } from "../data/facts.ts";
@@ -23,11 +24,25 @@ import { browserNavigateTool } from "../tools/navigate.ts";
 import { browserObserveTool } from "../tools/observe.ts";
 import type { ObservationRecord } from "../tools/session.ts";
 import { browserSubmitTool } from "../tools/submit.ts";
+import { browserTabsTool } from "../tools/tabs.ts";
+import type { browserTakeoverTool } from "../tools/takeover.ts";
 import { type BrowserUploadToolContext, browserUploadTool } from "../tools/upload.ts";
+import { browserWaitTool } from "../tools/wait.ts";
 
 export interface ScenarioContext extends BrowserUploadToolContext {
   facts: FactLookup;
   policy: ApplicantPolicy;
+  /** The profile's shipped tool instances. Keeping these preserves per-session state. */
+  tools?: {
+    observe: ReturnType<typeof browserObserveTool>;
+    navigate: ReturnType<typeof browserNavigateTool>;
+    act: ReturnType<typeof browserActTool>;
+    tabs: ReturnType<typeof browserTabsTool>;
+    upload: ReturnType<typeof browserUploadTool>;
+    submit: ReturnType<typeof browserSubmitTool>;
+    wait: ReturnType<typeof browserWaitTool>;
+    takeover: ReturnType<typeof browserTakeoverTool>;
+  };
 }
 
 export interface ScenarioStep {
@@ -87,8 +102,8 @@ export interface ApplyOptions {
  */
 export async function fillCurrentStep(options: ApplyOptions): Promise<ObservationRecord> {
   const { context, signal, log } = options;
-  const observe = browserObserveTool(context);
-  const act = browserActTool(context);
+  const observe = context.tools?.observe ?? browserObserveTool(context);
+  const act = context.tools?.act ?? browserActTool(context);
 
   await observe.execute("observe", {}, signal);
   let record = context.session.record();
@@ -177,7 +192,7 @@ export async function fillCurrentStep(options: ApplyOptions): Promise<Observatio
   }
 
   if (options.documentIds !== undefined && options.documentIds.length > 0) {
-    const upload = browserUploadTool(context);
+    const upload = context.tools?.upload ?? browserUploadTool(context);
     // A real browser exposes `<input type=file>` as a plain button, with nothing in the
     // accessibility tree naming it a file input, so there is no marker to look for. What
     // is left is the label — the same evidence a person uses. `browser_upload` is what
@@ -217,8 +232,8 @@ export async function advance(
   label: string,
 ): Promise<ObservationRecord | undefined> {
   const { context, signal, log } = options;
-  const act = browserActTool(context);
-  const observe = browserObserveTool(context);
+  const act = context.tools?.act ?? browserActTool(context);
+  const observe = context.tools?.observe ?? browserObserveTool(context);
   const record = context.session.record();
   const control = record?.observation.elements.find(
     (entry) => entry.label === label || entry.name === label,
@@ -245,23 +260,103 @@ export async function advance(
       ok: false,
       detail: `the form remained at ${record.observation.url}; validation did not accept this step`,
     });
-    return undefined;
   }
   return next;
+}
+
+/** Clicks a known reversible control and re-observes the resulting surface. */
+export async function clickControl(
+  options: ApplyOptions,
+  label: string,
+): Promise<ObservationRecord | undefined> {
+  const { context, signal, log } = options;
+  const record = context.session.record();
+  const control = record?.observation.elements.find(
+    (entry) => entry.label === label || entry.name === label,
+  );
+  if (record === undefined || control === undefined) return undefined;
+  const result = await (context.tools?.act ?? browserActTool(context)).execute(
+    `click-${label}`,
+    {
+      action: "click",
+      target: { ref: control.ref, revision: control.revision, tabId: control.tabId },
+    },
+    signal,
+  );
+  log.steps.push({
+    what: `click ${label}`,
+    ok: result.isError !== true,
+    detail: textOf(result),
+  });
+  await (context.tools?.observe ?? browserObserveTool(context)).execute("observe", {}, signal);
+  return context.session.record();
+}
+
+/** Selects the popup tab whose URL contains the supplied stable fixture fragment. */
+export async function switchToPopup(
+  options: ApplyOptions,
+  urlFragment: string,
+): Promise<ObservationRecord | undefined> {
+  const { context, signal, log } = options;
+  const tabs = context.tools?.tabs ?? browserTabsTool(context);
+  const listed = await tabs.execute("list-tabs", { action: "list" }, signal);
+  const details = listed.details as
+    | { kind?: string; tabs?: { id: string; url: string; active: boolean }[] }
+    | undefined;
+  const popup = details?.tabs?.find((tab) => tab.url.includes(urlFragment));
+  if (popup === undefined) {
+    log.steps.push({ what: "select popup", ok: false, detail: textOf(listed) });
+    return undefined;
+  }
+  if (!popup.active) {
+    const selected = await tabs.execute(
+      "select-popup",
+      { action: "select", tabId: popup.id },
+      signal,
+    );
+    log.steps.push({
+      what: "select popup",
+      ok: selected.isError !== true,
+      detail: textOf(selected),
+    });
+  }
+  await (context.tools?.observe ?? browserObserveTool(context)).execute("observe", {}, signal);
+  return context.session.record();
+}
+
+/** Waits for delayed page content and leaves a fresh observation in the session. */
+export async function waitForText(
+  options: ApplyOptions,
+  text: string,
+  timeoutMs = 10_000,
+): Promise<ObservationRecord | undefined> {
+  const result = await (options.context.tools?.wait ?? browserWaitTool(options.context)).execute(
+    `wait-${text}`,
+    { condition: "text", value: text, timeoutMs },
+    options.signal,
+  );
+  options.log.steps.push({
+    what: `wait for ${text}`,
+    ok: result.isError !== true,
+    detail: textOf(result),
+  });
+  return options.context.session.record();
 }
 
 export interface CommitResult {
   text: string;
   isError: boolean;
+  status?: "confirmed" | "completed" | "unknown" | "failed" | "cancelled" | undefined;
 }
 
 /** The one irreversible step, through the one tool that can reach it. */
 export async function commit(
   options: ApplyOptions,
   label: string,
+  intent: SubmitIntent = "submit-form",
 ): Promise<CommitResult | undefined> {
   const { context, signal, log } = options;
-  const submit = browserSubmitTool(context);
+  const submit = context.tools?.submit ?? browserSubmitTool(context);
   const record = context.session.record();
   const control = record?.observation.elements.find(
     (entry) => entry.label === label || entry.name === label,
@@ -283,17 +378,18 @@ export async function commit(
     "commit",
     {
       target: { ref: control.ref, revision: control.revision, tabId: control.tabId },
-      intent: "submit-form",
+      intent,
     },
     signal,
   );
   const text = textOf(result);
   log.steps.push({ what: `submit via ${label}`, ok: result.isError !== true, detail: text });
-  return { text, isError: result.isError === true };
+  const details = result.details as { status?: CommitResult["status"] } | undefined;
+  return { text, isError: result.isError === true, status: details?.status };
 }
 
 export async function openApplication(options: ApplyOptions): Promise<void> {
-  const navigate = browserNavigateTool(options.context);
+  const navigate = options.context.tools?.navigate ?? browserNavigateTool(options.context);
   const result = await navigate.execute(
     "open",
     { action: "open" as const, url: options.url },

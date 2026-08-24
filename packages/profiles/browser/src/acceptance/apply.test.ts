@@ -25,25 +25,33 @@ import { verifyProvenance } from "../testing/provenance.ts";
 import {
   type ApplyOptions,
   advance,
+  clickControl,
   commit,
   emptyLog,
   fillCurrentStep,
   openApplication,
   type ScenarioContext,
+  switchToPopup,
+  waitForText,
 } from "./scenario.ts";
 
 const LIVE = process.env.MU_BROWSER_LIVE === "1";
 
 interface LiveFixture {
   url: string;
+  crossOrigin: { url: string };
   recorder: {
-    all(): readonly {
-      path: string;
-      fields: { name: string; value: string }[];
-      files: { field: string; basename: string; sha256: string }[];
-    }[];
+    all(): readonly RecordedFixtureSubmission[];
+    only(path?: string): RecordedFixtureSubmission;
   };
   stop(): Promise<void>;
+}
+
+interface RecordedFixtureSubmission {
+  path: string;
+  fields: { name: string; value: string }[];
+  files: { field: string; basename: string; sha256: string }[];
+  response: { outcome: string; responseLost?: boolean };
 }
 
 async function startLiveFixture(): Promise<LiveFixture> {
@@ -67,6 +75,7 @@ const RESUME = [
 
 // The saved answers, in the vocabulary `data/fields.ts` defines.
 const PROFILE: Record<string, string> = {
+  full_name: "Ada Testwell",
   first_name: "Ada",
   last_name: "Testwell",
   email: "ada.testwell@example.invalid",
@@ -103,6 +112,8 @@ if (!LIVE) {
   async function scenarioContext(
     fixture: LiveFixture,
     mode: BrowserPermissionMode,
+    extraAllowedOrigins: readonly string[] = [],
+    callTimeoutMs = 90_000,
   ): Promise<{
     context: ScenarioContext;
     home: string;
@@ -132,13 +143,14 @@ if (!LIVE) {
       mode: 0o600,
     });
 
+    const allowedOrigins = [fixture.url, ...extraAllowedOrigins];
     const profile = await browserProfile({
       home,
       connection: "persistent",
       browser: "chrome",
       documents: [resumePath],
       applicantProfile: applicantPath,
-      allowedOrigins: [fixture.url],
+      allowedOrigins,
       factory: mcpPersistentFactory({
         home,
         // The public browser package owns the sidecar dependency. Resolve from the
@@ -150,7 +162,7 @@ if (!LIVE) {
           ? {}
           : { outputDir: process.env.MU_BROWSER_LIVE_OUTPUT }),
         startupTimeoutMs: 60_000,
-        callTimeoutMs: 90_000,
+        callTimeoutMs,
       }),
     });
     const facts = profile.facts;
@@ -162,7 +174,10 @@ if (!LIVE) {
       context: { taskId: `acceptance-${mode}` },
       ...(mode === "autonomous-submit"
         ? {
-            grant: autonomousSubmitGrant([new URL(fixture.url).origin], authority),
+            grant: autonomousSubmitGrant(
+              allowedOrigins.map((url) => new URL(url).origin),
+              authority,
+            ),
             rules: [
               { permission: "browser:upload", pattern: "*", action: "allow" },
               // Personal disclosure remains a user decision even in autonomous mode;
@@ -185,10 +200,132 @@ if (!LIVE) {
           sessionId: `acceptance-${mode}`,
           store: profile.artifacts,
         },
+        tools: {
+          observe: profile.toolset.find((tool) => tool.name === "browser_observe") as NonNullable<
+            ScenarioContext["tools"]
+          >["observe"],
+          navigate: profile.toolset.find((tool) => tool.name === "browser_navigate") as NonNullable<
+            ScenarioContext["tools"]
+          >["navigate"],
+          act: profile.toolset.find((tool) => tool.name === "browser_act") as NonNullable<
+            ScenarioContext["tools"]
+          >["act"],
+          tabs: profile.toolset.find((tool) => tool.name === "browser_tabs") as NonNullable<
+            ScenarioContext["tools"]
+          >["tabs"],
+          upload: profile.toolset.find((tool) => tool.name === "browser_upload") as NonNullable<
+            ScenarioContext["tools"]
+          >["upload"],
+          submit: profile.toolset.find((tool) => tool.name === "browser_submit") as NonNullable<
+            ScenarioContext["tools"]
+          >["submit"],
+          wait: profile.toolset.find((tool) => tool.name === "browser_wait") as NonNullable<
+            ScenarioContext["tools"]
+          >["wait"],
+          takeover: profile.toolset.find((tool) => tool.name === "browser_takeover") as NonNullable<
+            ScenarioContext["tools"]
+          >["takeover"],
+        },
       },
       home,
       shutdown: () => profile.runtime.shutdown(),
     };
+  }
+
+  const ANSWERS = {
+    "Desired annual salary *": "185000",
+    "I confirm the information above is accurate": "yes",
+  };
+
+  async function driveApplication(options: ApplyOptions): Promise<void> {
+    await openApplication(options);
+    const SUBMIT = "Submit application";
+    for (let step = 0; step < 10; step += 1) {
+      const record = options.context.session.record();
+      const has = (label: string) =>
+        record?.observation.elements.some(
+          (entry) => entry.label === label || entry.name === label,
+        ) === true;
+      if (has(SUBMIT)) return;
+      if (has("Open review window")) {
+        await clickControl(options, "Open review window");
+        if ((await switchToPopup(options, "/apply/review/embedded")) === undefined) {
+          throw new Error("the popup review tab did not become controllable");
+        }
+        continue;
+      }
+
+      await fillCurrentStep({
+        ...options,
+        answers: ANSWERS,
+        documentIds: options.context.documents.ids(),
+      });
+      const nextLabel = ["Continue", "Review application"].find((label) =>
+        options.context.session
+          .record()
+          ?.observation.elements.some((entry) => entry.label === label || entry.name === label),
+      );
+      if (nextLabel === undefined) break;
+      await advance(options, nextLabel);
+    }
+  }
+
+  async function receiptFor(context: ScenarioContext) {
+    const receiptStore = context.receipts?.store;
+    if (receiptStore === undefined) throw new Error("the acceptance receipt store is missing");
+    const receipts = await receiptStore.list("receipt");
+    const receipt = await receiptStore.readReceipt(
+      receipts[0]?.name.replace(/\.json$/, "") ?? "missing",
+    );
+    return { receiptStore, receipts, receipt };
+  }
+
+  async function reportAndClose(
+    log: ReturnType<typeof emptyLog>,
+    shutdown: () => Promise<void>,
+    fixture: LiveFixture,
+    home: string,
+  ): Promise<void> {
+    for (const step of log.steps) {
+      const head = step.detail.split("\n")[0] ?? "";
+      console.log(`[apply] ${step.ok ? "ok  " : "FAIL"} ${step.what} — ${head}`);
+      if (step.what.startsWith("submit via ")) {
+        console.log(`[apply] submit evidence — ${step.detail.replace(/\n/g, " | ")}`);
+      }
+    }
+    console.log(`[apply] unanswered: ${log.unanswered.join(", ") || "none"}`);
+    for (const skipped of log.plans[0]?.skipped ?? []) {
+      if (skipped.reason === "asked") continue;
+      console.log(`[apply] skipped ${skipped.label}: ${skipped.reason} — ${skipped.detail}`);
+    }
+    await shutdown();
+    await fixture.stop();
+    await rm(home, { recursive: true, force: true });
+  }
+
+  async function variantRun(
+    variant: string,
+    options: {
+      mode?: BrowserPermissionMode;
+      allowCrossOrigin?: boolean;
+      callTimeoutMs?: number;
+    } = {},
+  ) {
+    const fixture = await startLiveFixture();
+    const { context, home, shutdown } = await scenarioContext(
+      fixture,
+      options.mode ?? "confirm-submission",
+      options.allowCrossOrigin === true ? [fixture.crossOrigin.url] : [],
+      options.callTimeoutMs,
+    );
+    const log = emptyLog();
+    const apply: ApplyOptions = {
+      context,
+      url: `${fixture.url}/apply?variant=${variant}`,
+      signal: AbortSignal.timeout(240_000),
+      log,
+    };
+    return { fixture, context, home, shutdown, log, apply };
   }
 
   describe("one job application, end to end", () => {
@@ -206,34 +343,11 @@ if (!LIVE) {
         };
 
         try {
-          await openApplication(options);
-
-          // A real form is a loop, not a fixed script: it re-renders the step it could
-          // not accept, and nothing tells the caller in advance how many there are.
-          const SUBMIT = "Submit application";
-          const answers = {
-            "Desired annual salary *": "185000",
-            "I confirm the information above is accurate": "yes",
-          };
-          for (let step = 0; step < 8; step += 1) {
-            const record = context.session.record();
-            const atSubmit = record?.observation.elements.some(
-              (entry) => entry.label === SUBMIT || entry.name === SUBMIT,
-            );
-            if (atSubmit === true) break;
-            await fillCurrentStep({ ...options, answers, documentIds: context.documents.ids() });
-            const nextLabel = ["Continue", "Review application"].find((label) =>
-              context.session
-                .record()
-                ?.observation.elements.some(
-                  (entry) => entry.label === label || entry.name === label,
-                ),
-            );
-            if (nextLabel === undefined || (await advance(options, nextLabel)) === undefined) break;
-          }
+          await driveApplication(options);
 
           const result = await commit(options, "Submit application");
           expect(result?.isError ?? true).toBe(false);
+          expect(result?.status).toBe("confirmed");
 
           const submissions = fixture.recorder
             .all()
@@ -265,15 +379,11 @@ if (!LIVE) {
           const authorized = context.documents.entries()[0];
           expect(submitted.files[0]?.sha256).toBe(authorized?.sha256);
 
-          const receiptStore = context.receipts?.store;
-          if (receiptStore === undefined)
-            throw new Error("the acceptance receipt store is missing");
-          const receipts = await receiptStore.list("receipt");
+          const { receiptStore, receipts, receipt } = await receiptFor(context);
           expect(receipts).toHaveLength(1);
-          const receipt = await receiptStore.readReceipt(
-            receipts[0]?.name.replace(/\.json$/, "") ?? "missing",
-          );
+          expect(receiptStore).toBeDefined();
           expect(receipt?.intent).toBe("submit-form");
+          expect(receipt?.status).toBe("confirmed");
           expect(receipt?.uploadedFiles.map((file) => file.documentId)).toEqual(
             context.documents.ids(),
           );
@@ -292,19 +402,320 @@ if (!LIVE) {
         } finally {
           // A live acceptance run that reports only pass or fail cannot be diagnosed,
           // and it fails most usefully partway through.
-          for (const step of log.steps) {
-            const head = step.detail.split("\n")[0] ?? "";
-            console.log(`[apply] ${step.ok ? "ok  " : "FAIL"} ${step.what} — ${head}`);
-          }
-          console.log(`[apply] unanswered: ${log.unanswered.join(", ") || "none"}`);
-          for (const skipped of log.plans[0]?.skipped ?? []) {
-            if (skipped.reason === "asked") continue;
-            console.log(`[apply] skipped ${skipped.label}: ${skipped.reason} — ${skipped.detail}`);
-          }
-          await shutdown();
-          await fixture.stop();
-          await rm(home, { recursive: true, force: true });
+          await reportAndClose(log, shutdown, fixture, home);
         }
       }, 300_000);
+  });
+
+  describe("application variants", () => {
+    test("read-only research compares two sources across controlled tabs without a write", async () => {
+      const run = await variantRun("default", { mode: "read-only" });
+      run.context.session.setPolicy({
+        ...run.context.session.policy,
+        mode: "read-only",
+        rules: [],
+      });
+      try {
+        await openApplication({ ...run.apply, url: `${run.fixture.url}/tasks/research` });
+        await run.context.tools?.observe.execute("observe-comparison", {}, run.apply.signal);
+        expect(run.context.session.record()?.observation.snapshot).toContain("USD 12");
+        expect(run.context.session.record()?.observation.snapshot).toContain("USD 18");
+
+        const sources = ["atlas", "beacon"];
+        const snapshots: string[] = [];
+        for (const source of sources) {
+          const opened = await run.context.tools?.tabs.execute(
+            `open-${source}`,
+            { action: "open", url: `${run.fixture.url}/tasks/research/${source}` },
+            run.apply.signal,
+          );
+          expect(opened?.isError).not.toBe(true);
+          await run.context.tools?.observe.execute(`observe-${source}`, {}, run.apply.signal);
+          snapshots.push(run.context.session.record()?.observation.snapshot ?? "");
+        }
+        expect(snapshots[0]).toContain("Four-hour response");
+        expect(snapshots[1]).toContain("One-hour response");
+        const listed = await run.context.tools?.tabs.execute(
+          "list-research-tabs",
+          { action: "list" },
+          run.apply.signal,
+        );
+        const tabDetails = listed?.details as { tabs?: unknown[] } | undefined;
+        expect(tabDetails?.tabs).toHaveLength(3);
+        expect(run.fixture.recorder.all()).toEqual([]);
+        expect(await run.context.receipts?.store.list("receipt")).toEqual([]);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("scheduling and account settings use distinct explicit commitment intents", async () => {
+      const run = await variantRun("default");
+      try {
+        const schedule = { ...run.apply, url: `${run.fixture.url}/tasks/schedule` };
+        await openApplication(schedule);
+        await fillCurrentStep({
+          ...schedule,
+          answers: {
+            "Interview date *": "2026-10-15",
+            "Time slot": "14:00 UTC",
+            Note: "Synthetic fixture interview",
+          },
+        });
+        expect((await commit(schedule, "Book interview"))?.status).toBe("confirmed");
+
+        const account = { ...run.apply, url: `${run.fixture.url}/tasks/account` };
+        await openApplication(account);
+        await fillCurrentStep({
+          ...account,
+          answers: { "Time zone": "Asia/Kolkata", "Weekly digest": "yes" },
+        });
+        expect((await commit(account, "Update account", "account-change"))?.status).toBe(
+          "confirmed",
+        );
+
+        expect(run.fixture.recorder.only("/tasks/schedule").fields).toEqual([
+          { name: "interview_date", value: "2026-10-15" },
+          { name: "time_slot", value: "14:00Z" },
+          { name: "note", value: "Synthetic fixture interview" },
+        ]);
+        expect(run.fixture.recorder.only("/tasks/account").fields).toEqual([
+          { name: "time_zone", value: "Asia/Kolkata" },
+          { name: "weekly_digest", value: "yes" },
+        ]);
+        const receiptStore = run.context.receipts?.store;
+        if (receiptStore === undefined) throw new Error("missing receipt store");
+        const receipts = await receiptStore.list("receipt");
+        expect(receipts).toHaveLength(2);
+        const intents = await Promise.all(
+          receipts.map(
+            async (entry) =>
+              (await receiptStore.readReceipt(entry.name.replace(/\.json$/, "")))?.intent,
+          ),
+        );
+        expect(intents.sort()).toEqual(["account-change", "submit-form"]);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a real credential page forces takeover and resumes with fresh references", async () => {
+      const run = await variantRun("default");
+      run.apply.url = `${run.fixture.url}/auth/login`;
+      try {
+        await openApplication(run.apply);
+        await run.context.tools?.observe.execute(
+          "observe-login",
+          { screenshot: "viewport" },
+          run.apply.signal,
+        );
+        const before = run.context.session.record();
+        const password = before?.observation.elements.find((entry) =>
+          /\bPassword\b/.test(entry.label ?? entry.name ?? ""),
+        );
+        const username = before?.observation.elements.find((entry) =>
+          /Email or username/.test(entry.label ?? entry.name ?? ""),
+        );
+        expect(password?.value).toBe("[redacted]");
+        expect(password?.risk).toContain("password");
+        expect(before?.observation.risks).toContain("password");
+        expect(before?.observation.screenshot).toBeUndefined();
+        if (username === undefined) throw new Error("the username control was not observed");
+        const oldRef = {
+          ref: username.ref,
+          revision: username.revision,
+          tabId: username.tabId,
+        };
+
+        const takeover = await run.context.tools?.takeover.execute(
+          "takeover-password",
+          {
+            reason: "password",
+            instructions: "Sign in directly in the browser, then resume.",
+          },
+          run.apply.signal,
+        );
+        expect(takeover?.terminate).toBe(true);
+        expect(run.context.session.runtime.status().phase).toBe("takeover");
+        expect(run.context.session.record()).toBeUndefined();
+
+        const pausedAction = await run.context.tools?.act.execute(
+          "act-during-takeover",
+          { action: "fill", target: oldRef, value: "still-not-sent" },
+          run.apply.signal,
+        );
+        expect(pausedAction?.isError).toBe(true);
+
+        const resumed = await run.context.session.runtime.resume(run.apply.signal);
+        run.context.session.endTakeover();
+        const after = run.context.session.adopt(resumed);
+        expect(after.revision).toBeGreaterThan(before?.revision ?? -1);
+        expect(run.context.session.resolve(oldRef, after).kind).toBe("stale");
+        expect(
+          after.observation.elements.find((entry) =>
+            /\bPassword\b/.test(entry.label ?? entry.name ?? ""),
+          )?.value,
+        ).toBe("[redacted]");
+        expect(run.fixture.recorder.all()).toEqual([]);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a delayed SPA route is waited for, grounded, and submitted once", async () => {
+      const run = await variantRun("default");
+      run.apply.url = `${run.fixture.url}/spa`;
+      try {
+        await openApplication(run.apply);
+        await waitForText(run.apply, "Start");
+        expect(await clickControl(run.apply, "Details")).toBeDefined();
+        expect(await waitForText(run.apply, "Full name")).toBeDefined();
+        await fillCurrentStep({ ...run.apply, answers: { Role: "Engineer" } });
+
+        const result = await commit(run.apply, "Send", "send");
+        expect(result?.status).toBe("confirmed");
+        const submissions = run.fixture.recorder
+          .all()
+          .filter((entry) => entry.path === "/spa/submit");
+        expect(submissions).toHaveLength(1);
+        expect(submissions[0]?.fields).toEqual([
+          { name: "full_name", value: "Ada Testwell" },
+          { name: "role", value: "eng" },
+        ]);
+        const { receipts, receipt } = await receiptFor(run.context);
+        expect(receipts).toHaveLength(1);
+        expect(receipt?.status).toBe("confirmed");
+        expect(receipt?.intent).toBe("send");
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a server-side validation bounce is observed, refilled, and submitted once", async () => {
+      const run = await variantRun("validation");
+      try {
+        await driveApplication(run.apply);
+        const result = await commit(run.apply, "Submit application");
+        expect(result?.status).toBe("confirmed");
+        expect(
+          run.log.steps.some(
+            (step) =>
+              step.what === "advance via Continue" &&
+              step.detail.includes("validation did not accept this step"),
+          ),
+        ).toBe(true);
+        expect(
+          run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
+        ).toHaveLength(1);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a visible server failure is receipted as failed without being reported as success", async () => {
+      const run = await variantRun("failure");
+      try {
+        await driveApplication(run.apply);
+        const result = await commit(run.apply, "Submit application");
+        expect(result?.status).toBe("failed");
+        const submissions = run.fixture.recorder
+          .all()
+          .filter((entry) => entry.path === "/apply/submit");
+        expect(submissions).toHaveLength(1);
+        expect(submissions[0]?.response.outcome).toBe("failed");
+        const { receipts, receipt } = await receiptFor(run.context);
+        expect(receipts).toHaveLength(1);
+        expect(receipt?.status).toBe("failed");
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a lost response is unknown, receipted once, and never resubmitted", async () => {
+      const run = await variantRun("unknown", { callTimeoutMs: 15_000 });
+      try {
+        await driveApplication(run.apply);
+        const result = await commit(run.apply, "Submit application");
+        expect(result?.status).toBe("unknown");
+        const submissions = run.fixture.recorder
+          .all()
+          .filter((entry) => entry.path === "/apply/submit");
+        expect(submissions).toHaveLength(1);
+        expect(submissions[0]?.response).toMatchObject({
+          outcome: "ambiguous",
+          responseLost: true,
+        });
+        const { receipts, receipt } = await receiptFor(run.context);
+        expect(receipts).toHaveLength(1);
+        expect(receipt?.status).toBe("unknown");
+        expect(result?.text).toContain("Do not repeat this");
+        expect(
+          run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
+        ).toHaveLength(1);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    for (const variant of ["iframe", "iframe-cross-origin", "popup"] as const) {
+      test(`${variant} review reaches the framed or popup submit control semantically`, async () => {
+        const run = await variantRun(variant, {
+          allowCrossOrigin: variant === "iframe-cross-origin",
+        });
+        try {
+          await driveApplication(run.apply);
+          const result = await commit(run.apply, "Submit application");
+          expect(result?.status).toBe("confirmed");
+          expect(
+            run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
+          ).toHaveLength(1);
+        } finally {
+          await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+        }
+      }, 300_000);
+    }
+
+    test("submission denial reaches neither the server nor the receipt store", async () => {
+      const run = await variantRun("default");
+      try {
+        await driveApplication(run.apply);
+        run.context.session.setPolicy({
+          ...run.context.session.policy,
+          mode: "read-only",
+          rules: [],
+        });
+        const result = await commit(run.apply, "Submit application");
+        expect(result?.isError).toBe(true);
+        expect(
+          run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
+        ).toEqual([]);
+        expect(await run.context.receipts?.store.list("receipt")).toEqual([]);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
+
+    test("a rerendered submit target cannot be retargeted to withdrawal", async () => {
+      const run = await variantRun("stale");
+      try {
+        await driveApplication(run.apply);
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const result = await commit(run.apply, "Submit application");
+        expect(result).toBeUndefined();
+        expect(
+          run.log.steps.some(
+            (step) =>
+              step.what === "submit via Submit application" &&
+              step.ok === false &&
+              step.detail.includes("no such control"),
+          ),
+        ).toBe(true);
+        expect(
+          run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
+        ).toEqual([]);
+      } finally {
+        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
+      }
+    }, 300_000);
   });
 }
