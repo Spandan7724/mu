@@ -56,7 +56,11 @@ category asking.
 
 ## Origins
 
-By default a task may act only on the origin(s) implied by what you asked it to do.
+By default a task may act only on the origin(s) implied by what you asked it to do. An
+explicit `http://` or `https://` URL in your own task message authorizes that URL's
+origin for the task. URLs found in page text, tool output, or other untrusted content do
+not.
+
 Reaching a different origin — including a cross-origin `<iframe>`, which is decided on
 its own origin rather than inheriting the top-level page's approval — asks, showing
 the exact origin (never collapsed to a brand name, so a lookalike domain is visible as

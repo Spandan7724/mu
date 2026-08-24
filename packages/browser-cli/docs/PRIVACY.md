@@ -79,14 +79,11 @@ path into your own browser's profile directory. An `owner.json` lock file record
 which running `mu-browser` process currently holds it, so two sessions cannot drive
 the same profile at once.
 
-## Receipts: the accountability record, once wired
+## Receipts: the accountability record
 
-The receipt format is fully specified and validated today, and the `/receipt`
-command already reads from `artifacts/receipts/` — but in this build nothing calls
-the code that writes one after a commitment, so `/receipt` will currently tell you
-there are none. Once writing is wired, a `browser_submit` action that actually
-reached the site (a form submission, a message send, a purchase, a deletion, a
-consent, an account change) will produce a receipt in
+The `/receipt` command reads from `artifacts/receipts/`. A `browser_submit` action that
+reaches the site (a form submission, a message send, a purchase, a deletion, a consent,
+or an account change) writes a receipt in
 `artifacts/receipts/<id>.json`: the origin, the intent, a status (`confirmed` /
 `unconfirmed` / `unknown` / `failed`), which field *names* were disclosed and which
 authorized fact ids they came from (never the values), which authorized document ids
@@ -98,11 +95,11 @@ written with it inside.
 
 ## Retention bounds
 
-These bounds exist in the code today and will apply as soon as each artifact kind
-starts being written (see the note above — none of them are populated yet in this
-build). Each kind is capped independently, in count, total bytes, and age. Mu prunes
-on every write; the newest artifact of a kind is exempt from the count/size eviction
-(never age) so a write you just made is never immediately deleted out from under you.
+These bounds exist in the code today. Receipts are populated by the shipped submit path;
+the other artifact kinds apply when their corresponding capture path writes them. Each
+kind is capped independently, in count, total bytes, and age. Mu prunes on every write;
+the newest artifact of a kind is exempt from the count/size eviction (never age) so a
+write you just made is never immediately deleted out from under you.
 
 | Kind | Max count | Max total size | Max age |
 | --- | --- | --- | --- |

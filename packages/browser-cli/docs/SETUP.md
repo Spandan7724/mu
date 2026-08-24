@@ -42,7 +42,7 @@ window that was yours to begin with.
 `--headless` and `--browser-profile` are rejected with `extension`: the whole point
 of this mode is a browser you can see, driving your own profile, not one Mu owns.
 
-### Persistent mode, once enabled
+### Persistent mode
 
 `mu-browser --connection persistent [--browser-profile <name>] [--headless]` launches
 a browser under a profile Mu owns at `~/.mu/browser/profiles/<name>/` (`default` if
@@ -57,6 +57,11 @@ would in any browser profile you drove by hand; Mu does not read or export them 
 `chrome`); the executable is discovered from a short list of standard install
 locations for your OS, or from `MU_BROWSER_EXECUTABLE` if you set it. Mu never
 downloads a browser binary itself — install one of the three normally first.
+
+On Linux, a snap-packaged Chromium works for browsing and uploads, but its private
+`/tmp` namespace prevents Playwright from handing downloaded files back to Mu. `doctor`
+detects that packaging and reports the download limitation; use a non-snap Chrome-family
+installation when downloads are part of the task.
 
 ### Running from WSL
 
