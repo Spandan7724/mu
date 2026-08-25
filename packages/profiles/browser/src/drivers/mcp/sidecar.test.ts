@@ -55,6 +55,42 @@ describe("the bridge is pinned, never fetched", () => {
     ).toEqual({ cli: "/opt/mcp/cli.js", runtime: "/usr/bin/node" });
   });
 
+  test("a Windows Bun host uses Node from PATH for the Playwright bridge", () => {
+    expect(
+      resolveSidecar({
+        platform: "win32",
+        executablePath: "C:\\Tools\\bun.exe",
+        env: {
+          [SIDECAR_CLI_ENV]: "C:\\mcp\\cli.js",
+          PATH: "C:\\Tools;C:\\Program Files\\nodejs",
+        },
+        exists: (path) => path === "C:\\Program Files\\nodejs\\node.exe",
+      }),
+    ).toEqual({ cli: "C:\\mcp\\cli.js", runtime: "C:\\Program Files\\nodejs\\node.exe" });
+  });
+
+  test("a Windows Node host remains the sidecar runtime", () => {
+    expect(
+      resolveSidecar({
+        platform: "win32",
+        executablePath: "C:\\Program Files\\nodejs\\node.exe",
+        env: { [SIDECAR_CLI_ENV]: "C:\\mcp\\cli.js" },
+        exists: () => false,
+      }),
+    ).toEqual({ cli: "C:\\mcp\\cli.js", runtime: "C:\\Program Files\\nodejs\\node.exe" });
+  });
+
+  test("a Windows Bun host without Node gets an actionable refusal", () => {
+    expect(() =>
+      resolveSidecar({
+        platform: "win32",
+        executablePath: "C:\\Tools\\bun.exe",
+        env: { [SIDECAR_CLI_ENV]: "C:\\mcp\\cli.js", PATH: "C:\\Tools" },
+        exists: () => false,
+      }),
+    ).toThrow("Node.js is required");
+  });
+
   test("an unresolvable bridge says how to install it and never offers to fetch it", () => {
     const message = String(
       thrown(() => resolveSidecar({ env: {}, resolveFrom: ["file:///nowhere/x.ts"] })),

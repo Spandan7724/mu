@@ -5,7 +5,7 @@
 // the user already installed (BD28) and the version is the one that was pinned.
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { BrowserDriverError } from "../../contracts/driver.ts";
 import type { McpServerIdentity, McpSidecarSpec } from "./protocol.ts";
 
@@ -55,6 +55,42 @@ export interface ResolveSidecarOptions {
   // the dependency, so its own location is the authoritative one.
   resolveFrom?: readonly string[] | undefined;
   runtime?: string | undefined;
+  platform?: BrowserPlatform | undefined;
+  executablePath?: string | undefined;
+  exists?: ((path: string) => boolean) | undefined;
+}
+
+function defaultSidecarRuntime(
+  options: ResolveSidecarOptions,
+  env: Record<string, string | undefined>,
+): string {
+  const current = options.executablePath ?? process.execPath;
+  const platform = options.platform ?? (process.platform as BrowserPlatform);
+  if (platform !== "win32" || basename(current).toLowerCase() === "node.exe") return current;
+
+  // Playwright's persistent Chromium connection hangs on its first command when its
+  // Node-oriented CLI is hosted by Bun on Windows. Keep Mu itself on Bun, but host
+  // the pinned bridge with an installed Node runtime. No shell or PATH lookup process
+  // is involved, and the explicit override above remains authoritative.
+  const exists = options.exists ?? existsSync;
+  const candidates = [
+    ...(env.PATH ?? env.Path ?? env.path ?? "")
+      .split(delimiter)
+      .filter((entry) => entry.length > 0)
+      .map((entry) => join(entry, "node.exe")),
+    ...(env.PROGRAMFILES ? [join(env.PROGRAMFILES, "nodejs", "node.exe")] : []),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (exists(candidate)) return candidate;
+    } catch {
+      // An unreadable candidate is simply not a candidate.
+    }
+  }
+  throw new BrowserDriverError(
+    "unsupported",
+    `Node.js is required to run the Playwright browser bridge on Windows. Install Node.js, or set ${SIDECAR_RUNTIME_ENV} to node.exe.`,
+  );
 }
 
 function resolveCliFrom(base: string): string | undefined {
@@ -70,8 +106,8 @@ function resolveCliFrom(base: string): string | undefined {
 // depends on. There is deliberately no fallback that fetches anything.
 export function resolveSidecar(options: ResolveSidecarOptions = {}): SidecarResolution {
   const env = options.env ?? process.env;
-  const runtime = options.runtime ?? env[SIDECAR_RUNTIME_ENV] ?? process.execPath;
   const configured = env[SIDECAR_CLI_ENV];
+  let cli: string | undefined;
   if (configured !== undefined && configured.length > 0) {
     if (!isAbsoluteOnAnyPlatform(configured)) {
       throw new BrowserDriverError(
@@ -79,16 +115,23 @@ export function resolveSidecar(options: ResolveSidecarOptions = {}): SidecarReso
         `${SIDECAR_CLI_ENV} must be an absolute path to ${PINNED_SIDECAR_PACKAGE}/cli.js`,
       );
     }
-    return { cli: configured, runtime };
+    cli = configured;
   }
-  for (const base of [...(options.resolveFrom ?? []), import.meta.url]) {
-    const cli = resolveCliFrom(base);
-    if (cli !== undefined) return { cli, runtime };
+  if (cli === undefined) {
+    for (const base of [...(options.resolveFrom ?? []), import.meta.url]) {
+      cli = resolveCliFrom(base);
+      if (cli !== undefined) break;
+    }
   }
-  throw new BrowserDriverError(
-    "unsupported",
-    `could not find ${PINNED_SIDECAR_PACKAGE} ${PINNED_SIDECAR_VERSION}. Install @mu-agent/browser, or set ${SIDECAR_CLI_ENV} to the absolute path of its cli.js. Mu never downloads it.`,
-  );
+  if (cli === undefined) {
+    throw new BrowserDriverError(
+      "unsupported",
+      `could not find ${PINNED_SIDECAR_PACKAGE} ${PINNED_SIDECAR_VERSION}. Install @mu-agent/browser, or set ${SIDECAR_CLI_ENV} to the absolute path of its cli.js. Mu never downloads it.`,
+    );
+  }
+  const runtime =
+    options.runtime ?? env[SIDECAR_RUNTIME_ENV] ?? defaultSidecarRuntime(options, env);
+  return { cli, runtime };
 }
 
 export type BrowserPlatform = "linux" | "darwin" | "win32";
