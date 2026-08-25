@@ -1,0 +1,108 @@
+import { describe, expect, test } from "bun:test";
+import { BrowserTaskLedger } from "./task-ledger.ts";
+
+describe("browser task ledger", () => {
+  test("ordered results require document-order evidence and the requested count", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("user-task-1");
+    ledger.plan(
+      [
+        {
+          id: "newest-models",
+          description: "Identify the ten newest models in listed order",
+          kind: "ordered-list",
+          requiredCount: 10,
+        },
+      ],
+      ["Open the directory", "Select newest", "Read ten model cards"],
+    );
+    ledger.record({
+      id: "focused",
+      kind: "observation",
+      order: "relevance",
+      range: { start: 0, end: 120, total: 400 },
+      hasMore: true,
+      sourceIncomplete: false,
+    });
+    ledger.attach("newest-models", "focused", 10);
+    expect(ledger.state().status).toBe("active");
+
+    ledger.record({
+      id: "ordered",
+      kind: "observation",
+      order: "document",
+      range: { start: 0, end: 120, total: 400 },
+      hasMore: true,
+      sourceIncomplete: false,
+    });
+    ledger.attach("newest-models", "ordered", 9);
+    expect(ledger.state().status).toBe("active");
+    ledger.attach("newest-models", "ordered", 10);
+    expect(ledger.state().status).toBe("satisfied");
+  });
+
+  test("exhaustive work remains incomplete while source continuation exists", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("user-task-2");
+    ledger.plan(
+      [{ id: "all-results", description: "Inspect every result", kind: "exhaustive" }],
+      ["Traverse every semantic window"],
+    );
+    ledger.record({
+      id: "partial",
+      kind: "observation",
+      order: "document",
+      range: { start: 0, end: 100, total: 200 },
+      hasMore: true,
+      sourceIncomplete: false,
+    });
+    ledger.attach("all-results", "partial");
+    expect(ledger.state().status).toBe("active");
+
+    ledger.record({
+      id: "last-window",
+      kind: "observation",
+      order: "document",
+      range: { start: 100, end: 200, total: 200 },
+      hasMore: false,
+      sourceIncomplete: false,
+    });
+    ledger.attach("all-results", "last-window");
+    expect(ledger.state().status).toBe("satisfied");
+  });
+
+  test("an exhaustive final window cannot hide a coverage gap", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("user-task-gap");
+    ledger.plan(
+      [{ id: "all-results", description: "Inspect every result", kind: "exhaustive" }],
+      ["Traverse every semantic window"],
+    );
+    ledger.record({
+      id: "last-window",
+      kind: "observation",
+      order: "document",
+      range: { start: 100, end: 200, total: 200 },
+      hasMore: false,
+      sourceIncomplete: false,
+    });
+    ledger.attach("all-results", "last-window");
+    expect(ledger.state().status).toBe("active");
+  });
+
+  test("fabricated evidence and model-assigned completion are impossible", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("user-task-3");
+    ledger.plan([{ id: "claim", description: "Verify the claim", kind: "fact" }], ["Read it"]);
+    expect(() => ledger.attach("claim", "invented-evidence")).toThrow("unknown or expired");
+    expect(ledger.state().criteria[0]?.satisfied).toBe(false);
+  });
+
+  test("finish review is bounded and names unmet criteria", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("user-task-4");
+    ledger.plan([{ id: "claim", description: "Verify the claim", kind: "fact" }], ["Read it"]);
+    expect(ledger.finishReminder()).toContain("claim: Verify the claim");
+    expect(ledger.finishReminder()).toBeUndefined();
+  });
+});

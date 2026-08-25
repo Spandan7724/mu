@@ -61,6 +61,12 @@ export interface Profile {
     messages: AgentMessage[],
     context: { sessionId: string },
   ) => Promise<AgentMessage[]> | AgentMessage[];
+  // Last-chance domain review before a natural model stop. Returning a typed
+  // message continues the loop; returning nothing permits completion.
+  reviewFinish?: (
+    messages: AgentMessage[],
+    context: { sessionId: string },
+  ) => Promise<AgentMessage | undefined> | AgentMessage | undefined;
   // Actionable startup diagnostics from profile-owned resource discovery.
   diagnostics?: string[];
   // Compaction carryover: what this domain must not forget when summarizing.

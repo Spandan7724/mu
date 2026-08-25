@@ -67,6 +67,11 @@ export interface LoopConfig {
   // Follow-ups keep the loop alive after it would otherwise stop. Also the
   // wake-up mechanism for background work completing.
   getFollowUpMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
+  // A profile may require one more evidence/reconciliation turn before a
+  // natural finish. It must bound its own reminders to avoid an endless loop.
+  reviewFinish?: (
+    messages: AgentMessage[],
+  ) => AgentMessage | undefined | Promise<AgentMessage | undefined>;
 
   // Control hooks — the loop's public API.
   beforeToolCall?: (
@@ -268,6 +273,11 @@ export async function runLoop(
     const followUps = (await currentConfig.getFollowUpMessages?.()) ?? [];
     if (followUps.length > 0) {
       pending = followUps;
+      continue;
+    }
+    const review = await currentConfig.reviewFinish?.(currentContext.messages);
+    if (review !== undefined) {
+      pending = [review];
       continue;
     }
     break;

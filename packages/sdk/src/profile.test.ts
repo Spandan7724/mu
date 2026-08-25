@@ -67,4 +67,10 @@ describe("optionsFromProfile", () => {
     const source = { ...profile(provider("profile")), refreshContext };
     expect((await optionsFromProfile(source, "fake/model")).refreshContext).toBe(refreshContext);
   });
+
+  test("propagates the profile finish review hook", async () => {
+    const reviewFinish = () => undefined;
+    const source = { ...profile(provider("profile")), reviewFinish };
+    expect((await optionsFromProfile(source, "fake/model")).reviewFinish).toBe(reviewFinish);
+  });
 });

@@ -100,6 +100,10 @@ export interface AgentOptions {
     messages: AgentMessage[],
     context: { sessionId: string },
   ) => Promise<AgentMessage[]> | AgentMessage[];
+  reviewFinish?: (
+    messages: AgentMessage[],
+    context: { sessionId: string },
+  ) => Promise<AgentMessage | undefined> | AgentMessage | undefined;
   // Compaction (M7). Auto-compaction runs when the context crosses the
   // threshold; the profile supplies what its domain must not lose.
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
@@ -1784,6 +1788,12 @@ export class Agent {
         emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
         return true;
       },
+      ...(this.options.reviewFinish
+        ? {
+            reviewFinish: (messages: AgentMessage[]) =>
+              this.options.reviewFinish?.(messages, { sessionId: this._sessionId }),
+          }
+        : {}),
       shouldStopAfterTurn: async (turn: TurnInfo) => {
         this.recoveryAttempted = false;
         const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);

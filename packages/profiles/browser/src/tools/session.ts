@@ -45,6 +45,11 @@ import {
   OBSERVATION_BUDGET,
   observationDigest,
 } from "./observation.ts";
+import {
+  type BrowserTaskCriterionInput,
+  BrowserTaskLedger,
+  type BrowserTaskState,
+} from "./task-ledger.ts";
 
 export interface ObservationTarget {
   element: BrowserElement;
@@ -68,6 +73,8 @@ export interface ObservationRecord {
   minted: ReadonlyMap<string, string>;
   injections: InjectionFinding[];
   observedAt: number;
+  /** Immutable session evidence; distinct from actionable element refs. */
+  evidenceId: string;
 }
 
 export interface SessionObserveRequest extends ObserveRequest {
@@ -82,6 +89,7 @@ export type TargetResolution =
   | { kind: "stale"; validity: RefValidity; message: string };
 
 export interface BrowserAuditEntry {
+  evidenceId: string;
   at: number;
   tool: string;
   action: string;
@@ -127,6 +135,7 @@ export class BrowserTaskSession {
   readonly commitments = new CommitmentLedger();
   readonly disclosures = new DisclosureLedger();
   readonly takeoverController: BrowserTakeoverSession;
+  readonly task = new BrowserTaskLedger();
   #facts: FactLookup | undefined;
   readonly applicantPolicy: ApplicantPolicy;
   #documents: AuthorizedDocumentStore | undefined;
@@ -145,6 +154,7 @@ export class BrowserTaskSession {
   #revisionSeq = 0;
   #refSeq = 0;
   #cursorSeq = 0;
+  #evidenceSeq = 0;
   #activeTabId: string | undefined;
 
   constructor(options: BrowserTaskSessionOptions) {
@@ -225,6 +235,25 @@ export class BrowserTaskSession {
   plan(tabId?: string): FillPlan | undefined {
     const id = tabId ?? this.activeTabId;
     return id === undefined ? undefined : this.#plans.get(id);
+  }
+
+  beginTask(authorityId: string): void {
+    this.task.begin(authorityId);
+  }
+
+  planTask(
+    criteria: readonly BrowserTaskCriterionInput[],
+    steps: readonly string[],
+  ): BrowserTaskState {
+    return this.task.plan(criteria, steps);
+  }
+
+  attachTaskEvidence(
+    criterionId: string,
+    evidenceId: string,
+    observedItems?: number,
+  ): BrowserTaskState {
+    return this.task.attach(criterionId, evidenceId, observedItems);
   }
 
   /**
@@ -392,6 +421,7 @@ export class BrowserTaskSession {
         sourceIncomplete,
       },
     };
+    const evidenceId = this.#mintEvidenceId();
     const record: ObservationRecord = {
       tabId,
       revision,
@@ -402,7 +432,24 @@ export class BrowserTaskSession {
       minted,
       injections: scanObservation(sourceObservation),
       observedAt: this.#now(),
+      evidenceId,
     };
+    const coverage = observation.coverage;
+    this.task.record({
+      id: evidenceId,
+      kind: "observation",
+      url: observation.url,
+      tabId,
+      revision,
+      ...(coverage === undefined
+        ? {}
+        : {
+            order: coverage.order,
+            range: { start: coverage.start, end: coverage.end, total: coverage.total },
+            hasMore: coverage.hasMore,
+            sourceIncomplete: coverage.sourceIncomplete,
+          }),
+    });
     this.#records.set(tabId, record);
     this.#activeTabId = tabId;
     if (!unchanged && this.facts !== undefined) {
@@ -559,6 +606,7 @@ export class BrowserTaskSession {
     const questions = [...this.#plans.values()].flatMap((plan) =>
       plan.questions.map((question) => question.prompt),
     );
+    const taskState = this.task.state();
     return {
       connection: {
         mode: connection.mode,
@@ -579,8 +627,22 @@ export class BrowserTaskSession {
             },
           }),
       allowedOrigins: [...this.policy.origins.allowed],
-      completedSteps: [...this.#completedSteps],
-      outstandingSteps: [...this.#outstandingSteps],
+      completedSteps: [
+        ...new Set([
+          ...this.#completedSteps,
+          ...taskState.criteria
+            .filter((criterion) => criterion.satisfied)
+            .map((criterion) => criterion.description),
+        ]),
+      ],
+      outstandingSteps: [
+        ...new Set([
+          ...this.#outstandingSteps,
+          ...taskState.criteria
+            .filter((criterion) => !criterion.satisfied)
+            .map((criterion) => criterion.description),
+        ]),
+      ],
       filledFields: this.#filledFields.map((field) => ({ ...field })),
       unresolvedQuestions: [...new Set(questions)],
       uploadedDocumentIds: [...this.#uploadedDocumentIds],
@@ -593,16 +655,32 @@ export class BrowserTaskSession {
     return this.runtime.use(operation, signal);
   }
 
-  note(entry: Omit<BrowserAuditEntry, "at">): BrowserAuditEntry {
-    const recorded: BrowserAuditEntry = { at: this.#now(), ...entry };
+  note(entry: Omit<BrowserAuditEntry, "at" | "evidenceId">): BrowserAuditEntry {
+    const evidenceId = this.#mintEvidenceId();
+    const recorded: BrowserAuditEntry = { at: this.#now(), evidenceId, ...entry };
     this.#audit.push(recorded);
     if (this.#audit.length > MAX_AUDIT_ENTRIES) this.#audit.shift();
+    this.task.record({
+      id: evidenceId,
+      kind: "action",
+      ...(entry.url === undefined ? {} : { url: entry.url }),
+      ...(entry.tabId === undefined ? {} : { tabId: entry.tabId }),
+      ...(entry.revision === undefined ? {} : { revision: entry.revision }),
+      tool: entry.tool,
+      action: entry.action,
+      outcome: entry.outcome,
+    });
     return recorded;
   }
 
   #mintRef(): string {
     this.#refSeq += 1;
     return `r${this.#refSeq}`;
+  }
+
+  #mintEvidenceId(): string {
+    this.#evidenceSeq += 1;
+    return `evidence-${this.#evidenceSeq}`;
   }
 }
 

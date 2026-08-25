@@ -134,6 +134,7 @@ export function observationFacts(record: ObservationRecord): string[] {
     `tab ${observation.tab.id}${observation.tab.attached ? "" : " (detached)"} · origin ${
       observation.origin ?? "unknown"
     }`,
+    `evidence ${record.evidenceId}`,
   ];
   if (observation.frames.length > 0) {
     const cross = observation.frames.filter((frame) => frame.crossOrigin);

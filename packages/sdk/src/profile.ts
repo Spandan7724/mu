@@ -24,6 +24,7 @@ export async function optionsFromProfile(
     permissions: [...profile.permissionDefaults, ...(overrides.permissions ?? [])],
     ...(contextMessages.length > 0 ? { initialMessages: contextMessages } : {}),
     ...(profile.refreshContext ? { refreshContext: profile.refreshContext } : {}),
+    ...(profile.reviewFinish ? { reviewFinish: profile.reviewFinish } : {}),
     ...(profile.carryoverExtractor ? { carryoverExtractor: profile.carryoverExtractor } : {}),
     ...((overrides.runtime ?? profile.runtime)
       ? { runtime: overrides.runtime ?? profile.runtime }

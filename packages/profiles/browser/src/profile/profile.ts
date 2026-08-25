@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 // ARCHITECTURE §3. Async because it validates configuration, prepares private
 // storage and constructs the runtime that owns the connection.
 import { homedir } from "node:os";
@@ -22,6 +22,7 @@ import {
   connectionMessage,
   documentsMessage,
   environmentMessage,
+  latestUserTaskText,
   taskUrlsFromMessages,
 } from "./environment.ts";
 import {
@@ -171,6 +172,13 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       ...(applicant.facts === undefined ? [] : [applicantFactsMessage(applicant.facts)]),
     ],
     refreshContext: (messages): AgentMessage[] => {
+      const taskText = latestUserTaskText(messages);
+      if (taskText !== undefined) {
+        const userTurns = messages.filter((message) => message.role === "user").length;
+        session.beginTask(
+          createHash("sha256").update(`${userTurns}\u0000${taskText}`).digest("hex").slice(0, 16),
+        );
+      }
       let origins = session.policy.origins;
       const added: string[] = [];
       for (const url of taskUrlsFromMessages(messages)) {
@@ -194,6 +202,10 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
           ].join(", ")}`,
         ),
       ];
+    },
+    reviewFinish: (): AgentMessage | undefined => {
+      const reminder = session.task.finishReminder();
+      return reminder === undefined ? undefined : customMessage("browser-task-review", reminder);
     },
     diagnostics,
     // What compaction must not lose: where the browser is, what was already done

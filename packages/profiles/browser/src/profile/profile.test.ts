@@ -157,6 +157,27 @@ describe("browserProfile", () => {
     }
   });
 
+  test("an unmet browser task gets one bounded finish review", async () => {
+    const home = await tempHome();
+    try {
+      const profile = await browserProfile({ home, factory: fakeFactory() });
+      const messages = [userMessage("Compare every available plan")];
+      await profile.refreshContext?.(messages, { sessionId: "task-review" });
+      profile.session.planTask(
+        [{ id: "plans", description: "Compare every available plan", kind: "exhaustive" }],
+        ["Inspect all plan listings"],
+      );
+
+      const first = await profile.reviewFinish?.(messages, { sessionId: "task-review" });
+      expect(first?.role).toBe("custom");
+      expect(JSON.stringify(first)).toContain("plans: Compare every available plan");
+      expect(await profile.reviewFinish?.(messages, { sessionId: "task-review" })).toBeUndefined();
+      await profile.runtime.shutdown();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("it satisfies the profile contract with browser-only behaviour", async () => {
     const home = await tempHome();
     try {
@@ -170,6 +191,7 @@ describe("browserProfile", () => {
         "browser_submit",
         "browser_tabs",
         "browser_takeover",
+        "browser_task",
         "browser_wait",
       ]);
       // B5 and B8 surfaces must not appear before their milestones land.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "./events.ts";
 import { type AgentContext, type LoopConfig, runLoop } from "./loop.ts";
-import { type AgentMessage, userMessage } from "./messages.ts";
+import { type AgentMessage, customMessage, userMessage } from "./messages.ts";
 import { FakeProvider, fakeModel } from "./testing/fake-provider.ts";
 import { type AnyTool, type ToolResult, textResult } from "./tools.ts";
 
@@ -29,6 +29,28 @@ function ctx(tools?: AnyTool[]): AgentContext {
 }
 
 describe("agent loop", () => {
+  test("a profile finish review can require one more evidence turn", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "premature answer" }] },
+      { content: [{ type: "text", text: "verified answer" }] },
+    ]);
+    let reviewed = false;
+    const result = await runLoop(
+      [userMessage("research this")],
+      ctx(),
+      baseConfig(provider, {
+        reviewFinish: () => {
+          if (reviewed) return undefined;
+          reviewed = true;
+          return customMessage("finish-review", "Verify the requested outcome before finishing.");
+        },
+      }),
+      collector().emit,
+    );
+    expect(provider.callCount).toBe(2);
+    expect(result.messages.some((message) => message.role === "custom")).toBe(true);
+  });
+
   test("runs a multi-turn tool-use conversation", async () => {
     const provider = new FakeProvider([
       {

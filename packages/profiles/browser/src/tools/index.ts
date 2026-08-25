@@ -6,6 +6,7 @@ import { BROWSER_OBSERVE_TOOL, browserObserveTool } from "./observe.ts";
 import { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 import { BROWSER_TABS_TOOL, browserTabsTool } from "./tabs.ts";
 import { BROWSER_TAKEOVER_TOOL, browserTakeoverTool } from "./takeover.ts";
+import { BROWSER_TASK_TOOL, browserTaskTool } from "./task.ts";
 import { BROWSER_UPLOAD_TOOL, browserUploadTool } from "./upload.ts";
 import { BROWSER_WAIT_TOOL, browserWaitTool } from "./wait.ts";
 
@@ -39,6 +40,14 @@ export { BrowserTaskSession, BrowserToolSession } from "./session.ts";
 export { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 export { BROWSER_TABS_TOOL, browserTabsTool } from "./tabs.ts";
 export { BROWSER_TAKEOVER_TOOL, browserTakeoverTool } from "./takeover.ts";
+export { BROWSER_TASK_TOOL, browserTaskTool } from "./task.ts";
+export type {
+  BrowserTaskCriterion,
+  BrowserTaskCriterionInput,
+  BrowserTaskCriterionKind,
+  BrowserTaskEvidence,
+  BrowserTaskState,
+} from "./task-ledger.ts";
 export type { BrowserUploadToolContext } from "./upload.ts";
 export { BROWSER_UPLOAD_TOOL, browserUploadTool } from "./upload.ts";
 export { BROWSER_WAIT_TOOL, browserWaitTool } from "./wait.ts";
@@ -49,6 +58,7 @@ export { BROWSER_WAIT_TOOL, browserWaitTool } from "./wait.ts";
  * tools exist to enforce.
  */
 export const BROWSER_TOOL_NAMES = [
+  BROWSER_TASK_TOOL,
   BROWSER_OBSERVE_TOOL,
   BROWSER_NAVIGATE_TOOL,
   BROWSER_TABS_TOOL,
@@ -65,6 +75,7 @@ export function browserToolset(context: BrowserToolContext): AnyTool[] {
       ? []
       : [browserUploadTool(context) as AnyTool];
   return [
+    browserTaskTool(context) as AnyTool,
     browserObserveTool(context) as AnyTool,
     browserNavigateTool(context) as AnyTool,
     browserTabsTool(context) as AnyTool,
