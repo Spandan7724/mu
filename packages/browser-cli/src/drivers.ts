@@ -1,17 +1,15 @@
-// Which driver the product composes for a given connection choice.
-//
-// Both real modes run the same `McpBrowserDriver` over the pinned `@playwright/mcp`
-// sidecar (BD25, BD31). Nothing here downloads anything, resolves a package at
-// runtime, or shells out to `npx`: the sidecar is the dependency this package
-// declares, and a browser is one the user already has.
+// Which driver the product composes. The production implementation runs the
+// `McpBrowserDriver` over the pinned `@playwright/mcp` sidecar (BD25, BD31).
+// Nothing here downloads anything, resolves a package at runtime, or shells out
+// to `npx`: the sidecar is the dependency this package declares, and a browser is
+// one the user already has.
 import {
   type BrowserDriverFactory,
   fakeFactory,
-  mcpExtensionDriverFactory,
   mcpPersistentFactory,
 } from "@mu/profile-browser/drivers";
 
-export type BrowserConnectionChoice = "extension" | "persistent" | "fake";
+export type BrowserConnectionChoice = "persistent" | "fake";
 
 export function driverFactoryFor(
   choice: BrowserConnectionChoice,
@@ -30,8 +28,6 @@ export function driverFactoryFor(
   switch (choice) {
     case "fake":
       return fakeFactory();
-    case "extension":
-      return mcpExtensionDriverFactory(shared);
     case "persistent":
       return mcpPersistentFactory(shared);
   }

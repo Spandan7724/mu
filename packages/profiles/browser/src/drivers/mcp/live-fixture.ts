@@ -1,7 +1,7 @@
 // The loopback web fixture, described in the shape the driver conformance harness
-// consumes. Both the persistent and the extension adapter run the identical suite
-// against it, which is what stops them inventing different semantics for the same
-// page behaviour.
+// consumes. The persistent adapter runs the same contract as the deterministic fake
+// driver, which is what stops them inventing different semantics for the same page
+// behaviour.
 //
 // Pages and labels here are the real ones served by `@mu/browser-fixture`; nothing
 // is stubbed. It is a data file rather than a test so a release qualification can

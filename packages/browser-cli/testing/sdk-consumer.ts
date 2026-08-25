@@ -11,7 +11,7 @@ import {
   phaseSummary,
 } from "../dist/index.js";
 
-const options: BrowserProfileOptions = { connection: "extension", browser: "chrome" };
+const options: BrowserProfileOptions = { browser: "chrome" };
 
 const profile = await browserProfile(options);
 if (profile.name !== BROWSER_PROFILE_NAME) throw new Error("unexpected profile identity");

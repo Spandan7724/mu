@@ -22,25 +22,18 @@ async function tempHome(): Promise<string> {
 }
 
 describe("profile options", () => {
-  test("the safe defaults are the extension bridge, a visible browser and no extra origins", () => {
+  test("the safe defaults are a visible Mu-owned profile and no extra origins", () => {
     const resolved = resolveBrowserProfileOptions();
-    expect(resolved.connection).toBe("extension");
+    expect(resolved.connection).toBe("persistent");
     expect(resolved.browser).toBe("chrome");
     expect(resolved.headless).toBe(false);
     expect(resolved.allowedOrigins).toEqual([]);
-    expect(resolved.userDataDir).toBeUndefined();
+    expect(resolved.userDataDir).toBe("default");
   });
 
-  test("extension mode refuses headless and refuses to own a profile directory", () => {
-    expect(() => resolveBrowserProfileOptions({ headless: true })).toThrow();
-    expect(() => resolveBrowserProfileOptions({ userDataDir: "work" })).toThrow();
-  });
-
-  test("persistent mode names a Mu-owned profile and defaults it", () => {
-    expect(resolveBrowserProfileOptions({ connection: "persistent" }).userDataDir).toBe("default");
-    expect(
-      resolveBrowserProfileOptions({ connection: "persistent", userDataDir: "work" }).userDataDir,
-    ).toBe("work");
+  test("persistent mode supports headless and named Mu-owned profiles", () => {
+    expect(resolveBrowserProfileOptions({ headless: true }).headless).toBe(true);
+    expect(resolveBrowserProfileOptions({ userDataDir: "work" }).userDataDir).toBe("work");
   });
 
   test("allowed origins are normalized and deduplicated, and a non-origin is rejected", () => {
@@ -253,7 +246,7 @@ describe("browserProfile", () => {
       expect(() => normalizeSessionEnvironment(environment)).not.toThrow();
       expect(environment).toMatchObject({
         surface: "browser",
-        connection: "extension",
+        connection: "persistent",
         browser: "chrome",
         headless: "false",
         documents: "1",
@@ -277,24 +270,6 @@ describe("browserProfile", () => {
     }
   });
 
-  test("an extension token is recorded as configured, never as a value", async () => {
-    const home = await tempHome();
-    try {
-      const { BrowserSecret } = await import("../contracts/secret.ts");
-      const profile = await browserProfile({
-        home,
-        factory: fakeFactory(),
-        extensionToken: new BrowserSecret("tok-secret-value"),
-      });
-      const environment = await profile.environment?.();
-      expect(environment?.extensionToken).toBe("configured");
-      expect(JSON.stringify(environment)).not.toContain("tok-secret-value");
-      await profile.runtime.shutdown();
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
   test("the status tool opens the connection and reports the real phase", async () => {
     const home = await tempHome();
     try {
@@ -304,8 +279,8 @@ describe("browserProfile", () => {
       const text = (result?.content ?? [])
         .map((block) => (block.type === "text" ? block.text : ""))
         .join("\n");
-      expect(text).toContain("chrome (extension) ready");
-      expect(text).toContain("detach without closing it");
+      expect(text).toContain("chrome (persistent) ready");
+      expect(text).toContain("close it on shutdown");
       expect(profile.runtime.status().phase).toBe("ready");
       await profile.runtime.shutdown();
     } finally {
@@ -322,14 +297,14 @@ describe("browserProfile", () => {
       const text = (result?.content ?? [])
         .map((block) => (block.type === "text" ? block.text : ""))
         .join("\n");
-      expect(text).toContain("No browser driver is configured");
+      expect(text).toContain("No persistent browser driver is configured");
       expect(profile.runtime.status().phase).toBe("failed");
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   });
 
-  test("/browser and /disconnect report the connection and detach without closing", async () => {
+  test("/browser and /disconnect report and close the owned browser", async () => {
     const home = await tempHome();
     try {
       const profile = await browserProfile({ home, factory: fakeFactory() });
@@ -343,10 +318,10 @@ describe("browserProfile", () => {
       const commands = profile.commands ?? [];
       const browser = commands.find((command) => command.name === "browser");
       const connected = await browser?.run(context);
-      expect((connected as { message: string }).message).toContain("chrome (extension) ready");
+      expect((connected as { message: string }).message).toContain("chrome (persistent) ready");
       const disconnect = commands.find((command) => command.name === "disconnect");
       const ended = await disconnect?.run({ ...context, args: "" });
-      expect((ended as { message: string }).message).toContain("Nothing was closed");
+      expect((ended as { message: string }).message).toContain("Closed the browser Mu owns");
       expect(profile.runtime.status().phase).toBe("disconnected");
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -364,6 +339,18 @@ describe("browserProfile", () => {
       const carryover = profile.carryoverExtractor?.([]) as Record<string, unknown>;
       expect(JSON.parse(JSON.stringify(carryover))).toEqual(carryover);
       expect(carryover.allowedOrigins).toEqual(["https://jobs.example.com"]);
+      await profile.runtime.shutdown();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("artifactRoot is the artifact store root rather than an ignored option", async () => {
+    const home = await tempHome();
+    const artifactRoot = join(home, "custom-artifacts");
+    try {
+      const profile = await browserProfile({ home, factory: fakeFactory(), artifactRoot });
+      expect(profile.artifacts.root).toBe(artifactRoot);
       await profile.runtime.shutdown();
     } finally {
       await rm(home, { recursive: true, force: true });

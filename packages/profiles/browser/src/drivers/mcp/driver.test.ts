@@ -3,10 +3,8 @@
 // launched, so CI stays deterministic; the live-browser run of the identical
 // suite lives in `live.test.ts` behind an env flag.
 import { describe, expect, test } from "bun:test";
-import { BrowserDriverError } from "../../contracts/driver.ts";
 import { BROWSER_LIMITS } from "../../contracts/json.ts";
 import { elementRefOf } from "../../contracts/observation.ts";
-import { BrowserSecret } from "../../contracts/secret.ts";
 import type { DriverContractSetup } from "../../testing/conformance-types.ts";
 import {
   registerBrowserDriverContract,
@@ -29,21 +27,20 @@ import { createScriptedSidecar, type ScriptedSidecar } from "./scripted.ts";
 
 const document = fakeUploadDocument();
 
-function contractSetup(mode: "persistent" | "extension"): DriverContractSetup {
+function contractSetup(): DriverContractSetup {
   let sidecar: ScriptedSidecar | undefined;
   return {
-    name: `playwright-mcp (${mode}, scripted sidecar)`,
+    name: "playwright-mcp (persistent, scripted sidecar)",
     createDriver: () => {
       sidecar = createScriptedSidecar();
       return createMcpBrowserDriver({
         sidecar,
-        mode,
+        mode: "persistent",
         browser: "chrome",
-        ownership: mode === "persistent" ? "owned" : "attached",
         documents: [document],
       });
     },
-    connectOptions: { mode, browser: "chrome" },
+    connectOptions: { mode: "persistent", browser: "chrome" },
     fixture: FAKE_DRIVER_FIXTURE,
     capabilities: FAKE_DRIVER_CAPABILITIES,
     uploadDocument: document,
@@ -53,21 +50,11 @@ function contractSetup(mode: "persistent" | "extension"): DriverContractSetup {
   };
 }
 
-registerBrowserDriverContract({ describe, test }, contractSetup("persistent"));
-registerBrowserDriverContract({ describe, test }, contractSetup("extension"));
+registerBrowserDriverContract({ describe, test }, contractSetup());
 
-describe("both modes run the same suite and reach the same verdict", () => {
+describe("persistent mode runs the complete adapter suite", () => {
   test("persistent mode passes every case, with nothing skipped", async () => {
-    const report = await runBrowserDriverContract(contractSetup("persistent"));
-    expect(
-      report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`),
-    ).toEqual([]);
-    expect(report.skipped).toBe(0);
-    expect(report.passed).toBe(report.results.length);
-  }, 120_000);
-
-  test("extension mode passes every case, with nothing skipped", async () => {
-    const report = await runBrowserDriverContract(contractSetup("extension"));
+    const report = await runBrowserDriverContract(contractSetup());
     expect(
       report.results.filter((r) => r.status === "failed").map((r) => `${r.id}: ${r.message}`),
     ).toEqual([]);
@@ -77,22 +64,20 @@ describe("both modes run the same suite and reach the same verdict", () => {
 });
 
 async function connected(
-  mode: "persistent" | "extension" = "persistent",
   sidecar: ScriptedSidecar = createScriptedSidecar(),
 ): Promise<{ driver: McpBrowserDriver; sidecar: ScriptedSidecar; signal: AbortSignal }> {
   const driver = createMcpBrowserDriver({
     sidecar,
-    mode,
+    mode: "persistent",
     browser: "chrome",
-    ownership: mode === "persistent" ? "owned" : "attached",
     documents: [document],
   });
   const signal = new AbortController().signal;
-  await driver.connect({ mode, browser: "chrome" }, signal);
+  await driver.connect({ mode: "persistent", browser: "chrome" }, signal);
   return { driver, sidecar, signal };
 }
 
-describe("shutdown semantics differ by ownership (BD29)", () => {
+describe("Mu-owned browser shutdown (BD29)", () => {
   test("an owned browser is closed and awaited before the sidecar is let go", async () => {
     const calls: string[] = [];
     const inner = createScriptedSidecar();
@@ -103,24 +88,9 @@ describe("shutdown semantics differ by ownership (BD29)", () => {
         return inner.callTool(name, args, options);
       },
     };
-    const { driver } = await connected("persistent", recorder);
+    const { driver } = await connected(recorder);
     await driver.disconnect();
     expect(calls).toContain("browser_close");
-  });
-
-  test("an attached browser is never closed", async () => {
-    const calls: string[] = [];
-    const inner = createScriptedSidecar();
-    const recorder: ScriptedSidecar = {
-      ...inner,
-      callTool: async (name, args, options) => {
-        calls.push(name);
-        return inner.callTool(name, args, options);
-      },
-    };
-    const { driver } = await connected("extension", recorder);
-    await driver.disconnect();
-    expect(calls).not.toContain("browser_close");
   });
 });
 
@@ -133,7 +103,6 @@ describe("failure normalisation", () => {
       sidecar,
       mode: "persistent",
       browser: "chrome",
-      ownership: "owned",
     });
     const error = await driver
       .connect({ mode: "persistent", browser: "chrome" }, new AbortController().signal)
@@ -143,51 +112,12 @@ describe("failure normalisation", () => {
     expect(driver.status().phase).toBe("disconnected");
   });
 
-  test("a mode the driver was not built for is refused as unsupported", async () => {
-    const driver = createMcpBrowserDriver({
-      sidecar: createScriptedSidecar(),
-      mode: "persistent",
-      browser: "chrome",
-      ownership: "owned",
-    });
-    const error = await driver
-      .connect({ mode: "extension", browser: "chrome" }, new AbortController().signal)
-      .catch((thrown: unknown) => thrown);
-    expect((error as { code?: string }).code).toBe("unsupported");
-  });
-
-  test("a sidecar still waiting for extension approval says so, actionably", async () => {
-    const sidecar = createScriptedSidecar();
-    sidecar.failNext(
-      new BrowserDriverError("timeout", "Waiting for incoming extension connection"),
-    );
-    const driver = createMcpBrowserDriver({
-      sidecar,
-      mode: "extension",
-      browser: "chrome",
-      ownership: "attached",
-    });
-    const error = await driver
-      .connect({ mode: "extension", browser: "chrome" }, new AbortController().signal)
-      .catch((thrown: unknown) => thrown);
-    expect((error as { code?: string }).code).toBe("approval-required");
-    expect(String(error)).toContain("Approve it in the browser");
-    expect(driver.status().phase).toBe("disconnected");
-  });
-
   test("a severed bridge is a typed, reconnectable failure", async () => {
     const { driver, signal } = await connected();
     driver.sever();
     const error = await driver.observe({}, signal).catch((thrown: unknown) => thrown);
     expect((error as { code?: string }).code).toBe("browser-crashed");
     expect((error as { reconnectable?: boolean }).reconnectable).toBe(true);
-  });
-
-  test("a connect option carrying a secret never reaches the reported state", async () => {
-    const { driver } = await connected("extension");
-    const state = driver.status();
-    expect(JSON.stringify(state)).not.toContain("tok-");
-    expect(new BrowserSecret("tok-abcdef").toJSON()).toBe("[redacted]");
   });
 });
 
@@ -202,7 +132,7 @@ describe("the raw tool surface stays behind the adapter", () => {
         return inner.callTool(name, args, options);
       },
     };
-    const { driver, signal } = await connected("persistent", recorder);
+    const { driver, signal } = await connected(recorder);
     await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.form }, signal);
     const observation = await driver.observe({ screenshot: "viewport" }, signal);
     const field = observation.elements.find((element) => element.label === FAKE_LABELS.textField);
@@ -280,7 +210,7 @@ describe("observation discipline", () => {
         return inner.callTool(name, args, options);
       },
     };
-    const { driver, signal } = await connected("persistent", sidecar);
+    const { driver, signal } = await connected(sidecar);
     const observation = await driver.observe({ maxNodes: 20 }, signal);
     expect(observation.elements.slice(0, 3).map((element) => element.label)).toEqual([
       "Model 241",
@@ -331,7 +261,7 @@ describe("observation discipline", () => {
             ? { content: [...fixture.content] }
             : inner.callTool(name, args, options),
       };
-      const { driver, signal } = await connected("persistent", sidecar);
+      const { driver, signal } = await connected(sidecar);
       const observation = await driver.observe({ screenshot: "viewport" }, signal);
       expect(observation.screenshot).toBeUndefined();
       expect(observation.screenshotOmitted).toBe(fixture.reason);
@@ -376,7 +306,7 @@ describe("observation discipline", () => {
         return inner.callTool(name, args, options);
       },
     };
-    const { driver, signal } = await connected("persistent", sidecar);
+    const { driver, signal } = await connected(sidecar);
     await driver.navigate({ kind: "url", url: FAKE_PAGE_URLS.dynamic }, signal);
     const outcome = await driver.act({ kind: "scroll", deltaX: 0, deltaY: 400 }, signal);
     expect(outcome.status).toBe("completed");
@@ -521,7 +451,7 @@ describe("a site the adapter has never seen", () => {
       [{ url: "https://elsewhere.test/", title: "Elsewhere", summary: "", elements: [] }],
       "https://elsewhere.test/",
     );
-    const { driver, signal } = await connected("persistent", createScriptedSidecar({ site }));
+    const { driver, signal } = await connected(createScriptedSidecar({ site }));
     const observation = await driver.observe({}, signal);
     // The document root is still a node; nothing is invented beyond it.
     expect(observation.elements.filter((element) => element.name !== undefined)).toEqual([]);

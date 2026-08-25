@@ -80,7 +80,7 @@ const ALL_CAPABILITIES: DriverCapability[] = [
 function inertDriver(): BrowserDriver {
   const state: BrowserConnectionState = {
     phase: "disconnected",
-    mode: "extension",
+    mode: "persistent",
     browser: "chrome",
     updatedAt: 0,
   };
@@ -107,7 +107,7 @@ function setup(overrides: Partial<DriverContractSetup> = {}): DriverContractSetu
   return {
     name: "inert",
     createDriver: inertDriver,
-    connectOptions: { mode: "extension", browser: "chrome" },
+    connectOptions: { mode: "persistent", browser: "chrome" },
     fixture,
     capabilities: Object.fromEntries(ALL_CAPABILITIES.map((name) => [name, true])),
     uploadDocument: undefined,

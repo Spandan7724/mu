@@ -10,7 +10,7 @@ simply have no effect there).
   config.json     model/provider configuration you set with /model or similar — 0600
   models.json     cached model catalog — 0600
   sessions/       session transcripts (conversation + tool calls), one per session
-  profiles/       Mu-owned Chrome/Edge/Chromium profiles, only in persistent mode
+  profiles/       Mu-owned persistent Chrome/Edge/Chromium profiles
   documents/      private snapshots of eligible launch-directory files
   artifacts/      screenshots, receipts, and download/observation metadata
   logs/           reserved for redacted operational logs
@@ -30,12 +30,10 @@ unit-tested but not yet called by a shipped code path.
   sees (`isCredentialElement`, BD14) — not redacted after the fact, never captured.
   Password entry, MFA, and CAPTCHAs are handed back to you in the real browser
   (`browser_takeover`); Mu is not in that loop.
-- **Cookies, session storage, and your browser's login state.** Mu never calls a
-  cookie or storage export API. In `extension` mode your login state stays in your
-  browser and Mu only ever sees what the page's accessibility tree exposes. In
-  `persistent` mode the Mu-owned profile may accumulate cookies from sites you visit
-  through it, but Mu does not parse, read, or back them up — the browser owns them
-  the same way it would for a profile you drove by hand.
+- **Cookies, session storage, and browser login state.** Mu never calls a cookie or
+  storage export API. The Mu-owned profile may accumulate cookies from sites you visit
+  through it, but Mu does not parse, read, or back them up—the browser owns them the
+  same way it would for a profile you drove by hand.
 - **Bearer tokens, API keys, `Authorization`/`Set-Cookie` headers, and full payment
   card numbers**, wherever they might otherwise show up in a receipt, a disclosure
   record, or a tool result — a pattern-based scrubber (`artifacts/redaction.ts`)
@@ -73,8 +71,8 @@ back to the model — but that metadata is not yet also written to
 `artifacts/downloads/`. The sidecar's own scratch output is pinned inside this root
 rather than the directory you started `mu-browser` from.
 
-**`profiles/`** — only populated in `persistent` connection mode: a
-Chrome/Edge/Chromium user-data directory Mu owns outright, under its own
+**`profiles/`** — a persistent Chrome/Edge/Chromium user-data directory Mu owns
+outright, under its own
 name (`profiles/<name>/`, `default` unless you pass `--browser-profile`) — never a
 path into your own browser's profile directory. An `owner.json` lock file records
 which running `mu-browser` process currently holds it, so two sessions cannot drive

@@ -134,7 +134,7 @@ describe.skipIf(skip)("the browser tarball", () => {
     for (const entry of browser.entries) {
       expect(entry).not.toMatch(/\.test\.|__tests__|spikes?\//i);
       // The driver conformance harness and the loopback web fixture are test
-      // packages; the fake driver itself is a shipped connection mode.
+      // packages; the fake driver itself is a shipped testing implementation.
       expect(entry).not.toMatch(/profile-browser\/testing\/|browser-fixture/);
       expect(entry).not.toMatch(/cookies|credential|auth\.json|resume\.pdf/i);
       expect(entry).not.toMatch(/^profiles\/|\.config\/google-chrome/);

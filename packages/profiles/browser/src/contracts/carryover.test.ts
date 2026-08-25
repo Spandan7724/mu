@@ -35,11 +35,11 @@ describe("carryover", () => {
   });
 
   test("an unknown key cannot ride through compaction", () => {
-    expect(rejects({ ...sampleCarryover(), extensionToken: "mu_ext_1" })).toBe(true);
+    expect(rejects({ ...sampleCarryover(), unknownSetting: "not-allowed" })).toBe(true);
   });
 
   test("a secret cannot be smuggled into a carried value", () => {
-    const carryover = { ...sampleCarryover(), receiptId: new BrowserSecret("mu_ext_1") };
+    const carryover = { ...sampleCarryover(), receiptId: new BrowserSecret("secret_1") };
     expect(rejects(carryover)).toBe(true);
     expect(() => assertJsonSerializable(carryover, "carryover")).toThrow();
   });

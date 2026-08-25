@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { BrowserElement } from "../contracts/observation.ts";
 import { REDACTED } from "../contracts/secret.ts";
+import { createFactStore } from "../data/facts.ts";
 import {
   FAKE_LABELS,
   FAKE_ORIGIN,
@@ -546,6 +547,43 @@ describe("browser_act", () => {
       );
       expect(result.isError).toBe(true);
       expect(resultText(result)).toContain("Ask the user");
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  test("a successful fact-backed fill updates disclosure and carryover in the task session", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    const facts = createFactStore();
+    const admitted = facts.add({
+      field: "full_name",
+      value: FAKE_VALUES.text,
+      source: { kind: "user" },
+      confidence: "exact",
+      updatedAt: Date.now(),
+    });
+    if (!admitted.ok) throw new Error(admitted.rejection.detail);
+    try {
+      await on(harness, FAKE_PAGE_URLS.form);
+      const act = browserActTool({ session: harness.session, facts });
+      const result = await act.execute(
+        "c1",
+        {
+          action: "fill",
+          target: refOf(elementNamed(harness, FAKE_LABELS.textField)),
+          factId: admitted.fact.id,
+        },
+        signal(),
+      );
+      expect(result.isError).not.toBe(true);
+      expect(harness.session.disclosureRecords()).toHaveLength(1);
+      expect(harness.session.carryover().filledFields).toEqual([
+        {
+          label: FAKE_LABELS.textField,
+          factId: admitted.fact.id,
+          origin: FAKE_ORIGIN,
+        },
+      ]);
     } finally {
       await harness.shutdown();
     }

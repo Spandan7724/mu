@@ -1,11 +1,14 @@
+export {
+  classifyRisks,
+  commitmentIntent,
+  intentRisk,
+  isCredentialControl,
+} from "../../policy/risk.ts";
 export { mcpSdk, normalizeSidecarFailure, stdioSidecarLauncher } from "./client.ts";
 export type { McpBrowserDriver, McpBrowserDriverOptions } from "./driver.ts";
 export { createMcpBrowserDriver } from "./driver.ts";
-export type { McpExtensionOptions, McpModeOptions } from "./modes.ts";
+export type { McpModeOptions } from "./modes.ts";
 export {
-  EXTENSION_TOKEN_ENV,
-  mcpExtensionDriverFactory,
-  mcpExtensionSidecar,
   mcpPersistentFactory,
   mcpPersistentLaunch,
   persistentDriver,
@@ -25,8 +28,6 @@ export type {
 export { imageOf, textOf } from "./protocol.ts";
 export type { SidecarResponse, SidecarTab } from "./response.ts";
 export { parseSidecarResponse, parseTabList } from "./response.ts";
-export type { ClassifiedElement } from "./risk.ts";
-export { classifyRisks, commitmentIntent, intentRisk, isCredentialControl } from "./risk.ts";
 export type {
   BrowserPlatform,
   DiscoverBrowserOptions,
@@ -39,7 +40,6 @@ export {
   BROWSER_EXECUTABLE_ENV,
   browserExecutableCandidates,
   discoverBrowserExecutable,
-  extensionSidecarArgs,
   isSnapConfined,
   PINNED_SERVER_VERSION,
   PINNED_SIDECAR_PACKAGE,
@@ -60,4 +60,4 @@ export {
   textSnapshot,
 } from "./snapshot.ts";
 export type { TopologyEnvironment, TopologyVerdict } from "./topology.ts";
-export { extensionTopology, isWsl, persistentTopology } from "./topology.ts";
+export { persistentTopology } from "./topology.ts";

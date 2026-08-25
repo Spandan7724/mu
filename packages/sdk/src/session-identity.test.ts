@@ -19,12 +19,12 @@ const provider = () => new FakeProvider([{ content: [{ type: "text", text: "ok" 
 
 describe("session header identity", () => {
   test("the header records the profile that was actually selected", async () => {
-    const options = await optionsFromProfile(profile("browser", { connection: "extension" }), "x");
+    const options = await optionsFromProfile(profile("browser", { connection: "persistent" }), "x");
     const agent = new Agent({ ...options, provider: provider(), model: fakeModel, tools: [] });
 
     expect(agent.sessionProfile).toBe("browser");
     expect(agent.session.header?.profile).toBe("browser");
-    expect(agent.session.header?.environment).toEqual({ connection: "extension" });
+    expect(agent.session.header?.environment).toEqual({ connection: "persistent" });
   });
 
   test("an Agent with no profile is marked as having none, not as a profile named default", () => {
@@ -34,7 +34,7 @@ describe("session header identity", () => {
   });
 
   test("identity and environment survive newSession", async () => {
-    const options = await optionsFromProfile(profile("browser", { connection: "extension" }), "x");
+    const options = await optionsFromProfile(profile("browser", { connection: "persistent" }), "x");
     const agent = new Agent({ ...options, provider: provider(), model: fakeModel, tools: [] });
     const first = agent.sessionId;
 
@@ -42,13 +42,13 @@ describe("session header identity", () => {
 
     expect(agent.sessionId).not.toBe(first);
     expect(agent.session.header?.profile).toBe("browser");
-    expect(agent.session.header?.environment).toEqual({ connection: "extension" });
+    expect(agent.session.header?.environment).toEqual({ connection: "persistent" });
   });
 
   test("identity and environment round-trip through a persisted session", async () => {
     const store = new MemorySessionStore();
     const options = await optionsFromProfile(
-      profile("browser", { connection: "extension", "browser.family": "chrome" }),
+      profile("browser", { connection: "persistent", "browser.family": "chrome" }),
       "x",
     );
     const source = new Agent({
@@ -68,7 +68,7 @@ describe("session header identity", () => {
 
     expect(reader.session.header?.profile).toBe("browser");
     expect(reader.session.header?.environment).toEqual({
-      connection: "extension",
+      connection: "persistent",
       "browser.family": "chrome",
     });
   });

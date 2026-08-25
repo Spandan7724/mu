@@ -45,7 +45,6 @@ export function browserEnvironment(input: BrowserEnvironmentInput): SessionEnvir
     ...(options.userDataDir === undefined ? {} : { browserProfile: options.userDataDir }),
     ...(options.artifactRoot === undefined ? {} : { artifactRoot: options.artifactRoot }),
     ...(options.applicantProfile === undefined ? {} : { applicantProfile: "configured" }),
-    ...(options.extensionToken === undefined ? {} : { extensionToken: "configured" }),
   };
 }
 
@@ -54,12 +53,10 @@ export function environmentMessage(environment: SessionEnvironment): AgentMessag
   return customMessage("browser-environment", lines.join("\n"));
 }
 
-export function connectionMessage(description: string, mode: string): AgentMessage {
+export function connectionMessage(description: string, _mode: string): AgentMessage {
   return customMessage(
     "browser-connection",
-    mode === "extension"
-      ? `The browser connection is ${description}. It is not open yet: the user approves the tab in their browser the first time you need it.`
-      : `The browser connection is ${description}. Mu owns this browser and will close it when the session ends.`,
+    `The browser connection is ${description}. Mu owns this browser and will close it when the session ends.`,
   );
 }
 

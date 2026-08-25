@@ -162,11 +162,7 @@ describe("public SDK surface", () => {
   });
 
   test("driver implementations stay internal until their compatibility contract is intentional", () => {
-    for (const name of [
-      "createFakeBrowserDriver",
-      "extensionFactory",
-      "persistentProfileFactory",
-    ]) {
+    for (const name of ["createFakeBrowserDriver", "persistentProfileFactory"]) {
       expect((sdk as Record<string, unknown>)[name]).toBeUndefined();
     }
   });

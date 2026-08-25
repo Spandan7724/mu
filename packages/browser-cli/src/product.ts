@@ -15,7 +15,6 @@ import {
   browserProfile,
   browserSessionsDir,
   DEFAULT_BROWSER,
-  DEFAULT_CONNECTION,
 } from "@mu/profile-browser/profile";
 import { browserRenderers } from "@mu/profile-browser/renderers";
 import browserPackage from "../package.json";
@@ -26,7 +25,7 @@ export const DEFAULT_BROWSER_PROFILE = "browser";
 
 // Product-owned argv beyond the neutral surface flags.
 export interface BrowserProductOptions {
-  connection?: BrowserConnectionChoice | undefined;
+  fakeBrowser: boolean;
   browser?: "chrome" | "edge" | "chromium" | undefined;
   browserProfile?: string | undefined;
   headless: boolean;
@@ -37,11 +36,10 @@ export interface BrowserProductOptions {
 
 export type BrowserProductCommand = "doctor";
 
-const CONNECTIONS: BrowserConnectionChoice[] = ["extension", "persistent", "fake"];
 const BROWSERS = ["chrome", "edge", "chromium"] as const;
 
 export function emptyBrowserProductOptions(): BrowserProductOptions {
-  return { headless: false, allowedOrigins: [] };
+  return { fakeBrowser: false, headless: false, allowedOrigins: [] };
 }
 
 function parseBrowserArgs(
@@ -58,16 +56,15 @@ function parseBrowserArgs(
         command = "doctor";
         break;
       case "--fake-browser":
-        options.connection = "fake";
+        options.fakeBrowser = true;
         break;
       case "--headless":
         options.headless = true;
         break;
       case "--connection":
-        if (!value) errors.push("--connection requires a value");
-        else if (!CONNECTIONS.includes(value as BrowserConnectionChoice)) {
-          errors.push(`--connection expects ${CONNECTIONS.join(" | ")}, got "${value}"`);
-        } else options.connection = value as BrowserConnectionChoice;
+        errors.push(
+          "--connection was removed; Mu now always launches its own persistent browser (use --fake-browser only for testing)",
+        );
         break;
       case "--browser":
         if (!value) errors.push("--browser requires a value");
@@ -99,15 +96,6 @@ function parseBrowserArgs(
     }
   }
 
-  if (options.headless && (options.connection ?? DEFAULT_CONNECTION) === "extension") {
-    errors.push(
-      "--headless needs --connection persistent: the extension attaches to a browser you can see",
-    );
-  }
-  if (options.browserProfile && (options.connection ?? DEFAULT_CONNECTION) !== "persistent") {
-    errors.push("--browser-profile needs --connection persistent");
-  }
-
   return { options, ...(command ? { command } : {}), errors };
 }
 
@@ -117,12 +105,9 @@ export function browserProfileOptionsFrom(
   cwd?: string,
 ): BrowserProfileOptions {
   const product = options ?? emptyBrowserProductOptions();
-  const choice = product.connection ?? DEFAULT_CONNECTION;
+  const choice: BrowserConnectionChoice = product.fakeBrowser ? "fake" : "persistent";
   return {
     ...(home === undefined ? {} : { home }),
-    // The fake driver is a development connection over the extension contract; it
-    // never claims to own a browser.
-    connection: choice === "fake" ? "extension" : choice,
     browser: product.browser ?? DEFAULT_BROWSER,
     ...(product.headless ? { headless: true } : {}),
     ...(product.browserProfile ? { userDataDir: product.browserProfile } : {}),
@@ -201,12 +186,11 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
   help: {
     usage: [usageLine(`${BROWSER_COMMAND} doctor`, "check the browser environment, no network")],
     options: [
-      "      --connection <mode>  extension (default) | persistent | fake",
       "      --browser <name>     chrome (default) | edge | chromium",
       "      --browser-profile <name>",
-      "                           Mu-owned profile to use with --connection persistent",
-      "      --fake-browser       alias for --connection fake, a deterministic in-memory browser",
-      "      --headless           run the Mu-owned browser without a window (persistent only)",
+      "                           Mu-owned persistent profile to use (default: default)",
+      "      --fake-browser       use a deterministic in-memory browser for testing",
+      "      --headless           run the Mu-owned browser without a window",
       "                           uploadable files come from the launch directory",
       "      --allow-origin <origin>",
       "                           approve an origin beyond the task's own (repeatable)",
@@ -216,7 +200,7 @@ export const browserProduct: ProductDescriptor<BrowserProductOptions> = {
       "                           where screenshots, downloads and receipts are kept",
     ],
     permissionModes: BROWSER_PERMISSION_MODES.map((mode) => mode.id),
-    allowAll: "refused here: this product ships no full-access mode",
+    allowAll: "alias for --permission-mode yolo (no permission prompts)",
   },
   data: {
     configFile: (home) => browserConfigPath(home),

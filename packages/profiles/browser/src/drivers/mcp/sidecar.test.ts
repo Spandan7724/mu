@@ -5,7 +5,6 @@ import {
   BROWSER_EXECUTABLE_ENV,
   browserExecutableCandidates,
   discoverBrowserExecutable,
-  extensionSidecarArgs,
   isSnapConfined,
   PINNED_SERVER_VERSION,
   PINNED_SIDECAR_VERSION,
@@ -14,7 +13,6 @@ import {
   SIDECAR_CLI_ENV,
   SIDECAR_RUNTIME_ENV,
 } from "./sidecar.ts";
-import { extensionTopology, isWsl } from "./topology.ts";
 
 const OUTPUT = "/home/u/.mu/browser/artifacts/sidecar";
 
@@ -122,7 +120,6 @@ describe("sidecar argv", () => {
     executablePath: "/usr/bin/google-chrome",
     userDataDir: "/home/u/.mu/browser/profiles/default",
   });
-  const extension = extensionSidecarArgs({ browser: "chrome", outputDir: OUTPUT });
 
   test("persistent mode names a Mu-owned profile and never remote debugging (BD7)", () => {
     expect(persistent[persistent.indexOf("--user-data-dir") + 1]).toBe(
@@ -132,20 +129,11 @@ describe("sidecar argv", () => {
     expect(persistent).not.toContain("--isolated");
   });
 
-  test("every mode pins the output directory into Mu's private artifact root", () => {
-    for (const args of [persistent, extension]) {
-      expect(args).toContain("--output-dir");
-      expect(args[args.indexOf("--output-dir") + 1]).toBe(OUTPUT);
-      // Generated Playwright source is page text by another name.
-      expect(args[args.indexOf("--codegen") + 1]).toBe("none");
-    }
-  });
-
-  test("extension mode owns no profile and launches no executable", () => {
-    expect(extension).toContain("--extension");
-    expect(extension).not.toContain("--user-data-dir");
-    expect(extension).not.toContain("--executable-path");
-    expect(extension).not.toContain("--headless");
+  test("the sidecar writes into Mu's private artifact root", () => {
+    expect(persistent).toContain("--output-dir");
+    expect(persistent[persistent.indexOf("--output-dir") + 1]).toBe(OUTPUT);
+    // Generated Playwright source is page text by another name.
+    expect(persistent[persistent.indexOf("--codegen") + 1]).toBe("none");
   });
 
   test("headless is opt-in and persistent-only", () => {
@@ -159,40 +147,6 @@ describe("sidecar argv", () => {
         headless: true,
       }),
     ).toContain("--headless");
-  });
-});
-
-describe("extension topology (BD26)", () => {
-  const wsl = { platform: "linux" as const, env: { WSL_DISTRO_NAME: "Ubuntu" } };
-
-  test("WSL is detected from either marker without touching the filesystem", () => {
-    expect(isWsl(wsl)).toBe(true);
-    expect(isWsl({ platform: "linux", env: { WSL_INTEROP: "/run/x" }, exists: () => false })).toBe(
-      true,
-    );
-    expect(isWsl({ platform: "linux", env: {}, exists: () => false })).toBe(false);
-    expect(isWsl({ platform: "win32", env: {} })).toBe(false);
-  });
-
-  test("a WSL-hosted relay is refused before it can hang for ninety seconds", () => {
-    const verdict = extensionTopology({ ...wsl, runtime: "/usr/bin/node" });
-    expect(verdict.supported).toBe(false);
-    expect(verdict.reason).toContain("same operating system as the browser");
-    expect(verdict.reason).toContain("MU_BROWSER_MCP_RUNTIME");
-  });
-
-  test("the topology B0 validated — WSL client, Windows Node sidecar — is supported", () => {
-    expect(
-      extensionTopology({ ...wsl, runtime: "/mnt/c/Program Files/nodejs/node.exe" }).supported,
-    ).toBe(true);
-  });
-
-  test("a same-OS host needs no special arrangement", () => {
-    expect(extensionTopology({ platform: "win32", env: {} }).supported).toBe(true);
-    expect(extensionTopology({ platform: "darwin", env: {} }).supported).toBe(true);
-    expect(extensionTopology({ platform: "linux", env: {}, exists: () => false }).supported).toBe(
-      true,
-    );
   });
 });
 

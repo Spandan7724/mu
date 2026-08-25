@@ -1,31 +1,19 @@
-// What the browser toolset is built from. The tools own no state: everything durable
-// lives in the session's reference ledger, and everything decidable lives in policy.
-import type { BrowserArtifactStore } from "../artifacts/store.ts";
-import type { DisclosureRecord } from "../contracts/disclosure.ts";
-import type { FactLookup } from "../data/facts.ts";
-import type { BrowserToolSession } from "./session.ts";
+// Tools receive one stateful capability: the task session. Facts, documents,
+// disclosures, commitments, takeover and receipts all live behind it.
 
-/**
- * Where a commitment's receipt is written, when the profile configured a private
- * artifact root. Without it a commitment still happens and is still reported — the
- * receipt is the durable record, not the safety mechanism.
- */
-export interface BrowserReceiptSink {
-  sessionId: string;
-  store: BrowserArtifactStore;
-  taskId?: string | undefined;
-  // Read at write time: what was disclosed is only fully known once the form is filled.
-  disclosures?: (() => readonly DisclosureRecord[]) | undefined;
-}
+import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import type { FactLookup } from "../data/facts.ts";
+import type { BrowserReceiptSink, BrowserTaskSession } from "./session.ts";
+
+export type { BrowserReceiptSink } from "./session.ts";
 
 export interface BrowserToolContext {
-  session: BrowserToolSession;
-  /**
-   * Applicant facts, when the profile has any. A `factId` argument is checked against
-   * this; without it, the model may still enter a literal value, and the disclosure
-   * permission is what asks about it.
-   */
+  session: BrowserTaskSession;
+  /** @deprecated Configure these on BrowserTaskSession. */
   facts?: FactLookup | undefined;
+  /** @deprecated Configure these on BrowserTaskSession. */
+  documents?: AuthorizedDocumentStore | undefined;
+  /** @deprecated Configure these on BrowserTaskSession. */
   receipts?: BrowserReceiptSink | undefined;
 }
 
@@ -43,6 +31,8 @@ export type BrowserToolDetails =
       risks: string[];
       injections: number;
       screenshot: "attached" | "suppressed" | "unavailable" | "none";
+      plannedFills?: number | undefined;
+      unresolvedQuestions?: number | undefined;
       truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;
     }
   | {

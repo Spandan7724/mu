@@ -9,6 +9,7 @@ import { navigatePattern } from "../policy/scopes.ts";
 import { phaseSummary } from "../runtime/state.ts";
 import type { BrowserToolContext, BrowserToolDetails } from "./context.ts";
 import { toolErrorText } from "./errors.ts";
+import { runBrowserOperation, stage, stop } from "./operation.ts";
 import { observationFacts, observationHeadline, observationText, outcomeText } from "./render.ts";
 
 export const BROWSER_NAVIGATE_TOOL = "browser_navigate";
@@ -76,7 +77,7 @@ export function browserNavigateTool(context: BrowserToolContext) {
         toRequest(args),
         session.record(args.tabId)?.observation.url,
       );
-      if (decision.kind === "allow" || decision.kind === "ask") {
+      if (decision.kind === "permission") {
         return decision.scopes[0] ?? "browser:navigate";
       }
       return "browser:navigate";
@@ -102,91 +103,131 @@ export function browserNavigateTool(context: BrowserToolContext) {
       };
     },
     execute: async (args, { signal }): Promise<ToolResult> => {
-      const request = toRequest(args);
-      try {
-        const before = session.record(args.tabId);
-        // Origin, scheme and redirect rules all live in policy; this asks and obeys.
-        const decision = decideNavigateRequest(session.policy, request, before?.observation.url);
-        if (decision.kind === "deny") {
+      return runBrowserOperation({
+        session,
+        signal,
+        validate: () => stage(toRequest(args)),
+        refresh: async (request) => {
+          if (!acceptsModelActions(session.runtime.status().phase)) {
+            await session.runtime.connect(signal);
+          }
+          const phase = session.runtime.status().phase;
+          if (!acceptsModelActions(phase)) {
+            return stop({
+              content: [
+                { type: "text", text: `The browser is not ready: ${phaseSummary(phase)}.` },
+              ],
+              isError: true,
+            });
+          }
+          const current = session.record(args.tabId);
+          const before =
+            current === undefined
+              ? undefined
+              : await session.observe(
+                  args.tabId === undefined ? {} : { tabId: args.tabId },
+                  signal,
+                );
+          return stage({ request, before });
+        },
+        classify: ({ request, before }) =>
+          stage(decideNavigateRequest(session.policy, request, before?.observation.url)),
+        project: (decision) => {
+          if (decision.kind === "deny") {
+            session.note({
+              tool: BROWSER_NAVIGATE_TOOL,
+              action: args.action,
+              outcome: "denied",
+              detail: decision.message,
+            });
+            return stop({
+              content: [{ type: "text", text: decision.message }],
+              isError: true,
+            });
+          }
+          if (decision.kind !== "permission") {
+            return stop({
+              content: [{ type: "text", text: "This navigation could not be classified." }],
+              isError: true,
+            });
+          }
+          return stage({
+            scope: decision.scopes[0] ?? ("browser:navigate" as const),
+            pattern: decision.pattern,
+          });
+        },
+        drive: (driver, _projection, _decision, refreshed) =>
+          driver.navigate(refreshed.request, signal),
+        settle: async (outcome, _projection, _decision, refreshed) => {
+          session.invalidate(outcome.after?.tabId ?? refreshed.before?.tabId);
+          const after = await session.observe(
+            args.tabId === undefined ? {} : { tabId: args.tabId },
+            signal,
+          );
+          return { outcome, after };
+        },
+        update: ({ outcome, after }, _driven, projection) => {
           session.note({
             tool: BROWSER_NAVIGATE_TOOL,
             action: args.action,
-            outcome: "denied",
-            detail: decision.message,
+            tabId: after.tabId,
+            url: after.observation.url,
+            ...(after.observation.origin === undefined ? {} : { origin: after.observation.origin }),
+            revision: after.revision,
+            outcome: outcome.status,
+            scope: projection.scope,
+            pattern: projection.pattern,
           });
-          return { content: [{ type: "text", text: decision.message }], isError: true };
-        }
-
-        if (!acceptsModelActions(session.runtime.status().phase)) {
-          // Connecting is lazy, so make the attempt before judging the phase.
-          await session.runtime.connect(signal);
-        }
-        const phase = session.runtime.status().phase;
-        if (!acceptsModelActions(phase)) {
-          return {
-            content: [{ type: "text", text: `The browser is not ready: ${phaseSummary(phase)}.` }],
-            isError: true,
+        },
+        render: ({ outcome, after }, _driven, projection) => {
+          const landed = decideNavigateRequest(
+            session.policy,
+            { kind: "url", url: after.observation.url },
+            undefined,
+          );
+          const redirectedOutOfScope =
+            outcome.navigation !== undefined &&
+            landed.kind === "permission" &&
+            landed.scopes.includes("browser:new-origin");
+          const details: BrowserToolDetails = {
+            kind: "action",
+            tool: BROWSER_NAVIGATE_TOOL,
+            action: args.action,
+            status: outcome.status,
+            tabId: after.tabId,
+            url: after.observation.url,
+            navigated: outcome.navigation !== undefined,
+            scope: redirectedOutOfScope ? "browser:new-origin" : projection.scope,
+            pattern: navigatePattern(after.observation.origin),
           };
-        }
-
-        const outcome = await session.use((driver) => driver.navigate(request, signal), signal);
-        // Navigation always invalidates: ARCHITECTURE §8 lists it first.
-        session.invalidate(outcome.after?.tabId ?? before?.tabId);
-
-        const after = await session.observe(
-          args.tabId === undefined ? {} : { tabId: args.tabId },
-          signal,
-        );
-        const scope =
-          decision.kind === "allow" || decision.kind === "ask"
-            ? (decision.scopes[0] ?? "browser:navigate")
-            : "browser:navigate";
-        const pattern = navigatePattern(after.observation.origin);
-        session.note({
-          tool: BROWSER_NAVIGATE_TOOL,
-          action: args.action,
-          tabId: after.tabId,
-          url: after.observation.url,
-          ...(after.observation.origin === undefined ? {} : { origin: after.observation.origin }),
-          revision: after.revision,
-          outcome: outcome.status,
-          scope,
-          pattern,
-        });
-
-        const details: BrowserToolDetails = {
-          kind: "action",
-          tool: BROWSER_NAVIGATE_TOOL,
-          action: args.action,
-          status: outcome.status,
-          tabId: after.tabId,
-          url: after.observation.url,
-          navigated: outcome.navigation !== undefined,
-          scope,
-          pattern,
-        };
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: [
-                outcomeText(outcome),
-                "",
-                observationHeadline(after),
-                ...observationFacts(after),
-                "",
-                observationText(after),
-              ].join("\n"),
-            },
-          ],
-          details,
-          ...(outcome.status === "failed" ? { isError: true } : {}),
-        };
-      } catch (error) {
-        session.note({ tool: BROWSER_NAVIGATE_TOOL, action: args.action, outcome: "error" });
-        return { content: [{ type: "text", text: toolErrorText(error) }], isError: true };
-      }
+          return {
+            content: [
+              {
+                type: "text",
+                text: [
+                  outcomeText(outcome),
+                  ...(redirectedOutOfScope
+                    ? [
+                        "The page redirected to an origin this task has not approved. Do not interact with it until Mu grants browser:new-origin for that origin.",
+                      ]
+                    : []),
+                  "",
+                  observationHeadline(after),
+                  ...observationFacts(after),
+                  "",
+                  observationText(after),
+                ].join("\n"),
+              },
+            ],
+            details,
+            ...(outcome.status === "failed" || redirectedOutOfScope ? { isError: true } : {}),
+          };
+        },
+        renderError: (error) => {
+          session.note({ tool: BROWSER_NAVIGATE_TOOL, action: args.action, outcome: "error" });
+          return { content: [{ type: "text", text: toolErrorText(error) }], isError: true };
+        },
+      });
     },
   });
 }

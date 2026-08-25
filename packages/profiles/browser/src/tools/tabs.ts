@@ -54,7 +54,18 @@ export function browserTabsTool(context: BrowserToolContext) {
     executionMode: "sequential",
     isConcurrencySafe: () => false,
     changesState: (args) => args.action !== "list",
-    permissionScope: (args) => (args.action === "list" ? "browser:observe" : "browser:navigate"),
+    permissionScope: (args) => {
+      if (args.action === "list") return "browser:observe";
+      if (args.action !== "open" || args.url === undefined) return "browser:navigate";
+      const decision = decideNavigateRequest(
+        session.policy,
+        { kind: "url", url: args.url },
+        session.record()?.observation.url,
+      );
+      return decision.kind === "permission"
+        ? (decision.scopes[0] ?? "browser:navigate")
+        : "browser:navigate";
+    },
     permissionPattern: (args) => {
       if (args.action === "open" && args.url !== undefined) {
         try {

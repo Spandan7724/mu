@@ -81,14 +81,12 @@ const connectionCases: DriverContractCase[] = [
   {
     id: "connection/state-carries-no-secret",
     group: "connection",
-    title: "connection state never carries the extension token or an endpoint",
+    title: "connection state never carries a browser endpoint or cookie",
     managesConnection: true,
     async run(ctx) {
-      const token = ctx.setup.connectOptions.extensionToken;
       const state = await ctx.driver.connect(ctx.setup.connectOptions, ctx.signal);
       assertJsonSerializable(state, "connection state");
       const serialized = JSON.stringify(state);
-      if (token) excludes(serialized, token.reveal(), "serialized connection state");
       excludes(serialized, "ws://", "serialized connection state");
       excludes(serialized, "cookie", "serialized connection state");
     },
@@ -1004,15 +1002,13 @@ const evidenceCases: DriverContractCase[] = [
   {
     id: "evidence/outcomes-are-serializable-and-secret-free",
     group: "evidence",
-    title: "every outcome is plain JSON with no handle, function or token in it",
+    title: "every outcome is plain JSON with no browser handle or function in it",
     async run(ctx) {
       const observation: BrowserObservation = await ctx.open(ctx.fixture.pages.form);
       assertJsonSerializable(observation, "observation");
       const target = elementRefOf(ctx.find(observation, ctx.fixture.labels.textField));
       const outcome = await ctx.act({ kind: "fill", target, value: ctx.fixture.values.text });
       assertJsonSerializable(outcome, "action outcome");
-      const token = ctx.setup.connectOptions.extensionToken;
-      if (token) excludes(JSON.stringify(outcome), token.reveal(), "serialized outcome");
     },
   },
 ];

@@ -15,6 +15,7 @@ export const BROWSER_PERMISSION_SCOPES = {
   upload: "browser:upload",
   takeover: "browser:takeover",
   disclose: "browser:disclose",
+  unknown: "browser:unknown",
 } as const satisfies Record<string, BrowserScope>;
 
 export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
@@ -65,6 +66,7 @@ export const BROWSER_PERMISSION_MODES: PermissionMode[] = [
       { permission: BROWSER_PERMISSION_SCOPES.navigate, pattern: "*", action: "allow" },
       { permission: BROWSER_PERMISSION_SCOPES.act, pattern: "*", action: "deny" },
       { permission: BROWSER_PERMISSION_SCOPES.upload, pattern: "*", action: "deny" },
+      { permission: BROWSER_PERMISSION_SCOPES.unknown, pattern: "*", action: "deny" },
       ...denyEveryCommitment,
     ],
   },
@@ -86,12 +88,13 @@ export const BROWSER_PERMISSION_MODES: PermissionMode[] = [
       })),
     ],
   },
+  {
+    id: "yolo",
+    label: "full access",
+    description: "Allow every browser tool call without asking for permission.",
+    tone: "unrestricted",
+    rules: [{ permission: "*", pattern: "*", action: "allow" }],
+  },
 ];
-
-// There is deliberately no global full-access mode. SECURITY.md §9: expanding the
-// pre-authorized set requires a new BD entry and a security review, and v1 has none.
-// The coding product's `yolo` does not translate here — an unprompted file edit is
-// recoverable, an unprompted purchase, send or deletion on the user's signed-in
-// account is not.
 
 export const DEFAULT_BROWSER_PERMISSION_MODE = "confirm-submission";

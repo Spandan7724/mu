@@ -128,7 +128,7 @@ export interface BrowserApprovalCard {
   choices: readonly BrowserApprovalChoice[];
   previewComplete: boolean;
   incompleteReasons: readonly string[];
-  /** SECURITY §9: false whenever the preview is incomplete or the scope may never auto-allow. */
+  /** False when the preview is incomplete or a scoped remembered grant is unavailable. */
   offersTaskScope: boolean;
   /** Values that must not survive into any rendered line. */
   redactValues: readonly string[];

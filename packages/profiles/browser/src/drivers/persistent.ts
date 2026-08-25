@@ -93,12 +93,6 @@ export function persistentProfileFactory(
   const pid = options.pid ?? process.pid;
   const isAlive = options.isAlive ?? processIsAlive;
   return async (factoryOptions, signal) => {
-    if (factoryOptions.connection !== "persistent") {
-      throw new BrowserDriverError(
-        "unsupported",
-        "the persistent-profile factory only serves persistent connections",
-      );
-    }
     const directory = persistentProfileDir(
       factoryOptions.dataRoot,
       factoryOptions.userDataDir ?? "default",
@@ -123,7 +117,6 @@ export function persistentProfileFactory(
     }
     return {
       driver: launched.driver,
-      ownership: "owned",
       description: `${factoryOptions.browser} with the Mu profile at ${directory}`,
       dispose: async () => {
         // BD29: the browser Mu owns is closed and awaited before the lock goes,

@@ -65,7 +65,7 @@ describe("argv", () => {
     expect(args.errors).toEqual([]);
     expect(args.mode).toBe("headless");
     expect(args.prompt).toBe("open the form");
-    expect(args.product.connection).toBe("fake");
+    expect(args.product.fakeBrowser).toBe(true);
     expect(args.product.allowedOrigins).toEqual(["https://jobs.example.com"]);
   });
 
@@ -85,21 +85,18 @@ describe("argv", () => {
     );
   });
 
-  test("an unsupported connection choice is refused with the choices spelled out", () => {
-    expect(parse(["--connection", "safari"]).errors).toEqual([
-      '--connection expects extension | persistent | fake, got "safari"',
-    ]);
+  test("the removed connection selector is refused", () => {
+    expect(parse(["--connection", "extension"]).errors.join(" ")).toContain(
+      "--connection was removed",
+    );
     expect(parse(["--browser", "firefox"]).errors).toEqual([
       '--browser expects chrome | edge | chromium, got "firefox"',
     ]);
   });
 
-  test("headless browsing and a Mu profile are refused against the extension bridge", () => {
-    expect(parse(["--headless"]).errors.join(" ")).toContain("--connection persistent");
-    expect(parse(["--browser-profile", "work"]).errors.join(" ")).toContain(
-      "--browser-profile needs --connection persistent",
-    );
-    expect(parse(["--connection", "persistent", "--headless"]).errors).toEqual([]);
+  test("headless browsing and named Mu profiles work with the owned browser", () => {
+    expect(parse(["--headless"]).errors).toEqual([]);
+    expect(parse(["--browser-profile", "work"]).errors).toEqual([]);
   });
 
   test("doctor is a product command, and --help still outranks it", () => {
@@ -117,6 +114,9 @@ describe("help", () => {
     expect(HELP_TEXT).toContain("mu-browser doctor");
     expect(HELP_TEXT).toContain("--fake-browser");
     expect(HELP_TEXT).toContain("profile to load (default: browser)");
+    expect(HELP_TEXT).toContain("confirm-submission | confirm-every-write | read-only");
+    expect(HELP_TEXT).toContain("autonomous-submit | yolo");
+    expect(HELP_TEXT).toContain("alias for --permission-mode yolo (no permission prompts)");
     for (const coding of ["mu agents", "self update", "self uninstall", "--purge"]) {
       expect(HELP_TEXT).not.toContain(coding);
     }
@@ -124,7 +124,7 @@ describe("help", () => {
 });
 
 describe("doctor", () => {
-  test("it reports the data root and every connection mode without a network call", async () => {
+  test("it reports the data root and available browser paths without a network call", async () => {
     const home = await tempHome();
     const checks = await browserDoctorChecks(home);
     expect(checks.some((check) => check.detail.includes(join(home, ".mu", "browser")))).toBe(true);
@@ -132,12 +132,11 @@ describe("doctor", () => {
     expect(modes.map((check) => check.name)).toEqual([
       "deterministic fake browser",
       "Playwright MCP sidecar",
-      "existing-browser bridge",
       "Mu-owned browser",
     ]);
   });
 
-  test("an unavailable connection mode is a note, not a broken install", async () => {
+  test("an unavailable browser is a note, not a broken install", async () => {
     const { out, io } = sink();
     expect(await runBrowserDoctor(io, await tempHome())).toBe(0);
     const text = out.join("");
@@ -147,12 +146,11 @@ describe("doctor", () => {
 });
 
 describe("profile selection", () => {
-  test("the fake connection is composed over the extension contract and owns nothing", () => {
+  test("the fake browser uses the persistent connection contract", () => {
     const options = browserProfileOptionsFrom({
       ...emptyBrowserProductOptions(),
-      connection: "fake",
+      fakeBrowser: true,
     });
-    expect(options.connection).toBe("extension");
     expect(options.factory).toBeDefined();
   });
 
@@ -207,7 +205,7 @@ describe("a browser session runs end to end against the fake driver", () => {
 
     const store = new FileSessionStore({
       root: join(home, ".mu", "browser", "sessions"),
-      scope: "extension-chrome",
+      scope: "persistent-chrome",
     });
     const saved = await store.list();
     expect(saved).toHaveLength(1);
@@ -215,29 +213,32 @@ describe("a browser session runs end to end against the fake driver", () => {
     expect(tree?.header?.profile).toBe("browser");
     expect(tree?.header?.environment).toMatchObject({
       surface: "browser",
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
     });
   });
 
-  // SECURITY §9: this product deliberately ships no full-access mode. The flag used
-  // to append a wildcard allow of its own, which handed one out anyway.
-  test("--allow-all is refused rather than granting a mode this product does not have", async () => {
-    const product = createBrowserProduct({ home: await tempHome() });
-    const args = parseArgs(
-      ["-p", "check the browser", "--fake-browser", "--model", "fake/fake-1", "--allow-all"],
-      product,
-    );
-    const { out, io } = sink();
-    expect(
-      await runHeadless(
-        product,
-        args,
-        { provider: new FakeProvider([]), extensions: await fakeModelHost() },
-        io,
-      ),
-    ).not.toBe(EXIT.done);
-    expect(out.join("")).not.toContain("the browser is ready");
+  test("--allow-all selects the browser full-access mode", async () => {
+    const home = await tempHome();
+    const runtime = await createCliSessionRuntime({
+      cwd: process.cwd(),
+      product: createBrowserProduct({ home }),
+      productOptions: { ...emptyBrowserProductOptions(), fakeBrowser: true },
+      model: "fake/fake-1",
+      allowAll: true,
+      permissions: "deny",
+      agentOptions: { provider: new FakeProvider([]), extensions: await fakeModelHost() },
+    });
+    try {
+      expect(runtime.permissionMode?.id).toBe("yolo");
+      expect(runtime.agentOptions.permissions?.at(-1)).toEqual({
+        permission: "*",
+        pattern: "*",
+        action: "allow",
+      });
+    } finally {
+      await runtime.agent.shutdown();
+    }
   });
 
   test("a saved browser session resumes with the same product and profile identity", async () => {
@@ -246,7 +247,7 @@ describe("a browser session runs end to end against the fake driver", () => {
     const runtime = await createCliSessionRuntime({
       cwd: process.cwd(),
       product,
-      productOptions: { ...emptyBrowserProductOptions(), connection: "fake" },
+      productOptions: { ...emptyBrowserProductOptions(), fakeBrowser: true },
       model: "fake/fake-1",
       sessionId: "browser-resume-1",
       permissions: "deny",
@@ -259,7 +260,7 @@ describe("a browser session runs end to end against the fake driver", () => {
       const resumed = await createCliSessionRuntime({
         cwd: process.cwd(),
         product,
-        productOptions: { ...emptyBrowserProductOptions(), connection: "fake" },
+        productOptions: { ...emptyBrowserProductOptions(), fakeBrowser: true },
         model: "fake/fake-1",
         resumeSessionId: "browser-resume-1",
         permissions: "deny",
@@ -279,10 +280,9 @@ describe("a browser session runs end to end against the fake driver", () => {
     const runtime = await createCliSessionRuntime({
       cwd: process.cwd(),
       product,
-      productOptions: { ...emptyBrowserProductOptions(), connection: "fake" },
+      productOptions: { ...emptyBrowserProductOptions(), fakeBrowser: true },
       model: "fake/fake-1",
-      // `browser_status` only needs browser:observe, which read-only allows. There is
-      // deliberately no full-access mode to reach for here (SECURITY §9).
+      // Exercise the restrictive mode here; browser_status only needs browser:observe.
       permissionMode: "read-only",
       permissions: "forward",
       agentOptions: {
@@ -328,7 +328,7 @@ describe("a browser session runs end to end against the fake driver", () => {
         message.type === "event" &&
         (message.event as { type?: string }).type === "tool_execution_end",
     );
-    expect(JSON.stringify(toolEnd)).toContain("chrome (extension) ready");
+    expect(JSON.stringify(toolEnd)).toContain("chrome (persistent) ready");
   });
 
   test("shutting the session down leaves the browser connection closed", async () => {
@@ -337,7 +337,7 @@ describe("a browser session runs end to end against the fake driver", () => {
     const runtime = await createCliSessionRuntime({
       cwd: process.cwd(),
       product,
-      productOptions: { ...emptyBrowserProductOptions(), connection: "fake" },
+      productOptions: { ...emptyBrowserProductOptions(), fakeBrowser: true },
       model: "fake/fake-1",
       permissions: "deny",
       agentOptions: { provider: new FakeProvider([]), extensions: await fakeModelHost() },

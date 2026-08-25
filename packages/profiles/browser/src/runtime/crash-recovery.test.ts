@@ -16,7 +16,6 @@ function attachedFactory() {
   const driver = createFakeBrowserDriver();
   const factory: BrowserDriverFactory = async () => ({
     driver,
-    ownership: "attached",
     description: "fake",
     dispose: async () => {},
   });
@@ -31,7 +30,7 @@ describe.each([
     const { driver, factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -90,7 +89,7 @@ describe("a crash while a driver ref is already in flight never leaves the runti
     const { driver, factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });

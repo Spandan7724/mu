@@ -56,7 +56,9 @@ import {
   isWebUrl,
   normalizeOrigin,
 } from "../../contracts/primitives.ts";
-import { REDACTED } from "../../contracts/secret.ts";
+
+const REDACTED = "[redacted]";
+
 import type { BrowserFrame, BrowserTab, TabOutcome, TabRequest } from "../../contracts/tabs.ts";
 import type { TakeoverReason } from "../../contracts/takeover.ts";
 import {
@@ -82,9 +84,6 @@ export interface FakeBrowserDriverOptions {
   // Documents `upload` will accept. Anything else is refused, exactly as the
   // production adapters must refuse an id the runtime never authorized.
   documents?: readonly AuthorizedDocument[];
-  // When true, `connect` fails with `approval-required` until `approve()` is
-  // called — the extension-mode consent flow, without an extension.
-  requireApproval?: boolean;
   now?: () => number;
 }
 
@@ -94,7 +93,8 @@ export interface FakeBrowserDriver extends BrowserDriver {
   simulateConnectionLoss(code?: "connection-lost" | "browser-crashed"): void;
   // The next operation fails with this code, then the injection clears.
   failNext(code: BrowserDriverErrorCode, message?: string): void;
-  approve(): void;
+  // The next commitment call fails after pre-submit observation/revalidation.
+  failNextSubmit(code: BrowserDriverErrorCode, message?: string): void;
   authorize(document: AuthorizedDocument): void;
   reset(): void;
 }
@@ -141,7 +141,7 @@ function commits(risk: readonly BrowserRisk[] | undefined): boolean {
 
 export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}): FakeBrowserDriver {
   const site = options.site ?? defaultFakeSite();
-  const mode = options.mode ?? "extension";
+  const mode = options.mode ?? "persistent";
   const browser = options.browser ?? "chrome";
   const now = options.now ?? (() => Date.now());
   const documents = new Map<string, AuthorizedDocument>(
@@ -153,9 +153,9 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
   let tabSeq = 0;
   let revisionSeq = 0;
   let connectionId: string | undefined;
-  let approved = options.requireApproval !== true;
   let lostCode: "connection-lost" | "browser-crashed" | undefined;
   let injected: { code: BrowserDriverErrorCode; message: string } | undefined;
+  let injectedSubmit: { code: BrowserDriverErrorCode; message: string } | undefined;
   let message: string | undefined;
   let tabs: FakeTabState[] = [];
   let activeTabId: string | undefined;
@@ -168,7 +168,6 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
     ...(connectionId === undefined ? {} : { connectionId }),
     ...(activeTabId === undefined ? {} : { activeTabId }),
     ...(message === undefined ? {} : { message }),
-    ...(options.requireApproval === true && !approved ? { approvalRequired: true } : {}),
     updatedAt: now(),
   });
 
@@ -515,9 +514,9 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
     message = undefined;
     lostCode = undefined;
     injected = undefined;
+    injectedSubmit = undefined;
     tabs = [];
     submissions.length = 0;
-    approved = options.requireApproval !== true;
   };
 
   const driver: FakeBrowserDriver = {
@@ -538,13 +537,6 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       } catch (error) {
         phase = "disconnected";
         throw error;
-      }
-      if (!approved) {
-        phase = "disconnected";
-        throw new BrowserDriverError(
-          "approval-required",
-          "approve the connection in the browser, then connect again",
-        );
       }
       connectionSeq += 1;
       connectionId = `fake-conn-${connectionSeq}`;
@@ -657,6 +649,11 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
     },
 
     async submit(request: SubmitRequest, signal: AbortSignal) {
+      if (injectedSubmit !== undefined) {
+        const failure = injectedSubmit;
+        injectedSubmit = undefined;
+        throw new BrowserDriverError(failure.code, failure.message);
+      }
       requireReady();
       throwIfAborted(signal);
       const resolution = resolveRef(request.target);
@@ -884,8 +881,8 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       injected = { code, message: text ?? `injected ${code} failure` };
     },
 
-    approve() {
-      approved = true;
+    failNextSubmit(code, text) {
+      injectedSubmit = { code, message: text ?? `injected ${code} failure` };
     },
 
     authorize(document) {

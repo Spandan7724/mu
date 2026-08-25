@@ -14,7 +14,7 @@ import { taskAuthority } from "../policy/authority.ts";
 import { withApprovedOrigin } from "../policy/origin.ts";
 import { browserRenderers } from "../renderers/index.ts";
 import { BrowserRuntime } from "../runtime/runtime.ts";
-import type { BrowserToolSession } from "../tools/session.ts";
+import type { BrowserTaskSession } from "../tools/session.ts";
 import { browserDataDir, ensureBrowserDataRoot } from "./data.ts";
 import {
   applicantFactsMessage,
@@ -41,7 +41,7 @@ export const BROWSER_PROFILE_NAME = "browser";
 
 export interface BrowserProfile extends Profile {
   runtime: BrowserRuntime;
-  session: BrowserToolSession;
+  session: BrowserTaskSession;
   facts?: FactStore | undefined;
   documents: AuthorizedDocumentStore;
   artifacts: BrowserArtifactStore;
@@ -54,7 +54,7 @@ export interface BrowserProfile extends Profile {
 // nothing is worse than one that says why it cannot.
 const unconfiguredFactory: BrowserDriverFactory = async (options) => {
   throw new Error(
-    `No browser driver is configured for ${options.connection} mode. Pass a driver factory, or use the fake driver for a deterministic session.`,
+    `No persistent browser driver is configured for ${options.browser}. Pass a driver factory, or use the fake driver for a deterministic session.`,
   );
 };
 
@@ -101,7 +101,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     dataRoot,
     headless: resolved.headless,
     ...(resolved.userDataDir === undefined ? {} : { userDataDir: resolved.userDataDir }),
-    ...(resolved.extensionToken === undefined ? {} : { extensionToken: resolved.extensionToken }),
   });
 
   for (const path of [...new Set(documentPaths)]) {
@@ -127,12 +126,14 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     diagnostics.push(`could not load applicant profile: ${applicant.problem}`);
   }
 
-  const artifacts = new BrowserArtifactStore({ root: join(dataRoot, "artifacts") });
+  const artifacts = new BrowserArtifactStore({
+    root: resolved.artifactRoot ?? join(dataRoot, "artifacts"),
+  });
   const { tools, session } = browserToolset({
     runtime,
     allowedOrigins: resolved.allowedOrigins ?? [],
-    mode: DEFAULT_BROWSER_PERMISSION_MODE,
     ...(applicant.facts === undefined ? {} : { facts: applicant.facts }),
+    ...(applicant.facts === undefined ? {} : { applicantPolicy: applicant.facts.policy() }),
     ...(documents.size > 0 ? { documents } : {}),
     receipts: {
       // One profile is built per Mu session, so this identifies the session that
@@ -151,7 +152,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     defaultPermissionMode: DEFAULT_BROWSER_PERMISSION_MODE,
     renderers: browserRenderers,
     commands: browserCommands({
-      runtime,
+      session,
       options: resolved,
       dataRoot,
       sources: {
@@ -198,18 +199,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     // What compaction must not lose: where the browser is, what was already done
     // to the page, and what is still owed. Labels, ids and origins only — no
     // values, so the carryover is safe to persist (BD22).
-    carryoverExtractor: (): BrowserCarryover => {
-      const state = runtime.status();
-      return {
-        connection: { mode: state.mode, browser: state.browser, phase: state.phase },
-        allowedOrigins: [...session.policy.origins.allowed],
-        completedSteps: [],
-        outstandingSteps: [],
-        filledFields: [],
-        unresolvedQuestions: [],
-        uploadedDocumentIds: [],
-      };
-    },
+    carryoverExtractor: (): BrowserCarryover => session.carryover(),
     // Sessions group under the connection they were run against, inside the
     // browser product's own session root.
     scope: () => `${resolved.connection}-${resolved.browser}`,

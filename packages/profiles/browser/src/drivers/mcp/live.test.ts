@@ -104,7 +104,6 @@ if (!LIVE) {
         sidecar,
         mode: "persistent",
         browser: "chrome",
-        ownership: "owned",
         landingUrl: contract.pages.blank,
         ...(uploadDocument === undefined ? {} : { documents: [uploadDocument] }),
       });
@@ -160,7 +159,6 @@ if (!LIVE) {
         sidecar: live,
         mode: "persistent",
         browser: "chrome",
-        ownership: "owned",
       });
       const signal = new AbortController().signal;
       await driver.connect({ mode: "persistent", browser: "chrome" }, signal);

@@ -37,7 +37,7 @@ describe("submitting: an aborted attempt is settled and reported, never left unk
 
     // The driver call itself is what gets cancelled — the exact case BD18 exists for:
     // the request may already have reached the page.
-    harness.driver.failNext("aborted", "the operation was cancelled");
+    harness.driver.failNextSubmit("aborted", "the operation was cancelled");
 
     const result = await submit.execute("c1", { target, intent: "submit-form" }, signal());
     // A cancelled commitment attempt is a reported outcome, not a thrown tool failure.
@@ -63,7 +63,7 @@ describe("submitting: an aborted attempt is settled and reported, never left unk
     const target = refOf(elementNamed(harness, FAKE_LABELS.submitButton));
     const submit = browserSubmitTool({ session: harness.session });
 
-    harness.driver.failNext("connection-lost", "the bridge dropped mid-request");
+    harness.driver.failNextSubmit("connection-lost", "the bridge dropped mid-request");
     const result = await submit.execute("c1", { target, intent: "submit-form" }, signal());
     expect(result.isError).toBeUndefined();
     expect(resultText(result)).toContain("Do not repeat");

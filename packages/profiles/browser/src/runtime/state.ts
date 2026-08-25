@@ -14,7 +14,6 @@ export type BrowserRuntimeTrigger =
   | "resumed"
   | "bridge-lost"
   | "reconnected"
-  | "approval-required"
   | "timed-out"
   | "shutdown"
   | "closed";
@@ -27,7 +26,6 @@ const TRANSITIONS: Readonly<
     approved: "ready",
     rejected: "disconnected",
     failed: "failed",
-    "approval-required": "connecting",
     shutdown: "closing",
   },
   ready: {
@@ -40,7 +38,6 @@ const TRANSITIONS: Readonly<
   takeover: { resumed: "ready", "bridge-lost": "reconnecting", shutdown: "closing" },
   reconnecting: {
     reconnected: "ready",
-    "approval-required": "connecting",
     "timed-out": "failed",
     failed: "failed",
     shutdown: "closing",

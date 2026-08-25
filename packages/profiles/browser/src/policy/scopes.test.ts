@@ -28,6 +28,7 @@ describe("scope vocabulary", () => {
       "browser:interact",
       "browser:disclose",
       "browser:upload",
+      "browser:unknown",
       "browser:submit",
       "browser:send",
       "browser:purchase",

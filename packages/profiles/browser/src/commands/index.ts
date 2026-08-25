@@ -14,11 +14,7 @@ import { type TakeoverReason, takeoverReasonSchema } from "../contracts/takeover
 import { factValueText } from "../data/facts.ts";
 import { takeoverInstructions } from "../policy/takeover.ts";
 import type { ResolvedBrowserProfileOptions } from "../profile/options.ts";
-import {
-  BrowserTakeoverSession,
-  renderResumeReport,
-  renderTakeoverCell,
-} from "../renderers/takeover.ts";
+import { renderResumeReport, renderTakeoverCell } from "../renderers/takeover.ts";
 import {
   bytesLabel,
   clampLine,
@@ -29,6 +25,7 @@ import {
 } from "../renderers/text.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
 import { phaseSummary } from "../runtime/state.ts";
+import type { BrowserTaskSession } from "../tools/session.ts";
 import {
   applicantSource,
   type BrowserCommandSources,
@@ -66,18 +63,17 @@ function parseTakeoverReason(value: string): TakeoverReason {
 }
 
 export interface BrowserCommandsOptions {
-  runtime: BrowserRuntime;
+  session: BrowserTaskSession;
   options: ResolvedBrowserProfileOptions;
   dataRoot: string;
-  /** The session's takeover state; one is created when a caller supplies none. */
-  takeover?: BrowserTakeoverSession | undefined;
   /** Overridable so a test or an embedding host can supply its own data. */
   sources?: Partial<BrowserCommandSources> | undefined;
 }
 
 export function browserCommands(context: BrowserCommandsOptions): Command[] {
-  const { runtime, options, dataRoot } = context;
-  const takeover = context.takeover ?? new BrowserTakeoverSession();
+  const { session, options, dataRoot } = context;
+  const runtime = session.runtime;
+  const takeover = session.takeoverController;
   const sources: BrowserCommandSources = {
     documents: context.sources?.documents ?? documentSource(options.documents),
     applicant: context.sources?.applicant ?? applicantSource(options.applicantProfile),
@@ -90,12 +86,7 @@ export function browserCommands(context: BrowserCommandsOptions): Command[] {
       connectionSummary(state),
       phaseSummary(state.phase),
       joinParts(["connection", runtime.description]),
-      joinParts([
-        "shutdown",
-        runtime.ownership === "owned"
-          ? "closes the browser Mu owns"
-          : "detaches without closing your browser",
-      ]),
+      joinParts(["shutdown", "closes the browser Mu owns; its persistent profile remains on disk"]),
       joinParts(["permission mode", "see /permissions"]),
       joinParts(["data root", dataRoot]),
       joinParts([
@@ -156,12 +147,15 @@ export function browserCommands(context: BrowserCommandsOptions): Command[] {
     }
     // The runtime publishes a connection phase and an active tab id, not a URL, so
     // the task's own origin is the most specific destination available here.
-    const recorded = takeover.begin({
+    session.beginTakeover({
       reason,
       tabId: state.activeTabId ?? "the active tab",
       url: options.allowedOrigins[0] ?? "the page in your browser",
       instructions,
+      startedAt: Date.now(),
     });
+    const recorded = session.takeover;
+    if (recorded === undefined) return "could not record browser takeover state";
     return lines([
       phaseSummary("takeover"),
       ...renderTakeoverCell(recorded, {
@@ -186,22 +180,19 @@ export function browserCommands(context: BrowserCommandsOptions): Command[] {
       ]);
     }
     try {
-      return lines(renderResumeReport(takeover.resume(observation)));
+      return lines(renderResumeReport(session.resumeTakeover(observation)));
     } catch (error) {
       return `could not resume — ${describe(error)}`;
     }
   };
 
   const disconnect = async (): Promise<string> => {
-    const owned = runtime.ownership === "owned";
     try {
       await runtime.shutdown();
     } catch (error) {
       return `could not disconnect cleanly — ${describe(error)}`;
     }
-    return owned
-      ? "Closed the browser Mu owns. Its profile directory is untouched."
-      : "Detached from your browser. Nothing was closed and no browser data was removed.";
+    return "Closed the browser Mu owns. Its profile directory is untouched.";
   };
 
   const documents = async (): Promise<string> => {

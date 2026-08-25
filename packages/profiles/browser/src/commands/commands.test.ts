@@ -8,15 +8,17 @@ import type { ApplicantProfile } from "../contracts/applicant.ts";
 import { documentSummary } from "../contracts/documents.ts";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
 import { createFakeBrowserDriver } from "../drivers/fake/driver.ts";
+import { taskAuthority } from "../policy/authority.ts";
+import { createOriginPolicy } from "../policy/origin.ts";
 import { resolveBrowserProfileOptions } from "../profile/options.ts";
-import { BrowserTakeoverSession } from "../renderers/takeover.ts";
+import type { BrowserTakeoverSession } from "../renderers/takeover.ts";
 import { BrowserRuntime } from "../runtime/runtime.ts";
 import { sampleDocument, sampleFact, sampleReceipt } from "../testing/samples.ts";
+import { BrowserTaskSession } from "../tools/session.ts";
 import { BROWSER_RESUME_COMMAND, browserCommands } from "./index.ts";
 
 const factory: BrowserDriverFactory = async () => ({
   driver: createFakeBrowserDriver(),
-  ownership: "attached",
   description: "a deterministic fake chrome",
   dispose: async () => {},
 });
@@ -24,7 +26,7 @@ const factory: BrowserDriverFactory = async () => ({
 function runtime(): BrowserRuntime {
   return new BrowserRuntime({
     factory,
-    connection: "extension",
+    connection: "persistent",
     browser: "chrome",
     dataRoot: "/tmp/mu-browser-commands",
   });
@@ -37,18 +39,25 @@ interface Harness {
 }
 
 function harness(overrides: Partial<Parameters<typeof browserCommands>[0]> = {}): Harness {
-  const takeover = new BrowserTakeoverSession();
+  const options = resolveBrowserProfileOptions({ allowedOrigins: ["https://jobs.example.com"] });
+  const session =
+    overrides.session ??
+    new BrowserTaskSession({
+      runtime: runtime(),
+      policy: {
+        origins: createOriginPolicy({ configuredOrigins: options.allowedOrigins }, taskAuthority()),
+      },
+    });
   const list = browserCommands({
-    runtime: runtime(),
-    options: resolveBrowserProfileOptions({ allowedOrigins: ["https://jobs.example.com"] }),
+    session,
+    options,
     dataRoot: "/tmp/mu-browser-commands",
-    takeover,
     ...overrides,
   });
   const commands = new Map(list.map((command) => [command.name, command]));
   return {
     commands,
-    takeover,
+    takeover: session.takeoverController,
     run: async (name, args = "") => {
       const command = commands.get(name);
       if (command === undefined) throw new Error(`no /${name} command`);
@@ -93,10 +102,10 @@ describe("every capability DESIGN names is discoverable", () => {
 describe("/browser answers with real connection state", () => {
   test("status names the connection, the phase and the allowed origins", async () => {
     const message = await harness().run("browser");
-    expect(message).toContain("chrome (extension)");
+    expect(message).toContain("chrome (persistent)");
     expect(message).toContain("not connected");
     expect(message).toContain("https://jobs.example.com");
-    expect(message).toContain("detaches without closing your browser");
+    expect(message).toContain("closes the browser Mu owns");
   });
 
   test("connect opens the connection and reports it", async () => {
@@ -179,12 +188,12 @@ describe("takeover and resume are reachable from the keyboard alone", () => {
 });
 
 describe("/disconnect ends access without deleting browser data", () => {
-  test("an attached browser is detached, not closed", async () => {
+  test("the Mu-owned browser is closed without deleting its profile", async () => {
     const app = harness();
     await app.run("browser", "connect");
     const message = await app.run("disconnect");
-    expect(message).toContain("Detached");
-    expect(message).toContain("no browser data was removed");
+    expect(message).toContain("Closed the browser Mu owns");
+    expect(message).toContain("profile directory is untouched");
   });
 });
 

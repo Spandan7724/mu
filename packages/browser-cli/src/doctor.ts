@@ -4,7 +4,6 @@ import { stat } from "node:fs/promises";
 import {
   BROWSER_EXECUTABLE_ENV,
   discoverBrowserExecutable,
-  extensionTopology,
   isSnapConfined,
   PINNED_SIDECAR_VERSION,
   persistentTopology,
@@ -46,10 +45,8 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
     detail: `available — ${BROWSER_COMMAND} --fake-browser`,
   });
   // Read-only: resolving a path and reading env vars. Nothing is spawned here.
-  let runtime: string | undefined;
   try {
     const resolution = resolveSidecar({ resolveFrom: [import.meta.url] });
-    runtime = resolution.runtime;
     checks.push({
       name: "Playwright MCP sidecar",
       ok: true,
@@ -62,15 +59,6 @@ export async function browserDoctorChecks(home?: string): Promise<DoctorCheck[]>
       detail: `${error instanceof Error ? error.message : String(error)} (set ${SIDECAR_CLI_ENV} to override)`,
     });
   }
-
-  const topology = extensionTopology(runtime === undefined ? {} : { runtime });
-  checks.push({
-    name: "existing-browser bridge",
-    ok: topology.supported,
-    detail: topology.supported
-      ? "the sidecar can reach the browser from here; the browser will ask you to approve the connection"
-      : (topology.reason ?? "unsupported topology"),
-  });
 
   // A stable check name whatever is installed, so a report reads the same everywhere.
   const found = ["chrome", "edge", "chromium"].reduce<
@@ -108,6 +96,6 @@ export async function runBrowserDoctor(io: DoctorIo, home?: string): Promise<num
     io.stdout(`  ${check.ok ? "ok  " : "note"}  ${check.name}: ${check.detail}\n`);
   }
   io.stdout("\nNo network was used and no browser was launched.\n");
-  // Unavailable connection modes are reported, not treated as a broken install.
+  // Missing optional capabilities are reported, not treated as a broken install.
   return 0;
 }

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@mu/core";
 import { BrowserDriverError } from "../contracts/driver.ts";
-import { extensionFactory } from "../drivers/extension.ts";
 import type { BrowserDriverFactory, BrowserDriverHandle } from "../drivers/factory.ts";
 import { createFakeBrowserDriver } from "../drivers/fake/driver.ts";
 import {
@@ -29,7 +28,6 @@ function attachedFactory(overrides: Partial<BrowserDriverHandle> = {}): {
   let disposals = 0;
   const factory: BrowserDriverFactory = async () => ({
     driver: createFakeBrowserDriver(),
-    ownership: "attached",
     description: "a deterministic fake chrome",
     dispose: async () => {
       disposals += 1;
@@ -49,7 +47,6 @@ describe("the state machine follows ARCHITECTURE section 7", () => {
     expect(nextPhase("ready", "bridge-lost")).toBe("reconnecting");
     expect(nextPhase("takeover", "resumed")).toBe("ready");
     expect(nextPhase("reconnecting", "reconnected")).toBe("ready");
-    expect(nextPhase("reconnecting", "approval-required")).toBe("connecting");
     expect(nextPhase("reconnecting", "timed-out")).toBe("failed");
     expect(nextPhase("ready", "shutdown")).toBe("closing");
     expect(nextPhase("closing", "closed")).toBe("disconnected");
@@ -67,7 +64,7 @@ describe("connection lifecycle", () => {
     const { factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -83,14 +80,13 @@ describe("connection lifecycle", () => {
       calls += 1;
       return {
         driver: createFakeBrowserDriver(),
-        ownership: "attached",
         description: "fake",
         dispose: async () => {},
       };
     };
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -106,23 +102,22 @@ describe("connection lifecycle", () => {
     let attempt = 0;
     const factory: BrowserDriverFactory = async () => {
       attempt += 1;
-      if (attempt === 1) throw new BrowserDriverError("protocol-mismatch", "update the extension");
+      if (attempt === 1) throw new BrowserDriverError("protocol-mismatch", "update the bridge");
       return {
         driver: createFakeBrowserDriver(),
-        ownership: "attached",
         description: "fake",
         dispose: async () => {},
       };
     };
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
-    await expect(runtime.connect(signal())).rejects.toThrow("update the extension");
+    await expect(runtime.connect(signal())).rejects.toThrow("update the bridge");
     expect(runtime.status().phase).toBe("failed");
-    expect(runtime.status().message).toBe("update the extension");
+    expect(runtime.status().message).toBe("update the bridge");
     await runtime.connect(signal());
     expect(runtime.status().phase).toBe("ready");
   });
@@ -136,7 +131,7 @@ describe("connection lifecycle", () => {
     };
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -148,13 +143,12 @@ describe("connection lifecycle", () => {
     const driver = createFakeBrowserDriver();
     const factory: BrowserDriverFactory = async () => ({
       driver,
-      ownership: "attached",
       description: "fake",
       dispose: async () => {},
     });
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -171,7 +165,7 @@ describe("connection lifecycle", () => {
     const { factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -191,7 +185,7 @@ describe("connection lifecycle", () => {
     const { factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -201,21 +195,20 @@ describe("connection lifecycle", () => {
     await runtime.shutdown();
     expect(phases).toEqual(["connecting", "ready", "closing", "disconnected"]);
     expect(runtime.journal.length).toBeLessThanOrEqual(50);
-    expect(runtime.journal.at(-1)?.message).toContain("detached without closing");
+    expect(runtime.journal.at(-1)?.message).toContain("closed the browser Mu owns");
   });
 });
 
-describe("shutdown semantics differ for an attached and an owned browser (BD29)", () => {
-  test("an attached browser is detached from and never closed", async () => {
+describe("shutdown semantics close and dispose the Mu-owned browser", () => {
+  test("the browser handle is disposed once", async () => {
     const { factory, disposed } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
     await runtime.connect(signal());
-    expect(runtime.ownership).toBe("attached");
     await runtime.shutdown();
     expect(disposed()).toBe(1);
     expect(runtime.status().phase).toBe("disconnected");
@@ -241,7 +234,6 @@ describe("shutdown semantics differ for an attached and an owned browser (BD29)"
         userDataDir: "work",
       });
       await runtime.connect(signal());
-      expect(runtime.ownership).toBe("owned");
       const directory = persistentProfileDir(root, "work");
       expect(await readFile(join(directory, OWNERSHIP_FILE), "utf8")).toContain(
         `"pid": ${process.pid}`,
@@ -260,7 +252,7 @@ describe("shutdown semantics differ for an attached and an owned browser (BD29)"
     const { factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });
@@ -293,9 +285,9 @@ describe("the persistent-profile factory owns its directory exclusively", () => 
         },
         isAlive: () => true,
       });
-      await expect(
-        factory({ connection: "persistent", browser: "chromium", dataRoot: root }, signal()),
-      ).rejects.toThrow("already owns");
+      await expect(factory({ browser: "chromium", dataRoot: root }, signal())).rejects.toThrow(
+        "already owns",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -317,88 +309,11 @@ describe("the persistent-profile factory owns its directory exclusively", () => 
         }),
         isAlive: () => false,
       });
-      const handle = await factory(
-        { connection: "persistent", browser: "chromium", dataRoot: root },
-        signal(),
-      );
-      expect(handle.ownership).toBe("owned");
+      const handle = await factory({ browser: "chromium", dataRoot: root }, signal());
       await handle.dispose();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
-  });
-
-  test("the launcher is never reached for a connection this factory does not serve", async () => {
-    const factory = persistentProfileFactory({
-      launch: async () => {
-        throw new Error("must not launch");
-      },
-    });
-    await expect(
-      factory({ connection: "extension", browser: "chrome", dataRoot: "/unused" }, signal()),
-    ).rejects.toThrow("only serves persistent connections");
-  });
-});
-
-describe("the existing-browser factory enforces the B0 rules before connecting", () => {
-  const sidecar = async () => ({
-    driver: createFakeBrowserDriver(),
-    exit: async () => {},
-  });
-
-  test("it attaches rather than owning, and detaching never closes the browser", async () => {
-    const factory = extensionFactory({ startSidecar: sidecar });
-    const handle = await factory(
-      { connection: "extension", browser: "chrome", dataRoot: "/unused" },
-      signal(),
-    );
-    expect(handle.ownership).toBe("attached");
-    expect(handle.description).toContain("Playwright extension");
-    await handle.dispose();
-  });
-
-  test("a headless or profile-directory request is refused, not silently ignored", async () => {
-    const factory = extensionFactory({ startSidecar: sidecar });
-    await expect(
-      factory(
-        { connection: "extension", browser: "chrome", dataRoot: "/unused", headless: true },
-        signal(),
-      ),
-    ).rejects.toThrow("cannot run headless");
-    await expect(
-      factory(
-        { connection: "extension", browser: "chrome", dataRoot: "/unused", userDataDir: "work" },
-        signal(),
-      ),
-    ).rejects.toThrow("owns no profile directory");
-  });
-
-  test("a relay that cannot reach the browser's OS fails fast with the fix (BD26)", async () => {
-    const factory = extensionFactory({
-      startSidecar: async () => {
-        throw new Error("the sidecar must not start on the wrong operating system");
-      },
-      sidecarCanReachBrowser: () => false,
-    });
-    await expect(
-      factory({ connection: "extension", browser: "chrome", dataRoot: "/unused" }, signal()),
-    ).rejects.toThrow("same operating system");
-  });
-
-  test("a configured token is reported as a diagnostic and never returned as a value", async () => {
-    const { BrowserSecret } = await import("../contracts/secret.ts");
-    const factory = extensionFactory({ startSidecar: sidecar });
-    const handle = await factory(
-      {
-        connection: "extension",
-        browser: "chrome",
-        dataRoot: "/unused",
-        extensionToken: new BrowserSecret("tok-secret-value"),
-      },
-      signal(),
-    );
-    expect(handle.diagnostics?.join(" ")).toContain("extension token is configured");
-    expect(JSON.stringify(handle.diagnostics)).not.toContain("tok-secret-value");
   });
 });
 
@@ -408,7 +323,7 @@ describe("connection status reaches the user as an ordinary event", () => {
     const { factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
     });

@@ -46,7 +46,6 @@ export { BrowserDriverError, connectionSummary, isBrowserDriverError } from "@mu
 export type {
   BrowserDriverFactory,
   BrowserDriverHandle,
-  BrowserDriverOwnership,
 } from "@mu/profile-browser/drivers";
 export type { BrowserRuntime } from "@mu/profile-browser/runtime";
 export { acceptsModelActions, phaseSummary } from "@mu/profile-browser/runtime";
@@ -64,7 +63,7 @@ function modelRefFor(options: AgentOptions): string {
 
 export async function createBrowserAgent(options: CreateBrowserAgentOptions = {}): Promise<Agent> {
   const { profile, profileOptions, ...agentOptions } = options;
-  if (!profile) return new Agent(agentOptions);
-  const resolved = profile === "browser" ? await browserProfile(profileOptions) : profile;
+  const resolved =
+    profile === undefined || profile === "browser" ? await browserProfile(profileOptions) : profile;
   return new Agent(await optionsFromProfile(resolved, modelRefFor(agentOptions), agentOptions));
 }

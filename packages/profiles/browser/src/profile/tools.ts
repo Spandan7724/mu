@@ -1,28 +1,29 @@
 // The browser profile's toolset.
 //
 // `browserToolset` is the B3 surface from TOOLS.md: observe, navigate, tabs, act, wait and
-// takeover, built around one `BrowserToolSession` so every reference the model holds is
+// takeover, built around one `BrowserTaskSession` so every reference and task ledger is
 // minted, revised and invalidated in a single place. `browser_status` remains beside them
 // because a session has to be able to say what it is connected to without touching a page.
 import { type AnyTool, textResult } from "@mu/core";
 import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import { connectionSummary } from "../contracts/connection.ts";
 import { isBrowserDriverError } from "../contracts/driver.ts";
 import type { FactLookup } from "../data/facts.ts";
 import { taskAuthority } from "../policy/authority.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
-import type { BrowserPermissionMode } from "../policy/modes.ts";
 import { createOriginPolicy } from "../policy/origin.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
 import { phaseSummary } from "../runtime/state.ts";
 import type { BrowserReceiptSink } from "../tools/context.ts";
 import { browserToolset as buildBrowserToolset } from "../tools/index.ts";
-import { BrowserToolSession } from "../tools/session.ts";
+import { BrowserTaskSession } from "../tools/session.ts";
 import { BROWSER_PERMISSION_SCOPES } from "./permissions.ts";
 
 export const BROWSER_STATUS_TOOL = "browser_status";
 
-export function browserStatusTool(runtime: BrowserRuntime): AnyTool {
+export function browserStatusTool(owner: BrowserRuntime | BrowserTaskSession): AnyTool {
+  const runtime = owner instanceof BrowserTaskSession ? owner.runtime : owner;
   return {
     name: BROWSER_STATUS_TOOL,
     description:
@@ -60,9 +61,7 @@ export function browserStatusTool(runtime: BrowserRuntime): AnyTool {
         [
           connectionSummary(state),
           phaseSummary(state.phase),
-          runtime.ownership === "owned"
-            ? "Mu owns this browser and will close it on shutdown."
-            : "Mu is attached to your browser and will detach without closing it.",
+          "Mu owns this browser and will close it on shutdown.",
           ...(state.message ? [state.message] : []),
         ].join("\n"),
       );
@@ -74,8 +73,8 @@ export interface BrowserToolsetOptions {
   runtime: BrowserRuntime;
   /** Origins the task and explicit configuration made reachable. */
   allowedOrigins?: readonly string[] | undefined;
-  mode?: BrowserPermissionMode | undefined;
   facts?: FactLookup | undefined;
+  applicantPolicy?: ApplicantPolicy | undefined;
   /** Present only when the session has admitted documents; without it there is no upload tool. */
   documents?: AuthorizedDocumentStore | undefined;
   /** Set when the user has approved plaintext disclosure for this task. */
@@ -86,7 +85,7 @@ export interface BrowserToolsetOptions {
 
 export interface BrowserToolset {
   tools: AnyTool[];
-  session: BrowserToolSession;
+  session: BrowserTaskSession;
 }
 
 /**
@@ -105,17 +104,17 @@ export function browserToolset(options: BrowserToolsetOptions): BrowserToolset {
       },
       taskAuthority({ reason: "origins configured for this task" }),
     ),
-    mode: options.mode ?? "confirm-submission",
   };
-  const session = new BrowserToolSession({ runtime: options.runtime, policy });
-  const context = {
-    session,
+  const session = new BrowserTaskSession({
+    runtime: options.runtime,
+    policy,
     ...(options.facts === undefined ? {} : { facts: options.facts }),
+    ...(options.applicantPolicy === undefined ? {} : { applicantPolicy: options.applicantPolicy }),
     ...(options.documents === undefined ? {} : { documents: options.documents }),
     ...(options.receipts === undefined ? {} : { receipts: options.receipts }),
-  };
+  });
   return {
-    tools: [browserStatusTool(options.runtime), ...buildBrowserToolset(context)],
+    tools: [browserStatusTool(session), ...buildBrowserToolset({ session })],
     session,
   };
 }

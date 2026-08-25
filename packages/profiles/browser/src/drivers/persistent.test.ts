@@ -145,19 +145,15 @@ describe("persistentProfileFactory: two mu-browser processes cannot own one prof
         });
 
       const first = await factoryFor(1001)(
-        { connection: "persistent", browser: "chromium", dataRoot: root, userDataDir: "work" },
+        { browser: "chromium", dataRoot: root, userDataDir: "work" },
         signal(),
       );
-      expect(first.ownership).toBe("owned");
       expect(opened).toEqual(["pid-1001"]);
 
       // A second, genuinely concurrent process (a different pid, alive) must be refused
       // rather than corrupting the profile by launching a second browser onto it.
       await expect(
-        factoryFor(2002)(
-          { connection: "persistent", browser: "chromium", dataRoot: root, userDataDir: "work" },
-          signal(),
-        ),
+        factoryFor(2002)({ browser: "chromium", dataRoot: root, userDataDir: "work" }, signal()),
       ).rejects.toThrow(/already owns/);
       expect(opened).toEqual(["pid-1001"]); // the second launcher was never reached
 
@@ -167,10 +163,9 @@ describe("persistentProfileFactory: two mu-browser processes cannot own one prof
 
       // With the lock released, a fresh session (any pid) may now claim it.
       const third = await factoryFor(2002)(
-        { connection: "persistent", browser: "chromium", dataRoot: root, userDataDir: "work" },
+        { browser: "chromium", dataRoot: root, userDataDir: "work" },
         signal(),
       );
-      expect(third.ownership).toBe("owned");
       expect(opened).toEqual(["pid-1001", "pid-2002"]);
       await third.dispose();
     } finally {
@@ -189,10 +184,7 @@ describe("persistentProfileFactory: two mu-browser processes cannot own one prof
         },
       });
       await expect(
-        factory(
-          { connection: "persistent", browser: "chromium", dataRoot: root, userDataDir: "work" },
-          signal(),
-        ),
+        factory({ browser: "chromium", dataRoot: root, userDataDir: "work" }, signal()),
       ).rejects.toThrow("the browser binary is missing");
       const directory = persistentProfileDir(root, "work");
       await expect(readFile(join(directory, OWNERSHIP_FILE), "utf8")).rejects.toThrow();

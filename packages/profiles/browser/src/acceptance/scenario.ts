@@ -11,6 +11,7 @@
 // make this a measurement of the model, and the properties here must hold for any
 // caller of the tools.
 import type { ToolResult } from "@mu/core";
+import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
 import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import type { AuthorizedDocument } from "../contracts/documents.ts";
 import type { SubmitIntent } from "../contracts/intent.ts";
@@ -32,6 +33,7 @@ import { browserWaitTool } from "../tools/wait.ts";
 export interface ScenarioContext extends BrowserUploadToolContext {
   facts: FactLookup;
   policy: ApplicantPolicy;
+  documents: AuthorizedDocumentStore;
   /** The profile's shipped tool instances. Keeping these preserves per-session state. */
   tools?: {
     observe: ReturnType<typeof browserObserveTool>;

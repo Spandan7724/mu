@@ -223,12 +223,6 @@ export function persistentSidecarArgs(options: PersistentSidecarArgsOptions): st
   return args;
 }
 
-export function extensionSidecarArgs(options: SidecarArgsOptions): string[] {
-  // No `--executable-path` and no `--user-data-dir`: extension mode attaches to
-  // the browser the user is already running and owns nothing (BD29).
-  return [...commonArgs(options), "--extension"];
-}
-
 export function sidecarSpec(
   resolution: SidecarResolution,
   args: readonly string[],

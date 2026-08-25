@@ -6,7 +6,6 @@ import { BROWSER_OBSERVE_TOOL, browserObserveTool } from "./observe.ts";
 import { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 import { BROWSER_TABS_TOOL, browserTabsTool } from "./tabs.ts";
 import { BROWSER_TAKEOVER_TOOL, browserTakeoverTool } from "./takeover.ts";
-import type { BrowserUploadToolContext } from "./upload.ts";
 import { BROWSER_UPLOAD_TOOL, browserUploadTool } from "./upload.ts";
 import { BROWSER_WAIT_TOOL, browserWaitTool } from "./wait.ts";
 
@@ -17,6 +16,7 @@ export { normalizeToolError, toolErrorText } from "./errors.ts";
 export { BROWSER_NAVIGATE_TOOL, browserNavigateTool } from "./navigate.ts";
 export { elementSignature, OBSERVATION_BUDGET, observationDigest } from "./observation.ts";
 export { BROWSER_OBSERVE_TOOL, browserObserveTool } from "./observe.ts";
+export { runBrowserOperation, stage, stop } from "./operation.ts";
 export type { ActionPreparation, PreparedAction, RefusedAction } from "./pipeline.ts";
 export { checkActionability, prepareAction } from "./pipeline.ts";
 export {
@@ -29,12 +29,13 @@ export {
 } from "./render.ts";
 export type {
   BrowserAuditEntry,
+  BrowserTaskSessionOptions,
   BrowserToolSessionOptions,
   ObservationRecord,
   ObservationTarget,
   TargetResolution,
 } from "./session.ts";
-export { BrowserToolSession } from "./session.ts";
+export { BrowserTaskSession, BrowserToolSession } from "./session.ts";
 export { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 export { BROWSER_TABS_TOOL, browserTabsTool } from "./tabs.ts";
 export { BROWSER_TAKEOVER_TOOL, browserTakeoverTool } from "./takeover.ts";
@@ -58,11 +59,11 @@ export const BROWSER_TOOL_NAMES = [
   BROWSER_TAKEOVER_TOOL,
 ] as const;
 
-export function browserToolset(context: BrowserToolContext | BrowserUploadToolContext): AnyTool[] {
+export function browserToolset(context: BrowserToolContext): AnyTool[] {
   const uploads =
-    "documents" in context && context.documents !== undefined
-      ? [browserUploadTool(context) as AnyTool]
-      : [];
+    context.session.documents === undefined && context.documents === undefined
+      ? []
+      : [browserUploadTool(context) as AnyTool];
   return [
     browserObserveTool(context) as AnyTool,
     browserNavigateTool(context) as AnyTool,

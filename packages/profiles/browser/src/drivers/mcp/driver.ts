@@ -2,9 +2,9 @@
 // the other. It is the only path to the bridge, and it is where the contract is
 // enforced — the twenty-four raw MCP tools are never exposed to the model (BD25).
 //
-// Both connection modes share this class. That is the point of the shared
-// conformance suite: an extension-backed browser and a Mu-owned persistent profile
-// must not invent different semantics for equivalent page behaviour.
+// The shared conformance suite keeps this real-browser adapter aligned with the
+// deterministic fake driver: neither may invent different semantics for equivalent
+// page behaviour.
 import {
   type ActionOutcome,
   type ActionResultSnapshot,
@@ -59,7 +59,7 @@ import {
 import { REDACTED } from "../../contracts/secret.ts";
 import type { BrowserFrame, BrowserTab, TabOutcome, TabRequest } from "../../contracts/tabs.ts";
 import type { TakeoverReason } from "../../contracts/takeover.ts";
-import type { BrowserDriverOwnership } from "../factory.ts";
+import { classifyRisks, commitmentIntent, isCredentialControl } from "../../policy/risk.ts";
 import { imageOf, type McpSidecar, type McpToolResult, textOf } from "./protocol.ts";
 import {
   parseDialogState,
@@ -68,7 +68,6 @@ import {
   type SidecarResponse,
   sidecarErrorMessage,
 } from "./response.ts";
-import { classifyRisks, commitmentIntent, isCredentialControl } from "./risk.ts";
 import { assertSupportedServer } from "./sidecar.ts";
 import {
   parseSnapshot,
@@ -83,7 +82,6 @@ const SETTLE_POLL_MS = 100;
 const SCROLL_SETTLE_POLL_MS = 200;
 const SCROLL_MIN_SETTLE_MS = 600;
 const SCROLL_MAX_SETTLE_MS = 1_200;
-const APPROVAL_HINT = /waiting for (?:incoming )?extension|extension connection|connect.html/i;
 
 // Roles whose accessible value the snapshot reports, mapped to the input type the
 // contract expects. Everything else is left undeclared rather than guessed.
@@ -103,7 +101,6 @@ export interface McpBrowserDriverOptions {
   sidecar: McpSidecar;
   mode: BrowserConnectionMode;
   browser: BrowserFamily;
-  ownership: BrowserDriverOwnership;
   documents?: readonly AuthorizedDocument[] | undefined;
   // Where a freshly launched Mu-owned browser is put. Chrome's own new-tab page
   // fetches remote content into the Mu profile and is not a page Mu chose, so an
@@ -181,7 +178,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
   let connectionId: string | undefined;
   let activeTabId: string | undefined;
   let message: string | undefined;
-  let approvalRequired = false;
   let severed: "connection-lost" | "browser-crashed" | undefined;
   let tabs: TabState[] = [];
 
@@ -192,7 +188,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     ...(connectionId === undefined ? {} : { connectionId }),
     ...(activeTabId === undefined ? {} : { activeTabId }),
     ...(message === undefined ? {} : { message }),
-    ...(approvalRequired ? { approvalRequired: true } : {}),
     updatedAt: now(),
   });
 
@@ -240,23 +235,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         phase = "failed";
         message = "the browser connection was lost";
       }
-      if (failure.code === "timeout" && APPROVAL_HINT.test(failure.message)) {
-        throw new BrowserDriverError(
-          "approval-required",
-          "the browser is still waiting for the Playwright extension connection to be approved. Approve it in the browser and connect again.",
-        );
-      }
       throw failure;
     }
     const text = textOf(result);
     if (result.isError === true) {
-      if (APPROVAL_HINT.test(text)) {
-        approvalRequired = true;
-        throw new BrowserDriverError(
-          "approval-required",
-          "approve the Playwright extension connection in your browser, then connect again",
-        );
-      }
       throw new BrowserDriverError("unsupported", bounded(sidecarErrorMessage(text), 2_000));
     }
     // Only the parsed fields travel onwards. Any saved-output path the sidecar
@@ -1005,7 +987,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       }
       phase = "connecting";
       severed = undefined;
-      approvalRequired = false;
       // BD27: a new connection mints new tab identity and new revisions, so no
       // reference taken before a reconnect can survive it.
       tabs = [];
@@ -1023,7 +1004,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         }
         const landing = options.landingUrl;
         if (
-          options.ownership === "owned" &&
           landing !== undefined &&
           isWebUrl(landing) &&
           !isWebUrl(listed.find((tab) => tab.id === activeTabId)?.url ?? "")
@@ -1058,9 +1038,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     async disconnect() {
       if (phase === "disconnected") return;
       phase = "closing";
-      // BD29: an owned browser is closed and awaited so the last profile write is
-      // on disk; an attached browser is the user's and is only let go of.
-      if (options.ownership === "owned" && severed === undefined) {
+      // The Mu-owned browser is closed and awaited so the last profile write is on disk.
+      if (severed === undefined) {
         try {
           await sidecar.callTool("browser_close", {}, { signal: AbortSignal.timeout(30_000) });
         } catch {

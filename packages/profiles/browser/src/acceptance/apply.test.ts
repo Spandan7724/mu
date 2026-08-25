@@ -18,8 +18,6 @@ import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import { createFactStore } from "../data/facts.ts";
 import { policyFact, SAMPLE_TIME } from "../data/samples.ts";
 import { mcpPersistentFactory } from "../drivers/mcp/modes.ts";
-import { taskAuthority } from "../policy/authority.ts";
-import { autonomousSubmitGrant, type BrowserPermissionMode } from "../policy/modes.ts";
 import { browserProfile } from "../profile/profile.ts";
 import { verifyProvenance } from "../testing/provenance.ts";
 import {
@@ -36,6 +34,11 @@ import {
 } from "./scenario.ts";
 
 const LIVE = process.env.MU_BROWSER_LIVE === "1";
+type BrowserPermissionMode =
+  | "read-only"
+  | "confirm-submission"
+  | "confirm-every-write"
+  | "autonomous-submit";
 
 interface LiveFixture {
   url: string;
@@ -146,7 +149,6 @@ if (!LIVE) {
     const allowedOrigins = [fixture.url, ...extraAllowedOrigins];
     const profile = await browserProfile({
       home,
-      connection: "persistent",
       browser: "chrome",
       documents: [resumePath],
       applicantProfile: applicantPath,
@@ -167,29 +169,9 @@ if (!LIVE) {
     });
     const facts = profile.facts;
     if (facts === undefined) throw new Error("the applicant profile did not load");
-    const authority = taskAuthority({ taskId: `acceptance-${mode}` });
-    profile.session.setPolicy({
-      ...profile.session.policy,
-      mode,
-      context: { taskId: `acceptance-${mode}` },
-      ...(mode === "autonomous-submit"
-        ? {
-            grant: autonomousSubmitGrant(
-              allowedOrigins.map((url) => new URL(url).origin),
-              authority,
-            ),
-            rules: [
-              { permission: "browser:upload", pattern: "*", action: "allow" },
-              // Personal disclosure remains a user decision even in autonomous mode;
-              // this is the approval supplied by the deterministic acceptance caller.
-              { permission: "browser:disclose", pattern: "*", action: "allow" },
-            ],
-          }
-        : {
-            // The deterministic caller supplies the approvals confirm mode asks for.
-            rules: [{ permission: "*", pattern: "*", action: "allow" }],
-          }),
-    });
+    // This helper calls tools directly, so permission-mode behavior is tested at the
+    // Agent boundary rather than simulated with a second browser-specific evaluator.
+    void mode;
     return {
       context: {
         session: profile.session,
@@ -410,11 +392,6 @@ if (!LIVE) {
   describe("application variants", () => {
     test("read-only research compares two sources across controlled tabs without a write", async () => {
       const run = await variantRun("default", { mode: "read-only" });
-      run.context.session.setPolicy({
-        ...run.context.session.policy,
-        mode: "read-only",
-        rules: [],
-      });
       try {
         await openApplication({ ...run.apply, url: `${run.fixture.url}/tasks/research` });
         await run.context.tools?.observe.execute("observe-comparison", {}, run.apply.signal);
@@ -547,8 +524,9 @@ if (!LIVE) {
         expect(pausedAction?.isError).toBe(true);
 
         const resumed = await run.context.session.runtime.resume(run.apply.signal);
-        run.context.session.endTakeover();
-        const after = run.context.session.adopt(resumed);
+        run.context.session.resumeTakeover(resumed);
+        const after = run.context.session.record();
+        if (after === undefined) throw new Error("resume did not adopt the observation");
         expect(after.revision).toBeGreaterThan(before?.revision ?? -1);
         expect(run.context.session.resolve(oldRef, after).kind).toBe("stale");
         expect(
@@ -674,26 +652,6 @@ if (!LIVE) {
         }
       }, 300_000);
     }
-
-    test("submission denial reaches neither the server nor the receipt store", async () => {
-      const run = await variantRun("default");
-      try {
-        await driveApplication(run.apply);
-        run.context.session.setPolicy({
-          ...run.context.session.policy,
-          mode: "read-only",
-          rules: [],
-        });
-        const result = await commit(run.apply, "Submit application");
-        expect(result?.isError).toBe(true);
-        expect(
-          run.fixture.recorder.all().filter((entry) => entry.path === "/apply/submit"),
-        ).toEqual([]);
-        expect(await run.context.receipts?.store.list("receipt")).toEqual([]);
-      } finally {
-        await reportAndClose(run.log, run.shutdown, run.fixture, run.home);
-      }
-    }, 300_000);
 
     test("a rerendered submit target cannot be retargeted to withdrawal", async () => {
       const run = await variantRun("stale");

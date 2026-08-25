@@ -22,7 +22,6 @@ export type {
 export {
   browserProfileOptionsSchema,
   DEFAULT_BROWSER,
-  DEFAULT_CONNECTION,
   resolveBrowserProfileOptions,
 } from "./options.ts";
 export {

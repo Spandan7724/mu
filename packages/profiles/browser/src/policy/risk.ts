@@ -1,11 +1,7 @@
 import type { BrowserAction } from "../contracts/actions.ts";
 import type { SubmitIntent } from "../contracts/intent.ts";
-import {
-  type BrowserElement,
-  type BrowserRisk,
-  isCredentialElement,
-  TAKEOVER_RISKS,
-} from "../contracts/observation.ts";
+import { type BrowserElement, type BrowserRisk, TAKEOVER_RISKS } from "../contracts/observation.ts";
+import { isCredentialLabel } from "../contracts/redaction.ts";
 import type { TakeoverReason } from "../contracts/takeover.ts";
 
 // Labels, accessible names and form keys arrive with "_" and "-" as separators, so
@@ -242,24 +238,38 @@ export interface ElementClassification {
   reasons: string[];
 }
 
-function captions(element: BrowserElement): string[] {
+/** The minimum observed shape shared by policy and the driver-side defense. */
+export interface ClassifiedControl {
+  role?: string | undefined;
+  name?: string | undefined;
+  label?: string | undefined;
+  value?: string | undefined;
+  description?: string | undefined;
+  placeholder?: string | undefined;
+  inputType?: string | undefined;
+  risk?: readonly BrowserRisk[] | undefined;
+  fileChooser?: boolean | undefined;
+  download?: boolean | undefined;
+}
+
+function captions(element: ClassifiedControl): string[] {
   return [element.name, element.label, element.value, element.description].filter(
     (value): value is string => value !== undefined && value.length > 0,
   );
 }
 
-function fieldNames(element: BrowserElement): string[] {
+function fieldNames(element: ClassifiedControl): string[] {
   return [element.name, element.label, element.placeholder, element.description].filter(
     (value): value is string => value !== undefined && value.length > 0,
   );
 }
 
-function isFormSubmitter(element: BrowserElement): boolean {
+function isFormSubmitter(element: ClassifiedControl): boolean {
   const type = element.inputType?.toLowerCase();
   return type === "submit" || type === "image";
 }
 
-function isInteractiveControl(element: BrowserElement): boolean {
+function isInteractiveControl(element: ClassifiedControl): boolean {
   const role = element.role?.toLowerCase();
   return (
     role === "button" ||
@@ -275,7 +285,7 @@ function isInteractiveControl(element: BrowserElement): boolean {
 // Classification is derived from what was observed, never from a label the model
 // supplies. `element.risk` is treated as a floor the driver already found: this
 // function may add risks to it and never removes one.
-export function classifyElement(element: BrowserElement): ElementClassification {
+export function classifyObservedControl(element: ClassifiedControl): ElementClassification {
   const risks = new Set<BrowserRisk>(element.risk ?? []);
   const reasons: string[] = [];
 
@@ -284,7 +294,7 @@ export function classifyElement(element: BrowserElement): ElementClassification 
     risks.add(risk);
   };
 
-  if (isCredentialElement(element)) add("password", "credential-shaped control");
+  if (isCredentialControl(element)) add("password", "credential-shaped control");
 
   const caption = captions(element).join(" • ");
   const field = fieldNames(element).join(" • ");
@@ -304,7 +314,10 @@ export function classifyElement(element: BrowserElement): ElementClassification 
     if (SUBMIT_PATTERN.test(caption)) add("submit", "submit-class label");
   }
 
-  if (element.inputType?.toLowerCase() === "file") add("file-upload", "file input");
+  if (element.inputType?.toLowerCase() === "file" || element.fileChooser === true) {
+    add("file-upload", "file input");
+  }
+  if (element.download === true) add("download", "download control");
 
   const inputType = element.inputType?.toLowerCase();
   if (
@@ -335,6 +348,31 @@ export function classifyElement(element: BrowserElement): ElementClassification 
     ...(intent === undefined ? {} : { intent }),
     reasons,
   };
+}
+
+export function classifyElement(element: BrowserElement): ElementClassification {
+  return classifyObservedControl(element);
+}
+
+export function classifyRisks(element: ClassifiedControl): BrowserRisk[] {
+  return classifyObservedControl(element).risks;
+}
+
+export function commitmentIntent(element: ClassifiedControl): SubmitIntent | undefined {
+  return classifyObservedControl(element).intent;
+}
+
+export function intentRisk(intent: SubmitIntent): BrowserRisk {
+  return (Object.entries(RISK_INTENT).find(([, candidate]) => candidate === intent)?.[0] ??
+    "submit") as BrowserRisk;
+}
+
+export function isCredentialControl(element: ClassifiedControl): boolean {
+  if (element.inputType?.toLowerCase() === "password") return true;
+  if (element.risk?.some((risk) => risk === "password" || risk === "authentication")) return true;
+  return [element.name, element.label, element.placeholder, element.description].some((value) =>
+    isCredentialLabel(value),
+  );
 }
 
 const EMPTY_CLASSIFICATION: ElementClassification = {

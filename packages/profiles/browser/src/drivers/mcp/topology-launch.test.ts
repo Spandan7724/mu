@@ -1,7 +1,6 @@
-// modes.test.ts and sidecar.test.ts already prove `persistentTopology` itself refuses
-// a Windows browser from Linux, and that `extensionTopology`'s WSL refusal fires
-// before `mcpExtensionSidecar` ever calls its launcher. This closes the matching gap
-// for the persistent path: proving the same refusal fires through
+// modes.test.ts and sidecar.test.ts prove `persistentTopology` itself refuses a
+// Windows browser from Linux. This closes the matching gap by proving the same
+// refusal fires through
 // `mcpPersistentLaunch` itself — before a sidecar process is ever started — rather
 // than only being true of the standalone verdict function.
 import { afterAll, describe, expect, test } from "bun:test";

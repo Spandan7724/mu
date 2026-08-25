@@ -31,7 +31,10 @@ const schema = z.object({
     ),
 });
 
-export function observationDetails(record: ObservationRecord): BrowserToolDetails {
+export function observationDetails(
+  record: ObservationRecord,
+  plan?: { fills: readonly unknown[]; questions: readonly unknown[] },
+): BrowserToolDetails {
   const observation = record.observation;
   return {
     kind: "observation",
@@ -55,6 +58,9 @@ export function observationDetails(record: ObservationRecord): BrowserToolDetail
               ? "suppressed"
               : "attached",
     ...(observation.truncated === undefined ? {} : { truncated: observation.truncated }),
+    ...(plan === undefined
+      ? {}
+      : { plannedFills: plan.fills.length, unresolvedQuestions: plan.questions.length }),
   };
 }
 
@@ -108,6 +114,19 @@ export function browserObserveTool(context: BrowserToolContext) {
               return undefined;
           }
         })();
+        const plan = session.plan(record.tabId);
+        const applicantGuidance =
+          plan === undefined || (plan.fills.length === 0 && plan.questions.length === 0)
+            ? []
+            : [
+                "",
+                "Applicant grounding:",
+                ...plan.fills.map(
+                  (fill) =>
+                    `- ${fill.label}: use ${fill.factId === undefined ? fill.grounding : `fact ${fill.factId}`} (${fill.reason})`,
+                ),
+                ...plan.questions.map((question) => `- ask the user: ${question.prompt}`),
+              ];
         return {
           content: [
             {
@@ -120,11 +139,12 @@ export function browserObserveTool(context: BrowserToolContext) {
                 observationText(record, {
                   ...(args.focus === undefined ? {} : { focus: args.focus }),
                 }),
+                ...applicantGuidance,
               ].join("\n"),
             },
             ...screenshotContent(record),
           ],
-          details: observationDetails(record),
+          details: observationDetails(record, plan),
         };
       } catch (error) {
         return { content: [{ type: "text", text: toolErrorText(error) }], isError: true };

@@ -13,7 +13,7 @@ import { SAMPLE_ORIGIN, SAMPLE_REVISION, SAMPLE_TAB, SAMPLE_URL } from "./sample
 
 function baseCarryover(): BrowserCarryover {
   return {
-    connection: { mode: "extension", browser: "chrome", phase: "ready" },
+    connection: { mode: "persistent", browser: "chrome", phase: "ready" },
     active: {
       tabId: SAMPLE_TAB,
       url: SAMPLE_URL,

@@ -12,6 +12,7 @@ export const BROWSER_SCOPES = [
   "browser:interact",
   "browser:disclose",
   "browser:upload",
+  "browser:unknown",
   "browser:submit",
   "browser:send",
   "browser:purchase",
@@ -31,8 +32,8 @@ export const COMMITMENT_SCOPES: readonly BrowserScope[] = [
   "browser:account-change",
 ];
 
-// SECURITY §9: these stay ask in every v1 mode. Expanding the set needs a new BD*
-// decision, so the list is enforced here rather than left to configuration.
+// Scoped modes never auto-allow these. Explicit full access bypasses permission asks,
+// but the approval renderer must not offer a narrower remembered grant for them.
 export const NEVER_AUTO_ALLOWED_SCOPES: readonly BrowserScope[] = [
   "browser:purchase",
   "browser:delete",

@@ -100,7 +100,7 @@ export function sampleConnectionState(
 ): BrowserConnectionState {
   return {
     phase: "ready",
-    mode: "extension",
+    mode: "persistent",
     browser: "chrome",
     connectionId: SAMPLE_CONNECTION_ID,
     activeTabId: SAMPLE_TAB_ID,
@@ -215,7 +215,7 @@ export function sampleReceipt(overrides: Override<BrowserReceipt> = {}): Browser
 
 export function sampleCarryover(overrides: Override<BrowserCarryover> = {}): BrowserCarryover {
   return {
-    connection: { mode: "extension", browser: "chrome", phase: "ready" },
+    connection: { mode: "persistent", browser: "chrome", phase: "ready" },
     active: {
       tabId: SAMPLE_TAB_ID,
       url: SAMPLE_URL,

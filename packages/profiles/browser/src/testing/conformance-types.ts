@@ -32,8 +32,8 @@ export type DriverCapability =
   | "dialogGuard";
 
 // URLs and semantic labels of the deterministic fixture site. Every driver runs
-// the suite against a site satisfying this description, so the extension-backed
-// and persistent-profile adapters cannot diverge on equivalent page behaviour.
+// the suite against a site satisfying this description, so the fake and
+// persistent-profile adapters cannot diverge on equivalent page behaviour.
 export interface DriverContractFixture {
   origin: string;
   pages: {

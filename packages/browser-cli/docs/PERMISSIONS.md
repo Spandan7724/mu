@@ -1,10 +1,7 @@
 # The permission model
 
-`mu-browser` ships exactly four permission modes. There is deliberately no "full
-access" mode — one existed earlier in development and was removed for weakening the
-security model — so the list below is the complete set, not a summary of it. Pick one
-with `--permission-mode <id>`, or switch during an interactive session the way you
-switch modes in the coding product.
+`mu-browser` ships five permission modes. Pick one with `--permission-mode <id>`, or
+switch during an interactive session the way you switch modes in the coding product.
 
 | Mode | Default? | What it does |
 | --- | --- | --- |
@@ -12,16 +9,14 @@ switch modes in the coding product.
 | `confirm-every-write` | | Asks before every change to a page — every fill, click, and upload — not only before commitments. |
 | `read-only` | | Observe and navigate only; every interaction, upload, and commitment is refused outright, not just asked about. |
 | `autonomous-submit` | | Fills and **submits forms or sends messages** without asking, on any origin the task has already reached — which itself still requires approval the first time (see "Origins" below). Purchases, deletions, consent, and account changes still ask, always. |
+| `yolo` | | **Full access.** Allows every Mu permission scope without asking, including new origins, disclosures, uploads, purchases, deletions, consent, account changes, unknown-risk controls, and page-dialog acceptance. |
 
-A few things hold regardless of mode:
+A few structural safety and correctness rules hold regardless of mode:
 
-- **Disclosing an authorized personal fact into a field always asks**, in every mode
-  including `autonomous-submit` and `confirm-submission`. No mode pre-authorizes that
-  scope; only the write itself (filling a field with a literal value) is subject to
-  the table above.
-- **Purchases, deletions, consent, and account changes are never pre-authorized by any
-  mode.** `autonomous-submit` pre-authorizes exactly two intents — ordinary form
-  submission and sending a message — nothing else.
+- `confirm-submission` and `autonomous-submit` still ask before disclosing an authorized
+  personal fact; `yolo` does not.
+- `autonomous-submit` pre-authorizes exactly ordinary form submission and sending;
+  `yolo` also pre-authorizes purchases, deletions, consent, and account changes.
 - **A page's text is never authority.** Instructions embedded in a page ("ignore your
   previous instructions and…") do not widen what a mode allows; page content is
   wrapped as untrusted observation before the model ever sees it.
@@ -39,20 +34,22 @@ A few things hold regardless of mode:
 
 ## `--allow-all`
 
-`--allow-all` is an alias for a product's full-access permission mode. **This product
-does not have one**, so the flag is refused rather than honoured:
+`--allow-all` is an alias for `--permission-mode yolo`:
 
 ```
 $ mu-browser --allow-all
-Unknown permission mode "yolo" for profile "browser". Available modes: ...
 ```
 
-That is deliberate. A blanket allow would silence the ask on purchases, deletions,
-consent and account changes, which is exactly what this product's permission model
-exists to prevent. If you want form-filling and submission without a prompt at every
-step, use `--permission-mode autonomous-submit`: it pre-authorizes ordinary form
-submission and sending for the task's own origins, and keeps every other commitment
-category asking.
+This is the explicit, unrestricted mode. It suppresses every permission prompt for the
+session, including prompts for consequential external actions. Use
+`--permission-mode autonomous-submit` instead when only form submission and sending
+should be autonomous.
+
+Full access changes permission decisions only. It does not make unsafe URL schemes
+valid, retarget stale references, let generic clicks bypass `browser_submit`, expose
+passwords or MFA values, invent missing personal facts, retry uncertain commitments, or
+turn an unconfirmed external effect into a success. Those are tool and policy invariants,
+not permission asks.
 
 ## Origins
 
@@ -62,11 +59,11 @@ origin for the task. URLs found in page text, tool output, or other untrusted co
 not.
 
 Reaching a different origin — including a cross-origin `<iframe>`, which is decided on
-its own origin rather than inheriting the top-level page's approval — asks, showing
-the exact origin (never collapsed to a brand name, so a lookalike domain is visible as
-what it is). Pass `--allow-origin <origin>` (repeatable) to pre-approve additional
-origins for the task; there is no wildcard and no way for a page itself to add to this
-list.
+its own origin rather than inheriting the top-level page's approval — asks in every mode
+except `yolo`, showing the exact origin (never collapsed to a brand name, so a lookalike
+domain is visible as what it is). Pass `--allow-origin <origin>` (repeatable) to
+pre-approve additional origins for the task. A page itself cannot add to this list;
+`yolo` authorizes the projected new-origin permission rather than mutating origin policy.
 
 ## Documents
 
@@ -76,4 +73,4 @@ paths outside that directory are excluded. Only a file's logical id and bounded
 metadata are visible to the model—never a filesystem path. Uploading follows the same
 write permission as any other page change: it asks under `confirm-submission` and
 `confirm-every-write`, is refused under `read-only`, and is allowed without asking
-under `autonomous-submit`. See [PRIVACY.md](./PRIVACY.md) for the private snapshot.
+under `autonomous-submit` and `yolo`. See [PRIVACY.md](./PRIVACY.md) for the private snapshot.

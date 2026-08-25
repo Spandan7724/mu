@@ -13,7 +13,6 @@ function attachedFactory() {
   const driver = createFakeBrowserDriver();
   const factory: BrowserDriverFactory = async () => ({
     driver,
-    ownership: "attached",
     description: "fake",
     dispose: async () => {},
   });
@@ -27,7 +26,7 @@ describe("the runtime journal stays bounded across a flapping long session", () 
     const { driver, factory } = attachedFactory();
     const runtime = new BrowserRuntime({
       factory,
-      connection: "extension",
+      connection: "persistent",
       browser: "chrome",
       dataRoot: "/unused",
       now,

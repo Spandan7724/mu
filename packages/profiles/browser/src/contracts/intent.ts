@@ -20,7 +20,7 @@ export const submitIntentSchema = z.enum([
 ]);
 
 // SECURITY.md §9: autonomous-submit may pre-authorize these two for approved task
-// origins. The rest stay ask in every v1 permission mode.
+// origins. Its scoped grant does not cover the remaining intents; explicit full access does.
 export const AUTONOMOUS_SUBMIT_INTENTS: readonly SubmitIntent[] = ["submit-form", "send"];
 
 export function permissionScopeForIntent(intent: SubmitIntent): string {

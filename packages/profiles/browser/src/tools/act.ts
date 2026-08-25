@@ -16,6 +16,7 @@ import { actPattern, type BrowserScope, scopesForAction } from "../policy/scopes
 import type { BrowserToolContext, BrowserToolDetails } from "./context.ts";
 import { toolErrorText } from "./errors.ts";
 import { KEY_NAMES, normalizeKey } from "./keys.ts";
+import { runBrowserOperation, stage, stop } from "./operation.ts";
 import { type DisclosureContext, disclosesPersonalData, prepareAction } from "./pipeline.ts";
 import { observationFacts, observationHeadline, observationText, outcomeText } from "./render.ts";
 import type { ObservationRecord } from "./session.ts";
@@ -134,7 +135,7 @@ type ValueResolution = ResolvedValue | { error: string };
 function resolveValue(context: BrowserToolContext, args: Args): ValueResolution {
   const literal = args.value ?? "";
   if (args.factId === undefined) return { value: literal };
-  const facts = context.facts;
+  const facts = context.session.facts;
   if (facts === undefined) {
     return {
       error:
@@ -218,6 +219,7 @@ function previewValue(element: BrowserElement | undefined, value: string, fact?:
 
 export function browserActTool(context: BrowserToolContext) {
   const { session } = context;
+  session.configureResources({ facts: context.facts });
 
   const recordFor = (args: Args) => session.record(args.target?.tabId ?? args.destination?.tabId);
 
@@ -239,7 +241,7 @@ export function browserActTool(context: BrowserToolContext) {
       action: toAction(args, args.value ?? ""),
       observation: record.observation,
     });
-    if (decision.kind !== "allow" && decision.kind !== "ask") return fallback;
+    if (decision.kind !== "permission") return fallback;
     return { scope: decision.scopes[0] ?? fallback.scope, pattern: decision.pattern };
   };
 
@@ -281,28 +283,29 @@ export function browserActTool(context: BrowserToolContext) {
       };
     },
     execute: async (args, { signal }): Promise<ToolResult> => {
-      const resolved = resolveValue(context, args);
-      if ("error" in resolved) {
-        session.note({ tool: BROWSER_ACT_TOOL, action: args.action, outcome: "refused" });
-        return { content: [{ type: "text", text: resolved.error }], isError: true };
-      }
-      const action = toAction(args, resolved.value);
-
-      try {
-        const prepared = await prepareAction(session, {
-          action,
-          ...(args.target?.tabId === undefined ? {} : { tabId: args.target.tabId }),
-          signal,
-          ...(resolved.disclosure !== undefined
-            ? { disclosure: resolved.disclosure }
-            : disclosesPersonalData(elementFor(recordFor(args), args))
-              ? // A personal value with no authorized fact behind it still discloses;
-                // the disclosure decision is what asks about it (TOOLS.md).
-                { disclosure: { sensitivity: "personal" as const } }
-              : {}),
-        });
-
-        if (prepared.kind === "refused") {
+      return runBrowserOperation({
+        session,
+        signal,
+        validate: () => {
+          const resolved = resolveValue(context, args);
+          if ("error" in resolved) {
+            session.note({ tool: BROWSER_ACT_TOOL, action: args.action, outcome: "refused" });
+            return stop({ content: [{ type: "text", text: resolved.error }], isError: true });
+          }
+          return stage({ resolved, action: toAction(args, resolved.value) });
+        },
+        refresh: async ({ resolved, action }) => {
+          const prepared = await prepareAction(session, {
+            action,
+            ...(args.target?.tabId === undefined ? {} : { tabId: args.target.tabId }),
+            signal,
+            ...(resolved.disclosure !== undefined
+              ? { disclosure: resolved.disclosure }
+              : disclosesPersonalData(elementFor(recordFor(args), args))
+                ? { disclosure: { sensitivity: "personal" as const } }
+                : {}),
+          });
+          if (prepared.kind === "ready") return stage(prepared);
           const message =
             args.action === "scroll" && args.target !== undefined && prepared.reason === "stale"
               ? `${prepared.message} To scroll the page viewport, retry browser_act with action "scroll", deltaY, and no target.`
@@ -320,66 +323,106 @@ export function browserActTool(context: BrowserToolContext) {
             outcome: prepared.reason,
             detail: message,
           });
-          return { content: [{ type: "text", text: message }], isError: true };
-        }
-
-        const outcome = await session.use((driver) => driver.act(prepared.request, signal), signal);
-
-        // Settle: anything that moved the page invalidates every reference minted
-        // against it, including the one just used.
-        if (outcome.navigation !== undefined) session.invalidate(prepared.record.tabId);
-
-        const after = await session.observe({ tabId: prepared.record.tabId }, signal);
-        const scope = scopeOf(args);
-        const pattern = actPattern(prepared.record.observation.origin, prepared.element);
-        session.note({
-          tool: BROWSER_ACT_TOOL,
-          action: args.action,
-          tabId: after.tabId,
-          url: after.observation.url,
-          ...(after.observation.origin === undefined ? {} : { origin: after.observation.origin }),
-          revision: after.revision,
-          outcome: outcome.status,
-          scope,
-          pattern,
-        });
-
-        const details: BrowserToolDetails = {
-          kind: "action",
-          tool: BROWSER_ACT_TOOL,
-          action: args.action,
-          status: outcome.status,
-          tabId: after.tabId,
-          url: after.observation.url,
-          ...(prepared.element === undefined
-            ? {}
-            : { target: prepared.element.label ?? prepared.element.name ?? prepared.element.ref }),
-          navigated: outcome.navigation !== undefined,
-          scope,
-          pattern,
-        };
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: [
-                outcomeText(outcome),
-                "",
-                observationHeadline(after),
-                ...observationFacts(after),
-                "",
-                observationText(after),
-              ].join("\n"),
-            },
-          ],
-          details,
-          ...(outcome.ok ? {} : { isError: outcome.status === "failed" }),
-        };
-      } catch (error) {
-        session.note({ tool: BROWSER_ACT_TOOL, action: args.action, outcome: "error" });
-        return { content: [{ type: "text", text: toolErrorText(error) }], isError: true };
-      }
+          return stop({ content: [{ type: "text", text: message }], isError: true });
+        },
+        classify: (prepared) => stage(prepared.decision),
+        project: (decision, prepared) => {
+          if (decision.kind !== "permission") {
+            return stop({
+              content: [{ type: "text", text: "This interaction could not be classified." }],
+              isError: true,
+            });
+          }
+          return stage({
+            scope: decision.scopes[0] ?? scopeOf(args),
+            pattern: decision.pattern,
+            prepared,
+          });
+        },
+        drive: (driver, projection) => driver.act(projection.prepared.request, signal),
+        settle: async (outcome, projection) => {
+          if (outcome.navigation !== undefined)
+            session.invalidate(projection.prepared.record.tabId);
+          const after = await session.observe({ tabId: projection.prepared.record.tabId }, signal);
+          return { outcome, after };
+        },
+        update: ({ outcome, after }, _driven, projection) => {
+          const prepared = projection.prepared;
+          if (outcome.ok && (args.action === "fill" || args.action === "type")) {
+            const label =
+              prepared.element?.label ??
+              prepared.element?.name ??
+              prepared.element?.role ??
+              "field";
+            const origin = prepared.record.observation.origin;
+            if (origin !== undefined) {
+              session.recordFilledField({
+                label,
+                origin,
+                ...(args.factId === undefined ? {} : { factId: args.factId }),
+              });
+              if (args.factId !== undefined) {
+                session.recordFactDisclosure({
+                  url: prepared.record.observation.url,
+                  factId: args.factId,
+                  fieldName: label,
+                });
+              }
+            }
+          }
+          session.note({
+            tool: BROWSER_ACT_TOOL,
+            action: args.action,
+            tabId: after.tabId,
+            url: after.observation.url,
+            ...(after.observation.origin === undefined ? {} : { origin: after.observation.origin }),
+            revision: after.revision,
+            outcome: outcome.status,
+            scope: projection.scope,
+            pattern: projection.pattern,
+          });
+        },
+        render: ({ outcome, after }, _driven, projection) => {
+          const prepared = projection.prepared;
+          const details: BrowserToolDetails = {
+            kind: "action",
+            tool: BROWSER_ACT_TOOL,
+            action: args.action,
+            status: outcome.status,
+            tabId: after.tabId,
+            url: after.observation.url,
+            ...(prepared.element === undefined
+              ? {}
+              : {
+                  target: prepared.element.label ?? prepared.element.name ?? prepared.element.ref,
+                }),
+            navigated: outcome.navigation !== undefined,
+            scope: projection.scope,
+            pattern: projection.pattern,
+          };
+          return {
+            content: [
+              {
+                type: "text",
+                text: [
+                  outcomeText(outcome),
+                  "",
+                  observationHeadline(after),
+                  ...observationFacts(after),
+                  "",
+                  observationText(after),
+                ].join("\n"),
+              },
+            ],
+            details,
+            ...(outcome.ok ? {} : { isError: outcome.status === "failed" }),
+          };
+        },
+        renderError: (error) => {
+          session.note({ tool: BROWSER_ACT_TOOL, action: args.action, outcome: "error" });
+          return { content: [{ type: "text", text: toolErrorText(error) }], isError: true };
+        },
+      });
     },
   });
 }

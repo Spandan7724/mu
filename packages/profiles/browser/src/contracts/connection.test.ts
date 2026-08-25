@@ -48,26 +48,12 @@ describe("connection state", () => {
   });
 
   test("summarises without inventing detail", () => {
-    expect(connectionSummary(sampleConnectionState())).toBe("chrome (extension) ready tab tab-1");
+    expect(connectionSummary(sampleConnectionState())).toBe("chrome (persistent) ready tab tab-1");
   });
 });
 
 describe("connect options", () => {
-  test("extension mode owns no profile directory and is never headless", () => {
-    expect(
-      connectOptionsSchema.safeParse({
-        mode: "extension",
-        browser: "chrome",
-        userDataDir: "/home/user/.mu/browser/profiles/default",
-      }).success,
-    ).toBe(false);
-    expect(
-      connectOptionsSchema.safeParse({ mode: "extension", browser: "chrome", headless: true })
-        .success,
-    ).toBe(false);
-  });
-
-  test("a persistent profile never carries an extension token", () => {
+  test("rejects removed extension configuration", () => {
     expect(
       connectOptionsInputSchema.safeParse({
         mode: "persistent",
@@ -75,10 +61,13 @@ describe("connect options", () => {
         extensionToken: "mu_ext_1",
       }).success,
     ).toBe(false);
+    expect(connectOptionsSchema.safeParse({ mode: "extension", browser: "edge" }).success).toBe(
+      false,
+    );
   });
 
-  test("accepts the two supported shapes", () => {
-    expect(connectOptionsSchema.safeParse({ mode: "extension", browser: "edge" }).success).toBe(
+  test("accepts a visible or headless persistent profile", () => {
+    expect(connectOptionsSchema.safeParse({ mode: "persistent", browser: "edge" }).success).toBe(
       true,
     );
     expect(

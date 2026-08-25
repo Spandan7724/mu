@@ -35,7 +35,6 @@ export interface BrowserDriver {
 // stale, unknown — stay in ActionOutcome so the model can react to them.
 export type BrowserDriverErrorCode =
   | "not-connected"
-  | "approval-required"
   | "connection-lost"
   | "browser-crashed"
   | "timeout"

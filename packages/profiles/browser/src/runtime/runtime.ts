@@ -13,13 +13,8 @@ import type { AuthorizedDocument } from "../contracts/documents.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
 import { BrowserDriverError, isBrowserDriverError } from "../contracts/driver.ts";
 import type { BrowserObservation } from "../contracts/observation.ts";
-import type { BrowserSecret } from "../contracts/secret.ts";
 import type { TakeoverReason } from "../contracts/takeover.ts";
-import type {
-  BrowserDriverFactory,
-  BrowserDriverHandle,
-  BrowserDriverOwnership,
-} from "../drivers/factory.ts";
+import type { BrowserDriverFactory, BrowserDriverHandle } from "../drivers/factory.ts";
 import { type BrowserRuntimeTrigger, nextPhase, phaseSummary } from "./state.ts";
 
 // Bounded so a flapping connection cannot grow without limit inside a session.
@@ -32,7 +27,6 @@ export interface BrowserRuntimeOptions {
   dataRoot: string;
   headless?: boolean | undefined;
   userDataDir?: string | undefined;
-  extensionToken?: BrowserSecret | undefined;
   // Read at connect time rather than construction: the profile authorizes the
   // user's documents after it builds the runtime.
   documents?: (() => readonly AuthorizedDocument[]) | undefined;
@@ -83,10 +77,6 @@ export class BrowserRuntime implements ProfileRuntime {
     return this.entries;
   }
 
-  get ownership(): BrowserDriverOwnership | undefined {
-    return this.handle?.ownership;
-  }
-
   get description(): string {
     return this.handle?.description ?? `${this.options.browser} (${this.options.connection})`;
   }
@@ -100,7 +90,6 @@ export class BrowserRuntime implements ProfileRuntime {
       ...(reported?.connectionId === undefined ? {} : { connectionId: reported.connectionId }),
       ...(reported?.activeTabId === undefined ? {} : { activeTabId: reported.activeTabId }),
       ...(this.note === undefined ? {} : { message: this.note }),
-      ...(reported?.approvalRequired === true ? { approvalRequired: true } : {}),
       updatedAt: this.now(),
     };
   }
@@ -133,16 +122,12 @@ export class BrowserRuntime implements ProfileRuntime {
         this.handle ??
         (await this.options.factory(
           {
-            connection: this.options.connection,
             browser: this.options.browser,
             dataRoot: this.options.dataRoot,
             ...(this.options.headless === undefined ? {} : { headless: this.options.headless }),
             ...(this.options.userDataDir === undefined
               ? {}
               : { userDataDir: this.options.userDataDir }),
-            ...(this.options.extensionToken === undefined
-              ? {}
-              : { extensionToken: this.options.extensionToken }),
             ...(this.options.documents === undefined
               ? {}
               : { documents: this.options.documents() }),
@@ -158,9 +143,6 @@ export class BrowserRuntime implements ProfileRuntime {
           ...(this.options.userDataDir === undefined
             ? {}
             : { userDataDir: this.options.userDataDir }),
-          ...(this.options.extensionToken === undefined
-            ? {}
-            : { extensionToken: this.options.extensionToken }),
         },
         linked.signal,
       );
@@ -169,8 +151,7 @@ export class BrowserRuntime implements ProfileRuntime {
     } catch (error) {
       const code = isBrowserDriverError(error) ? error.code : undefined;
       const detail = error instanceof Error ? error.message : String(error);
-      if (code === "approval-required") this.transition("rejected", detail);
-      else if (code === "aborted") this.transition("rejected", "the connection was cancelled");
+      if (code === "aborted") this.transition("rejected", "the connection was cancelled");
       else this.transition("failed", detail);
       throw error;
     } finally {
@@ -228,11 +209,7 @@ export class BrowserRuntime implements ProfileRuntime {
       this.transition("reconnected", "the browser connection was re-established");
       return this.handle.driver;
     } catch (error) {
-      const code = isBrowserDriverError(error) ? error.code : undefined;
-      this.transition(
-        code === "approval-required" ? "approval-required" : "timed-out",
-        error instanceof Error ? error.message : String(error),
-      );
+      this.transition("timed-out", error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
@@ -242,8 +219,7 @@ export class BrowserRuntime implements ProfileRuntime {
     this.controller?.abort(new Error("cancelled"));
   }
 
-  // BD29: detach from a browser Mu attached to, close one Mu owns — and in both
-  // cases await the release before returning.
+  // The browser is Mu-owned; await its close and profile-lock release before returning.
   async shutdown(): Promise<void> {
     const handle = this.handle;
     if (!handle) {
@@ -256,12 +232,7 @@ export class BrowserRuntime implements ProfileRuntime {
       await handle.driver.disconnect();
     } finally {
       await handle.dispose();
-      this.transition(
-        "closed",
-        handle.ownership === "owned"
-          ? "closed the browser Mu owns"
-          : "detached without closing your browser",
-      );
+      this.transition("closed", "closed the browser Mu owns");
     }
   }
 

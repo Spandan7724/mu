@@ -2,13 +2,11 @@
 // tool session with an origin policy, so a test states the page and the task origins and
 // nothing else. Shipped code never imports it.
 
-import type { PermissionRule } from "@mu/core";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
 import { createFakeBrowserDriver, type FakeBrowserDriver } from "../drivers/fake/driver.ts";
 import type { FakeSite } from "../drivers/fake/site.ts";
 import { taskAuthority } from "../policy/authority.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
-import type { BrowserPermissionMode } from "../policy/modes.ts";
 import { createOriginPolicy } from "../policy/origin.ts";
 import { BrowserRuntime } from "../runtime/runtime.ts";
 import { BrowserToolSession } from "./session.ts";
@@ -16,8 +14,6 @@ import { BrowserToolSession } from "./session.ts";
 export interface HarnessOptions {
   site?: FakeSite | undefined;
   allowedOrigins?: readonly string[] | undefined;
-  mode?: BrowserPermissionMode | undefined;
-  rules?: readonly PermissionRule[] | undefined;
   allowInsecureDisclosure?: boolean | undefined;
 }
 
@@ -36,13 +32,12 @@ export function createHarness(options: HarnessOptions = {}): Harness {
   });
   const factory: BrowserDriverFactory = async () => ({
     driver,
-    ownership: "attached",
     description: "a deterministic fake chrome",
     dispose: async () => {},
   });
   const runtime = new BrowserRuntime({
     factory,
-    connection: "extension",
+    connection: "persistent",
     browser: "chrome",
     dataRoot: "/tmp/mu-browser-tools-harness",
   });
@@ -56,8 +51,6 @@ export function createHarness(options: HarnessOptions = {}): Harness {
       },
       taskAuthority(),
     ),
-    mode: options.mode ?? "confirm-submission",
-    ...(options.rules === undefined ? {} : { rules: options.rules }),
   };
   const session = new BrowserToolSession({ runtime, policy });
   return {

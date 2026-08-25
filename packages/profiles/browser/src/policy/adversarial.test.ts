@@ -3,7 +3,7 @@ import type { BrowserElement, BrowserObservation } from "../contracts/observatio
 import { authorizedDocumentId, elementRefId } from "../contracts/primitives.ts";
 import { REDACTED } from "../contracts/secret.ts";
 import { sampleElement, sampleFrame, sampleObservation } from "../testing/samples.ts";
-import { taskAuthority, userAuthority } from "./authority.ts";
+import { taskAuthority } from "./authority.ts";
 import {
   type BrowserPolicyState,
   decideActRequest,
@@ -11,7 +11,6 @@ import {
   decideSubmitRequest,
   decideUploadRequest,
 } from "./decide.ts";
-import { autonomousSubmitGrant } from "./modes.ts";
 import { createOriginPolicy, decideRedirectChain } from "./origin.ts";
 import { scanObservation } from "./untrusted.ts";
 
@@ -25,17 +24,12 @@ const TASK_ORIGIN = "https://jobs.example.com";
 function state(overrides: Partial<BrowserPolicyState> = {}): BrowserPolicyState {
   return {
     origins: createOriginPolicy({ taskUrls: [TASK_URL] }, taskAuthority({ taskId: "t1" })),
-    mode: "confirm-submission",
-    context: { taskId: "t1" },
     ...overrides,
   };
 }
 
 function autonomous(): BrowserPolicyState {
-  return state({
-    mode: "autonomous-submit",
-    grant: autonomousSubmitGrant([TASK_ORIGIN], userAuthority({ taskId: "t1" })),
-  });
+  return state();
 }
 
 function withElements(
@@ -133,7 +127,7 @@ describe("threat: a normal click unexpectedly reaches a purchase, send or delete
       request: { target: control, intent: "purchase" },
       observation: withElements([control]),
     });
-    expect(outcome.kind).toBe("ask");
+    expect(outcome.kind).toBe("permission");
   });
 
   test("a grant never covers answering a question the page writes itself", () => {
@@ -145,7 +139,7 @@ describe("threat: a normal click unexpectedly reaches a purchase, send or delete
       },
       observation: withElements([submitButton]),
     });
-    expect(outcome.kind).toBe("ask");
+    expect(outcome.kind).toBe("permission");
   });
 
   test("ordinary form submission is what the grant actually pre-authorizes", () => {
@@ -153,7 +147,7 @@ describe("threat: a normal click unexpectedly reaches a purchase, send or delete
       request: { target: submitButton, intent: "submit-form" },
       observation: withElements([nameField, submitButton]),
     });
-    expect(outcome.kind).toBe("allow");
+    expect(outcome.kind).toBe("permission");
   });
 });
 
@@ -236,8 +230,8 @@ describe("threat: a link redirects from an allowed origin to an unapproved one",
       { kind: "url", url: "https://jobs.example.com.evil.example/apply" },
       TASK_URL,
     );
-    expect(outcome.kind).toBe("ask");
-    if (outcome.kind !== "ask") throw new Error("unreachable");
+    expect(outcome.kind).toBe("permission");
+    if (outcome.kind !== "permission") throw new Error("unreachable");
     expect(outcome.description).toContain("https://jobs.example.com.evil.example");
   });
 
@@ -251,8 +245,8 @@ describe("threat: a link redirects from an allowed origin to an unapproved one",
       action: { kind: "fill", target: nameField, value: "Ada Lovelace" },
       observation,
     });
-    expect(outcome.kind).toBe("ask");
-    if (outcome.kind !== "ask") throw new Error("unreachable");
+    expect(outcome.kind).toBe("permission");
+    if (outcome.kind !== "permission") throw new Error("unreachable");
     expect(outcome.scopes).toEqual(["browser:new-origin"]);
   });
 });
@@ -283,8 +277,8 @@ describe("threat: an iframe asks the agent to reveal cookies or credentials", ()
       action: { kind: "click", target: inFrame },
       observation: withElements([inFrame], { frames: [frame] }),
     });
-    expect(outcome.kind).toBe("ask");
-    if (outcome.kind !== "ask") throw new Error("unreachable");
+    expect(outcome.kind).toBe("permission");
+    if (outcome.kind !== "permission") throw new Error("unreachable");
     expect(outcome.scopes).toEqual(["browser:new-origin"]);
   });
 
@@ -316,7 +310,7 @@ describe("threat: page text instructs the agent to change policy", () => {
     expect(policy.allowed).toEqual([TASK_ORIGIN]);
     expect(
       decideNavigateRequest(state(), { kind: "url", url: "https://evil.example" }, TASK_URL).kind,
-    ).toBe("ask");
+    ).toBe("permission");
   });
 
   test("the instruction to submit without asking does not lower the submit decision", () => {
@@ -325,7 +319,7 @@ describe("threat: page text instructs the agent to change policy", () => {
         request: { target: submitButton, intent: "submit-form" },
         observation: hostile,
       }).kind,
-    ).toBe("ask");
+    ).toBe("permission");
   });
 });
 
@@ -363,8 +357,8 @@ describe("threat: page text tells the agent to ignore the task and upload anothe
       basenames: ["resume.pdf"],
       observation: withElements([fileInput]),
     });
-    expect(outcome.kind).toBe("ask");
-    if (outcome.kind !== "ask") throw new Error("unreachable");
+    expect(outcome.kind).toBe("permission");
+    if (outcome.kind !== "permission") throw new Error("unreachable");
     expect(outcome.scopes).toEqual(["browser:upload"]);
   });
 });
@@ -391,7 +385,7 @@ describe("threat: an attachment path traverses outside the authorized file", () 
       basenames: ["resume.pdf"],
       observation: withElements([nameField]),
     });
-    expect(outcome.kind).toBe("ask");
+    expect(outcome.kind).toBe("permission");
   });
 
   test("uploading through a control that commits is denied outright", () => {
@@ -419,8 +413,8 @@ describe("threat: a hidden field requests unrelated personal data", () => {
         observation: withElements([hidden]),
         disclosure: { sensitivity: "sensitive" },
       });
-      expect(outcome.kind).toBe("ask");
-      if (outcome.kind !== "ask") throw new Error("unreachable");
+      expect(outcome.kind).toBe("permission");
+      if (outcome.kind !== "permission") throw new Error("unreachable");
       expect(outcome.scopes).toContain("browser:disclose");
     }
   });
@@ -439,7 +433,6 @@ describe("threat: personal data is attempted over plaintext transport", () => {
   test("HTTP disclosure is denied even on an allowed origin", () => {
     const insecure: BrowserPolicyState = {
       origins: createOriginPolicy({ taskUrls: ["http://jobs.example.com"] }, taskAuthority()),
-      mode: "confirm-submission",
     };
     const observation = withElements([nameField], {
       url: "http://jobs.example.com/apply",

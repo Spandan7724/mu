@@ -18,8 +18,6 @@ export interface NormalizedToolError {
 const INSTRUCTIONS: Record<BrowserDriverErrorCode, string> = {
   "not-connected":
     "No browser is connected. Ask the user to connect one with /browser connect, then observe before acting.",
-  "approval-required":
-    "The user has to approve this connection in the browser window. Ask them to approve it, then observe again.",
   "connection-lost":
     "The browser connection dropped. Nothing about the last action is confirmed: reconnect, observe the page, and read what it actually says before deciding anything.",
   "browser-crashed":
@@ -34,7 +32,6 @@ const INSTRUCTIONS: Record<BrowserDriverErrorCode, string> = {
 };
 
 const NEVER_RETRYABLE: readonly BrowserDriverErrorCode[] = [
-  "approval-required",
   "aborted",
   "protocol-mismatch",
   "unsupported",

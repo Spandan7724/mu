@@ -6,7 +6,7 @@
 import type { ToolPermissionDetails, ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
-import type { AuthorizedDocumentStore, ResolvedDocument } from "../artifacts/documents.ts";
+import type { ResolvedDocument } from "../artifacts/documents.ts";
 import type { UploadRequest } from "../contracts/actions.ts";
 import { acceptsModelActions } from "../contracts/connection.ts";
 import { browserElementRefSchema } from "../contracts/observation.ts";
@@ -26,9 +26,7 @@ export const BROWSER_UPLOAD_TOOL = "browser_upload";
  * does: the authorized-document store BD16 resolves every id through. Extending rather
  * than widening `BrowserToolContext` keeps `context.ts` untouched.
  */
-export interface BrowserUploadToolContext extends BrowserToolContext {
-  documents: AuthorizedDocumentStore;
-}
+export type BrowserUploadToolContext = BrowserToolContext;
 
 const schema = z
   .object({
@@ -57,7 +55,9 @@ function fieldLabel(record: ObservationRecord | undefined, args: Args): string {
 }
 
 function basenamesOf(context: BrowserUploadToolContext, args: Args): string {
-  return args.documentIds.map((id) => context.documents.summary(id)?.basename ?? id).join(" ");
+  return args.documentIds
+    .map((id) => context.session.documents?.summary(id)?.basename ?? id)
+    .join(" ");
 }
 
 function previewLines(
@@ -71,7 +71,7 @@ function previewLines(
     `field: ${fieldLabel(record, args)}`,
   ];
   for (const id of args.documentIds) {
-    const summary = context.documents.summary(id);
+    const summary = context.session.documents?.summary(id);
     lines.push(
       summary === undefined
         ? `document: ${id} is not an authorized document`
@@ -84,6 +84,11 @@ function previewLines(
 
 export function browserUploadTool(context: BrowserUploadToolContext) {
   const { session } = context;
+  session.configureResources({ documents: context.documents });
+  const documents = session.documents;
+  if (documents === undefined) {
+    throw new TypeError("browser_upload requires documents owned by the task session");
+  }
 
   return tool({
     name: BROWSER_UPLOAD_TOOL,
@@ -93,7 +98,18 @@ export function browserUploadTool(context: BrowserUploadToolContext) {
     executionMode: "sequential",
     isConcurrencySafe: () => false,
     changesState: true,
-    permissionScope: () => "browser:upload",
+    permissionScope: (args) => {
+      const record = recordFor(context, args);
+      if (record === undefined) return "browser:upload";
+      const decision = decideUploadRequest(session.policy, {
+        target: args.target,
+        basenames: args.documentIds.map((id) => documents.summary(id)?.basename ?? id),
+        observation: record.observation,
+      });
+      return decision.kind === "permission"
+        ? (decision.scopes[0] ?? "browser:upload")
+        : "browser:upload";
+    },
     permissionPattern: (args) =>
       uploadPattern(recordFor(context, args)?.observation.origin, basenamesOf(context, args)),
     permissionDetails: (args): ToolPermissionDetails => {
@@ -148,7 +164,7 @@ export function browserUploadTool(context: BrowserUploadToolContext) {
         // whole batch rather than silently dropping it.
         const resolved: ResolvedDocument[] = [];
         for (const id of args.documentIds) {
-          const outcome = await context.documents.resolveForPurpose(id, "upload");
+          const outcome = await documents.resolveForPurpose(id, "upload");
           if (!outcome.ok) {
             session.note({
               tool: BROWSER_UPLOAD_TOOL,
@@ -185,6 +201,7 @@ export function browserUploadTool(context: BrowserUploadToolContext) {
         // of that, same as every other mutating tool.
         if (outcome.navigation !== undefined) session.invalidate(record.tabId);
         const after = await session.observe({ tabId: record.tabId }, signal);
+        if (outcome.ok) session.recordUploadedDocuments(args.documentIds);
 
         const scope = "browser:upload" as const;
         const pattern = uploadPattern(

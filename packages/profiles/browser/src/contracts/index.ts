@@ -1,16 +1,8 @@
-export * from "./actions.ts";
-export * from "./applicant.ts";
-export * from "./carryover.ts";
-export * from "./connection.ts";
-export * from "./disclosure.ts";
-export * from "./documents.ts";
-export * from "./driver.ts";
-export * from "./intent.ts";
-export * from "./json.ts";
-export * from "./observation.ts";
-export * from "./primitives.ts";
-export * from "./receipt.ts";
-export * from "./redaction.ts";
-export * from "./secret.ts";
-export * from "./tabs.ts";
-export * from "./takeover.ts";
+// Five canonical groups. The small files behind them remain compatibility leaves for
+// internal imports, but callers no longer need to navigate a seventeen-file public API.
+
+export * from "./applicant-data.ts";
+export * from "./artifacts.ts";
+export * from "./browser-state.ts";
+export * from "./observations-actions.ts";
+export * from "./policy.ts";

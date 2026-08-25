@@ -1,4 +1,4 @@
-// The reference ledger the browser tools act through.
+// The single owner of browser task state.
 //
 // Two things live here that cannot live anywhere else. First, observation revisions are
 // minted by this session rather than read from the driver, so "the page changed" is
@@ -8,7 +8,14 @@
 // back to a driver ref requires a live ledger entry whose element still has the identity
 // it had when the token was minted, which is what makes ARCHITECTURE §8's rule —
 // a stale ref is rejected, never retargeted — structural rather than aspirational.
+import { CommitmentLedger } from "../artifacts/commitment.ts";
+import { DisclosureLedger } from "../artifacts/disclosure.ts";
+import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import type { BrowserArtifactStore } from "../artifacts/store.ts";
 import type { ObserveRequest } from "../contracts/actions.ts";
+import type { ApplicantPolicy } from "../contracts/applicant.ts";
+import type { BrowserCarryover, BrowserCarryoverField } from "../contracts/carryover.ts";
+import type { DisclosureRecord } from "../contracts/disclosure.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
 import {
   type BrowserElement,
@@ -19,10 +26,17 @@ import {
   type RefValidity,
   refValidityMessage,
 } from "../contracts/observation.ts";
+import type { AuthorizedDocumentId } from "../contracts/primitives.ts";
 import { elementRefId } from "../contracts/primitives.ts";
 import type { TakeoverState } from "../contracts/takeover.ts";
+import { recordFactDisclosure } from "../data/disclosure.ts";
+import type { FactLookup } from "../data/facts.ts";
+import { type FillPlan, planFill } from "../data/plan.ts";
+import { createQuestionQueue } from "../data/questions.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
 import { type InjectionFinding, scanObservation } from "../policy/untrusted.ts";
+import type { TakeoverResumeReport } from "../renderers/takeover.ts";
+import { BrowserTakeoverSession } from "../renderers/takeover.ts";
 import type { BrowserRuntime } from "../runtime/runtime.ts";
 import {
   elementIdentity,
@@ -73,27 +87,55 @@ export interface BrowserAuditEntry {
 
 const MAX_AUDIT_ENTRIES = 200;
 
-export interface BrowserToolSessionOptions {
+export interface BrowserTaskSessionOptions {
   runtime: BrowserRuntime;
   policy: BrowserPolicyState;
+  facts?: FactLookup | undefined;
+  applicantPolicy?: ApplicantPolicy | undefined;
+  documents?: AuthorizedDocumentStore | undefined;
+  receipts?: BrowserReceiptSink | undefined;
   now?: (() => number) | undefined;
 }
 
-export class BrowserToolSession {
+export interface BrowserReceiptSink {
+  sessionId: string;
+  store: BrowserArtifactStore;
+  taskId?: string | undefined;
+}
+
+export class BrowserTaskSession {
   readonly runtime: BrowserRuntime;
+  /** Duplicate-prevention belongs to the task, not to one tool closure. */
+  readonly commitments = new CommitmentLedger();
+  readonly disclosures = new DisclosureLedger();
+  readonly takeoverController: BrowserTakeoverSession;
+  #facts: FactLookup | undefined;
+  readonly applicantPolicy: ApplicantPolicy;
+  #documents: AuthorizedDocumentStore | undefined;
+  #receipts: BrowserReceiptSink | undefined;
   #policy: BrowserPolicyState;
-  #takeover: TakeoverState | undefined;
   readonly #now: () => number;
   readonly #records = new Map<string, ObservationRecord>();
+  readonly #plans = new Map<string, FillPlan>();
   readonly #audit: BrowserAuditEntry[] = [];
+  readonly #filledFields: BrowserCarryoverField[] = [];
+  readonly #uploadedDocumentIds = new Set<AuthorizedDocumentId>();
+  readonly #completedSteps = new Set<string>();
+  readonly #outstandingSteps = new Set<string>();
+  #receiptId: string | undefined;
   #revisionSeq = 0;
   #refSeq = 0;
   #activeTabId: string | undefined;
 
-  constructor(options: BrowserToolSessionOptions) {
+  constructor(options: BrowserTaskSessionOptions) {
     this.runtime = options.runtime;
     this.#policy = options.policy;
     this.#now = options.now ?? (() => Date.now());
+    this.takeoverController = new BrowserTakeoverSession(this.#now);
+    this.#facts = options.facts;
+    this.applicantPolicy = options.applicantPolicy ?? {};
+    this.#documents = options.documents;
+    this.#receipts = options.receipts;
   }
 
   get policy(): BrowserPolicyState {
@@ -106,7 +148,45 @@ export class BrowserToolSession {
   }
 
   get takeover(): TakeoverState | undefined {
-    return this.#takeover;
+    return this.takeoverController.state;
+  }
+
+  get facts(): FactLookup | undefined {
+    return this.#facts;
+  }
+
+  get documents(): AuthorizedDocumentStore | undefined {
+    return this.#documents;
+  }
+
+  get receipts(): BrowserReceiptSink | undefined {
+    return this.#receipts;
+  }
+
+  /** Migration hook for embedders; resources are adopted once and never replaced. */
+  configureResources(resources: {
+    facts?: FactLookup | undefined;
+    documents?: AuthorizedDocumentStore | undefined;
+    receipts?: BrowserReceiptSink | undefined;
+  }): void {
+    if (resources.facts !== undefined) {
+      if (this.#facts !== undefined && this.#facts !== resources.facts) {
+        throw new TypeError("the task session already owns a different fact store");
+      }
+      this.#facts = resources.facts;
+    }
+    if (resources.documents !== undefined) {
+      if (this.#documents !== undefined && this.#documents !== resources.documents) {
+        throw new TypeError("the task session already owns a different document store");
+      }
+      this.#documents = resources.documents;
+    }
+    if (resources.receipts !== undefined) {
+      if (this.#receipts !== undefined && this.#receipts !== resources.receipts) {
+        throw new TypeError("the task session already owns a different receipt sink");
+      }
+      this.#receipts = resources.receipts;
+    }
   }
 
   get audit(): readonly BrowserAuditEntry[] {
@@ -120,6 +200,11 @@ export class BrowserToolSession {
   record(tabId?: string): ObservationRecord | undefined {
     const id = tabId ?? this.activeTabId;
     return id === undefined ? undefined : this.#records.get(id);
+  }
+
+  plan(tabId?: string): FillPlan | undefined {
+    const id = tabId ?? this.activeTabId;
+    return id === undefined ? undefined : this.#plans.get(id);
   }
 
   /**
@@ -196,6 +281,18 @@ export class BrowserToolSession {
     };
     this.#records.set(tabId, record);
     this.#activeTabId = tabId;
+    if (!unchanged && this.facts !== undefined) {
+      this.#plans.set(
+        tabId,
+        planFill({
+          url: observation.url,
+          elements: observation.elements,
+          facts: this.facts,
+          policy: this.applicantPolicy,
+          questions: createQuestionQueue(),
+        }),
+      );
+    }
     return record;
   }
 
@@ -256,8 +353,13 @@ export class BrowserToolSession {
    * takeover, so the next reference the model uses has to come from a new observation.
    */
   invalidate(tabId?: string): void {
-    if (tabId === undefined) this.#records.clear();
-    else this.#records.delete(tabId);
+    if (tabId === undefined) {
+      this.#records.clear();
+      this.#plans.clear();
+    } else {
+      this.#records.delete(tabId);
+      this.#plans.delete(tabId);
+    }
   }
 
   setActiveTab(tabId: string | undefined): void {
@@ -265,12 +367,98 @@ export class BrowserToolSession {
   }
 
   beginTakeover(state: TakeoverState): void {
-    this.#takeover = state;
+    const revision = this.record(state.tabId)?.revision;
+    this.takeoverController.begin({
+      reason: state.reason,
+      instructions: state.instructions,
+      tabId: state.tabId,
+      url: state.url,
+      now: state.startedAt,
+      ...(revision === undefined ? {} : { revision }),
+    });
     this.invalidate();
   }
 
-  endTakeover(): void {
-    this.#takeover = undefined;
+  resumeTakeover(raw: BrowserObservation): TakeoverResumeReport {
+    const record = this.adopt(raw);
+    return this.takeoverController.resume(record.observation);
+  }
+
+  recordFilledField(input: { label: string; origin: string; factId?: string | undefined }): void {
+    const field: BrowserCarryoverField = {
+      label: input.label,
+      origin: input.origin,
+      ...(input.factId === undefined ? {} : { factId: input.factId }),
+    };
+    const existing = this.#filledFields.findIndex(
+      (candidate) => candidate.origin === field.origin && candidate.label === field.label,
+    );
+    if (existing >= 0) this.#filledFields.splice(existing, 1);
+    this.#filledFields.push(field);
+    this.#completedSteps.add(`filled ${field.label}`);
+    this.#outstandingSteps.delete(`fill ${field.label}`);
+  }
+
+  recordFactDisclosure(input: { url: string; factId: string; fieldName: string }): void {
+    if (this.facts === undefined) return;
+    recordFactDisclosure(this.disclosures, this.facts, {
+      url: input.url,
+      fills: [{ factId: input.factId, fieldName: input.fieldName }],
+    });
+  }
+
+  recordUploadedDocuments(ids: readonly AuthorizedDocumentId[]): void {
+    for (const id of ids) this.#uploadedDocumentIds.add(id);
+    if (ids.length > 0) this.#completedSteps.add(`uploaded ${ids.length} document(s)`);
+  }
+
+  recordReceipt(id: string): void {
+    this.#receiptId = id;
+    this.#completedSteps.add(`recorded receipt ${id}`);
+  }
+
+  markOutstanding(step: string): void {
+    if (step.trim().length > 0) this.#outstandingSteps.add(step.trim());
+  }
+
+  disclosureRecords(): DisclosureRecord[] {
+    return this.disclosures.records();
+  }
+
+  carryover(): BrowserCarryover {
+    const connection = this.runtime.status();
+    const active = this.record();
+    const questions = [...this.#plans.values()].flatMap((plan) =>
+      plan.questions.map((question) => question.prompt),
+    );
+    return {
+      connection: {
+        mode: connection.mode,
+        browser: connection.browser,
+        phase: connection.phase,
+      },
+      ...(active === undefined
+        ? {}
+        : {
+            active: {
+              tabId: active.tabId,
+              url: active.observation.url,
+              ...(active.observation.origin === undefined
+                ? {}
+                : { origin: active.observation.origin }),
+              title: active.observation.title,
+              revision: active.revision,
+            },
+          }),
+      allowedOrigins: [...this.policy.origins.allowed],
+      completedSteps: [...this.#completedSteps],
+      outstandingSteps: [...this.#outstandingSteps],
+      filledFields: this.#filledFields.map((field) => ({ ...field })),
+      unresolvedQuestions: [...new Set(questions)],
+      uploadedDocumentIds: [...this.#uploadedDocumentIds],
+      ...(this.takeover === undefined ? {} : { takeover: this.takeover }),
+      ...(this.#receiptId === undefined ? {} : { receiptId: this.#receiptId }),
+    };
   }
 
   use<T>(operation: (driver: BrowserDriver) => Promise<T>, signal: AbortSignal): Promise<T> {
@@ -289,3 +477,8 @@ export class BrowserToolSession {
     return `r${this.#refSeq}`;
   }
 }
+
+/** @deprecated Use BrowserTaskSession. Kept as a source-compatible migration alias. */
+export { BrowserTaskSession as BrowserToolSession };
+/** @deprecated Use BrowserTaskSessionOptions. */
+export type BrowserToolSessionOptions = BrowserTaskSessionOptions;

@@ -1,6 +1,6 @@
 import type { PromptSection } from "@mu/ai";
 
-// Everything session-specific — connection mode, task data, allowed origins —
+// Everything session-specific — browser state, task data, allowed origins —
 // arrives as a typed context message, not in here (cache hygiene).
 const BASE = `You are mu-browser, an agent that operates a real web browser on the user's behalf.
 

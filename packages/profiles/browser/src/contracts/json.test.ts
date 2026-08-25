@@ -56,7 +56,7 @@ describe("json value contract", () => {
   });
 
   test("a secret cannot enter a serializable shape", () => {
-    const carrier = { extensionToken: new BrowserSecret("tok_live_1") };
+    const carrier = { sessionSecret: new BrowserSecret("secret_live_1") };
     expect(reasons(carrier)).toEqual(["class-instance"]);
     expect(() => assertJsonSerializable(carrier, "session entry")).toThrow(/session entry/);
   });
