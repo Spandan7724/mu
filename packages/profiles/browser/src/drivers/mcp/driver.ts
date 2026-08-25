@@ -623,11 +623,12 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const all = referenced.map((node) =>
       withCheckedDefault(elementFor(node, page.nodes, page.tab, frameIds), node),
     );
+    const sourceOffset = request.sourceOffset ?? 0;
     const maxNodes = Math.min(
       request.maxNodes ?? BROWSER_LIMITS.maxElements,
       BROWSER_LIMITS.maxElements,
     );
-    const elements = all.slice(0, maxNodes);
+    const elements = all.slice(sourceOffset, sourceOffset + maxNodes);
     const risks = [...new Set(elements.flatMap((element) => element.risk ?? []))];
     const full = elements
       .map(
@@ -640,7 +641,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       BROWSER_LIMITS.maxSnapshotChars,
     );
     const snapshot = full.slice(0, maxText);
-    const nodesOmitted = all.length - elements.length;
+    const nodesOmitted = Math.max(0, all.length - sourceOffset - elements.length);
     const textCharsOmitted = full.length - snapshot.length;
     const origin = normalizeOrigin(page.url);
     const viewport = {
@@ -691,6 +692,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       snapshot,
       elements,
       risks,
+      sourceHasMore: sourceOffset + elements.length < all.length,
+      sourceRevision: Bun.hash(JSON.stringify(referenced)).toString(36),
       ...(screenshot === undefined ? {} : { screenshot }),
       ...(screenshotOmitted === undefined ? {} : { screenshotOmitted }),
       ...(nodesOmitted > 0 || textCharsOmitted > 0

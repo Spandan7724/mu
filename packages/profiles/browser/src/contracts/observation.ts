@@ -235,6 +235,10 @@ export interface BrowserObservation {
   screenshot?: BrowserScreenshot | undefined;
   screenshotOmitted?: ScreenshotOmissionReason | undefined;
   truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;
+  /** INTERNAL driver continuation metadata; never itself used as a model cursor. */
+  sourceHasMore?: boolean | undefined;
+  /** Stable fingerprint of the canonical semantic source for fail-closed continuation. */
+  sourceRevision?: string | undefined;
   coverage?: BrowserObservationCoverage | undefined;
 }
 
@@ -274,6 +278,8 @@ export const browserObservationSchema = z
         textCharsOmitted: z.number().int().nonnegative(),
       })
       .optional(),
+    sourceHasMore: z.boolean().optional(),
+    sourceRevision: z.string().min(1).max(256).optional(),
     coverage: z
       .strictObject({
         start: z.number().int().nonnegative(),

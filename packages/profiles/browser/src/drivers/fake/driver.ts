@@ -272,8 +272,9 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
   const observationFor = (tab: FakeTabState, request: ObserveRequest): BrowserObservation => {
     const page = pageFor(tab);
     const all = page.elements.map((spec) => elementFor(spec, tab));
+    const sourceOffset = request.sourceOffset ?? 0;
     const maxNodes = request.maxNodes ?? BROWSER_LIMITS.maxElements;
-    const elements = all.slice(0, maxNodes);
+    const elements = all.slice(sourceOffset, sourceOffset + maxNodes);
     const risks = [...new Set(elements.flatMap((element) => element.risk ?? []))];
     const lines = elements.map(
       (element) => `${element.role ?? "generic"} "${element.label ?? element.name ?? element.ref}"`,
@@ -284,7 +285,7 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       BROWSER_LIMITS.maxSnapshotChars,
     );
     const snapshot = full.slice(0, maxText);
-    const nodesOmitted = all.length - elements.length;
+    const nodesOmitted = Math.max(0, all.length - sourceOffset - elements.length);
     const textCharsOmitted = full.length - snapshot.length;
     const url = tab.history[tab.historyIndex] as string;
     const origin = normalizeOrigin(url);
@@ -308,6 +309,8 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       snapshot,
       elements,
       risks,
+      sourceHasMore: sourceOffset + elements.length < all.length,
+      sourceRevision: Bun.hash(JSON.stringify(page.elements)).toString(36),
       // A credential page is never captured, so no screenshot can carry a
       // password field's rendered value (SECURITY §11).
       ...(wantsImage && page.credential !== true

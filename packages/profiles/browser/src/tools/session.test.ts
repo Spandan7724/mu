@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { browserObservationSchema } from "../contracts/observation.ts";
+import { type BrowserElement, browserObservationSchema } from "../contracts/observation.ts";
 import { elementRefId } from "../contracts/primitives.ts";
 import {
   FAKE_LABELS,
@@ -157,6 +157,67 @@ describe("the observation ledger", () => {
       await harness.shutdown();
     }
   });
+
+  test("continues canonical source beyond 2,000 controls without overlap and keeps old refs", async () => {
+    const page = mutablePage(
+      Array.from({ length: 2_075 }, (_, index) => ({
+        ref: `control-${index}`,
+        role: "button",
+        label: `Control ${index}`,
+      })),
+    );
+    const harness = createHarness({
+      site: { origin: FAKE_ORIGIN, landingUrl: page.url, pages: page.pages },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      let record = await harness.session.observe({}, signal());
+      const first = record.observation.elements[0] as BrowserElement;
+      const labels: string[] = [];
+      while (true) {
+        labels.push(...record.observation.elements.map((element) => element.label as string));
+        const cursor = record.observation.coverage?.nextCursor;
+        if (cursor === undefined) break;
+        record = await harness.session.observe({ cursor }, signal());
+      }
+      expect(labels).toHaveLength(2_075);
+      expect(new Set(labels).size).toBe(2_075);
+      expect(labels[1_999]).toBe("Control 1999");
+      expect(labels[2_000]).toBe("Control 2000");
+      expect(harness.session.resolve(first, record).kind).toBe("resolved");
+      expect(record.observation.coverage?.sourceIncomplete).toBe(false);
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  test("stops semantic aggregation at the documented hard cap", async () => {
+    const page = mutablePage(
+      Array.from({ length: 10_001 }, (_, index) => ({
+        ref: `control-${index}`,
+        role: "button",
+        label: `Control ${index}`,
+      })),
+    );
+    const harness = createHarness({
+      site: { origin: FAKE_ORIGIN, landingUrl: page.url, pages: page.pages },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      let record = await harness.session.observe({}, signal());
+      while (record.observation.coverage?.nextCursor !== undefined) {
+        record = await harness.session.observe(
+          { cursor: record.observation.coverage.nextCursor },
+          signal(),
+        );
+      }
+      expect(record.sourceObservation.elements).toHaveLength(10_000);
+      expect(record.observation.coverage?.sourceIncomplete).toBe(true);
+      expect(record.observation.coverage?.hasMore).toBe(true);
+    } finally {
+      await harness.shutdown();
+    }
+  }, 15_000);
 
   test("a continuation cursor fails closed after structural mutation", async () => {
     const page = mutablePage(

@@ -164,7 +164,7 @@ export function observationFacts(record: ObservationRecord): string[] {
     }
     if (coverage.nextCursor !== undefined) {
       facts.push(
-        `more controls are available: call browser_observe with cursor "${coverage.nextCursor}"`,
+        `more controls or source chunks are available: call browser_observe with cursor "${coverage.nextCursor}"`,
       );
     }
   }

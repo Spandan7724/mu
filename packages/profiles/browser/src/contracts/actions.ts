@@ -25,6 +25,8 @@ export interface ObserveRequest {
   includeHidden?: false | undefined;
   maxNodes?: number | undefined;
   maxTextChars?: number | undefined;
+  /** INTERNAL: zero-based continuation into the canonical semantic element list. */
+  sourceOffset?: number | undefined;
 }
 
 export const observeRequestSchema = z.strictObject({
@@ -33,6 +35,12 @@ export const observeRequestSchema = z.strictObject({
   includeHidden: z.literal(false).optional(),
   maxNodes: z.number().int().positive().max(BROWSER_LIMITS.maxElements).optional(),
   maxTextChars: z.number().int().positive().max(BROWSER_LIMITS.maxSnapshotChars).optional(),
+  sourceOffset: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(BROWSER_LIMITS.maxSemanticSourceElements)
+    .optional(),
 });
 
 export type NavigateRequest =

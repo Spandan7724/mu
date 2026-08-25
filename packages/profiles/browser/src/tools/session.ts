@@ -44,6 +44,7 @@ import {
   elementSignature,
   OBSERVATION_BUDGET,
   observationDigest,
+  rankElements,
 } from "./observation.ts";
 import {
   type BrowserTaskCriterionInput,
@@ -111,6 +112,7 @@ interface ObservationCursor {
   offset: number;
   order: string[];
   kind: "document" | "relevance";
+  sourceOffset: number;
 }
 
 export interface BrowserTaskSessionOptions {
@@ -262,12 +264,19 @@ export class BrowserTaskSession {
    */
   async observe(request: SessionObserveRequest, signal: AbortSignal): Promise<ObservationRecord> {
     const { cursor, focus, ...driverRequest } = request;
+    const continuation = cursor === undefined ? undefined : this.#cursors.get(cursor);
+    if (cursor !== undefined && continuation === undefined) {
+      throw new TypeError("that observation cursor is unknown or expired; observe from the start");
+    }
     const bounded: ObserveRequest = {
       ...driverRequest,
       // This is the private source backstop, not the model-facing window. Applying the
       // smaller context budget here made omitted controls semantically nonexistent.
       maxNodes: BROWSER_LIMITS.maxElements,
       maxTextChars: BROWSER_LIMITS.maxSnapshotChars,
+      ...(continuation === undefined || continuation.sourceOffset === 0
+        ? {}
+        : { sourceOffset: continuation.sourceOffset }),
     };
     const raw = await this.use((driver) => driver.observe(bounded, signal), signal);
     return this.adopt(raw, { cursor, focus });
@@ -279,8 +288,39 @@ export class BrowserTaskSession {
     projection: { cursor?: string | undefined; focus?: string | undefined } = {},
   ): ObservationRecord {
     const tabId = raw.tab.id;
-    const digest = observationDigest(raw);
     const prior = this.#records.get(tabId);
+    const priorCursor =
+      projection.cursor === undefined ? undefined : this.#cursors.get(projection.cursor);
+    if (projection.cursor !== undefined && priorCursor === undefined) {
+      throw new TypeError("that observation cursor is unknown or expired; observe from the start");
+    }
+    const continuingSource = priorCursor !== undefined && priorCursor.sourceOffset > 0;
+    if (
+      priorCursor !== undefined &&
+      (priorCursor.tabId !== tabId ||
+        prior?.sourceObservation.sourceRevision !== raw.sourceRevision)
+    ) {
+      this.#cursors.delete(projection.cursor as string);
+      throw new TypeError(
+        "that observation cursor is stale because the page changed; observe again",
+      );
+    }
+    const mergedRaw: BrowserObservation = continuingSource
+      ? {
+          ...raw,
+          elements: [
+            ...(prior?.sourceObservation.elements ?? []).map((element) => {
+              const target = prior?.targets.get(element.ref);
+              return target === undefined ? element : { ...element, ...target.driverRef };
+            }),
+            ...raw.elements,
+          ].slice(0, BROWSER_LIMITS.maxSemanticSourceElements),
+        }
+      : raw;
+    const digest =
+      continuingSource || raw.sourceHasMore === true
+        ? (raw.sourceRevision ?? observationDigest(mergedRaw))
+        : observationDigest(mergedRaw);
     const unchanged = prior !== undefined && prior.digest === digest;
     const revision = unchanged ? prior.revision : ++this.#revisionSeq;
 
@@ -298,7 +338,7 @@ export class BrowserTaskSession {
     }
     const claimed = new Set<string>();
 
-    raw.elements.forEach((element, index) => {
+    mergedRaw.elements.forEach((element, index) => {
       const identity = elementIdentity(element);
       const driverRef = elementRefOf(element);
       const carriedRef = carried.get(`${driverRef.ref}\u0000${identity}`);
@@ -318,16 +358,11 @@ export class BrowserTaskSession {
     });
 
     const sourceObservation: BrowserObservation = {
-      ...raw,
+      ...mergedRaw,
       revision,
       elements: sourceElements,
       risks: [...new Set(sourceElements.flatMap((element) => element.risk ?? []))],
     };
-    const priorCursor =
-      projection.cursor === undefined ? undefined : this.#cursors.get(projection.cursor);
-    if (projection.cursor !== undefined && priorCursor === undefined) {
-      throw new TypeError("that observation cursor is unknown or expired; observe from the start");
-    }
     if (
       priorCursor !== undefined &&
       (priorCursor.tabId !== tabId || priorCursor.digest !== digest)
@@ -366,25 +401,41 @@ export class BrowserTaskSession {
         })
         .map((entry) => entry.element);
     };
-    const ordered =
-      priorCursor === undefined
-        ? defaultOrder()
-        : priorCursor.order.flatMap((driverRef) => {
-            const element = byDriverRef.get(driverRef);
-            return element === undefined ? [] : [element];
-          });
-    if (priorCursor !== undefined && ordered.length !== priorCursor.order.length) {
+    const cursorElements =
+      priorCursor?.order.flatMap((driverRef) => {
+        const element = byDriverRef.get(driverRef);
+        return element === undefined ? [] : [element];
+      }) ?? [];
+    if (priorCursor !== undefined && cursorElements.length !== priorCursor.order.length) {
       this.#cursors.delete(projection.cursor as string);
       throw new TypeError(
         "that observation cursor is stale because its controls changed; observe again",
       );
     }
+    const knownDriverRefs = new Set(priorCursor?.order ?? []);
+    const additions = sourceElements.filter((element) => {
+      const driverRef = targets.get(element.ref)?.driverRef.ref;
+      return driverRef !== undefined && !knownDriverRefs.has(driverRef);
+    });
+    const ordered =
+      priorCursor === undefined
+        ? defaultOrder()
+        : [
+            ...cursorElements,
+            ...(priorCursor.kind === "relevance"
+              ? rankElements(additions, projection.focus)
+              : additions),
+          ];
     const start = priorCursor?.offset ?? 0;
     const end = Math.min(start + OBSERVATION_BUDGET.maxRenderedElements, ordered.length);
     const elements = ordered.slice(start, end);
     const order = ordered.map((element) => targets.get(element.ref)?.driverRef.ref ?? "");
     let nextCursor: string | undefined;
-    if (end < ordered.length) {
+    const aggregateCapped =
+      mergedRaw.elements.length >= BROWSER_LIMITS.maxSemanticSourceElements &&
+      (raw.sourceHasMore === true || (continuingSource && raw.elements.length > 0));
+    const needsSource = end >= ordered.length && raw.sourceHasMore === true && !aggregateCapped;
+    if (end < ordered.length || needsSource) {
       nextCursor = `cursor-${++this.#cursorSeq}`;
       this.#cursors.set(nextCursor, {
         tabId,
@@ -392,9 +443,13 @@ export class BrowserTaskSession {
         offset: end,
         order,
         kind: priorCursor?.kind ?? (projection.focus === undefined ? "document" : "relevance"),
+        sourceOffset:
+          needsSource || mergedRaw.elements.length > BROWSER_LIMITS.maxElements
+            ? mergedRaw.elements.length
+            : 0,
       });
     }
-    const sourceIncomplete = raw.truncated !== undefined;
+    const sourceIncomplete = aggregateCapped;
     const snapshot = elements
       .map(
         (element) =>

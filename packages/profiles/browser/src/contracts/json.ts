@@ -24,6 +24,8 @@ export const BROWSER_LIMITS = {
   maxSummaryChars: 4_000,
   maxSnapshotChars: 200_000,
   maxElements: 2_000,
+  // Private semantic indexing may span several driver responses, but never grows without bound.
+  maxSemanticSourceElements: 10_000,
   maxElementTextChars: 2_000,
   maxOptionsPerElement: 500,
   maxFrames: 200,
