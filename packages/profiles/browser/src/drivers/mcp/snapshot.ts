@@ -27,13 +27,6 @@ export interface SnapshotNode {
   box?: { x: number; y: number; width: number; height: number } | undefined;
 }
 
-export interface VisibleControlHint {
-  role: string;
-  label: string;
-  occurrence: number;
-  framePrefix?: string | undefined;
-}
-
 const LINE = /^(\s*)-\s?(.*)$/;
 const ROLE = /^([A-Za-z][A-Za-z0-9_-]*)/;
 const NAME = /^\s*"((?:[^"\\]|\\.)*)"/;
@@ -148,82 +141,6 @@ export function parseSnapshot(yaml: string): SnapshotNode[] {
     stack.push(parsed.node);
   }
   return nodes;
-}
-
-function comparableLabel(value: string): string {
-  return value.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function labelContainsWholeName(label: string, name: string): boolean {
-  const at = label.indexOf(name);
-  if (at < 0) return false;
-  const before = at === 0 ? "" : (label[at - 1] ?? "");
-  const after = at + name.length >= label.length ? "" : (label[at + name.length] ?? "");
-  return (before === "" || /[^a-z0-9]/.test(before)) && (after === "" || /[^a-z0-9]/.test(after));
-}
-
-/**
- * Accessibility snapshots are document-ordered even after the viewport scrolls. Use
- * bounded, visible DOM labels only to choose which already-referenced nodes fit in the
- * observation budget; refs and all action identity still come from Playwright's snapshot.
- */
-export function prioritizeSnapshotNodes(
-  nodes: readonly SnapshotNode[],
-  visibleControls: readonly VisibleControlHint[],
-  visibleFramePrefixes: readonly string[] = [],
-): SnapshotNode[] {
-  const visible = visibleControls
-    .map((control) => ({
-      ...control,
-      role: comparableLabel(control.role),
-      label: comparableLabel(control.label),
-    }))
-    .filter(
-      (control) =>
-        control.role.length > 0 &&
-        control.label.length > 0 &&
-        Number.isInteger(control.occurrence) &&
-        control.occurrence >= 0,
-    );
-  const visibleFrames = new Set(visibleFramePrefixes);
-  if (visible.length === 0 && visibleFrames.size === 0) return [...nodes];
-
-  const occurrences = new Map<string, number>();
-  const ranked = nodes.map((node, index) => {
-    const name = node.name === undefined ? "" : comparableLabel(node.name);
-    const role = comparableLabel(node.role);
-    const occurrenceKey = `${node.framePrefix ?? ""}\u0000${role}\u0000${name}`;
-    const occurrence = occurrences.get(occurrenceKey) ?? 0;
-    occurrences.set(occurrenceKey, occurrence + 1);
-    const visibleIndex =
-      name.length < 2
-        ? -1
-        : visible.findIndex(
-            (control) =>
-              control.role === role &&
-              control.occurrence === occurrence &&
-              control.framePrefix === node.framePrefix &&
-              (control.label === name ||
-                (name.length >= 4 && labelContainsWholeName(control.label, name)) ||
-                (control.label.length >= 4 && labelContainsWholeName(name, control.label))),
-          );
-    return {
-      node,
-      index,
-      visibleIndex,
-      visibleFrame: node.framePrefix !== undefined && visibleFrames.has(node.framePrefix),
-    };
-  });
-  return ranked
-    .sort((a, b) => {
-      const aVisible = a.visibleIndex >= 0;
-      const bVisible = b.visibleIndex >= 0;
-      if (aVisible !== bVisible) return aVisible ? -1 : 1;
-      if (aVisible && a.visibleIndex !== b.visibleIndex) return a.visibleIndex - b.visibleIndex;
-      if (a.visibleFrame !== b.visibleFrame) return a.visibleFrame ? -1 : 1;
-      return a.index - b.index;
-    })
-    .map((entry) => entry.node);
 }
 
 // The signature a page revision is keyed on. Values are excluded deliberately:

@@ -4,7 +4,6 @@ import { BROWSER_LIMITS } from "../contracts/json.ts";
 import { observePattern } from "../policy/scopes.ts";
 import type { BrowserToolContext, BrowserToolDetails } from "./context.ts";
 import { toolErrorText } from "./errors.ts";
-import { OBSERVATION_BUDGET } from "./observation.ts";
 import {
   observationFacts,
   observationHeadline,
@@ -27,7 +26,7 @@ const schema = z.object({
     .max(BROWSER_LIMITS.maxElementTextChars)
     .optional()
     .describe(
-      "What you are looking for, in words — a section heading, a field label, a role. A hint for ordering, never a selector.",
+      "What you are looking for, in words — a section heading, field label, or role. Reorders by relevance, so omit it when page/list order matters. Never a selector.",
     ),
   cursor: z
     .string()
@@ -75,7 +74,7 @@ export function browserObserveTool(context: BrowserToolContext) {
   return tool({
     name: BROWSER_OBSERVE_TOOL,
     description:
-      "Look at the page through a bounded semantic window: URL, title, frames and actionable controls with references. Follow nextCursor to continue through an oversized page, or use focus to search the complete indexed source. References remain usable across windows of the same revision; after the page changes, observe again. Reads the page and changes nothing.",
+      "Look at the page through a bounded semantic window: URL, title, frames and actionable controls with references. Without focus, controls preserve document order; follow nextCursor to continue. Focus searches the complete source but reorders by relevance, so never use focus to establish list order. References remain usable across windows of the same revision; after the page changes, observe again. Reads the page and changes nothing.",
     inputSchema: schema,
     // TOOLS.md: observing races with page mutation and establishes revision state.
     isConcurrencySafe: () => false,

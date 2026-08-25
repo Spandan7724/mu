@@ -102,6 +102,7 @@ interface ObservationCursor {
   digest: string;
   offset: number;
   order: string[];
+  kind: "document" | "relevance";
 }
 
 export interface BrowserTaskSessionOptions {
@@ -315,16 +316,8 @@ export class BrowserTaskSession {
     }
     const defaultOrder = (): BrowserElement[] => {
       const needle = projection.focus?.trim().toLowerCase();
+      if (needle === undefined || needle.length === 0) return sourceElements;
       const scored = sourceElements.map((element, index) => {
-        const box = element.box;
-        const visible =
-          box !== undefined &&
-          box.width > 0 &&
-          box.height > 0 &&
-          box.x + box.width > 0 &&
-          box.y + box.height > 0 &&
-          box.x < raw.viewport.width &&
-          box.y < raw.viewport.height;
         const text = [
           element.role,
           element.name,
@@ -335,12 +328,11 @@ export class BrowserTaskSession {
           .filter((entry): entry is string => entry !== undefined)
           .join(" ")
           .toLowerCase();
-        return { element, index, visible, focused: needle !== undefined && text.includes(needle) };
+        return { element, index, focused: text.includes(needle) };
       });
       return scored
         .sort((a, b) => {
           if (a.focused !== b.focused) return a.focused ? -1 : 1;
-          if (needle === undefined && a.visible !== b.visible) return a.visible ? -1 : 1;
           return a.index - b.index;
         })
         .map((entry) => entry.element);
@@ -365,7 +357,13 @@ export class BrowserTaskSession {
     let nextCursor: string | undefined;
     if (end < ordered.length) {
       nextCursor = `cursor-${++this.#cursorSeq}`;
-      this.#cursors.set(nextCursor, { tabId, digest, offset: end, order });
+      this.#cursors.set(nextCursor, {
+        tabId,
+        digest,
+        offset: end,
+        order,
+        kind: priorCursor?.kind ?? (projection.focus === undefined ? "document" : "relevance"),
+      });
     }
     const sourceIncomplete = raw.truncated !== undefined;
     const snapshot = elements
@@ -388,6 +386,7 @@ export class BrowserTaskSession {
         start,
         end,
         total: ordered.length,
+        order: priorCursor?.kind ?? (projection.focus === undefined ? "document" : "relevance"),
         hasMore: end < ordered.length || sourceIncomplete,
         ...(nextCursor === undefined ? {} : { nextCursor }),
         sourceIncomplete,

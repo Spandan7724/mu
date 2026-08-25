@@ -3,12 +3,7 @@
 // parser honest when no browser is present.
 import { describe, expect, test } from "bun:test";
 import { parseSidecarResponse, parseTabList, sidecarErrorMessage } from "./response.ts";
-import {
-  contextualText,
-  parseSnapshot,
-  prioritizeSnapshotNodes,
-  structuralSignature,
-} from "./snapshot.ts";
+import { contextualText, parseSnapshot, structuralSignature } from "./snapshot.ts";
 
 const SNAPSHOT_RESPONSE = [
   "### Page",
@@ -172,46 +167,6 @@ describe("accessibility snapshot parsing", () => {
       ),
     );
     expect(structuralSignature(relabelled)).not.toBe(before);
-  });
-
-  test("visible controls move ahead of an oversized document without changing their refs", () => {
-    const many = Array.from({ length: 300 }, (_, index) =>
-      parseSnapshot(`- link "Model ${index + 1}" [ref=e${index + 1}]`),
-    ).flat();
-    const ordered = prioritizeSnapshotNodes(many, [
-      { role: "link", label: "Model 241", occurrence: 0 },
-      { role: "link", label: "Model 242", occurrence: 0 },
-      { role: "link", label: "Model 243", occurrence: 0 },
-    ]);
-    expect(ordered.slice(0, 3).map((node) => node.name)).toEqual([
-      "Model 241",
-      "Model 242",
-      "Model 243",
-    ]);
-    expect(ordered.slice(0, 3).map((node) => node.ref)).toEqual(["e241", "e242", "e243"]);
-    expect(many[0]?.name).toBe("Model 1");
-  });
-
-  test("repeated labels are matched by occurrence instead of all looking visible", () => {
-    const repeated = Array.from({ length: 300 }, (_, index) =>
-      parseSnapshot(`- button "View details" [ref=e${index + 1}]`),
-    ).flat();
-    const ordered = prioritizeSnapshotNodes(repeated, [
-      { role: "button", label: "View details", occurrence: 240 },
-      { role: "button", label: "View details", occurrence: 241 },
-    ]);
-    expect(ordered.slice(0, 2).map((node) => node.ref)).toEqual(["e241", "e242"]);
-    expect(ordered[2]?.ref).toBe("e1");
-  });
-
-  test("a visible cross-origin frame moves its inaccessible subtree into the budget", () => {
-    const topLevel = Array.from({ length: 300 }, (_, index) =>
-      parseSnapshot(`- link "Top ${index + 1}" [ref=e${index + 1}]`),
-    ).flat();
-    const framed = parseSnapshot(`- link "Inside frame" [ref=f1e1]`);
-    const ordered = prioritizeSnapshotNodes([...topLevel, ...framed], [], ["f1"]);
-    expect(ordered[0]?.ref).toBe("f1e1");
-    expect(ordered[1]?.ref).toBe("e1");
   });
 });
 

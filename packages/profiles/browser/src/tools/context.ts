@@ -2,6 +2,7 @@
 // disclosures, commitments, takeover and receipts all live behind it.
 
 import type { AuthorizedDocumentStore } from "../artifacts/documents.ts";
+import type { BrowserObservationCoverage } from "../contracts/observation.ts";
 import type { FactLookup } from "../data/facts.ts";
 import type { BrowserReceiptSink, BrowserTaskSession } from "./session.ts";
 
@@ -31,14 +32,7 @@ export type BrowserToolDetails =
       risks: string[];
       injections: number;
       screenshot: "attached" | "suppressed" | "unavailable" | "none";
-      coverage?: {
-        start: number;
-        end: number;
-        total: number;
-        hasMore: boolean;
-        nextCursor?: string | undefined;
-        sourceIncomplete: boolean;
-      } | undefined;
+      coverage?: BrowserObservationCoverage | undefined;
       plannedFills?: number | undefined;
       unresolvedQuestions?: number | undefined;
       truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;

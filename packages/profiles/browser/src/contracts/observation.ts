@@ -209,6 +209,8 @@ export interface BrowserObservationCoverage {
   end: number;
   /** Number of actionable controls in the bounded private source. */
   total: number;
+  /** Relevance projections are for discovery and do not prove document order. */
+  order: "document" | "relevance";
   hasMore: boolean;
   /** Session-issued and revision-bound. Never a selector or browser ref. */
   nextCursor?: string | undefined;
@@ -277,6 +279,7 @@ export const browserObservationSchema = z
         start: z.number().int().nonnegative(),
         end: z.number().int().nonnegative(),
         total: z.number().int().nonnegative(),
+        order: z.enum(["document", "relevance"]),
         hasMore: z.boolean(),
         nextCursor: identifierSchema.optional(),
         sourceIncomplete: z.boolean(),
@@ -286,7 +289,11 @@ export const browserObservationSchema = z
           ctx.addIssue({ code: "custom", message: "observation coverage range is invalid" });
         }
         if (coverage.hasMore !== (coverage.end < coverage.total || coverage.sourceIncomplete)) {
-          ctx.addIssue({ code: "custom", path: ["hasMore"], message: "hasMore must match coverage" });
+          ctx.addIssue({
+            code: "custom",
+            path: ["hasMore"],
+            message: "hasMore must match coverage",
+          });
         }
         if (coverage.nextCursor !== undefined && coverage.end >= coverage.total) {
           ctx.addIssue({

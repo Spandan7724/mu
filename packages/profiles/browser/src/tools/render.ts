@@ -154,10 +154,13 @@ export function observationFacts(record: ObservationRecord): string[] {
   if (observation.coverage !== undefined) {
     const coverage = observation.coverage;
     facts.push(
-      `semantic window ${coverage.start + 1}-${coverage.end} of ${coverage.total}${
+      `${coverage.order}-order semantic window ${coverage.start + 1}-${coverage.end} of ${coverage.total}${
         coverage.sourceIncomplete ? "+ indexed controls; the source is incomplete" : ""
       }`,
     );
+    if (coverage.order === "relevance") {
+      facts.push("focus reordered this projection; do not use it to infer page or list order");
+    }
     if (coverage.nextCursor !== undefined) {
       facts.push(
         `more controls are available: call browser_observe with cursor "${coverage.nextCursor}"`,

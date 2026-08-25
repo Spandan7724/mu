@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { browserObservationSchema } from "../contracts/observation.ts";
+import { elementRefId } from "../contracts/primitives.ts";
 import {
   FAKE_LABELS,
   FAKE_ORIGIN,
@@ -7,6 +8,7 @@ import {
   type FakeElementSpec,
   type FakePageSpec,
 } from "../drivers/fake/site.ts";
+import { sampleElement, sampleObservation } from "../testing/samples.ts";
 import { browserActTool } from "./act.ts";
 import { createHarness } from "./harness.ts";
 import { elementSignature, observationDigest } from "./observation.ts";
@@ -39,6 +41,44 @@ const textbox = (ref: string, label: string, value = ""): FakeElementSpec => ({
 });
 
 describe("the observation ledger", () => {
+  test("default projections preserve document order even when later controls are visible", async () => {
+    const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
+    try {
+      const raw = sampleObservation({
+        elements: [
+          sampleElement({
+            ref: elementRefId("model-1"),
+            name: "ornith-1.5",
+            label: "ornith-1.5",
+            box: { x: 0, y: -200, width: 500, height: 100 },
+          }),
+          sampleElement({
+            ref: elementRefId("model-2"),
+            name: "granite4.2",
+            label: "granite4.2",
+            box: { x: 0, y: 100, width: 500, height: 100 },
+          }),
+          sampleElement({
+            ref: elementRefId("model-3"),
+            name: "qwen3.8",
+            label: "qwen3.8",
+            box: { x: 0, y: 220, width: 500, height: 100 },
+          }),
+        ],
+        risks: [],
+      });
+      const record = harness.session.adopt(raw);
+      expect(record.observation.elements.map((element) => element.label)).toEqual([
+        "ornith-1.5",
+        "granite4.2",
+        "qwen3.8",
+      ]);
+      expect(record.observation.coverage?.order).toBe("document");
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
   test("references are opaque session tokens, not the driver's own identifiers", async () => {
     const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
     try {
@@ -134,7 +174,9 @@ describe("the observation ledger", () => {
         ...Array.from({ length: 139 }, (_, index) => textbox(`field-${index}`, `Field ${index}`)),
         textbox("replacement", "Replacement"),
       ]);
-      await expect(harness.session.observe({ cursor }, signal())).rejects.toThrow("cursor is stale");
+      await expect(harness.session.observe({ cursor }, signal())).rejects.toThrow(
+        "cursor is stale",
+      );
     } finally {
       await harness.shutdown();
     }
