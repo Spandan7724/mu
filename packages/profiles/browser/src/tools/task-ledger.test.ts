@@ -105,4 +105,26 @@ describe("browser task ledger", () => {
     expect(ledger.finishReminder()).toContain("claim: Verify the claim");
     expect(ledger.finishReminder()).toBeUndefined();
   });
+
+  test("snapshot restores evidence, attachments, and review state", () => {
+    const original = new BrowserTaskLedger();
+    original.begin("user-task-restart");
+    original.plan([{ id: "claim", description: "Verify it", kind: "fact" }], ["Read it"]);
+    original.record({ id: "seen", kind: "observation", url: "https://example.test" });
+    original.attach("claim", "seen");
+
+    const restored = new BrowserTaskLedger();
+    expect(restored.restore(JSON.parse(JSON.stringify(original.snapshot())))).toBe(true);
+    expect(restored.snapshot()).toEqual(original.snapshot());
+    expect(restored.state().status).toBe("satisfied");
+  });
+
+  test("restore rejects corrupt or oversized state without changing the ledger", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("current");
+    const before = ledger.snapshot();
+    expect(ledger.restore({ ...before, version: 2 })).toBe(false);
+    expect(ledger.restore({ ...before, steps: ["x".repeat(4_097)] })).toBe(false);
+    expect(ledger.snapshot()).toEqual(before);
+  });
 });
