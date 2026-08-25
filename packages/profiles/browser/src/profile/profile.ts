@@ -9,6 +9,7 @@ import { BrowserArtifactStore } from "../artifacts/store.ts";
 import { applicantSource, browserCommands } from "../commands/index.ts";
 import type { BrowserCarryover } from "../contracts/carryover.ts";
 import type { FactStore } from "../data/facts.ts";
+import { BrowserTaskStateStore } from "../data/task-state-store.ts";
 import type { BrowserDriverFactory } from "../drivers/factory.ts";
 import { taskAuthority } from "../policy/authority.ts";
 import { withApprovedOrigin } from "../policy/origin.ts";
@@ -130,6 +131,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   const artifacts = new BrowserArtifactStore({
     root: resolved.artifactRoot ?? join(dataRoot, "artifacts"),
   });
+  const taskStateStore = new BrowserTaskStateStore(join(dataRoot, "task-state"));
   const { tools, session } = browserToolset({
     runtime,
     allowedOrigins: resolved.allowedOrigins ?? [],
@@ -142,6 +144,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       sessionId: randomUUID(),
       store: artifacts,
     },
+    taskStateStore,
   });
 
   return {
@@ -171,11 +174,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       documentsMessage(documents.summaries()),
       ...(applicant.facts === undefined ? [] : [applicantFactsMessage(applicant.facts)]),
     ],
-    refreshContext: (messages): AgentMessage[] => {
+    refreshContext: async (messages, context): Promise<AgentMessage[]> => {
+      await session.bindTaskState(context.sessionId);
       const taskText = latestUserTaskText(messages);
       if (taskText !== undefined) {
         const userTurns = messages.filter((message) => message.role === "user").length;
-        session.beginTask(
+        await session.beginTask(
           createHash("sha256").update(`${userTurns}\u0000${taskText}`).digest("hex").slice(0, 16),
         );
       }

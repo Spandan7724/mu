@@ -4,7 +4,11 @@
 // of these instead of standing up a browser.
 import type { BrowserDialog, BrowserDownload } from "../../contracts/actions.ts";
 import type { SubmitIntent } from "../../contracts/intent.ts";
-import type { BrowserElementOption, BrowserRisk } from "../../contracts/observation.ts";
+import type {
+  BrowserElementBox,
+  BrowserElementOption,
+  BrowserRisk,
+} from "../../contracts/observation.ts";
 
 export const FAKE_ORIGIN = "https://fake.mu-browser.test";
 export const FAKE_FRAME_ORIGIN = "https://widgets.mu-browser.test";
@@ -46,6 +50,7 @@ export interface FakeElementSpec {
   checked?: boolean;
   options?: BrowserElementOption[];
   risk?: BrowserRisk[];
+  box?: BrowserElementBox;
   disabled?: boolean;
   required?: boolean;
   frameId?: string;

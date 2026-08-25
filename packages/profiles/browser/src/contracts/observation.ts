@@ -188,6 +188,8 @@ export interface BrowserViewport {
   height: number;
   scrollX: number;
   scrollY: number;
+  documentWidth?: number | undefined;
+  documentHeight?: number | undefined;
 }
 
 export interface BrowserScreenshot {
@@ -256,6 +258,8 @@ export const browserObservationSchema = z
       height: z.number().int().nonnegative(),
       scrollX: z.number().int(),
       scrollY: z.number().int(),
+      documentWidth: z.number().int().nonnegative().optional(),
+      documentHeight: z.number().int().nonnegative().optional(),
     }),
     frames: z.array(browserFrameSchema).max(BROWSER_LIMITS.maxFrames),
     summary: z.string().max(BROWSER_LIMITS.maxSummaryChars),

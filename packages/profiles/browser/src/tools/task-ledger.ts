@@ -15,6 +15,7 @@ export interface BrowserTaskEvidence {
   revision?: number | undefined;
   order?: "document" | "relevance" | undefined;
   range?: { start: number; end: number; total: number } | undefined;
+  viewportRange?: { start: number; end: number; total: number } | undefined;
   hasMore?: boolean | undefined;
   sourceIncomplete?: boolean | undefined;
   tool?: string | undefined;
@@ -44,7 +45,7 @@ const MAX_TEXT = 4_096;
 const MAX_CRITERIA = 100;
 const MAX_STEPS = 100;
 const MAX_EVIDENCE = 500;
-const MAX_ATTACHMENTS = 20;
+const MAX_ATTACHMENTS = 100;
 
 export interface BrowserTaskLedgerSnapshot {
   version: 1;
@@ -94,6 +95,7 @@ function validEvidence(value: unknown): value is BrowserTaskEvidence {
       "revision",
       "order",
       "range",
+      "viewportRange",
       "hasMore",
       "sourceIncomplete",
       "tool",
@@ -118,6 +120,18 @@ function validEvidence(value: unknown): value is BrowserTaskEvidence {
     if (!integer(value.range.start) || !integer(value.range.end) || !integer(value.range.total))
       return false;
     if (value.range.start > value.range.end || value.range.end > value.range.total) return false;
+  }
+  if (value.viewportRange !== undefined) {
+    if (!record(value.viewportRange) || !exact(value.viewportRange, ["start", "end", "total"]))
+      return false;
+    if (
+      !integer(value.viewportRange.start) ||
+      !integer(value.viewportRange.end) ||
+      !integer(value.viewportRange.total) ||
+      value.viewportRange.start > value.viewportRange.end ||
+      value.viewportRange.end > value.viewportRange.total
+    )
+      return false;
   }
   return true;
 }
@@ -219,13 +233,33 @@ function criterionSatisfied(
         .filter((evidence) => evidence.kind === "observation" && evidence.order === "document")
         .sort((left, right) => (left.range?.start ?? 1) - (right.range?.start ?? 1));
       let coveredThrough = 0;
+      let semanticComplete = false;
       for (const evidence of ordered) {
         const range = evidence.range;
         if (range === undefined || range.start > coveredThrough) break;
         coveredThrough = Math.max(coveredThrough, range.end);
-        if (evidence.hasMore === false && evidence.sourceIncomplete === false) return true;
+        if (evidence.hasMore === false && evidence.sourceIncomplete === false) {
+          semanticComplete = true;
+          break;
+        }
       }
-      return false;
+      if (!semanticComplete) return false;
+      const viewportRanges = attached
+        .map(({ evidence }) => evidence.viewportRange)
+        .filter(
+          (range): range is NonNullable<BrowserTaskEvidence["viewportRange"]> =>
+            range !== undefined,
+        )
+        .sort((left, right) => left.start - right.start);
+      if (viewportRanges.length === 0 || viewportRanges.every((range) => range.total <= range.end))
+        return true;
+      let viewportThrough = 0;
+      const finalTotal = Math.max(...viewportRanges.map((range) => range.total));
+      for (const range of viewportRanges) {
+        if (range.start > viewportThrough) return false;
+        viewportThrough = Math.max(viewportThrough, range.end);
+      }
+      return viewportThrough >= finalTotal;
     }
     case "action":
       return attached.some(
@@ -243,6 +277,16 @@ export class BrowserTaskLedger {
   #steps: string[] = [];
   #revision = 0;
   #reviewedRevision = -1;
+
+  reset(): void {
+    this.#authorityId = undefined;
+    this.#criteria = [];
+    this.#attachments.clear();
+    this.#evidence.clear();
+    this.#steps = [];
+    this.#revision = 0;
+    this.#reviewedRevision = -1;
+  }
 
   begin(authorityId: string): void {
     if (!text(authorityId)) throw new TypeError("invalid task authority");
@@ -294,8 +338,8 @@ export class BrowserTaskLedger {
     const existing = this.#attachments.get(criterionId) ?? [];
     const attached = existing.find((entry) => entry.evidenceId === evidenceId);
     if (attached === undefined) {
-      if (existing.length >= 20)
-        throw new TypeError("a criterion may retain at most 20 evidence records");
+      if (existing.length >= MAX_ATTACHMENTS)
+        throw new TypeError(`a criterion may retain at most ${MAX_ATTACHMENTS} evidence records`);
       existing.push({ evidenceId, ...(observedItems === undefined ? {} : { observedItems }) });
       this.#attachments.set(criterionId, existing);
       this.#revision += 1;

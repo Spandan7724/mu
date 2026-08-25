@@ -90,6 +90,55 @@ describe("browser task ledger", () => {
     expect(ledger.state().status).toBe("active");
   });
 
+  test("exhaustive virtualized work requires contiguous viewport coverage", () => {
+    const ledger = new BrowserTaskLedger();
+    ledger.begin("virtual-list");
+    ledger.plan(
+      [{ id: "all-results", description: "Inspect every rendered result", kind: "exhaustive" }],
+      ["Traverse each viewport"],
+    );
+    for (const [id, start, end, incomplete] of [
+      ["top", 0, 700, true],
+      ["middle", 700, 1_400, true],
+      ["bottom", 1_400, 2_000, false],
+    ] as const) {
+      ledger.record({
+        id,
+        kind: "observation",
+        order: "document",
+        range: { start: 0, end: 20, total: 20 },
+        viewportRange: { start, end, total: 2_000 },
+        hasMore: incomplete,
+        sourceIncomplete: incomplete,
+      });
+      ledger.attach("all-results", id);
+    }
+    expect(ledger.state().status).toBe("satisfied");
+
+    const skipped = new BrowserTaskLedger();
+    skipped.begin("virtual-list-gap");
+    skipped.plan(
+      [{ id: "all-results", description: "Inspect every rendered result", kind: "exhaustive" }],
+      ["Traverse each viewport"],
+    );
+    for (const [id, start, end, incomplete] of [
+      ["top", 0, 700, true],
+      ["bottom", 1_400, 2_000, false],
+    ] as const) {
+      skipped.record({
+        id,
+        kind: "observation",
+        order: "document",
+        range: { start: 0, end: 20, total: 20 },
+        viewportRange: { start, end, total: 2_000 },
+        hasMore: incomplete,
+        sourceIncomplete: incomplete,
+      });
+      skipped.attach("all-results", id);
+    }
+    expect(skipped.state().status).toBe("active");
+  });
+
   test("fabricated evidence and model-assigned completion are impossible", () => {
     const ledger = new BrowserTaskLedger();
     ledger.begin("user-task-3");

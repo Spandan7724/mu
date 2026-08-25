@@ -512,6 +512,19 @@ export function createScriptedSidecar(options: ScriptedSidecarOptions = {}): Scr
         requireRef(entry, args.endTarget);
         return snapshotResponse(entry);
       }
+      case "browser_mouse_click_xy":
+      case "browser_mouse_move_xy":
+      case "browser_mouse_drag_xy":
+        return snapshotResponse(tab());
+      case "browser_mouse_wheel": {
+        const entry = tab();
+        const page = pageOf(entry);
+        const maxX = Math.max(0, VIEWPORT.width - VIEWPORT.width);
+        const maxY = Math.max(0, (page.contentHeight ?? VIEWPORT.height) - VIEWPORT.height);
+        entry.scrollX = Math.max(0, Math.min(maxX, entry.scrollX + Number(args.deltaX ?? 0)));
+        entry.scrollY = Math.max(0, Math.min(maxY, entry.scrollY + Number(args.deltaY ?? 0)));
+        return snapshotResponse(entry);
+      }
       case "browser_type": {
         const entry = tab();
         const found = requireRef(entry, args.target);

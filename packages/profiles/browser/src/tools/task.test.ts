@@ -8,7 +8,7 @@ describe("browser_task", () => {
   test("only session-minted evidence can satisfy planned outcomes", async () => {
     const harness = createHarness();
     try {
-      harness.session.beginTask("user-task");
+      await harness.session.beginTask("user-task");
       const task = browserTaskTool({ session: harness.session });
       const planned = await task.execute(
         "plan",

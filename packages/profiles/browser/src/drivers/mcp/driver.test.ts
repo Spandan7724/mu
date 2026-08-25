@@ -122,6 +122,25 @@ describe("failure normalisation", () => {
 });
 
 describe("the raw tool surface stays behind the adapter", () => {
+  test("visual pointer actions map only to the opt-in vision tools and re-observe", async () => {
+    const calls: string[] = [];
+    const inner = createScriptedSidecar();
+    const recorder: ScriptedSidecar = {
+      ...inner,
+      callTool: async (name, args, options) => {
+        calls.push(name);
+        return inner.callTool(name, args, options);
+      },
+    };
+    const { driver, signal } = await connected(recorder);
+    const outcome = await driver.pointer({ kind: "click", x: 40, y: 30 }, signal);
+    expect(outcome.status).toBe("completed");
+    expect(calls).toContain("browser_mouse_click_xy");
+    expect(calls.indexOf("browser_snapshot")).toBeGreaterThan(
+      calls.indexOf("browser_mouse_click_xy"),
+    );
+  });
+
   test("no unsafe or inspection tool is ever called", async () => {
     const calls: string[] = [];
     const inner = createScriptedSidecar();

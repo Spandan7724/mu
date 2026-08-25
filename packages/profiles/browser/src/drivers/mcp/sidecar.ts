@@ -250,6 +250,8 @@ function commonArgs(options: SidecarArgsOptions): string[] {
     // and a second place for page text to end up.
     "--codegen",
     "none",
+    "--caps",
+    "vision",
   ];
 }
 

@@ -163,7 +163,7 @@ describe("browserProfile", () => {
       const profile = await browserProfile({ home, factory: fakeFactory() });
       const messages = [userMessage("Compare every available plan")];
       await profile.refreshContext?.(messages, { sessionId: "task-review" });
-      profile.session.planTask(
+      await profile.session.planTask(
         [{ id: "plans", description: "Compare every available plan", kind: "exhaustive" }],
         ["Inspect all plan listings"],
       );
@@ -178,6 +178,30 @@ describe("browserProfile", () => {
     }
   });
 
+  test("task criteria survive a process-style profile restart", async () => {
+    const home = await tempHome();
+    const messages = [userMessage("Compare every available plan")];
+    try {
+      const first = await browserProfile({ home, factory: fakeFactory() });
+      await first.refreshContext?.(messages, { sessionId: "durable-task" });
+      await first.session.planTask(
+        [{ id: "plans", description: "Compare every available plan", kind: "exhaustive" }],
+        ["Inspect all plan listings"],
+      );
+      await first.runtime.shutdown();
+
+      const resumed = await browserProfile({ home, factory: fakeFactory() });
+      await resumed.refreshContext?.(messages, { sessionId: "durable-task" });
+      expect(resumed.session.task.state()).toMatchObject({
+        status: "active",
+        criteria: [{ id: "plans", satisfied: false }],
+      });
+      await resumed.runtime.shutdown();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("it satisfies the profile contract with browser-only behaviour", async () => {
     const home = await tempHome();
     try {
@@ -187,6 +211,7 @@ describe("browserProfile", () => {
         "browser_act",
         "browser_navigate",
         "browser_observe",
+        "browser_pointer",
         BROWSER_STATUS_TOOL,
         "browser_submit",
         "browser_tabs",
@@ -195,7 +220,7 @@ describe("browserProfile", () => {
         "browser_wait",
       ]);
       // B5 and B8 surfaces must not appear before their milestones land.
-      for (const later of ["browser_upload", "browser_pointer"]) {
+      for (const later of ["browser_upload"]) {
         expect(profile.toolset.some((tool) => tool.name === later)).toBe(false);
       }
       expect(profile.promptFor("anthropic/claude-opus-5")[0]?.text).toContain("mu-browser");

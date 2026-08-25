@@ -10,6 +10,7 @@ import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import { connectionSummary } from "../contracts/connection.ts";
 import { isBrowserDriverError } from "../contracts/driver.ts";
 import type { FactLookup } from "../data/facts.ts";
+import type { BrowserTaskStateStore } from "../data/task-state-store.ts";
 import { taskAuthority } from "../policy/authority.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
 import { createOriginPolicy } from "../policy/origin.ts";
@@ -81,6 +82,7 @@ export interface BrowserToolsetOptions {
   allowInsecureDisclosure?: boolean | undefined;
   /** Where a commitment's receipt is written. Without it, nothing durable is kept. */
   receipts?: BrowserReceiptSink | undefined;
+  taskStateStore?: BrowserTaskStateStore | undefined;
 }
 
 export interface BrowserToolset {
@@ -112,6 +114,7 @@ export function browserToolset(options: BrowserToolsetOptions): BrowserToolset {
     ...(options.applicantPolicy === undefined ? {} : { applicantPolicy: options.applicantPolicy }),
     ...(options.documents === undefined ? {} : { documents: options.documents }),
     ...(options.receipts === undefined ? {} : { receipts: options.receipts }),
+    ...(options.taskStateStore === undefined ? {} : { taskStateStore: options.taskStateStore }),
   });
   return {
     tools: [browserStatusTool(session), ...buildBrowserToolset({ session })],

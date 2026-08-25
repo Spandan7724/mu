@@ -79,13 +79,14 @@ export function browserTaskTool(context: BrowserToolContext) {
               return session.task.state();
           }
         })();
+        const resolvedState = await state;
         const evidence = session.task.evidence();
         return {
           content: [
             {
               type: "text" as const,
               text: [
-                ...renderState(state),
+                ...renderState(resolvedState),
                 ...(evidence.length === 0
                   ? []
                   : [

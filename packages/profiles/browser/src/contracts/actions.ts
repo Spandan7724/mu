@@ -126,6 +126,31 @@ export const browserActionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+export type BrowserPointerAction =
+  | { kind: "click" | "double-click" | "move"; x: number; y: number }
+  | { kind: "drag"; x: number; y: number; toX: number; toY: number }
+  | { kind: "scroll"; x: number; y: number; deltaX: number; deltaY: number };
+
+const coordinate = z.number().int().nonnegative().max(20_000);
+
+export const browserPointerActionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.enum(["click", "double-click", "move"]), x: coordinate, y: coordinate }),
+  z.strictObject({
+    kind: z.literal("drag"),
+    x: coordinate,
+    y: coordinate,
+    toX: coordinate,
+    toY: coordinate,
+  }),
+  z.strictObject({
+    kind: z.literal("scroll"),
+    x: coordinate,
+    y: coordinate,
+    deltaX: z.number().int().min(-20_000).max(20_000),
+    deltaY: z.number().int().min(-20_000).max(20_000),
+  }),
+]);
+
 export function actionTargets(action: BrowserAction): BrowserElementRef[] {
   if (action.kind === "drag") return [action.source, action.target];
   return action.target === undefined ? [] : [action.target];

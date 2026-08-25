@@ -34,6 +34,7 @@ import { recordFactDisclosure } from "../data/disclosure.ts";
 import type { FactLookup } from "../data/facts.ts";
 import { type FillPlan, planFill } from "../data/plan.ts";
 import { createQuestionQueue } from "../data/questions.ts";
+import type { BrowserTaskStateStore } from "../data/task-state-store.ts";
 import type { BrowserPolicyState } from "../policy/decide.ts";
 import { type InjectionFinding, scanObservation } from "../policy/untrusted.ts";
 import type { TakeoverResumeReport } from "../renderers/takeover.ts";
@@ -76,6 +77,8 @@ export interface ObservationRecord {
   observedAt: number;
   /** Immutable session evidence; distinct from actionable element refs. */
   evidenceId: string;
+  /** Screenshot geometry represented by this record, when one was requested. */
+  screenshotScope?: ObserveRequest["screenshot"] | undefined;
 }
 
 export interface SessionObserveRequest extends ObserveRequest {
@@ -122,6 +125,7 @@ export interface BrowserTaskSessionOptions {
   applicantPolicy?: ApplicantPolicy | undefined;
   documents?: AuthorizedDocumentStore | undefined;
   receipts?: BrowserReceiptSink | undefined;
+  taskStateStore?: BrowserTaskStateStore | undefined;
   now?: (() => number) | undefined;
 }
 
@@ -142,6 +146,7 @@ export class BrowserTaskSession {
   readonly applicantPolicy: ApplicantPolicy;
   #documents: AuthorizedDocumentStore | undefined;
   #receipts: BrowserReceiptSink | undefined;
+  readonly #taskStateStore: BrowserTaskStateStore | undefined;
   #policy: BrowserPolicyState;
   readonly #now: () => number;
   readonly #records = new Map<string, ObservationRecord>();
@@ -157,6 +162,9 @@ export class BrowserTaskSession {
   #refSeq = 0;
   #cursorSeq = 0;
   #evidenceSeq = 0;
+  #taskStateSessionId: string | undefined;
+  #taskSave = Promise.resolve();
+  #taskSaveError: unknown;
   #activeTabId: string | undefined;
 
   constructor(options: BrowserTaskSessionOptions) {
@@ -168,6 +176,8 @@ export class BrowserTaskSession {
     this.applicantPolicy = options.applicantPolicy ?? {};
     this.#documents = options.documents;
     this.#receipts = options.receipts;
+    this.#taskStateStore = options.taskStateStore;
+    this.runtime.addShutdownHook(() => this.flushTaskState());
   }
 
   get policy(): BrowserPolicyState {
@@ -239,23 +249,47 @@ export class BrowserTaskSession {
     return id === undefined ? undefined : this.#plans.get(id);
   }
 
-  beginTask(authorityId: string): void {
-    this.task.begin(authorityId);
+  async bindTaskState(sessionId: string): Promise<void> {
+    if (sessionId === this.#taskStateSessionId) return;
+    await this.flushTaskState();
+    this.#taskStateSessionId = sessionId;
+    const snapshot = await this.#taskStateStore?.load(sessionId);
+    if (snapshot === undefined) this.task.reset();
+    else if (!this.task.restore(snapshot)) throw new TypeError("browser task state is invalid");
+    this.#evidenceSeq = Math.max(
+      0,
+      ...(snapshot?.evidence.map((entry) => {
+        const match = /^evidence-(\d+)$/.exec(entry.id);
+        return match === null ? 0 : Number(match[1]);
+      }) ?? []),
+    );
   }
 
-  planTask(
+  async beginTask(authorityId: string): Promise<void> {
+    this.task.begin(authorityId);
+    await this.#persistTaskState();
+    await this.flushTaskState();
+  }
+
+  async planTask(
     criteria: readonly BrowserTaskCriterionInput[],
     steps: readonly string[],
-  ): BrowserTaskState {
-    return this.task.plan(criteria, steps);
+  ): Promise<BrowserTaskState> {
+    const state = this.task.plan(criteria, steps);
+    await this.#persistTaskState();
+    await this.flushTaskState();
+    return state;
   }
 
-  attachTaskEvidence(
+  async attachTaskEvidence(
     criterionId: string,
     evidenceId: string,
     observedItems?: number,
-  ): BrowserTaskState {
-    return this.task.attach(criterionId, evidenceId, observedItems);
+  ): Promise<BrowserTaskState> {
+    const state = this.task.attach(criterionId, evidenceId, observedItems);
+    await this.#persistTaskState();
+    await this.flushTaskState();
+    return state;
   }
 
   /**
@@ -279,13 +313,19 @@ export class BrowserTaskSession {
         : { sourceOffset: continuation.sourceOffset }),
     };
     const raw = await this.use((driver) => driver.observe(bounded, signal), signal);
-    return this.adopt(raw, { cursor, focus });
+    const record = this.adopt(raw, { cursor, focus, screenshotScope: driverRequest.screenshot });
+    await this.flushTaskState();
+    return record;
   }
 
   /** Files an observation the driver produced outside `observe` — a takeover resume, say. */
   adopt(
     raw: BrowserObservation,
-    projection: { cursor?: string | undefined; focus?: string | undefined } = {},
+    projection: {
+      cursor?: string | undefined;
+      focus?: string | undefined;
+      screenshotScope?: ObserveRequest["screenshot"] | undefined;
+    } = {},
   ): ObservationRecord {
     const tabId = raw.tab.id;
     const prior = this.#records.get(tabId);
@@ -449,7 +489,10 @@ export class BrowserTaskSession {
             : 0,
       });
     }
-    const sourceIncomplete = aggregateCapped;
+    const documentHeight = raw.viewport.documentHeight;
+    const viewportIncomplete =
+      documentHeight !== undefined && raw.viewport.scrollY + raw.viewport.height < documentHeight;
+    const sourceIncomplete = aggregateCapped || viewportIncomplete;
     const snapshot = elements
       .map(
         (element) =>
@@ -488,6 +531,9 @@ export class BrowserTaskSession {
       injections: scanObservation(sourceObservation),
       observedAt: this.#now(),
       evidenceId,
+      ...(projection.screenshotScope === undefined
+        ? {}
+        : { screenshotScope: projection.screenshotScope }),
     };
     const coverage = observation.coverage;
     this.task.record({
@@ -501,10 +547,23 @@ export class BrowserTaskSession {
         : {
             order: coverage.order,
             range: { start: coverage.start, end: coverage.end, total: coverage.total },
+            ...(observation.viewport.documentHeight === undefined
+              ? {}
+              : {
+                  viewportRange: {
+                    start: observation.viewport.scrollY,
+                    end: Math.min(
+                      observation.viewport.scrollY + observation.viewport.height,
+                      observation.viewport.documentHeight,
+                    ),
+                    total: observation.viewport.documentHeight,
+                  },
+                }),
             hasMore: coverage.hasMore,
             sourceIncomplete: coverage.sourceIncomplete,
           }),
     });
+    void this.#persistTaskState();
     this.#records.set(tabId, record);
     this.#activeTabId = tabId;
     if (!unchanged && this.facts !== undefined) {
@@ -725,6 +784,7 @@ export class BrowserTaskSession {
       action: entry.action,
       outcome: entry.outcome,
     });
+    void this.#persistTaskState();
     return recorded;
   }
 
@@ -736,6 +796,29 @@ export class BrowserTaskSession {
   #mintEvidenceId(): string {
     this.#evidenceSeq += 1;
     return `evidence-${this.#evidenceSeq}`;
+  }
+
+  async flushTaskState(): Promise<void> {
+    await this.#taskSave;
+    if (this.#taskSaveError !== undefined) {
+      const error = this.#taskSaveError;
+      this.#taskSaveError = undefined;
+      throw error;
+    }
+  }
+
+  #persistTaskState(): Promise<void> {
+    const store = this.#taskStateStore;
+    const sessionId = this.#taskStateSessionId;
+    if (store === undefined || sessionId === undefined) return Promise.resolve();
+    const snapshot = this.task.snapshot();
+    this.#taskSave = this.#taskSave
+      .catch(() => {})
+      .then(() => store.save(sessionId, snapshot))
+      .catch((error: unknown) => {
+        this.#taskSaveError = error;
+      });
+    return this.#taskSave;
   }
 }
 

@@ -166,6 +166,10 @@ export function observationFacts(record: ObservationRecord): string[] {
       facts.push(
         `more controls or source chunks are available: call browser_observe with cursor "${coverage.nextCursor}"`,
       );
+    } else if (coverage.hasMore) {
+      facts.push(
+        `more rendered content may exist below: scroll by at most one viewport (${observation.viewport.height}px), then observe again`,
+      );
     }
   }
   if (record.injections.length > 0) facts.push(describeInjection(record.injections));

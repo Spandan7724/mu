@@ -13,6 +13,7 @@ import {
   type BrowserAction,
   type BrowserDialog,
   type BrowserDownload,
+  type BrowserPointerAction,
   blockedOutcome,
   completedOutcome,
   type DialogAcceptance,
@@ -442,6 +443,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     height: number;
     scrollX: number;
     scrollY: number;
+    documentWidth: number;
+    documentHeight: number;
     // "complete" only once the response finished. A commitment that leaves the
     // document short of it is an outcome Mu cannot establish (BD18).
     readyState: string;
@@ -565,6 +568,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       height: window.innerHeight,
       scrollX: Math.round(window.scrollX),
       scrollY: Math.round(window.scrollY),
+      documentWidth: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+      documentHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
       readyState: document.readyState,
       frameUrls,
     };
@@ -576,6 +581,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       height: 0,
       scrollX: 0,
       scrollY: 0,
+      documentWidth: 0,
+      documentHeight: 0,
       readyState: "unknown",
       frameUrls: [],
     };
@@ -598,6 +605,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         height: read("height"),
         scrollX: read("scrollX"),
         scrollY: read("scrollY"),
+        documentWidth: read("documentWidth"),
+        documentHeight: read("documentHeight"),
         readyState: typeof parsed.readyState === "string" ? parsed.readyState : "unknown",
         frameUrls: Array.isArray(parsed.frameUrls)
           ? parsed.frameUrls.filter((entry): entry is string => typeof entry === "string")
@@ -649,6 +658,8 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       height: metadata.height,
       scrollX: metadata.scrollX,
       scrollY: metadata.scrollY,
+      documentWidth: metadata.documentWidth,
+      documentHeight: metadata.documentHeight,
     };
     const credentialPage = all.some((element) => element.inputType === "password");
     const wantsImage = request.screenshot === "viewport" || request.screenshot === "full-page";
@@ -1265,6 +1276,50 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         after,
         ...(navigation === undefined ? {} : { navigation }),
         ...(download === undefined ? {} : { details: downloadDetails(download) }),
+      });
+    },
+
+    async pointer(request: BrowserPointerAction, signal: AbortSignal) {
+      requireReady();
+      throwIfAborted(signal);
+      const tab = await ensureActive(undefined, signal);
+      const before = snapshotOf(tab);
+      switch (request.kind) {
+        case "click":
+        case "double-click":
+          await call(
+            "browser_mouse_click_xy",
+            { x: request.x, y: request.y, clickCount: request.kind === "double-click" ? 2 : 1 },
+            signal,
+          );
+          break;
+        case "move":
+          await call("browser_mouse_move_xy", { x: request.x, y: request.y }, signal);
+          break;
+        case "drag":
+          await call(
+            "browser_mouse_drag_xy",
+            { startX: request.x, startY: request.y, endX: request.toX, endY: request.toY },
+            signal,
+          );
+          break;
+        case "scroll":
+          await call("browser_mouse_move_xy", { x: request.x, y: request.y }, signal);
+          await call(
+            "browser_mouse_wheel",
+            { deltaX: request.deltaX, deltaY: request.deltaY },
+            signal,
+          );
+          break;
+      }
+      const { tab: updated } = await afterAction(tab.id, signal);
+      const after = resultOf(updated);
+      const navigation = navigationOf(before, after);
+      return completedOutcome({
+        message: `Pointer ${request.kind} completed.`,
+        before,
+        after,
+        ...(navigation === undefined ? {} : { navigation }),
       });
     },
 

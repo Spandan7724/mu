@@ -53,6 +53,7 @@ export class BrowserRuntime implements ProfileRuntime {
   private controller: AbortController | undefined;
   private connecting: Promise<BrowserDriver> | undefined;
   private readonly listeners = new Set<BrowserRuntimeListener>();
+  private readonly shutdownHooks = new Set<() => Promise<void>>();
   private readonly entries: BrowserRuntimeJournalEntry[] = [];
   private readonly now: () => number;
 
@@ -71,6 +72,11 @@ export class BrowserRuntime implements ProfileRuntime {
   subscribe(listener: BrowserRuntimeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  addShutdownHook(hook: () => Promise<void>): () => void {
+    this.shutdownHooks.add(hook);
+    return () => this.shutdownHooks.delete(hook);
   }
 
   get journal(): readonly BrowserRuntimeJournalEntry[] {
@@ -221,6 +227,7 @@ export class BrowserRuntime implements ProfileRuntime {
 
   // The browser is Mu-owned; await its close and profile-lock release before returning.
   async shutdown(): Promise<void> {
+    await Promise.all([...this.shutdownHooks].map((hook) => hook()));
     const handle = this.handle;
     if (!handle) {
       this.phase = "disconnected";

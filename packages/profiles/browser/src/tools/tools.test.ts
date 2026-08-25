@@ -162,6 +162,69 @@ describe("browser_observe", () => {
     }
   });
 
+  test("a virtualized page requires contiguous viewport observations before exhaustion", async () => {
+    const url = `${FAKE_ORIGIN}/virtualized`;
+    const harness = createHarness({
+      site: {
+        origin: FAKE_ORIGIN,
+        landingUrl: url,
+        pages: new Map([
+          [
+            url,
+            {
+              url,
+              title: "Virtualized catalog",
+              summary: "Rows are rendered as the viewport moves.",
+              elements: [],
+              contentHeight: 1_800,
+            },
+          ],
+        ]),
+      },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      await harness.session.beginTask("virtualized-task");
+      await harness.session.planTask(
+        [{ id: "all", description: "Inspect every rendered viewport", kind: "exhaustive" }],
+        ["Observe each viewport without gaps"],
+      );
+      const observe = browserObserveTool({ session: harness.session });
+      const records = [];
+      const first = await observe.execute("c1", {}, signal());
+      records.push(
+        harness.session.record() as NonNullable<ReturnType<typeof harness.session.record>>,
+      );
+      expect(resultText(first)).toContain("scroll by at most one viewport (720px)");
+
+      await harness.runtime.use(
+        (driver) => driver.act({ kind: "scroll", deltaX: 0, deltaY: 720 }, signal()),
+        signal(),
+      );
+      await observe.execute("c2", {}, signal());
+      records.push(
+        harness.session.record() as NonNullable<ReturnType<typeof harness.session.record>>,
+      );
+      await harness.runtime.use(
+        (driver) => driver.act({ kind: "scroll", deltaX: 0, deltaY: 720 }, signal()),
+        signal(),
+      );
+      const last = await observe.execute("c3", {}, signal());
+      records.push(
+        harness.session.record() as NonNullable<ReturnType<typeof harness.session.record>>,
+      );
+      expect(resultText(last)).not.toContain("more rendered content may exist below");
+      expect(records.map((record) => record.observation.viewport.scrollY)).toEqual([0, 720, 1_080]);
+
+      for (const record of records) {
+        await harness.session.attachTaskEvidence("all", record.evidenceId);
+      }
+      expect(harness.session.task.state().status).toBe("satisfied");
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
   test("its permission projection is observe against the page's origin", async () => {
     const harness = createHarness({ allowedOrigins: [FAKE_ORIGIN] });
     try {

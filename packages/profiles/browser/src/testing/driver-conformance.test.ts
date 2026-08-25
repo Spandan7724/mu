@@ -94,6 +94,7 @@ function inertDriver(): BrowserDriver {
     observe: refuse,
     navigate: refuse,
     act: refuse,
+    pointer: refuse,
     submit: refuse,
     tabs: refuse,
     upload: refuse,

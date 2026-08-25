@@ -13,6 +13,7 @@ import {
   actionTargets,
   type BrowserAction,
   type BrowserDialog,
+  type BrowserPointerAction,
   blockedOutcome,
   completedOutcome,
   downloadDetails,
@@ -266,6 +267,7 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
       ...(spec.inputType === undefined ? {} : { inputType: spec.inputType }),
       ...(credential || options_ === undefined ? {} : { options: options_ }),
       ...(spec.risk === undefined ? {} : { risk: [...spec.risk] }),
+      ...(spec.box === undefined ? {} : { box: { ...spec.box } }),
     };
   };
 
@@ -303,6 +305,8 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
         height: VIEWPORT.height,
         scrollX: tab.scrollX,
         scrollY: tab.scrollY,
+        documentWidth: VIEWPORT.width,
+        documentHeight: page.contentHeight ?? VIEWPORT.height,
       },
       frames: frameList(page),
       summary: page.summary,
@@ -619,8 +623,15 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
         const tab = tabById(activeTabId);
         const before = snapshotOf(tab);
         if (request.kind === "scroll") {
-          tab.scrollX += request.deltaX;
-          tab.scrollY = Math.max(0, tab.scrollY + request.deltaY);
+          const page = pageFor(tab);
+          tab.scrollX = Math.max(0, tab.scrollX + request.deltaX);
+          tab.scrollY = Math.max(
+            0,
+            Math.min(
+              (page.contentHeight ?? VIEWPORT.height) - VIEWPORT.height,
+              tab.scrollY + request.deltaY,
+            ),
+          );
           return ok({ message: "Scrolled.", before, after: resultOf(tab) });
         }
         return ok({ message: "Sent the key to the page.", before, after: resultOf(tab) });
@@ -645,10 +656,40 @@ export function createFakeBrowserDriver(options: FakeBrowserDriverOptions = {}):
         });
       }
       if (request.kind === "scroll") {
-        tab.scrollX += request.deltaX;
-        tab.scrollY = Math.max(0, tab.scrollY + request.deltaY);
+        const page = pageFor(tab);
+        tab.scrollX = Math.max(0, tab.scrollX + request.deltaX);
+        tab.scrollY = Math.max(
+          0,
+          Math.min(
+            (page.contentHeight ?? VIEWPORT.height) - VIEWPORT.height,
+            tab.scrollY + request.deltaY,
+          ),
+        );
       }
       return applyAction(request, tab, spec, before);
+    },
+
+    async pointer(request: BrowserPointerAction, signal: AbortSignal) {
+      requireReady();
+      throwIfAborted(signal);
+      const tab = tabById(activeTabId);
+      const before = snapshotOf(tab);
+      if (request.kind === "scroll") {
+        const page = pageFor(tab);
+        tab.scrollX = Math.max(0, tab.scrollX + request.deltaX);
+        tab.scrollY = Math.max(
+          0,
+          Math.min(
+            (page.contentHeight ?? VIEWPORT.height) - VIEWPORT.height,
+            tab.scrollY + request.deltaY,
+          ),
+        );
+      }
+      return completedOutcome({
+        message: `Pointer ${request.kind} completed.`,
+        before,
+        after: resultOf(tab),
+      });
     },
 
     async submit(request: SubmitRequest, signal: AbortSignal) {

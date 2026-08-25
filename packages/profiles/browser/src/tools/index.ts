@@ -3,6 +3,7 @@ import { BROWSER_ACT_TOOL, browserActTool } from "./act.ts";
 import type { BrowserToolContext } from "./context.ts";
 import { BROWSER_NAVIGATE_TOOL, browserNavigateTool } from "./navigate.ts";
 import { BROWSER_OBSERVE_TOOL, browserObserveTool } from "./observe.ts";
+import { BROWSER_POINTER_TOOL, browserPointerTool } from "./pointer.ts";
 import { BROWSER_SUBMIT_TOOL, browserSubmitTool } from "./submit.ts";
 import { BROWSER_TABS_TOOL, browserTabsTool } from "./tabs.ts";
 import { BROWSER_TAKEOVER_TOOL, browserTakeoverTool } from "./takeover.ts";
@@ -20,6 +21,7 @@ export { BROWSER_OBSERVE_TOOL, browserObserveTool } from "./observe.ts";
 export { runBrowserOperation, stage, stop } from "./operation.ts";
 export type { ActionPreparation, PreparedAction, RefusedAction } from "./pipeline.ts";
 export { checkActionability, prepareAction } from "./pipeline.ts";
+export { BROWSER_POINTER_TOOL, browserPointerTool } from "./pointer.ts";
 export {
   describeElement,
   observationFacts,
@@ -53,13 +55,14 @@ export { BROWSER_UPLOAD_TOOL, browserUploadTool } from "./upload.ts";
 export { BROWSER_WAIT_TOOL, browserWaitTool } from "./wait.ts";
 
 /**
- * TOOLS.md's model-facing surface. `browser_pointer` is B8 and stays absent; a generic
- * action cannot substitute for a commitment or an upload, which is what the dedicated
- * tools exist to enforce.
+ * TOOLS.md's model-facing surface. Pointer interaction remains a separate screenshot-bound
+ * fallback; a generic action cannot substitute for a commitment or an upload, which is
+ * what the dedicated tools exist to enforce.
  */
 export const BROWSER_TOOL_NAMES = [
   BROWSER_TASK_TOOL,
   BROWSER_OBSERVE_TOOL,
+  BROWSER_POINTER_TOOL,
   BROWSER_NAVIGATE_TOOL,
   BROWSER_TABS_TOOL,
   BROWSER_ACT_TOOL,
@@ -77,6 +80,7 @@ export function browserToolset(context: BrowserToolContext): AnyTool[] {
   return [
     browserTaskTool(context) as AnyTool,
     browserObserveTool(context) as AnyTool,
+    browserPointerTool(context) as AnyTool,
     browserNavigateTool(context) as AnyTool,
     browserTabsTool(context) as AnyTool,
     browserActTool(context) as AnyTool,

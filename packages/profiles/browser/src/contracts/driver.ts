@@ -1,6 +1,7 @@
 import type {
   ActionOutcome,
   BrowserAction,
+  BrowserPointerAction,
   NavigateRequest,
   ObserveRequest,
   SubmitRequest,
@@ -22,6 +23,7 @@ export interface BrowserDriver {
   observe(request: ObserveRequest, signal: AbortSignal): Promise<BrowserObservation>;
   navigate(request: NavigateRequest, signal: AbortSignal): Promise<ActionOutcome>;
   act(request: BrowserAction, signal: AbortSignal): Promise<ActionOutcome>;
+  pointer(request: BrowserPointerAction, signal: AbortSignal): Promise<ActionOutcome>;
   submit(request: SubmitRequest, signal: AbortSignal): Promise<ActionOutcome>;
   tabs(request: TabRequest, signal: AbortSignal): Promise<TabOutcome>;
   upload(request: UploadRequest, signal: AbortSignal): Promise<ActionOutcome>;
