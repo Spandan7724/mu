@@ -131,6 +131,18 @@ describe("describeElement never displays a credential value (defense in depth)",
     });
     expect(describeElement(element)).toContain("Ada Lovelace");
   });
+
+  test("static accessibility context is shown with a catalog control", () => {
+    const element = sampleElement({
+      ref: elementRefId("e5"),
+      role: "link",
+      label: "granite4.2",
+      description: "IBM enterprise foundation model · 3B, 8B, 30B",
+    });
+    expect(describeElement(element)).toContain(
+      'context: "IBM enterprise foundation model · 3B, 8B, 30B"',
+    );
+  });
 });
 
 describe("screenshotSuppressed", () => {

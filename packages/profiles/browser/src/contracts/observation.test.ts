@@ -110,6 +110,35 @@ describe("observation", () => {
       browserObservationSchema.safeParse({ ...sampleObservation(), cookies: "session=1" }).success,
     ).toBe(false);
   });
+
+  test("a semantic continuation declares an internally consistent range", () => {
+    const observation = sampleObservation({
+      coverage: {
+        start: 0,
+        end: 2,
+        total: 10,
+        hasMore: true,
+        nextCursor: "cursor-1",
+        sourceIncomplete: false,
+      },
+    });
+    expect(browserObservationSchema.safeParse(observation).success).toBe(true);
+  });
+
+  test("an invalid semantic range or cursor fails closed", () => {
+    const observation = sampleObservation({
+      coverage: {
+        start: 8,
+        end: 11,
+        total: 10,
+        hasMore: false,
+        nextCursor: "cursor-1",
+        sourceIncomplete: false,
+      },
+    });
+    expect(issues(observation)).toContain("observation coverage range is invalid");
+    expect(issues(observation)).toContain("a continuation cursor requires another indexed window");
+  });
 });
 
 describe("credential redaction", () => {

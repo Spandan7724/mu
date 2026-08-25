@@ -3,7 +3,12 @@
 // parser honest when no browser is present.
 import { describe, expect, test } from "bun:test";
 import { parseSidecarResponse, parseTabList, sidecarErrorMessage } from "./response.ts";
-import { parseSnapshot, prioritizeSnapshotNodes, structuralSignature } from "./snapshot.ts";
+import {
+  contextualText,
+  parseSnapshot,
+  prioritizeSnapshotNodes,
+  structuralSignature,
+} from "./snapshot.ts";
 
 const SNAPSHOT_RESPONSE = [
   "### Page",
@@ -107,6 +112,21 @@ describe("accessibility snapshot parsing", () => {
   test("boxed snapshots keep geometry on the same accessibility ref", () => {
     const [node] = parseSnapshot('- link "Model 241" [ref=e241] [box=24,-10,640,96]');
     expect(node?.box).toEqual({ x: 24, y: -10, width: 640, height: 96 });
+  });
+
+  test("a catalog link keeps the static text from its accessibility card", () => {
+    const nodes = parseSnapshot(`- listitem
+  - link "granite4.2" [ref=e1]
+  - paragraph "IBM enterprise foundation model"
+  - text "3B, 8B, 30B"
+- listitem
+  - link "ornith-1.5" [ref=e2]
+  - paragraph "Multimodal model family"`);
+    const link = nodes.find((node) => node.ref === "e1");
+    expect(link).toBeDefined();
+    expect(contextualText(link as NonNullable<typeof link>, nodes)).toBe(
+      "IBM enterprise foundation model · 3B, 8B, 30B",
+    );
   });
 
   test("state flags are read as flags", () => {

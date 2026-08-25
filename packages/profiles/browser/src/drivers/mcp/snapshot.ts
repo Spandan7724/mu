@@ -246,3 +246,37 @@ export function textSnapshot(nodes: readonly SnapshotNode[]): string {
     })
     .join("\n");
 }
+
+const CONTEXT_ROLES = new Set(["article", "listitem", "row", "cell", "group"]);
+
+/** Static text grouped with a control by the accessibility tree, not DOM proximity. */
+export function contextualText(
+  node: SnapshotNode,
+  nodes: readonly SnapshotNode[],
+): string | undefined {
+  let root: SnapshotNode | undefined = CONTEXT_ROLES.has(node.role) ? node : undefined;
+  for (let parent = node.parent; parent !== undefined; parent = parent.parent) {
+    if (CONTEXT_ROLES.has(parent.role)) {
+      root = parent;
+      break;
+    }
+  }
+
+  if (root === undefined) return undefined;
+
+  const start = nodes.indexOf(root);
+  if (start < 0) return undefined;
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  for (let index = start; index < nodes.length; index += 1) {
+    const entry = nodes[index] as SnapshotNode;
+    if (index > start && entry.depth <= root.depth) break;
+    for (const value of [entry.name, entry.ref === undefined ? entry.value : undefined]) {
+      const text = value?.replace(/\s+/g, " ").trim();
+      if (text === undefined || text.length === 0 || text === node.name || seen.has(text)) continue;
+      seen.add(text);
+      parts.push(text);
+    }
+  }
+  return parts.length === 0 ? undefined : parts.join(" · ");
+}

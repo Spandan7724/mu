@@ -70,6 +70,7 @@ import {
 } from "./response.ts";
 import { assertSupportedServer } from "./sidecar.ts";
 import {
+  contextualText,
   parseSnapshot,
   type SnapshotNode,
   structuralSignature,
@@ -373,7 +374,12 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     return [...frames.values()].slice(0, BROWSER_LIMITS.maxFrames);
   };
 
-  const elementFor = (node: SnapshotNode, tab: TabState, frameIds: Set<string>): BrowserElement => {
+  const elementFor = (
+    node: SnapshotNode,
+    nodes: readonly SnapshotNode[],
+    tab: TabState,
+    frameIds: Set<string>,
+  ): BrowserElement => {
     const inputType = INPUT_TYPES[node.role];
     const attached = node.ref === undefined ? undefined : tab.attachments.get(node.ref);
     const credential = isCredentialControl({ role: node.role, name: node.name, inputType });
@@ -384,6 +390,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     });
     const checked = node.attributes.checked;
     const frameId = node.framePrefix;
+    const description = contextualText(node, nodes);
     const options = node.options.slice(0, BROWSER_LIMITS.maxOptionsPerElement).map((option) => ({
       label: bounded(option.label, 2_000),
       value: bounded(option.label, 2_000),
@@ -397,6 +404,9 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       role: bounded(node.role, 64),
       ...(node.name === undefined ? {} : { name: bounded(node.name, 2_000) }),
       ...(node.name === undefined ? {} : { label: bounded(node.name, 2_000) }),
+      ...(credential || description === undefined
+        ? {}
+        : { description: bounded(description, 2_000) }),
       // BD14: a credential field's value is never observed, whatever the page shows.
       ...(credential
         ? { value: REDACTED }
@@ -611,7 +621,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       (node) => node.ref !== undefined && node.role !== "iframe",
     );
     const all = referenced.map((node) =>
-      withCheckedDefault(elementFor(node, page.tab, frameIds), node),
+      withCheckedDefault(elementFor(node, page.nodes, page.tab, frameIds), node),
     );
     const maxNodes = Math.min(
       request.maxNodes ?? BROWSER_LIMITS.maxElements,

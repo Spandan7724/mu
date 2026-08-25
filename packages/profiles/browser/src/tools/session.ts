@@ -303,7 +303,9 @@ export class BrowserTaskSession {
       (priorCursor.tabId !== tabId || priorCursor.digest !== digest)
     ) {
       this.#cursors.delete(projection.cursor as string);
-      throw new TypeError("that observation cursor is stale because the page changed; observe again");
+      throw new TypeError(
+        "that observation cursor is stale because the page changed; observe again",
+      );
     }
 
     const byDriverRef = new Map<string, BrowserElement>();
@@ -323,7 +325,13 @@ export class BrowserTaskSession {
           box.y + box.height > 0 &&
           box.x < raw.viewport.width &&
           box.y < raw.viewport.height;
-        const text = [element.role, element.name, element.label, element.placeholder]
+        const text = [
+          element.role,
+          element.name,
+          element.label,
+          element.placeholder,
+          element.description,
+        ]
           .filter((entry): entry is string => entry !== undefined)
           .join(" ")
           .toLowerCase();
@@ -346,7 +354,9 @@ export class BrowserTaskSession {
           });
     if (priorCursor !== undefined && ordered.length !== priorCursor.order.length) {
       this.#cursors.delete(projection.cursor as string);
-      throw new TypeError("that observation cursor is stale because its controls changed; observe again");
+      throw new TypeError(
+        "that observation cursor is stale because its controls changed; observe again",
+      );
     }
     const start = priorCursor?.offset ?? 0;
     const end = Math.min(start + OBSERVATION_BUDGET.maxRenderedElements, ordered.length);
@@ -361,7 +371,7 @@ export class BrowserTaskSession {
     const snapshot = elements
       .map(
         (element) =>
-          `${element.role ?? "generic"} "${element.label ?? element.name ?? element.ref}"${element.value === undefined ? "" : `: ${element.value}`}`,
+          `${element.role ?? "generic"} "${element.label ?? element.name ?? element.ref}"${element.description === undefined ? "" : ` — ${element.description}`}${element.value === undefined ? "" : `: ${element.value}`}`,
       )
       .join("\n")
       .slice(0, OBSERVATION_BUDGET.maxTextChars);
@@ -369,7 +379,11 @@ export class BrowserTaskSession {
       ...sourceObservation,
       elements,
       snapshot,
-      summary: `${raw.title || raw.url} — showing controls ${start + 1}-${end} of ${ordered.length}${sourceIncomplete ? "+ indexed" : ""}`,
+      summary:
+        `${raw.summary}\nShowing controls ${start + 1}-${end} of ${ordered.length}${sourceIncomplete ? "+ indexed" : ""}`.slice(
+          0,
+          OBSERVATION_BUDGET.maxSummaryChars,
+        ),
       coverage: {
         start,
         end,

@@ -50,6 +50,11 @@ function displayValue(element: BrowserElement): string | undefined {
 
 export function describeElement(element: BrowserElement): string {
   const parts = [`[${element.ref}] ${element.role ?? "control"} "${elementCaption(element)}"`];
+  if (element.description !== undefined && element.description.length > 0) {
+    parts.push(
+      `context: ${JSON.stringify(clip(element.description, OBSERVATION_BUDGET.maxValueChars))}`,
+    );
+  }
   const value = displayValue(element);
   if (value !== undefined) parts.push(`= ${JSON.stringify(value)}`);
   if (element.options !== undefined && element.options.length > 0) {
@@ -113,7 +118,10 @@ export function observationHeadline(record: ObservationRecord): string {
   const observation = record.observation;
   const controls = observation.elements.length;
   const coverage = observation.coverage;
-  const count = coverage === undefined ? `${controls}` : `${coverage.total}${coverage.sourceIncomplete ? "+" : ""}`;
+  const count =
+    coverage === undefined
+      ? `${controls}`
+      : `${coverage.total}${coverage.sourceIncomplete ? "+" : ""}`;
   return `Observed "${clip(observation.title, 120)}" · ${count} control${
     count === "1" ? "" : "s"
   } · ${observation.url} · revision ${observation.revision}`;
@@ -151,7 +159,9 @@ export function observationFacts(record: ObservationRecord): string[] {
       }`,
     );
     if (coverage.nextCursor !== undefined) {
-      facts.push(`more controls are available: call browser_observe with cursor "${coverage.nextCursor}"`);
+      facts.push(
+        `more controls are available: call browser_observe with cursor "${coverage.nextCursor}"`,
+      );
     }
   }
   if (record.injections.length > 0) facts.push(describeInjection(record.injections));
