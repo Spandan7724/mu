@@ -101,7 +101,7 @@ describe("browser_observe", () => {
     }
   });
 
-  test("a page larger than the budget is cut between controls and says so", async () => {
+  test("an oversized page is traversed through stable, non-overlapping semantic windows", async () => {
     const many: FakeElementSpec[] = Array.from({ length: 400 }, (_, index) => ({
       ref: `e${index}`,
       role: "textbox",
@@ -117,12 +117,44 @@ describe("browser_observe", () => {
     });
     try {
       const observe = browserObserveTool({ session: harness.session });
-      const text = resultText(await observe.execute("c1", {}, signal()));
-      expect(text).toContain("further control(s) not shown");
+      const first = await observe.execute("c1", {}, signal());
+      const text = resultText(first);
+      expect(text).toContain("semantic window 1-120 of 400");
+      expect(text).toContain('cursor "cursor-1"');
+      const second = resultText(await observe.execute("c2", { cursor: "cursor-1" }, signal()));
+      expect(second).toContain("semantic window 121-240 of 400");
+      expect(second).toContain("Field 120");
+      expect(second).not.toContain('textbox "Field 0"');
       // Never a half-written control: every rendered line is complete.
       for (const line of text.split("\n").filter((entry) => entry.startsWith("[r"))) {
         expect(line).toMatch(/^\[r\d+\] textbox "Field \d+"$/);
       }
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  test("focus searches beyond the first semantic window", async () => {
+    const many: FakeElementSpec[] = Array.from({ length: 400 }, (_, index) => ({
+      ref: `e${index}`,
+      role: "link",
+      name: `Model ${index}`,
+      label: `Model ${index}`,
+    }));
+    const url = `${FAKE_ORIGIN}/catalog`;
+    const harness = createHarness({
+      site: {
+        origin: FAKE_ORIGIN,
+        landingUrl: url,
+        pages: new Map([[url, { url, title: "Catalog", summary: "Models", elements: many }]]),
+      },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      const observe = browserObserveTool({ session: harness.session });
+      const text = resultText(await observe.execute("c1", { focus: "Model 399" }, signal()));
+      expect(text).toContain('[r400] link "Model 399"');
+      expect(text.indexOf("Model 399")).toBeLessThan(text.indexOf("Model 0"));
     } finally {
       await harness.shutdown();
     }

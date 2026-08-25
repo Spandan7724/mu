@@ -17,6 +17,7 @@ import type { ApplicantPolicy } from "../contracts/applicant.ts";
 import type { BrowserCarryover, BrowserCarryoverField } from "../contracts/carryover.ts";
 import type { DisclosureRecord } from "../contracts/disclosure.ts";
 import type { BrowserDriver } from "../contracts/driver.ts";
+import { BROWSER_LIMITS } from "../contracts/json.ts";
 import {
   type BrowserElement,
   type BrowserElementRef,
@@ -59,12 +60,21 @@ export interface ObservationRecord {
   revision: ObservationRevision;
   /** Session-facing: opaque refs, session revision, everything else as observed. */
   observation: BrowserObservation;
+  /** Complete bounded source for policy, focus, continuations, and ref validation. */
+  sourceObservation: BrowserObservation;
   digest: string;
   targets: ReadonlyMap<string, ObservationTarget>;
   /** Identities as of the revision that minted these refs, for the identity check. */
   minted: ReadonlyMap<string, string>;
   injections: InjectionFinding[];
   observedAt: number;
+}
+
+export interface SessionObserveRequest extends ObserveRequest {
+  /** Opaque continuation issued by an earlier observation of this revision. */
+  cursor?: string | undefined;
+  /** Semantic search over the complete bounded source, never a selector. */
+  focus?: string | undefined;
 }
 
 export type TargetResolution =
@@ -86,6 +96,13 @@ export interface BrowserAuditEntry {
 }
 
 const MAX_AUDIT_ENTRIES = 200;
+
+interface ObservationCursor {
+  tabId: string;
+  digest: string;
+  offset: number;
+  order: string[];
+}
 
 export interface BrowserTaskSessionOptions {
   runtime: BrowserRuntime;
@@ -116,6 +133,7 @@ export class BrowserTaskSession {
   #policy: BrowserPolicyState;
   readonly #now: () => number;
   readonly #records = new Map<string, ObservationRecord>();
+  readonly #cursors = new Map<string, ObservationCursor>();
   readonly #plans = new Map<string, FillPlan>();
   readonly #audit: BrowserAuditEntry[] = [];
   readonly #filledFields: BrowserCarryoverField[] = [];
@@ -125,6 +143,7 @@ export class BrowserTaskSession {
   #receiptId: string | undefined;
   #revisionSeq = 0;
   #refSeq = 0;
+  #cursorSeq = 0;
   #activeTabId: string | undefined;
 
   constructor(options: BrowserTaskSessionOptions) {
@@ -211,24 +230,24 @@ export class BrowserTaskSession {
    * Observe and file the result. Callers get a record whose refs are safe to hand the
    * model; nothing else in this package mints one.
    */
-  async observe(request: ObserveRequest, signal: AbortSignal): Promise<ObservationRecord> {
+  async observe(request: SessionObserveRequest, signal: AbortSignal): Promise<ObservationRecord> {
+    const { cursor, focus, ...driverRequest } = request;
     const bounded: ObserveRequest = {
-      ...request,
-      maxNodes: Math.min(
-        request.maxNodes ?? OBSERVATION_BUDGET.maxElements,
-        OBSERVATION_BUDGET.maxElements,
-      ),
-      maxTextChars: Math.min(
-        request.maxTextChars ?? OBSERVATION_BUDGET.maxTextChars,
-        OBSERVATION_BUDGET.maxTextChars,
-      ),
+      ...driverRequest,
+      // This is the private source backstop, not the model-facing window. Applying the
+      // smaller context budget here made omitted controls semantically nonexistent.
+      maxNodes: BROWSER_LIMITS.maxElements,
+      maxTextChars: BROWSER_LIMITS.maxSnapshotChars,
     };
     const raw = await this.use((driver) => driver.observe(bounded, signal), signal);
-    return this.adopt(raw);
+    return this.adopt(raw, { cursor, focus });
   }
 
   /** Files an observation the driver produced outside `observe` — a takeover resume, say. */
-  adopt(raw: BrowserObservation): ObservationRecord {
+  adopt(
+    raw: BrowserObservation,
+    projection: { cursor?: string | undefined; focus?: string | undefined } = {},
+  ): ObservationRecord {
     const tabId = raw.tab.id;
     const digest = observationDigest(raw);
     const prior = this.#records.get(tabId);
@@ -237,7 +256,7 @@ export class BrowserTaskSession {
 
     const targets = new Map<string, ObservationTarget>();
     const minted = new Map<string, string>();
-    const elements: BrowserElement[] = [];
+    const sourceElements: BrowserElement[] = [];
 
     // A ref survives a page change when the same underlying node is still there,
     // unchanged. Both halves are required: the driver's own ref proves it is the same
@@ -263,20 +282,112 @@ export class BrowserTaskSession {
         revision,
         tabId,
       };
-      elements.push(projected);
+      sourceElements.push(projected);
       targets.set(ref, { element: projected, driverRef, signature, identity });
       minted.set(ref, identity);
     });
 
-    const observation: BrowserObservation = { ...raw, revision, elements };
+    const sourceObservation: BrowserObservation = {
+      ...raw,
+      revision,
+      elements: sourceElements,
+      risks: [...new Set(sourceElements.flatMap((element) => element.risk ?? []))],
+    };
+    const priorCursor =
+      projection.cursor === undefined ? undefined : this.#cursors.get(projection.cursor);
+    if (projection.cursor !== undefined && priorCursor === undefined) {
+      throw new TypeError("that observation cursor is unknown or expired; observe from the start");
+    }
+    if (
+      priorCursor !== undefined &&
+      (priorCursor.tabId !== tabId || priorCursor.digest !== digest)
+    ) {
+      this.#cursors.delete(projection.cursor as string);
+      throw new TypeError("that observation cursor is stale because the page changed; observe again");
+    }
+
+    const byDriverRef = new Map<string, BrowserElement>();
+    for (const element of sourceElements) {
+      const driverRef = targets.get(element.ref)?.driverRef.ref;
+      if (driverRef !== undefined) byDriverRef.set(driverRef, element);
+    }
+    const defaultOrder = (): BrowserElement[] => {
+      const needle = projection.focus?.trim().toLowerCase();
+      const scored = sourceElements.map((element, index) => {
+        const box = element.box;
+        const visible =
+          box !== undefined &&
+          box.width > 0 &&
+          box.height > 0 &&
+          box.x + box.width > 0 &&
+          box.y + box.height > 0 &&
+          box.x < raw.viewport.width &&
+          box.y < raw.viewport.height;
+        const text = [element.role, element.name, element.label, element.placeholder]
+          .filter((entry): entry is string => entry !== undefined)
+          .join(" ")
+          .toLowerCase();
+        return { element, index, visible, focused: needle !== undefined && text.includes(needle) };
+      });
+      return scored
+        .sort((a, b) => {
+          if (a.focused !== b.focused) return a.focused ? -1 : 1;
+          if (needle === undefined && a.visible !== b.visible) return a.visible ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map((entry) => entry.element);
+    };
+    const ordered =
+      priorCursor === undefined
+        ? defaultOrder()
+        : priorCursor.order.flatMap((driverRef) => {
+            const element = byDriverRef.get(driverRef);
+            return element === undefined ? [] : [element];
+          });
+    if (priorCursor !== undefined && ordered.length !== priorCursor.order.length) {
+      this.#cursors.delete(projection.cursor as string);
+      throw new TypeError("that observation cursor is stale because its controls changed; observe again");
+    }
+    const start = priorCursor?.offset ?? 0;
+    const end = Math.min(start + OBSERVATION_BUDGET.maxRenderedElements, ordered.length);
+    const elements = ordered.slice(start, end);
+    const order = ordered.map((element) => targets.get(element.ref)?.driverRef.ref ?? "");
+    let nextCursor: string | undefined;
+    if (end < ordered.length) {
+      nextCursor = `cursor-${++this.#cursorSeq}`;
+      this.#cursors.set(nextCursor, { tabId, digest, offset: end, order });
+    }
+    const sourceIncomplete = raw.truncated !== undefined;
+    const snapshot = elements
+      .map(
+        (element) =>
+          `${element.role ?? "generic"} "${element.label ?? element.name ?? element.ref}"${element.value === undefined ? "" : `: ${element.value}`}`,
+      )
+      .join("\n")
+      .slice(0, OBSERVATION_BUDGET.maxTextChars);
+    const observation: BrowserObservation = {
+      ...sourceObservation,
+      elements,
+      snapshot,
+      summary: `${raw.title || raw.url} — showing controls ${start + 1}-${end} of ${ordered.length}${sourceIncomplete ? "+ indexed" : ""}`,
+      coverage: {
+        start,
+        end,
+        total: ordered.length,
+        hasMore: end < ordered.length || sourceIncomplete,
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+        sourceIncomplete,
+      },
+    };
     const record: ObservationRecord = {
       tabId,
       revision,
       observation,
+      sourceObservation,
       digest,
       targets,
       minted,
-      injections: scanObservation(observation),
+      injections: scanObservation(sourceObservation),
       observedAt: this.#now(),
     };
     this.#records.set(tabId, record);
@@ -286,7 +397,7 @@ export class BrowserTaskSession {
         tabId,
         planFill({
           url: observation.url,
-          elements: observation.elements,
+          elements: sourceObservation.elements,
           facts: this.facts,
           policy: this.applicantPolicy,
           questions: createQuestionQueue(),
@@ -356,9 +467,13 @@ export class BrowserTaskSession {
     if (tabId === undefined) {
       this.#records.clear();
       this.#plans.clear();
+      this.#cursors.clear();
     } else {
       this.#records.delete(tabId);
       this.#plans.delete(tabId);
+      for (const [cursor, state] of this.#cursors) {
+        if (state.tabId === tabId) this.#cursors.delete(cursor);
+      }
     }
   }
 

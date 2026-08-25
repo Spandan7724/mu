@@ -80,6 +80,66 @@ describe("the observation ledger", () => {
     }
   });
 
+  test("a reference remains actionable after continuing to another semantic window", async () => {
+    const page = mutablePage(
+      Array.from({ length: 140 }, (_, index) => ({
+        ref: `button-${index}`,
+        role: "button",
+        name: `Inspect ${index}`,
+        label: `Inspect ${index}`,
+      })),
+    );
+    const harness = createHarness({
+      site: { origin: FAKE_ORIGIN, landingUrl: page.url, pages: page.pages },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      const first = await harness.session.observe({}, signal());
+      const oldRef = first.observation.elements[0] as NonNullable<
+        (typeof first.observation.elements)[0]
+      >;
+      const cursor = first.observation.coverage?.nextCursor;
+      expect(cursor).toBeDefined();
+      const second = await harness.session.observe({ cursor }, signal());
+      expect(second.revision).toBe(first.revision);
+      expect(harness.session.resolve(oldRef, second).kind).toBe("resolved");
+
+      const result = await browserActTool({ session: harness.session }).execute(
+        "call-1",
+        {
+          action: "click",
+          target: { ref: oldRef.ref, revision: oldRef.revision, tabId: oldRef.tabId },
+        },
+        signal(),
+      );
+      expect(result.isError).not.toBe(true);
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
+  test("a continuation cursor fails closed after structural mutation", async () => {
+    const page = mutablePage(
+      Array.from({ length: 140 }, (_, index) => textbox(`field-${index}`, `Field ${index}`)),
+    );
+    const harness = createHarness({
+      site: { origin: FAKE_ORIGIN, landingUrl: page.url, pages: page.pages },
+      allowedOrigins: [FAKE_ORIGIN],
+    });
+    try {
+      const first = await harness.session.observe({}, signal());
+      const cursor = first.observation.coverage?.nextCursor;
+      expect(cursor).toBeDefined();
+      page.set([
+        ...Array.from({ length: 139 }, (_, index) => textbox(`field-${index}`, `Field ${index}`)),
+        textbox("replacement", "Replacement"),
+      ]);
+      await expect(harness.session.observe({ cursor }, signal())).rejects.toThrow("cursor is stale");
+    } finally {
+      await harness.shutdown();
+    }
+  });
+
   test("entering a value does not invalidate the references around it", async () => {
     const page = mutablePage([textbox("a", "First"), textbox("b", "Second")]);
     const harness = createHarness({

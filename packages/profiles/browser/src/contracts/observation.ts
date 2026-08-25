@@ -88,6 +88,13 @@ export interface BrowserElementOption {
   selected?: boolean | undefined;
 }
 
+export interface BrowserElementBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface BrowserElement extends BrowserElementRef {
   role?: string | undefined;
   name?: string | undefined;
@@ -103,6 +110,8 @@ export interface BrowserElement extends BrowserElementRef {
   inputType?: string | undefined;
   options?: BrowserElementOption[] | undefined;
   risk?: BrowserRisk[] | undefined;
+  /** Viewport-relative geometry from the same accessibility snapshot as this ref. */
+  box?: BrowserElementBox | undefined;
 }
 
 const text = z.string().max(BROWSER_LIMITS.maxElementTextChars);
@@ -147,6 +156,14 @@ export const browserElementSchema = z
       .max(BROWSER_LIMITS.maxOptionsPerElement)
       .optional(),
     risk: z.array(browserRiskSchema).max(browserRiskSchema.options.length).optional(),
+    box: z
+      .strictObject({
+        x: z.number().int(),
+        y: z.number().int(),
+        width: z.number().int().nonnegative(),
+        height: z.number().int().nonnegative(),
+      })
+      .optional(),
   })
   .superRefine((element, ctx) => {
     if (!isCredentialElement(element)) return;
@@ -186,6 +203,19 @@ export type ScreenshotOmissionReason =
   | "unsupported-format"
   | "unavailable";
 
+export interface BrowserObservationCoverage {
+  /** Zero-based range in this revision's semantic ordering. */
+  start: number;
+  end: number;
+  /** Number of actionable controls in the bounded private source. */
+  total: number;
+  hasMore: boolean;
+  /** Session-issued and revision-bound. Never a selector or browser ref. */
+  nextCursor?: string | undefined;
+  /** The browser source exceeded Mu's private backstop, so `total` is not page-complete. */
+  sourceIncomplete: boolean;
+}
+
 export interface BrowserObservation {
   connectionId: string;
   tab: BrowserTab;
@@ -203,6 +233,7 @@ export interface BrowserObservation {
   screenshot?: BrowserScreenshot | undefined;
   screenshotOmitted?: ScreenshotOmissionReason | undefined;
   truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;
+  coverage?: BrowserObservationCoverage | undefined;
 }
 
 export const browserObservationSchema = z
@@ -239,6 +270,31 @@ export const browserObservationSchema = z
       .strictObject({
         nodesOmitted: z.number().int().nonnegative(),
         textCharsOmitted: z.number().int().nonnegative(),
+      })
+      .optional(),
+    coverage: z
+      .strictObject({
+        start: z.number().int().nonnegative(),
+        end: z.number().int().nonnegative(),
+        total: z.number().int().nonnegative(),
+        hasMore: z.boolean(),
+        nextCursor: identifierSchema.optional(),
+        sourceIncomplete: z.boolean(),
+      })
+      .superRefine((coverage, ctx) => {
+        if (coverage.end < coverage.start || coverage.end > coverage.total) {
+          ctx.addIssue({ code: "custom", message: "observation coverage range is invalid" });
+        }
+        if (coverage.hasMore !== (coverage.end < coverage.total || coverage.sourceIncomplete)) {
+          ctx.addIssue({ code: "custom", path: ["hasMore"], message: "hasMore must match coverage" });
+        }
+        if (coverage.nextCursor !== undefined && coverage.end >= coverage.total) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["nextCursor"],
+            message: "a continuation cursor requires another indexed window",
+          });
+        }
       })
       .optional(),
   })

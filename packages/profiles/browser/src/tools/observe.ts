@@ -29,6 +29,11 @@ const schema = z.object({
     .describe(
       "What you are looking for, in words — a section heading, a field label, a role. A hint for ordering, never a selector.",
     ),
+  cursor: z
+    .string()
+    .max(100)
+    .optional()
+    .describe("Opaque nextCursor from the preceding observation. Omit to start a new window."),
 });
 
 export function observationDetails(
@@ -57,6 +62,7 @@ export function observationDetails(
             : screenshotSuppressed(observation)
               ? "suppressed"
               : "attached",
+    ...(observation.coverage === undefined ? {} : { coverage: observation.coverage }),
     ...(observation.truncated === undefined ? {} : { truncated: observation.truncated }),
     ...(plan === undefined
       ? {}
@@ -69,7 +75,7 @@ export function browserObserveTool(context: BrowserToolContext) {
   return tool({
     name: BROWSER_OBSERVE_TOOL,
     description:
-      "Look at the page: its URL, title, frames and every control you can act on, each with a reference you pass to the other browser tools. References belong to the observation that produced them — after anything changes the page, observe again. Reads the page and changes nothing.",
+      "Look at the page through a bounded semantic window: URL, title, frames and actionable controls with references. Follow nextCursor to continue through an oversized page, or use focus to search the complete indexed source. References remain usable across windows of the same revision; after the page changes, observe again. Reads the page and changes nothing.",
     inputSchema: schema,
     // TOOLS.md: observing races with page mutation and establishes revision state.
     isConcurrencySafe: () => false,
@@ -82,8 +88,8 @@ export function browserObserveTool(context: BrowserToolContext) {
           {
             ...(args.tabId === undefined ? {} : { tabId: args.tabId }),
             ...(args.screenshot === undefined ? {} : { screenshot: args.screenshot }),
-            maxNodes: OBSERVATION_BUDGET.maxElements,
-            maxTextChars: OBSERVATION_BUDGET.maxTextChars,
+            ...(args.focus === undefined ? {} : { focus: args.focus }),
+            ...(args.cursor === undefined ? {} : { cursor: args.cursor }),
           },
           signal,
         );
@@ -137,7 +143,7 @@ export function browserObserveTool(context: BrowserToolContext) {
                 ...(screenshotNotice === undefined ? [] : [screenshotNotice]),
                 "",
                 observationText(record, {
-                  ...(args.focus === undefined ? {} : { focus: args.focus }),
+                  // The session already searched the complete source before projecting.
                 }),
                 ...applicantGuidance,
               ].join("\n"),

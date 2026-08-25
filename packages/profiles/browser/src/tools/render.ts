@@ -112,8 +112,10 @@ export function observationText(
 export function observationHeadline(record: ObservationRecord): string {
   const observation = record.observation;
   const controls = observation.elements.length;
-  return `Observed "${clip(observation.title, 120)}" · ${controls} control${
-    controls === 1 ? "" : "s"
+  const coverage = observation.coverage;
+  const count = coverage === undefined ? `${controls}` : `${coverage.total}${coverage.sourceIncomplete ? "+" : ""}`;
+  return `Observed "${clip(observation.title, 120)}" · ${count} control${
+    count === "1" ? "" : "s"
   } · ${observation.url} · revision ${observation.revision}`;
 }
 
@@ -140,6 +142,17 @@ export function observationFacts(record: ObservationRecord): string[] {
     facts.push(
       `the page exceeded the observation budget: ${observation.truncated.nodesOmitted} node(s) and ${observation.truncated.textCharsOmitted} character(s) were left out`,
     );
+  }
+  if (observation.coverage !== undefined) {
+    const coverage = observation.coverage;
+    facts.push(
+      `semantic window ${coverage.start + 1}-${coverage.end} of ${coverage.total}${
+        coverage.sourceIncomplete ? "+ indexed controls; the source is incomplete" : ""
+      }`,
+    );
+    if (coverage.nextCursor !== undefined) {
+      facts.push(`more controls are available: call browser_observe with cursor "${coverage.nextCursor}"`);
+    }
   }
   if (record.injections.length > 0) facts.push(describeInjection(record.injections));
   return facts;

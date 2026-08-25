@@ -31,6 +31,14 @@ export type BrowserToolDetails =
       risks: string[];
       injections: number;
       screenshot: "attached" | "suppressed" | "unavailable" | "none";
+      coverage?: {
+        start: number;
+        end: number;
+        total: number;
+        hasMore: boolean;
+        nextCursor?: string | undefined;
+        sourceIncomplete: boolean;
+      } | undefined;
       plannedFills?: number | undefined;
       unresolvedQuestions?: number | undefined;
       truncated?: { nodesOmitted: number; textCharsOmitted: number } | undefined;

@@ -162,7 +162,7 @@ describe("the raw tool surface stays behind the adapter", () => {
 });
 
 describe("observation discipline", () => {
-  test("an oversized page prioritizes controls in the viewport before applying maxNodes", async () => {
+  test("an oversized driver snapshot remains canonical document order and requests boxes", async () => {
     const url = "https://fake.mu-browser.test/oversized";
     const site = fakeSite(
       [
@@ -180,10 +180,12 @@ describe("observation discipline", () => {
       ],
       url,
     );
+    let requestedBoxes = false;
     const inner = createScriptedSidecar({ site });
     const sidecar: ScriptedSidecar = {
       ...inner,
       callTool: async (name, args, options) => {
+        if (name === "browser_snapshot") requestedBoxes = args.boxes === true;
         if (name === "browser_evaluate" && String(args.function).includes("window.innerWidth")) {
           return {
             content: [
@@ -196,12 +198,6 @@ describe("observation discipline", () => {
                   scrollY: 24_000,
                   readyState: "complete",
                   frameUrls: [],
-                  visibleControls: [
-                    { role: "link", label: "Model 241", occurrence: 0 },
-                    { role: "link", label: "Model 242", occurrence: 0 },
-                    { role: "link", label: "Model 243", occurrence: 0 },
-                  ],
-                  visibleFramePrefixes: [],
                 })}`,
               },
             ],
@@ -212,10 +208,11 @@ describe("observation discipline", () => {
     };
     const { driver, signal } = await connected(sidecar);
     const observation = await driver.observe({ maxNodes: 20 }, signal);
-    expect(observation.elements.slice(0, 3).map((element) => element.label)).toEqual([
-      "Model 241",
-      "Model 242",
-      "Model 243",
+    expect(requestedBoxes).toBe(true);
+    expect(observation.elements.slice(1, 4).map((element) => element.label)).toEqual([
+      "Model 1",
+      "Model 2",
+      "Model 3",
     ]);
     expect(observation.truncated?.nodesOmitted).toBe(281);
   });

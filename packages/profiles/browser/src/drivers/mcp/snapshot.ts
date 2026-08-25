@@ -24,6 +24,7 @@ export interface SnapshotNode {
   options: SnapshotOption[];
   depth: number;
   parent?: SnapshotNode | undefined;
+  box?: { x: number; y: number; width: number; height: number } | undefined;
 }
 
 export interface VisibleControlHint {
@@ -38,6 +39,7 @@ const ROLE = /^([A-Za-z][A-Za-z0-9_-]*)/;
 const NAME = /^\s*"((?:[^"\\]|\\.)*)"/;
 const ATTRIBUTE = /^\s*\[([A-Za-z][A-Za-z0-9_-]*)(?:=([^\]]*))?\]/;
 const FRAME_REF = /^(f\d+)e\d+$/;
+const BOX = /^(-?\d+),(-?\d+),(\d+),(\d+)$/;
 
 function unquoteEscapes(value: string): string {
   return value.replace(/\\(.)/g, "$1");
@@ -93,6 +95,16 @@ function parseLine(raw: string): ParsedLine | undefined {
 
   const ref = typeof attributes.ref === "string" ? attributes.ref : undefined;
   const frame = ref === undefined ? undefined : FRAME_REF.exec(ref)?.[1];
+  const rawBox = typeof attributes.box === "string" ? BOX.exec(attributes.box) : undefined;
+  const box =
+    rawBox === undefined || rawBox === null
+      ? undefined
+      : {
+          x: Number(rawBox[1]),
+          y: Number(rawBox[2]),
+          width: Number(rawBox[3]),
+          height: Number(rawBox[4]),
+        };
   return {
     depth,
     node: {
@@ -101,6 +113,7 @@ function parseLine(raw: string): ParsedLine | undefined {
       ...(ref === undefined ? {} : { ref }),
       ...(frame === undefined || frame === null ? {} : { framePrefix: frame }),
       ...(value === undefined ? {} : { value }),
+      ...(box === undefined ? {} : { box }),
       attributes,
       options: [],
       depth,

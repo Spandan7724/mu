@@ -191,7 +191,9 @@ export async function prepareAction(
   // risk classification and permission evaluation in ARCHITECTURE §9's order.
   const decision = decideActRequest(session.policy, {
     action: input.action,
-    observation: record.observation,
+    // Whole-page policy must not become weaker because a control fell outside the
+    // bounded window shown to the model.
+    observation: record.sourceObservation,
     ...(input.disclosure === undefined ? {} : { disclosure: input.disclosure }),
   });
 

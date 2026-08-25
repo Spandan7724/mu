@@ -104,6 +104,11 @@ describe("accessibility snapshot parsing", () => {
     expect(byRef("e2")?.attributes.level).toBe("1");
   });
 
+  test("boxed snapshots keep geometry on the same accessibility ref", () => {
+    const [node] = parseSnapshot('- link "Model 241" [ref=e241] [box=24,-10,640,96]');
+    expect(node?.box).toEqual({ x: 24, y: -10, width: 640, height: 96 });
+  });
+
   test("state flags are read as flags", () => {
     expect(byRef("e37")?.attributes.checked).toBe(true);
     expect(byRef("e37")?.attributes.active).toBe(true);

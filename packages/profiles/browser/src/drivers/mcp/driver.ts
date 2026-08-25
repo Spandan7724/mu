@@ -71,10 +71,8 @@ import {
 import { assertSupportedServer } from "./sidecar.ts";
 import {
   parseSnapshot,
-  prioritizeSnapshotNodes,
   type SnapshotNode,
   structuralSignature,
-  type VisibleControlHint,
 } from "./snapshot.ts";
 
 const DEFAULT_WAIT_MS = 5_000;
@@ -322,7 +320,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
   // control appearing, moving or being relabelled must (BD9).
   const readPage = async (tabId: string | undefined, signal: AbortSignal): Promise<PageState> => {
     const tab = await ensureActive(tabId, signal);
-    const response = await call("browser_snapshot", {}, signal);
+    const response = await call("browser_snapshot", { boxes: true }, signal);
     const nodes = parseSnapshot(response.snapshot ?? "");
     const url = response.url ?? tab.url;
     const title = response.title ?? tab.title;
@@ -417,6 +415,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         : { inputType: credential ? "password" : inputType }),
       ...(credential || options.length === 0 ? {} : { options }),
       ...(risks.length === 0 ? {} : { risk: risks }),
+      ...(node.box === undefined ? {} : { box: node.box }),
     };
   };
 
@@ -437,8 +436,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     // document short of it is an outcome Mu cannot establish (BD18).
     readyState: string;
     frameUrls: string[];
-    visibleControls: VisibleControlHint[];
-    visibleFramePrefixes: string[];
   }
 
   const PAGE_METADATA_FUNCTION = String.raw`() => {
@@ -450,10 +447,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       right: window.innerWidth,
       bottom: window.innerHeight,
     };
-    const visibleFramePrefixes = [];
     const frameUrls = [];
-    const occurrences = new Map();
-    const visibleControls = [];
     let rootsVisited = 0;
     let frameSequence = 0;
 
@@ -521,29 +515,10 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         .slice(0, 500);
     };
 
-    const recordControl = (element, context) => {
-      if (!rendered(element)) return;
-      const role = roleOf(element);
-      const label = labelOf(element);
-      if (!label) return;
-      const key = (context.framePrefix ?? "") + "\\u0000" + role + "\\u0000" + label.toLowerCase();
-      const occurrence = occurrences.get(key) ?? 0;
-      occurrences.set(key, occurrence + 1);
-      if (!intersects(globalRect(element, context), context.clip)) return;
-      if (visibleControls.length < 500) {
-        visibleControls.push({
-          role,
-          label,
-          occurrence,
-          ...(context.framePrefix ? { framePrefix: context.framePrefix } : {}),
-        });
-      }
-    };
     const visitRoot = (root, context) => {
       rootsVisited += 1;
       if (rootsVisited > 100) return;
       for (const element of Array.from(root.querySelectorAll("*"))) {
-        if (element.matches(selector)) recordControl(element, context);
         const shadow = element.shadowRoot;
         if (shadow) visitRoot(shadow, context);
         if (element.tagName.toLowerCase() !== "iframe") continue;
@@ -558,7 +533,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
           bottom: Math.min(context.clip.bottom, rect.bottom),
         };
         frameUrls.push(frame.src || "");
-        if (intersects(rect, context.clip)) visibleFramePrefixes.push(framePrefix);
         try {
           const child = frame.contentDocument;
           if (child) {
@@ -583,8 +557,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       scrollY: Math.round(window.scrollY),
       readyState: document.readyState,
       frameUrls,
-      visibleControls,
-      visibleFramePrefixes,
     };
   }`;
 
@@ -596,8 +568,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
       scrollY: 0,
       readyState: "unknown",
       frameUrls: [],
-      visibleControls: [],
-      visibleFramePrefixes: [],
     };
     try {
       // A constant, adapter-authored expression. No model input reaches it;
@@ -622,35 +592,6 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
         frameUrls: Array.isArray(parsed.frameUrls)
           ? parsed.frameUrls.filter((entry): entry is string => typeof entry === "string")
           : [],
-        visibleControls: Array.isArray(parsed.visibleControls)
-          ? parsed.visibleControls.flatMap((entry): VisibleControlHint[] => {
-              if (typeof entry !== "object" || entry === null) return [];
-              const value = entry as Record<string, unknown>;
-              if (
-                typeof value.role !== "string" ||
-                typeof value.label !== "string" ||
-                typeof value.occurrence !== "number"
-              ) {
-                return [];
-              }
-              return [
-                {
-                  role: value.role.slice(0, 64),
-                  label: value.label.slice(0, 500),
-                  occurrence: Math.max(0, Math.trunc(value.occurrence)),
-                  ...(typeof value.framePrefix === "string"
-                    ? { framePrefix: value.framePrefix.slice(0, 32) }
-                    : {}),
-                },
-              ];
-            })
-          : [],
-        visibleFramePrefixes: Array.isArray(parsed.visibleFramePrefixes)
-          ? parsed.visibleFramePrefixes
-              .filter((entry): entry is string => typeof entry === "string")
-              .slice(0, 100)
-              .map((entry) => entry.slice(0, 32))
-          : [],
       };
     } catch (error) {
       if (error instanceof BrowserDriverError && error.code === "aborted") throw error;
@@ -669,12 +610,7 @@ export function createMcpBrowserDriver(options: McpBrowserDriverOptions): McpBro
     const referenced = page.nodes.filter(
       (node) => node.ref !== undefined && node.role !== "iframe",
     );
-    const ordered = prioritizeSnapshotNodes(
-      referenced,
-      metadata.visibleControls,
-      metadata.visibleFramePrefixes,
-    );
-    const all = ordered.map((node) =>
+    const all = referenced.map((node) =>
       withCheckedDefault(elementFor(node, page.tab, frameIds), node),
     );
     const maxNodes = Math.min(
