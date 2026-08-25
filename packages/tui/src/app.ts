@@ -320,6 +320,11 @@ export class App {
     };
   }
 
+  setFooterStatus(status: string | undefined): void {
+    const { status: _previous, ...footerData } = this.footerData;
+    this.footerData = { ...footerData, ...(status ? { status } : {}) };
+  }
+
   setThinking(level: string, levels?: readonly string[]): void {
     if (levels && levels.length > 0) this.thinkingLevels = [...new Set(levels)];
     this.thinkingLevel = this.thinkingLevels.includes(level)

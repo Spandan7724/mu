@@ -478,6 +478,18 @@ describe("components", () => {
     expect(lines.at(-1)).toContain("2 bg");
   });
 
+  test("footer shows live status in parentheses beside the directory", () => {
+    const lines = visible(footer({ ...footerData, status: "feature/branch" }, 60, "none"));
+    expect(lines[0]).toBe("  ~/code/mu (feature/branch)");
+    expect(lines[1]).toBe("  claude-opus-5 · 0.4%/272k · ↑1.1k ↓11 · $0.14");
+  });
+
+  test("footer preserves status when the terminal is narrow", () => {
+    const line = visible(footer({ ...footerData, status: "main" }, 14, "none"))[0] ?? "";
+    expect(line).toEndWith("(main)");
+    expect(line.length).toBeLessThanOrEqual(14);
+  });
+
   test("footer token arrows use the accent without coloring their values", () => {
     const line = footer(footerData, 60, "truecolor").at(-1) ?? "";
     expect(line).toContain("\u001b[38;2;177;249;223m↑\u001b[0m");

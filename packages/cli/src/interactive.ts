@@ -47,6 +47,7 @@ import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-vi
 import type { ParsedArgs } from "./args.ts";
 import { saveDefaultModel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
+import { observeGitBranch } from "./git-branch.ts";
 import {
   type AccountLoginProvider,
   accountLoginProviders,
@@ -282,6 +283,7 @@ export async function runInteractive(
   const depth = detectColorDepth();
   let app: App;
   const renderer = new FullScreenRenderer(terminal);
+  let stopGitBranch = () => {};
   let exiting = false;
   let activeRun: Promise<void> | undefined;
   let activeShell: Promise<void> | undefined;
@@ -295,6 +297,7 @@ export async function runInteractive(
   // run and deny anything still waiting, or the process lingers after the UI
   // is gone.
   const shutdown = () => {
+    stopGitBranch();
     loginController?.abort();
     shellController?.abort();
     modelCatalog?.stop();
@@ -1013,6 +1016,10 @@ export async function runInteractive(
   };
   terminal.start();
   terminal.setTitle(formatTerminalTitle(process.cwd()));
+  stopGitBranch = await observeGitBranch(process.cwd(), (branch) => {
+    app.setFooterStatus(branch);
+    paint();
+  });
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking, agent.thinkingLevels);
   if (args.resumeSessionId) {

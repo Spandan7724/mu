@@ -429,6 +429,7 @@ export interface FooterData {
   outputTokens: number;
   costUsd: number;
   backgroundTasks?: number;
+  status?: string;
   hint?: string;
 }
 
@@ -481,7 +482,7 @@ function contextPressure(percent: number): Style {
   return { accent: true };
 }
 
-// A dim cwd row followed by model, context window, cumulative I/O and cost.
+// A dim cwd and live status row followed by model, context window, cumulative I/O and cost.
 export function footer(data: FooterData, width: number, depth: ColorDepth): string[] {
   const tokenParts: string[] = [];
   if (data.inputTokens > 0) tokenParts.push(`↑${formatTokens(data.inputTokens)}`);
@@ -501,8 +502,16 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
     parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
   }
   if (data.hint) parts.push({ text: data.hint, style: quiet });
-  const maxWidth = width - MARGIN.length;
-  const cwd = truncateToWidth(sanitizeUntrusted(data.cwd), maxWidth);
+  const maxWidth = Math.max(0, width - MARGIN.length);
+  const safeCwd = sanitizeUntrusted(data.cwd);
+  const safeStatus = sanitizeUntrusted(data.status ?? "");
+  const status = safeStatus ? truncateToWidth(`(${safeStatus})`, maxWidth) : "";
+  const statusWidth = stringWidth(status);
+  const cwd = truncateToWidth(
+    safeCwd,
+    Math.max(0, maxWidth - statusWidth - (statusWidth > 0 ? 1 : 0)),
+  );
+  const location = cwd + (statusWidth > 0 ? `${cwd ? " " : ""}${status}` : "");
   const plain = parts.map((part) => part.text).join(` ${GLYPHS.separator} `);
   // Per-part styling cannot survive truncation of the joined string, so a row
   // too narrow to hold the stats falls back to the uniformly quiet rendering.
@@ -512,7 +521,7 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
           .map((part) => styleFooterPart(part.text, part.style, depth))
           .join(dim(` ${GLYPHS.separator} `, depth))
       : styleFooterText(truncateToWidth(plain, maxWidth), depth);
-  return [MARGIN + dim(cwd, depth), MARGIN + stats];
+  return [MARGIN + dim(location, depth), MARGIN + stats];
 }
 
 // Brackets the composer: once above it, once below (before the footer).
