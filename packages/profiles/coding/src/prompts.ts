@@ -40,6 +40,8 @@ Be explicit and literal in your tool use. State briefly what you are about to do
 const GEMINI_ADDENDUM = `
 Prefer a small number of well-chosen tool calls over many exploratory ones. When editing, reproduce the exact surrounding text in oldString so the match is unambiguous.`;
 
+export const CODING_SIDE_BOUNDARY = `This is a coding side conversation. Do not modify files, source, git state, configuration, or workspace state unless the user deliberately changes the side conversation's permission mode. Do not request broader permissions or use subagents.`;
+
 export function codingPrompt(modelRef: string): PromptSection[] {
   const sections: PromptSection[] = [{ text: BASE }];
   const ref = modelRef.toLowerCase();

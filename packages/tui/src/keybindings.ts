@@ -25,6 +25,7 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
         keys: "shift+tab",
         description: "cycle permission modes",
       },
+      { keys: "ctrl+b", description: "switch between the main and side conversations" },
       { keys: "ctrl+j", description: "insert a newline in the composer" },
     ],
   },
@@ -46,7 +47,11 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
           "complete the highlighted command or file; queues a follow-up while the agent is running",
       },
       { keys: "alt+up", description: "edit the most recently queued steer/follow-up message" },
-      { keys: "escape", description: "abort a running turn, or clear a started !shell line" },
+      {
+        keys: "escape",
+        description:
+          "abort a running turn, clear a started !shell line, or close an idle side conversation",
+      },
       { keys: "/ at the start of an empty line", description: "open the command menu" },
       { keys: "@", description: "open the file-mention popup" },
       {

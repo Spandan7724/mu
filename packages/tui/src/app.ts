@@ -32,6 +32,7 @@ import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style
 import { terminalRows, wrapText } from "./wrap.ts";
 
 export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
+export type ConversationSource = "main" | "side";
 
 export interface PickerRequest {
   title: string;
@@ -64,9 +65,15 @@ export interface AppCallbacks {
   // Present only for a conversation attached from agent view. Plain mu omits
   // it, so Left remains ordinary editor navigation there.
   onDetach?: () => void;
-  onPermissionReply?: (requestId: string, outcome: "allow" | "deny", remember: boolean) => void;
+  onPermissionReply?: (
+    requestId: string,
+    outcome: "allow" | "deny",
+    remember: boolean,
+    source: ConversationSource,
+  ) => void;
   onCommand?: (text: string) => void;
   onThinkingChange?: (level: string) => void;
+  onCloseSide?: () => void;
   // Shift+Tab. The surface owns the mode list (profile-defined), so this is
   // just a "cycle to the next one" signal, same shape as onAbort/onExit.
   onCyclePermissionMode?: () => void;
@@ -229,26 +236,17 @@ type TranscriptItem =
       rendered?: { width: number; expanded: boolean; superseded: boolean; lines: string[] };
     };
 
-export class App {
-  readonly editor = new Editor();
-  readonly registry: RendererRegistry;
-  private spinner = new Spinner();
-  private commandList = new SelectList([]);
-  private mode: AppMode = "composing";
-  private running = false;
-  private runStartedAt = 0;
-  private compacting = false;
-  private compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
-  // A parallel-safe tool batch can raise several asks at once, so they queue
-  // rather than overwriting each other. One is shown; resolving removes only
-  // the matching id and advances to the next.
-  private approvals: PermissionRequest[] = [];
-  private approvalIndex = 0;
-  private pendingTools = new Map<string, PendingTool>();
-  private pendingInputs: PendingInput[] = [];
-  private transcript: TranscriptItem[] = [];
-  private transcriptVersion = 0;
-  private transcriptCache:
+interface ConversationView {
+  editor: Editor;
+  running: boolean;
+  runStartedAt: number;
+  compacting: boolean;
+  compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
+  pendingTools: Map<string, PendingTool>;
+  pendingInputs: PendingInput[];
+  transcript: TranscriptItem[];
+  transcriptVersion: number;
+  transcriptCache:
     | {
         version: number;
         width: number;
@@ -256,11 +254,8 @@ export class App {
         rows: string[];
       }
     | undefined;
-  private toolOutputExpanded = false;
-  private backgroundTasks = new Map<string, LiveTask>();
-  // The assistant message currently streaming, shown live above the composer.
-  private streaming: string | undefined;
-  private streamingCache:
+  streaming: string | undefined;
+  streamingCache:
     | {
         text: string;
         width: number;
@@ -268,12 +263,62 @@ export class App {
         rows: string[];
       }
     | undefined;
-  private lastError: string | undefined;
+  lastError: string | undefined;
+  footerData: FooterData;
+  thinkingLevel: string;
+  thinkingLevels: string[];
+}
+
+function conversationView(
+  footerData: FooterData,
+  thinkingLevels: readonly string[],
+): ConversationView {
+  return {
+    editor: new Editor(),
+    running: false,
+    runStartedAt: 0,
+    compacting: false,
+    compactionStage: undefined,
+    pendingTools: new Map(),
+    pendingInputs: [],
+    transcript: [],
+    transcriptVersion: 0,
+    transcriptCache: undefined,
+    streaming: undefined,
+    streamingCache: undefined,
+    lastError: undefined,
+    footerData,
+    thinkingLevel: thinkingLevels[0] ?? "off",
+    thinkingLevels: [...thinkingLevels],
+  };
+}
+
+export class App {
+  readonly registry: RendererRegistry;
+  private spinner = new Spinner();
+  private commandList = new SelectList([]);
+  private mode: AppMode = "composing";
+  // A parallel-safe tool batch can raise several asks at once, so they queue
+  // rather than overwriting each other. One is shown; resolving removes only
+  // the matching id and advances to the next.
+  private approvals: { request: PermissionRequest; source: ConversationSource }[] = [];
+  private approvalIndex = 0;
+  private main: ConversationView;
+  private side: ConversationView | undefined;
+  private activeSource: ConversationSource = "main";
+  private eventView: ConversationView | undefined;
+  private eventSource: ConversationSource = "main";
+  private mainStatus:
+    | "working"
+    | "needs approval"
+    | "interrupted"
+    | "failed"
+    | "finished"
+    | undefined;
+  private toolOutputExpanded = false;
+  private backgroundTasks = new Map<string, LiveTask>();
   private ctrlCArmedAt = 0;
-  private footerData: FooterData;
   private commands: { label: string; description?: string }[] = [];
-  private thinkingLevel = "off";
-  private thinkingLevels: string[];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private prompt: InputPromptRequest | undefined;
@@ -282,16 +327,117 @@ export class App {
 
   constructor(private options: AppOptions) {
     this.registry = options.registry ?? new RendererRegistry();
-    this.thinkingLevels = [...new Set(options.thinkingLevels ?? ["off", "low", "medium", "high"])];
-    this.footerData = {
-      cwd: options.cwd ?? ".",
-      model: options.model,
-      contextPercent: 0,
-      contextWindow: options.contextWindow ?? 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
-    };
+    const thinkingLevels = [
+      ...new Set(options.thinkingLevels ?? ["off", "low", "medium", "high"]),
+    ] as string[];
+    this.main = conversationView(
+      {
+        cwd: options.cwd ?? ".",
+        model: options.model,
+        contextPercent: 0,
+        contextWindow: options.contextWindow ?? 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+      },
+      thinkingLevels,
+    );
+  }
+
+  private get view(): ConversationView {
+    return this.eventView ?? (this.activeSource === "side" && this.side ? this.side : this.main);
+  }
+
+  get editor(): Editor {
+    return this.activeSource === "side" && this.side ? this.side.editor : this.main.editor;
+  }
+
+  private get running(): boolean {
+    return this.view.running;
+  }
+  private set running(value: boolean) {
+    this.view.running = value;
+  }
+  private get runStartedAt(): number {
+    return this.view.runStartedAt;
+  }
+  private set runStartedAt(value: number) {
+    this.view.runStartedAt = value;
+  }
+  private get compacting(): boolean {
+    return this.view.compacting;
+  }
+  private set compacting(value: boolean) {
+    this.view.compacting = value;
+  }
+  private get compactionStage(): ConversationView["compactionStage"] {
+    return this.view.compactionStage;
+  }
+  private set compactionStage(value: ConversationView["compactionStage"]) {
+    this.view.compactionStage = value;
+  }
+  private get pendingTools(): Map<string, PendingTool> {
+    return this.view.pendingTools;
+  }
+  private get pendingInputs(): PendingInput[] {
+    return this.view.pendingInputs;
+  }
+  private set pendingInputs(value: PendingInput[]) {
+    this.view.pendingInputs = value;
+  }
+  private get transcript(): TranscriptItem[] {
+    return this.view.transcript;
+  }
+  private set transcript(value: TranscriptItem[]) {
+    this.view.transcript = value;
+  }
+  private get transcriptVersion(): number {
+    return this.view.transcriptVersion;
+  }
+  private set transcriptVersion(value: number) {
+    this.view.transcriptVersion = value;
+  }
+  private get transcriptCache(): ConversationView["transcriptCache"] {
+    return this.view.transcriptCache;
+  }
+  private set transcriptCache(value: ConversationView["transcriptCache"]) {
+    this.view.transcriptCache = value;
+  }
+  private get streaming(): string | undefined {
+    return this.view.streaming;
+  }
+  private set streaming(value: string | undefined) {
+    this.view.streaming = value;
+  }
+  private get streamingCache(): ConversationView["streamingCache"] {
+    return this.view.streamingCache;
+  }
+  private set streamingCache(value: ConversationView["streamingCache"]) {
+    this.view.streamingCache = value;
+  }
+  private get lastError(): string | undefined {
+    return this.view.lastError;
+  }
+  private set lastError(value: string | undefined) {
+    this.view.lastError = value;
+  }
+  private get footerData(): FooterData {
+    return this.view.footerData;
+  }
+  private set footerData(value: FooterData) {
+    this.view.footerData = value;
+  }
+  private get thinkingLevel(): string {
+    return this.view.thinkingLevel;
+  }
+  private set thinkingLevel(value: string) {
+    this.view.thinkingLevel = value;
+  }
+  private get thinkingLevels(): string[] {
+    return this.view.thinkingLevels;
+  }
+  private set thinkingLevels(value: string[]) {
+    this.view.thinkingLevels = value;
   }
 
   private get ctx(): RenderContext {
@@ -311,25 +457,110 @@ export class App {
     this.commands = commands;
   }
 
-  setModel(model: string, contextWindow?: number): void {
+  get activeConversation(): ConversationSource {
+    return this.activeSource;
+  }
+
+  get hasSideConversation(): boolean {
+    return this.side !== undefined;
+  }
+
+  openSideConversation(
+    model: string,
+    contextWindow: number,
+    thinkingLevels: readonly string[],
+  ): void {
+    const footerData: FooterData = {
+      cwd: this.main.footerData.cwd,
+      model,
+      contextPercent: 0,
+      contextWindow,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      ...(this.main.footerData.status ? { status: this.main.footerData.status } : {}),
+    };
+    this.side = conversationView(footerData, thinkingLevels);
+    this.activeSource = "side";
+    this.syncSideFooter();
+    this.replaceTranscript(
+      [],
+      [
+        composerRule(this.options.width, this.options.depth),
+        `${MARGIN}${styleText("side conversation · inherited context is reference only · esc to close", { dim: true }, this.options.depth)}`,
+        "",
+      ],
+    );
+  }
+
+  toggleSideConversation(): void {
+    if (!this.side) return;
+    this.activeSource = this.activeSource === "side" ? "main" : "side";
+    this.mode = this.approvals.length > 0 ? "approval" : "composing";
+  }
+
+  closeSideConversation(): void {
+    if (!this.side) return;
+    this.side = undefined;
+    this.activeSource = "main";
+    this.approvals = this.approvals.filter((item) => item.source !== "side");
+    this.mode = this.approvals.length > 0 ? "approval" : "composing";
+  }
+
+  private syncSideFooter(): void {
+    if (!this.side) return;
+    const status = this.mainStatus ? ` · main ${this.mainStatus}` : "";
+    this.side.footerData = {
+      ...this.side.footerData,
+      side: `from main${status} · ctrl+b switch · esc close`,
+    };
+  }
+
+  setModel(
+    model: string,
+    contextWindow?: number,
+    source: ConversationSource = this.activeSource,
+  ): void {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    if (!this.eventView) {
+      this.eventView = previous;
+      return;
+    }
     this.footerData = {
       ...this.footerData,
       model,
       contextPercent: 0,
       ...(contextWindow !== undefined ? { contextWindow } : {}),
     };
+    this.eventView = previous;
   }
 
   setFooterStatus(status: string | undefined): void {
-    const { status: _previous, ...footerData } = this.footerData;
-    this.footerData = { ...footerData, ...(status ? { status } : {}) };
+    const update = (view: ConversationView) => {
+      const { status: _previous, ...footerData } = view.footerData;
+      view.footerData = { ...footerData, ...(status ? { status } : {}) };
+    };
+    update(this.main);
+    if (this.side) update(this.side);
   }
 
-  setThinking(level: string, levels?: readonly string[]): void {
+  setThinking(
+    level: string,
+    levels?: readonly string[],
+    source: ConversationSource = this.activeSource,
+  ): void {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    if (!this.eventView) {
+      this.eventView = previous;
+      return;
+    }
     if (levels && levels.length > 0) this.thinkingLevels = [...new Set(levels)];
     this.thinkingLevel = this.thinkingLevels.includes(level)
       ? level
       : (this.thinkingLevels[0] ?? "off");
+    this.eventView = previous;
   }
 
   get thinking(): string {
@@ -381,17 +612,43 @@ export class App {
   // Events that produce transcript output return their rendered lines for
   // callers that inspect events directly; all durable output is also retained
   // as semantic transcript cells for whole-screen rendering.
-  handleEvent(event: AgentEvent): string[] {
+  handleEvent(event: AgentEvent, source: ConversationSource = "main"): string[] {
+    const target = source === "side" ? this.side : this.main;
+    if (!target) return [];
+    this.eventView = target;
+    this.eventSource = source;
+    try {
+      return this.handleConversationEvent(event);
+    } finally {
+      this.eventView = undefined;
+      this.eventSource = this.activeSource;
+    }
+  }
+
+  private handleConversationEvent(event: AgentEvent): string[] {
     switch (event.type) {
       case "agent_start":
         this.running = true;
         this.runStartedAt = Date.now();
+        if (this.eventSource === "main") {
+          this.mainStatus = "working";
+          this.syncSideFooter();
+        }
         return [];
 
       case "agent_end": {
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
+        if (this.eventSource === "main") {
+          this.mainStatus =
+            event.reason === "error"
+              ? "failed"
+              : event.reason === "aborted"
+                ? "interrupted"
+                : "finished";
+          this.syncSideFooter();
+        }
         const duration = styleText(
           `worked for ${formatDuration(Date.now() - this.runStartedAt)}`,
           { dim: true },
@@ -527,18 +784,32 @@ export class App {
       }
 
       case "permission_asked":
-        this.approvals.push(event.request);
+        this.approvals.push({ request: event.request, source: this.eventSource });
+        if (this.eventSource === "main") {
+          this.mainStatus = "needs approval";
+          this.syncSideFooter();
+        }
         this.approvalIndex = 0;
         this.mode = "approval";
         return [];
 
       case "permission_resolved": {
         const before = this.approvals.length;
-        this.approvals = this.approvals.filter((r) => r.id !== event.requestId);
+        this.approvals = this.approvals.filter(
+          (item) => item.request.id !== event.requestId || item.source !== this.eventSource,
+        );
         // A resolution for an id we never showed must not close another ask.
         if (this.approvals.length === before) return [];
         this.approvalIndex = 0;
         if (this.approvals.length === 0) this.mode = "composing";
+        if (this.eventSource === "main" && this.mainStatus === "needs approval") {
+          this.mainStatus = this.approvals.some((item) => item.source === "main")
+            ? "needs approval"
+            : this.main.running
+              ? "working"
+              : undefined;
+          this.syncSideFooter();
+        }
         return [];
       }
 
@@ -683,8 +954,15 @@ export class App {
     this.spinner.tick();
   }
 
-  appendTranscript(lines: string[]): void {
+  appendTranscript(lines: string[], source: ConversationSource = this.activeSource): void {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    if (!this.eventView) {
+      this.eventView = previous;
+      return;
+    }
     if (lines.length > 0) this.pushTranscript({ kind: "lines", lines: [...lines] });
+    this.eventView = previous;
   }
 
   replaceTranscript(messages: readonly AgentMessage[], prefix: string[] = []): void {
@@ -741,8 +1019,12 @@ export class App {
     return [...this.transcriptRows(), ...this.toTerminalRows(this.renderManaged())];
   }
 
-  renderTranscript(): string[] {
-    return [...this.transcriptRows()];
+  renderTranscript(source: ConversationSource = this.activeSource): string[] {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    const rows = this.eventView ? [...this.transcriptRows()] : [];
+    this.eventView = previous;
+    return rows;
   }
 
   renderBottom(): string[] {
@@ -884,12 +1166,13 @@ export class App {
     }
 
     if (this.mode === "approval" && this.approvals[0]) {
-      const request = this.approvals[0];
+      const approval = this.approvals[0];
+      const request = approval.request;
       const preview = request.preview;
       lines.push(
         ...approvalOverlay(
           {
-            title: request.description,
+            title: `${approval.source === "side" ? "side · " : ""}${request.description}`,
             ...(preview?.kind === "diff"
               ? {
                   diff: {
@@ -1095,6 +1378,11 @@ export class App {
       return;
     }
 
+    if (key.ctrl && key.name === "b" && this.side) {
+      this.toggleSideConversation();
+      return;
+    }
+
     // Ctrl+T cycles thinking depth without leaving the composer.
     if (key.ctrl && key.name === "t") {
       const levels = this.thinkingLevels;
@@ -1146,6 +1434,13 @@ export class App {
       case "escape":
         if (this.running) this.options.callbacks.onAbort();
         else if (this.isShellMode) this.editor.setText("");
+        else if (
+          this.activeSource === "side" &&
+          this.editor.isEmpty &&
+          this.approvals.length === 0
+        ) {
+          this.options.callbacks.onCloseSide?.();
+        }
         return;
       case "return": {
         // Two ways to insert a newline instead of submitting. Shift/Ctrl/Alt+Enter
@@ -1258,8 +1553,9 @@ export class App {
   }
 
   private handleApprovalKey(key: Key): void {
-    const request = this.approvals[0];
-    if (!request) return;
+    const approval = this.approvals[0];
+    if (!approval) return;
+    const { request, source } = approval;
     if (key.name === "left") {
       this.approvalIndex =
         (this.approvalIndex - 1 + APPROVAL_OPTIONS.length) % APPROVAL_OPTIONS.length;
@@ -1270,13 +1566,18 @@ export class App {
       return;
     }
     if (key.name === "escape") {
-      this.options.callbacks.onPermissionReply?.(request.id, "deny", false);
+      this.options.callbacks.onPermissionReply?.(request.id, "deny", false, source);
       return;
     }
     if (key.name === "return") {
       const option = APPROVAL_OPTIONS[this.approvalIndex];
       const outcome = option === "deny" ? "deny" : "allow";
-      this.options.callbacks.onPermissionReply?.(request.id, outcome, option === "always allow");
+      this.options.callbacks.onPermissionReply?.(
+        request.id,
+        outcome,
+        option === "always allow",
+        source,
+      );
     }
   }
 

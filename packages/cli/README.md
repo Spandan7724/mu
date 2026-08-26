@@ -59,7 +59,9 @@ Interactive runs are saved by working-directory scope under `~/.mu/sessions`; us
 the direct resume command when an interactive session closes. Use `/new` to clear the
 terminal and start a fresh chat without deleting the previous saved session. Use
 `/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
-behavior, including while the agent is running.
+behavior, including while the agent is running. In the coding TUI, `/btw [question]`
+opens an ephemeral read-only side conversation with the current chat as reference. Press
+Ctrl+B to switch between conversations or Escape to close the side conversation.
 
 Run `mu agents` to manage several sessions whose worker processes survive closing the
 viewer. Managed sessions commit the initiating prompt before contacting the provider and

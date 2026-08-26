@@ -131,6 +131,8 @@ export type { Profile, ProfileImporter } from "./profile.ts";
 export { loadProfile, optionsFromProfile } from "./profile.ts";
 export type { HookEvent, HookRunner, HookSpec } from "./shell-hooks.ts";
 export { shellHooksExtension } from "./shell-hooks.ts";
+export type { SideConversation, SideConversationInput } from "./side.ts";
+export { startSideConversation } from "./side.ts";
 export type { Skill } from "./skills.ts";
 export {
   defaultSkillRoots,

@@ -2,6 +2,7 @@ export type {
   AppCallbacks,
   AppMode,
   AppOptions,
+  ConversationSource,
   InputPromptRequest,
   PickerRequest,
 } from "./app.ts";

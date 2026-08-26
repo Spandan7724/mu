@@ -22,6 +22,9 @@ export interface CommandResult {
 export interface Command {
   name: string; // without the leading slash
   description: string;
+  // Commands that replace or rewind the active durable session are unavailable
+  // in ephemeral side conversations.
+  sessionScoped?: boolean;
   // biome-ignore lint/suspicious/noConfusingVoidType: a command may legitimately return nothing
   run: (ctx: CommandContext) => CommandResult | void | Promise<CommandResult | void>;
 }

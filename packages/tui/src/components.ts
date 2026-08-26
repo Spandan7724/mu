@@ -430,6 +430,8 @@ export interface FooterData {
   costUsd: number;
   backgroundTasks?: number;
   status?: string;
+  // Present only while rendering an ephemeral side conversation.
+  side?: string;
   hint?: string;
 }
 
@@ -490,6 +492,12 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   const percent = Math.max(0, data.contextPercent);
   const quiet: Style = { dim: true };
   const parts: { text: string; style: Style }[] = [
+    ...(data.side
+      ? [
+          { text: "side", style: { accent: true } },
+          { text: data.side, style: quiet },
+        ]
+      : []),
     { text: data.model, style: quiet },
     {
       text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,

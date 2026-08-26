@@ -4,6 +4,7 @@ import { bashTool } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
+  type ConversationSource,
   CTRL_C_EXIT_WINDOW_MS,
   checkpointCell,
   codingRenderers,
@@ -37,7 +38,9 @@ import {
   providerConfig,
   readAuthFile,
   removeStoredCredential,
+  type SideConversation,
   saveApiKey,
+  startSideConversation,
   type ThinkingLevel,
   type ToolRenderer,
   toCommand,
@@ -286,6 +289,18 @@ export async function runInteractive(
   let stopGitBranch = () => {};
   let exiting = false;
   let activeRun: Promise<void> | undefined;
+  let sideRun: Promise<void> | undefined;
+  let sideConversation: SideConversation | undefined;
+  let unsubscribeSide: (() => void) | undefined;
+  let closingSide: Promise<void> | undefined;
+  let sidePermissionMode: PermissionMode | undefined;
+  const sidePermissions = new Map<
+    string,
+    {
+      request: Parameters<NonNullable<AgentOptions["onPermission"]>>[0];
+      resolve: (outcome: "allow" | "deny") => void;
+    }
+  >();
   let activeShell: Promise<void> | undefined;
   let shellController: AbortController | undefined;
   let loginController: AbortController | undefined;
@@ -302,8 +317,17 @@ export async function runInteractive(
     shellController?.abort();
     modelCatalog?.stop();
     agent.stop();
+    sideConversation?.agent.stop();
     runtime.cancelPermissions();
+    for (const [id, item] of sidePermissions) {
+      sidePermissions.delete(id);
+      item.resolve("deny");
+    }
   };
+
+  const activeAgent = () =>
+    app?.activeConversation === "side" && sideConversation ? sideConversation.agent : agent;
+  const activeRunPromise = () => (app?.activeConversation === "side" ? sideRun : activeRun);
 
   app = new App({
     width: terminal.columns,
@@ -323,7 +347,7 @@ export async function runInteractive(
         if (activeShell) {
           commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
-        } else if (activeRun || agent.isRunning) agent.send(text);
+        } else if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
         else beginRun(text);
       },
       onSteer: (text) => {
@@ -332,7 +356,7 @@ export async function runInteractive(
           paint();
           return false;
         }
-        agent.send(text);
+        activeAgent().send(text);
         return true;
       },
       onFollowUp: (text) => {
@@ -341,14 +365,14 @@ export async function runInteractive(
           paint();
           return false;
         }
-        agent.followUp(text);
+        activeAgent().followUp(text);
         return true;
       },
-      onEditQueued: (kind, text) => agent.removeQueuedMessage(kind, text),
+      onEditQueued: (kind, text) => activeAgent().removeQueuedMessage(kind, text),
       onShell: (command) => beginUserShell(command),
       onAbort: () => {
         if (shellController) shellController.abort();
-        else agent.abort();
+        else activeAgent().abort();
       },
       onExit: () => {
         exiting = true;
@@ -363,13 +387,28 @@ export async function runInteractive(
         void runCommand(text);
       },
       onMentionQuery: (query) => mentionCandidates(query),
-      onThinkingChange: (level) => agent.setThinking(level as ThinkingLevel),
+      onThinkingChange: (level) => activeAgent().setThinking(level as ThinkingLevel),
       onCyclePermissionMode: () => cyclePermissionMode(),
-      onPermissionReply: (id, outcome, remember) => {
+      onPermissionReply: (id, outcome, remember, source) => {
+        if (source === "side") {
+          const pending = sidePermissions.get(id);
+          if (!pending || !sideConversation) return;
+          sidePermissions.delete(id);
+          if (outcome === "allow" && remember) {
+            sideConversation.agent.addPermissionRule({
+              permission: pending.request.permission,
+              pattern: pending.request.pattern,
+              action: "allow",
+            });
+          }
+          pending.resolve(outcome);
+          return;
+        }
         const pending = runtime.pendingPermissions.get(id);
         if (!pending) return;
         runtime.resolvePermission(id, outcome, remember);
       },
+      onCloseSide: () => void closeSideConversation(),
     },
   });
   // User- and project-authored markdown commands join the built-ins.
@@ -381,21 +420,26 @@ export async function runInteractive(
     name: "model",
     description: "Switch the active model",
     run: async () => {
-      if (activeRun || agent.isRunning) {
+      const source = app.activeConversation;
+      const target = activeAgent();
+      if (activeRunPromise() || target.isRunning) {
         return { handled: true, message: "Cannot switch models during a run." };
       }
       let refresh: ModelCatalogRefreshResult | undefined;
       if (modelCatalog && !modelCatalog.hasFreshModels) {
-        commitLines(["  refreshing model catalog…"]);
+        commitLines(["  refreshing model catalog…"], source);
         paint();
         refresh = await modelCatalog.ensureFresh();
         if (!refresh.ok) {
-          commitLines([
-            `  model discovery failed · showing ${refresh.fallback} catalog`,
-            `  ${refresh.error}`,
-          ]);
+          commitLines(
+            [
+              `  model discovery failed · showing ${refresh.fallback} catalog`,
+              `  ${refresh.error}`,
+            ],
+            source,
+          );
         } else if (refresh.cacheWarning) {
-          commitLines([`  ${refresh.cacheWarning}`]);
+          commitLines([`  ${refresh.cacheWarning}`], source);
         }
       }
       let auth: Awaited<ReturnType<typeof readAuthFile>>;
@@ -414,9 +458,9 @@ export async function runInteractive(
       if (models.length === 0) {
         return { handled: true, message: "No authenticated models. Run /login first." };
       }
-      const source = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
+      const sourceSuffix = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
       app.openPicker({
-        title: `select a model · ${models.length} available${source}`,
+        title: `select a model · ${models.length} available${sourceSuffix}`,
         filterable: true,
         items: models.map((model) => {
           const ref = `${model.provider}/${model.id}`;
@@ -435,17 +479,25 @@ export async function runInteractive(
           };
         }),
         onChoose: async (label) => {
-          agent.setModel(label);
-          app.setModel(label, agent.contextWindow);
-          app.setThinking(agent.thinking, agent.thinkingLevels);
+          target.setModel(label);
+          app.setModel(label, target.contextWindow, source);
+          app.setThinking(target.thinking, target.thinkingLevels, source);
+          if (source === "side") {
+            commitLines([`  side model set to ${label}`], source);
+            paint();
+            return;
+          }
           try {
             await saveDefaultModel(label);
-            commitLines([`  model set to ${label} · saved as default`]);
+            commitLines([`  model set to ${label} · saved as default`], source);
           } catch (error) {
-            commitLines([
-              `  model set to ${label}`,
-              `  could not save default: ${error instanceof Error ? error.message : String(error)}`,
-            ]);
+            commitLines(
+              [
+                `  model set to ${label}`,
+                `  could not save default: ${error instanceof Error ? error.message : String(error)}`,
+              ],
+              source,
+            );
           }
           paint();
         },
@@ -515,6 +567,8 @@ export async function runInteractive(
     name: "permissions",
     description: "Choose what mu is allowed to do",
     run: () => {
+      const source = app.activeConversation;
+      const currentMode = source === "side" ? sidePermissionMode : activePermissionMode;
       const modes = profile?.permissionModes ?? [];
       if (modes.length === 0) {
         return { handled: true, message: "This profile does not define permission modes." };
@@ -523,11 +577,11 @@ export async function runInteractive(
         title: "update permissions",
         items: modes.map((mode) => ({
           label: mode.label,
-          description: `${mode.description}${mode.id === activePermissionMode?.id ? " · current" : ""}`,
+          description: `${mode.description}${mode.id === currentMode?.id ? " · current" : ""}`,
         })),
         onChoose: (label) => {
           const mode = modes.find((candidate) => candidate.label === label);
-          if (mode) applyPermissionMode(mode);
+          if (mode) applyPermissionMode(mode, source);
         },
         onBack: () => app.openCommandMenu(),
       });
@@ -537,6 +591,7 @@ export async function runInteractive(
   commands.register({
     name: "resume",
     description: "Resume an earlier session",
+    sessionScoped: true,
     run: async () => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot resume during a run." };
@@ -600,6 +655,7 @@ export async function runInteractive(
   commands.register({
     name: "new",
     description: "Clear the terminal and start a new chat",
+    sessionScoped: true,
     run: () => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot start a new chat during a run." };
@@ -619,10 +675,10 @@ export async function runInteractive(
   });
   commands.register(
     transcriptExportCommand({
-      getSession: () => agent.session,
-      getSessionId: () => agent.sessionId,
-      getModel: () => agent.modelRef,
-      isRunning: () => Boolean(activeRun || agent.isRunning),
+      getSession: () => activeAgent().session,
+      getSessionId: () => activeAgent().sessionId,
+      getModel: () => activeAgent().modelRef,
+      isRunning: () => Boolean(activeRunPromise() || activeAgent().isRunning),
       save: async (markdown, requestedPath, now) =>
         (
           await saveTranscriptMarkdown(markdown, {
@@ -633,6 +689,19 @@ export async function runInteractive(
         ).displayPath,
     }),
   );
+  if (profile?.name === "coding") {
+    commands.register({
+      name: "btw",
+      description: "Start an ephemeral side conversation",
+      run: (ctx) => {
+        if (sideConversation || closingSide) {
+          return { handled: true, message: "A side conversation is already open." };
+        }
+        openSideConversation(ctx.args.trim() || undefined);
+        return { handled: true };
+      },
+    });
+  }
 
   app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
 
@@ -640,12 +709,12 @@ export async function runInteractive(
   // Provider streams often deliver several deltas in one frame interval; an
   // eager app.renderScreen() here would parse and wrap every discarded state.
   const paint = () => renderer.requestRender(() => app.renderScreen());
-  const commitLines = (lines: string[]) => {
-    app.appendTranscript(lines);
+  const commitLines = (lines: string[], source: ConversationSource = app.activeConversation) => {
+    app.appendTranscript(lines, source);
     paint();
   };
   const unsubscribe = agent.subscribe((event) => {
-    app.handleEvent(event);
+    app.handleEvent(event, "main");
     paint();
   });
 
@@ -682,37 +751,124 @@ export async function runInteractive(
     return out;
   }
 
-  function applyPermissionMode(mode: PermissionMode): void {
-    agent.setPermissions(rulesForPermissionMode(basePermissions, mode));
-    activePermissionMode = mode;
-    commitLines([formatPermissionMode(mode, depth)]);
+  function applyPermissionMode(mode: PermissionMode, source = app.activeConversation): void {
+    const target = source === "side" ? sideConversation?.agent : agent;
+    if (!target) return;
+    target.setPermissions(rulesForPermissionMode(basePermissions, mode));
+    if (source === "side") sidePermissionMode = mode;
+    else activePermissionMode = mode;
+    commitLines([formatPermissionMode(mode, depth)], source);
     paint();
   }
 
   function cyclePermissionMode(): void {
-    const next = nextPermissionMode(profile?.permissionModes ?? [], activePermissionMode);
-    if (next) applyPermissionMode(next);
+    const source = app.activeConversation;
+    const current = source === "side" ? sidePermissionMode : activePermissionMode;
+    const next = nextPermissionMode(profile?.permissionModes ?? [], current);
+    if (next) applyPermissionMode(next, source);
   }
 
   function beginRun(text: string, options?: AgentRunOptions): void {
+    const source = app.activeConversation;
+    const target = activeAgent();
     if (activeShell) {
-      commitLines(["  A shell command is already running; press Esc to cancel it."]);
+      commitLines(["  A shell command is already running; press Esc to cancel it."], source);
       paint();
       return;
     }
-    if (activeRun || agent.isRunning) {
-      commitLines(["  A run is already active; submit text to steer it."]);
+    const running = source === "side" ? sideRun : activeRun;
+    if (running || target.isRunning) {
+      commitLines(["  A run is already active; submit text to steer it."], source);
       paint();
       return;
     }
-    activeRun = startRun(text, options).finally(() => {
-      activeRun = undefined;
+    const run = startRun(target, source, text, options).finally(() => {
+      if (source === "side") sideRun = undefined;
+      else activeRun = undefined;
     });
+    if (source === "side") sideRun = run;
+    else activeRun = run;
+  }
+
+  function openSideConversation(question?: string): void {
+    try {
+      const restrictive = (profile?.permissionModes ?? []).find(
+        (mode) => mode.tone === "restrictive",
+      );
+      const permissions = restrictive
+        ? rulesForPermissionMode(basePermissions, restrictive)
+        : rulesForPermissionMode(basePermissions, activePermissionMode);
+      sidePermissionMode = restrictive ?? activePermissionMode;
+      const conversation = startSideConversation(
+        {
+          ...resolved,
+          model: agent.modelRef,
+          thinkingLevel: agent.thinking,
+          extensions,
+          permissions,
+          onPermission: (request) =>
+            new Promise<"allow" | "deny">((resolve) => {
+              sidePermissions.set(request.id, { request, resolve });
+            }),
+        },
+        {
+          messages: agent.session.messagesAt(),
+          ...(profile?.sideBoundary ? { boundary: profile.sideBoundary() } : {}),
+          permissions,
+        },
+      );
+      sideConversation = conversation;
+      unsubscribeSide = conversation.agent.subscribe((event) => {
+        app.handleEvent(event, "side");
+        paint();
+      });
+      app.openSideConversation(
+        conversation.agent.modelRef,
+        conversation.agent.contextWindow,
+        conversation.agent.thinkingLevels,
+      );
+      app.setThinking(conversation.agent.thinking, conversation.agent.thinkingLevels, "side");
+      paint();
+      if (question) beginRun(question);
+    } catch (error) {
+      sideConversation = undefined;
+      sidePermissionMode = undefined;
+      commitLines(
+        [
+          `  Could not start side conversation: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+        "main",
+      );
+    }
+  }
+
+  async function closeSideConversation(): Promise<void> {
+    if (closingSide) return closingSide;
+    const conversation = sideConversation;
+    if (!conversation) return;
+    app.closeSideConversation();
+    unsubscribeSide?.();
+    unsubscribeSide = undefined;
+    for (const [id, item] of sidePermissions) {
+      sidePermissions.delete(id);
+      item.resolve("deny");
+    }
+    sideConversation = undefined;
+    sidePermissionMode = undefined;
+    paint();
+    closingSide = conversation.close().finally(() => {
+      closingSide = undefined;
+      paint();
+    });
+    return closingSide;
   }
 
   function beginUserShell(command: string): void {
-    if (activeRun || agent.isRunning) {
-      commitLines(["  Wait for the agent turn to finish before running a shell command."]);
+    const source = app.activeConversation;
+    const target = activeAgent();
+    const running = source === "side" ? sideRun : activeRun;
+    if (running || target.isRunning) {
+      commitLines(["  Wait for the agent turn to finish before running a shell command."], source);
       paint();
       return;
     }
@@ -726,25 +882,28 @@ export async function runInteractive(
     shellController = controller;
     activeShell = (async () => {
       const dispatch = (event: Parameters<App["handleEvent"]>[0]) => {
-        app.handleEvent(event);
+        app.handleEvent(event, source);
         paint();
       };
 
       dispatch({ type: "agent_start" });
       try {
         const result = await runUserShellCommand(shellTool, command, controller.signal, dispatch);
-        agent.session.appendMessage(
+        target.session.appendMessage(
           customMessage("user_shell_command", formatUserShellRecord(command, result)),
         );
         try {
-          await agent.sessionStore.save(agent.sessionId, agent.session);
-          sessionResumable = true;
+          await target.sessionStore.save(target.sessionId, target.session);
+          if (source === "main") sessionResumable = true;
         } catch (error) {
-          commitLines([
-            `  shell result could not be saved to the session: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          ]);
+          commitLines(
+            [
+              `  shell result could not be saved to the session: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            ],
+            source,
+          );
         }
       } finally {
         dispatch({ type: "agent_end", messages: [], reason: "done" });
@@ -941,25 +1100,38 @@ export async function runInteractive(
     }
   }
 
-  async function startRun(text: string, options?: AgentRunOptions): Promise<void> {
+  async function startRun(
+    target: Agent,
+    source: ConversationSource,
+    text: string,
+    options?: AgentRunOptions,
+  ): Promise<void> {
     try {
-      await agent.run(text, options);
-      sessionResumable = true;
+      await target.run(text, options);
+      if (source === "main") sessionResumable = true;
     } catch (error) {
-      commitLines([`  ${error instanceof Error ? error.message : String(error)}`]);
+      commitLines([`  ${error instanceof Error ? error.message : String(error)}`], source);
     }
     paint();
   }
 
   async function runCommand(text: string): Promise<void> {
+    const source = app.activeConversation;
+    const target = activeAgent();
+    const parsed = commands.parse(text);
+    const command = parsed ? commands.get(parsed.name) : undefined;
+    if (source === "side" && command?.sessionScoped) {
+      commitLines([`  /${parsed?.name} is not available in a side conversation.`], source);
+      return;
+    }
     const result = await commands.execute(text, {
       inject: (message) => {
         if (message.role === "custom" && message.content[0]?.type === "text") {
-          agent.followUp(message.content[0].text);
+          target.followUp(message.content[0].text);
         }
       },
-      print: (output) => commitLines([`  ${output}`]),
-      getModel: () => agent.modelRef,
+      print: (output) => commitLines([`  ${output}`], source),
+      getModel: () => target.modelRef,
       setModel: () => {},
     });
     const data = result.data as
@@ -975,9 +1147,9 @@ export async function runInteractive(
       } else if (data.action === "redo") {
         app.editor.setText("");
       }
-      commitLines(renderCheckpointCommand(data, terminal.columns, depth));
+      commitLines(renderCheckpointCommand(data, terminal.columns, depth), source);
     } else if (data?.kind === "diff") {
-      commitLines(renderDiffCommand(data, terminal.columns, depth));
+      commitLines(renderDiffCommand(data, terminal.columns, depth), source);
     } else if (data?.kind === "fork-points") {
       app.openPicker({
         title: "fork from",
@@ -1003,7 +1175,7 @@ export async function runInteractive(
       // Standalone compaction reports its durable boundary through AgentEvent;
       // avoid printing the same outcome twice in the interactive transcript.
     } else if (result.message) {
-      commitLines([`  ${result.message}`]);
+      commitLines([`  ${result.message}`], source);
     }
     paint();
   }
@@ -1095,13 +1267,19 @@ export async function runInteractive(
     shutdown();
     // Let the aborted run unwind before the terminal is handed back, so it
     // cannot repaint over a restored screen.
-    await Promise.all([activeRun?.catch(() => {}), activeShell?.catch(() => {})]);
+    await Promise.all([
+      activeRun?.catch(() => {}),
+      sideRun?.catch(() => {}),
+      activeShell?.catch(() => {}),
+    ]);
+    await closeSideConversation();
+    await closingSide;
     await agent.shutdown();
     unsubscribe();
     clearInterval(spinnerTimer);
     stopResize();
     renderer.renderNow([
-      ...app.renderTranscript(),
+      ...app.renderTranscript("main"),
       ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth), ""] : []),
     ]);
     renderer.stop();

@@ -24,7 +24,7 @@ import {
   loadProjectConfig,
   rememberAllow,
 } from "./permissions.ts";
-import { codingPrompt } from "./prompts.ts";
+import { CODING_SIDE_BOUNDARY, codingPrompt } from "./prompts.ts";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
@@ -170,6 +170,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     rememberPermission: (permission, pattern) => rememberAllow(root, permission, pattern),
     environment,
     contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
+    sideBoundary: () => CODING_SIDE_BOUNDARY,
     refreshContext: (messages, context) =>
       instructionLoader.refreshedMessages(messages, context.sessionId),
     diagnostics: [

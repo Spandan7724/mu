@@ -2680,3 +2680,81 @@ describe("mid-buffer file mentions", () => {
     expect(app.editor.text).toBe("look at src/chosen.ts ");
   });
 });
+describe("side conversations", () => {
+  test("retain independent transcripts while ctrl+b switches views", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: assistant("main answer") }, "main");
+    app.openSideConversation("fake/fake-1", 100_000, ["off", "high"]);
+    app.handleEvent({ type: "message_end", message: assistant("side answer") }, "side");
+
+    expect(app.activeConversation).toBe("side");
+    expect(stripAnsi(app.renderTranscript().join("\n"))).toContain("side answer");
+    expect(stripAnsi(app.renderTranscript().join("\n"))).not.toContain("main answer");
+
+    feed(app, "\u0002");
+    expect(app.activeConversation).toBe("main");
+    expect(stripAnsi(app.renderTranscript().join("\n"))).toContain("main answer");
+    expect(stripAnsi(app.renderTranscript("side").join("\n"))).toContain("side answer");
+  });
+
+  test("main and side keep independent composer histories", () => {
+    const { app } = harness();
+    feed(app, "main question\r");
+    app.openSideConversation("fake/fake-1", 100_000, ["off"]);
+    feed(app, "side question\r");
+
+    feed(app, "\u0002");
+    app.handleInput({
+      type: "key",
+      key: { name: "up", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.editor.text).toBe("main question");
+
+    app.editor.setText("");
+    feed(app, "\u0002");
+    app.handleInput({
+      type: "key",
+      key: { name: "up", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.editor.text).toBe("side question");
+  });
+
+  test("escape closes an idle side conversation and approvals retain their source", () => {
+    let closed = 0;
+    const replies: string[] = [];
+    const { app } = harness({
+      onCloseSide: () => closed++,
+      onPermissionReply: (_id, _outcome, _remember, source) => replies.push(source),
+    });
+    app.openSideConversation("fake/fake-1", 100_000, ["off"]);
+    app.handleEvent(
+      {
+        type: "permission_asked",
+        request: {
+          id: "side-permission",
+          toolCallId: "call",
+          toolName: "bash",
+          permission: "bash",
+          pattern: "pwd",
+          description: "run pwd",
+        },
+      },
+      "side",
+    );
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(replies).toEqual(["side"]);
+    app.handleEvent(
+      { type: "permission_resolved", requestId: "side-permission", outcome: "allow" },
+      "side",
+    );
+
+    app.handleInput({
+      type: "key",
+      key: { name: "escape", ctrl: false, alt: false, shift: false },
+    });
+    expect(closed).toBe(1);
+  });
+});

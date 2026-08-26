@@ -76,6 +76,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "compact",
       description: "Summarize older context now while preserving recent work: /compact [focus]",
+      sessionScoped: true,
       run: async (ctx) => {
         if (!hooks.requestCompaction) {
           return { handled: true, message: "Compaction is not available on this surface." };
@@ -88,6 +89,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "undo",
       description: "Revert the last step — both the workspace and the conversation",
+      sessionScoped: true,
       run: async () => {
         if (!hooks.undo) return { handled: true, message: "Undo is not available here." };
         const result = await hooks.undo();
@@ -101,6 +103,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "redo",
       description: "Re-apply the step that was undone",
+      sessionScoped: true,
       run: async () => {
         if (!hooks.redo) return { handled: true, message: "Redo is not available here." };
         const result = await hooks.redo();
@@ -114,6 +117,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "fork",
       description: "Branch the conversation from an earlier point",
+      sessionScoped: true,
       run: async (ctx) => {
         if (!hooks.fork) return { handled: true, message: "Fork is not available here." };
         const entryId = ctx.args.trim();
