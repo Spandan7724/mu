@@ -202,13 +202,28 @@ function renderTable(rows: TableRow[], width: number, depth: ColorDepth): string
       ...rows.map((row) => stringWidth(visibleInlineText(row.cells[column] ?? ""))),
     ),
   );
-  while (widths.reduce((sum, cellWidth) => sum + cellWidth, separatorWidth) > width) {
-    let widest = 0;
-    for (let column = 1; column < widths.length; column++) {
-      if ((widths[column] ?? 0) > (widths[widest] ?? 0)) widest = column;
+  const cellBudget = width - separatorWidth;
+  if (widths.reduce((sum, cellWidth) => sum + cellWidth, 0) > cellBudget) {
+    let low = minimumCellWidth;
+    let high = Math.max(...widths);
+    while (low < high) {
+      const cap = Math.ceil((low + high) / 2);
+      const total = widths.reduce((sum, cellWidth) => sum + Math.min(cellWidth, cap), 0);
+      if (total <= cellBudget) low = cap;
+      else high = cap - 1;
     }
-    if ((widths[widest] ?? minimumCellWidth) <= minimumCellWidth) break;
-    widths[widest] = (widths[widest] ?? minimumCellWidth) - 1;
+
+    const natural = [...widths];
+    for (let column = 0; column < widths.length; column++) {
+      widths[column] = Math.min(widths[column] ?? minimumCellWidth, low);
+    }
+    let spare = cellBudget - widths.reduce((sum, cellWidth) => sum + cellWidth, 0);
+    for (let column = widths.length - 1; column >= 0 && spare > 0; column--) {
+      if ((widths[column] ?? 0) < (natural[column] ?? 0)) {
+        widths[column] = (widths[column] ?? 0) + 1;
+        spare--;
+      }
+    }
   }
 
   return rows.map((row, rowIndex) =>

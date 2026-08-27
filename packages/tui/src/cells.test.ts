@@ -605,6 +605,18 @@ describe("components", () => {
     expect(lines.join("\n")).toContain("docs (https://example.com)");
   });
 
+  test("markdown sizes tables arithmetically even with an enormous cell", () => {
+    const huge = "x".repeat(100_000);
+    const lines = renderMarkdown(
+      `| huge | small | medium |\n| --- | --- | --- |\n| ${huge} | ok | value |`,
+      40,
+      "none",
+    );
+
+    expect(lines.some((line) => line.includes("…"))).toBe(true);
+    expect(lines.every((line) => stringWidth(line) <= 40)).toBe(true);
+  });
+
   test("markdown styling uses semantic ANSI roles and agent cells render it", () => {
     const rendered = renderMarkdown(
       "# Heading\n\n**bold** *italic* ~~old~~ `code` [link](https://example.com)\n\n> quote\n\n```ts\nconst value = 1;\n```",
