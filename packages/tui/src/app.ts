@@ -237,6 +237,14 @@ type TranscriptItem =
       rendered?: { width: number; expanded: boolean; superseded: boolean; lines: string[] };
     };
 
+function hasAssistantDisplay(message: AssistantMessage): boolean {
+  return message.content.some(
+    (block) =>
+      (block.type === "thinking" && block.thinking.trim().length > 0) ||
+      (block.type === "text" && block.text.trim().length > 0),
+  );
+}
+
 interface ConversationView {
   editor: Editor;
   running: boolean;
@@ -736,15 +744,8 @@ export class App {
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
-          const lines = this.assistantRows(message);
-          if (lines.length > 0) {
-            this.pushTranscript({
-              kind: "assistant",
-              message,
-              rendered: { width: this.options.width, lines },
-            });
-          }
-          return lines.length > 0 ? [...lines, ""] : [];
+          if (hasAssistantDisplay(message)) this.pushTranscript({ kind: "assistant", message });
+          return [];
         }
         return [];
       }
@@ -986,14 +987,7 @@ export class App {
         continue;
       }
       if (message.role === "assistant") {
-        const lines = this.assistantRows(message);
-        if (lines.length > 0) {
-          this.pushTranscript({
-            kind: "assistant",
-            message,
-            rendered: { width: this.options.width, lines },
-          });
-        }
+        if (hasAssistantDisplay(message)) this.pushTranscript({ kind: "assistant", message });
         for (const block of message.content) {
           if (block.type === "toolCall") {
             calls.set(block.id, { toolName: block.name, args: block.arguments });

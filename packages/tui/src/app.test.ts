@@ -142,9 +142,8 @@ describe("fake-agent session", () => {
       { type: "agent_end", messages: [], reason: "done" },
     ];
 
-    const transcript: string[] = [];
-    for (const event of script) transcript.push(...app.handleEvent(event));
-    const visible = transcript.map(stripAnsi);
+    for (const event of script) app.handleEvent(event);
+    const visible = app.renderTranscript().map(stripAnsi);
 
     expect(visible).toContain("  ▸ add retries");
     expect(visible).toContain("  │ read src/api/client.ts · 142 lines");
@@ -2278,8 +2277,20 @@ describe("live streaming region", () => {
 
     expect(committed).toEqual([]);
     expect(live.some((line) => line.includes("word-79"))).toBe(true);
-    expect(final.length).toBeGreaterThan(0);
+    expect(final).toEqual([]);
     expect(screen.filter((line) => line.startsWith("  mu  "))).toHaveLength(1);
+  });
+
+  test("completed Markdown layout is deferred until a frame is requested", () => {
+    const { app } = harness();
+    const text = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
+
+    const committed = app.handleEvent({ type: "message_end", message: assistant(text) });
+
+    expect(committed).toEqual([]);
+    const rendered = app.renderFrame().transcript.map(stripAnsi).join("\n");
+    expect(rendered).toContain("line 0");
+    expect(rendered).toContain("line 1999");
   });
 
   test("very large live Markdown renders a bounded tail and completes in full", () => {
