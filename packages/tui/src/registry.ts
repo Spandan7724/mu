@@ -15,6 +15,7 @@ import { truncateToWidth } from "./width.ts";
 
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
+const EXPANDED_OUTPUT_LINES = 200;
 
 export interface ToolRenderInfo {
   toolName: string;
@@ -68,6 +69,24 @@ function compactLines(text: string, maxLines = COMPACT_OUTPUT_LINES): string[] {
     `… ${lines.length - head - tail} lines omitted · ctrl+o to expand`,
     ...lines.slice(-tail),
   ];
+}
+
+function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  if (!info.result) return [];
+  const lines = resultText(info.result).split("\n");
+  const visible = EXPANDED_OUTPUT_LINES - 1;
+  const head = Math.ceil(visible / 2);
+  const tail = Math.floor(visible / 2);
+  const selected =
+    lines.length <= EXPANDED_OUTPUT_LINES
+      ? lines
+      : [
+          ...lines.slice(0, head),
+          `… ${lines.length - head - tail} lines omitted · full output remains in session`,
+          ...lines.slice(-tail),
+        ];
+  const lineWidth = Math.max(18, ctx.width - 4);
+  return selected.flatMap((line) => toolOutputCell(truncateToWidth(line, lineWidth), ctx));
 }
 
 function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: number): string[] {
@@ -144,15 +163,18 @@ function booleanArg(args: unknown, key: string): boolean {
 }
 
 function boundedDiffLines(lines: DiffLine[], expanded: boolean | undefined): DiffLine[] {
-  if (expanded || lines.length <= COMPACT_DIFF_LINES) return lines;
-  const visible = COMPACT_DIFF_LINES - 1;
+  const limit = expanded ? EXPANDED_OUTPUT_LINES : COMPACT_DIFF_LINES;
+  if (lines.length <= limit) return lines;
+  const visible = limit - 1;
   const head = Math.ceil(visible / 2);
   const tail = Math.floor(visible / 2);
   return [
     ...lines.slice(0, head),
     {
       kind: "context",
-      text: `… ${lines.length - head - tail} lines omitted · ctrl+o to expand`,
+      text: expanded
+        ? `… ${lines.length - head - tail} lines omitted · full diff remains in session`
+        : `… ${lines.length - head - tail} lines omitted · ctrl+o to expand`,
     },
     ...lines.slice(-tail),
   ];
@@ -164,7 +186,6 @@ function displayedDiffLines(
   ctx: RenderContext,
 ): DiffLine[] {
   const bounded = boundedDiffLines(lines, info.expanded);
-  if (info.expanded) return bounded;
   const width = Math.max(20, ctx.width - 14);
   return bounded.map((line) => ({ ...line, text: truncateToWidth(line.text, width) }));
 }
@@ -301,7 +322,7 @@ export class RendererRegistry {
       ownsExpansion = false;
     }
     return info.expanded && info.result && !ownsExpansion
-      ? [...lines, ...toolOutputCell(resultText(info.result), ctx)]
+      ? [...lines, ...expandedResult(info, ctx)]
       : lines;
   }
 }

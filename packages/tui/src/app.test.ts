@@ -855,6 +855,35 @@ describe("renderer registry", () => {
     expect(lines.map(stripAnsi)).toEqual(["  │ custom rendering", "  │ line one", "  │ line two"]);
   });
 
+  test("expanded output has an honest per-tool row bound", () => {
+    const registry = new RendererRegistry();
+    registry.register("custom", () => ["  │ custom rendering"]);
+    const output = Array.from({ length: 1_000 }, (_, index) => `line ${index + 1}`).join("\n");
+    const lines = registry
+      .render(
+        {
+          toolName: "custom",
+          args: {},
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "c",
+            toolName: "custom",
+            content: [{ type: "text", text: output }],
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.length).toBeLessThanOrEqual(201);
+    expect(lines).toContain("  │ line 1");
+    expect(lines).toContain("  │ line 1000");
+    expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
+  });
+
   test("a single enormous command-output line stays compact in the transcript", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
