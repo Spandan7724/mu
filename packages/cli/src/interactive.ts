@@ -282,7 +282,7 @@ export async function runInteractive(
   let sessionResumable = Boolean(args.resumeSessionId);
 
   const registry = new RendererRegistry();
-  registry.registerAll(codingRenderers);
+  if (profile?.name === "coding") registry.registerAll(codingRenderers);
   registerDeclaredRenderers(registry, Object.entries(profileRenderers));
   registerDeclaredRenderers(registry, extensions.renderers);
   const depth = detectColorDepth();

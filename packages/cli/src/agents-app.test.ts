@@ -58,6 +58,28 @@ describe("AgentsApp", () => {
         { width: 80, depth: "none" },
       ),
     ).toEqual(["rendered:42"]);
+    expect(
+      stripAnsi(
+        presentation.registry
+          .render(
+            {
+              toolName: "read",
+              args: { path: "custom-resource" },
+              result: {
+                role: "toolResult",
+                toolCallId: "read-1",
+                toolName: "read",
+                content: [{ type: "text", text: "custom data" }],
+                details: { lines: 42 },
+                isError: false,
+                timestamp: 1,
+              },
+            },
+            { width: 80, depth: "none" },
+          )
+          .join("\n"),
+      ),
+    ).not.toContain("42 lines");
     await presentation.dispose();
     expect(calls).toEqual(["custom-profile:true:/work", "shutdown"]);
   });

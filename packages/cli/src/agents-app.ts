@@ -558,13 +558,16 @@ export async function rendererRegistryForManagedProfile(
   load: typeof resolveProfile = resolveProfile,
 ): Promise<{ registry: RendererRegistry; dispose: () => Promise<void> }> {
   const registry = new RendererRegistry();
-  registry.registerAll(codingRenderers);
-  if (record.profile === DEFAULT_PROFILE) return { registry, dispose: async () => {} };
+  if (record.profile === DEFAULT_PROFILE) {
+    registry.registerAll(codingRenderers);
+    return { registry, dispose: async () => {} };
+  }
 
   const profile: Profile = await load(record.profile, {
     root: record.workingCwd,
     presentationOnly: true,
   });
+  if (profile.name === "coding") registry.registerAll(codingRenderers);
   registerDeclaredRenderers(registry, Object.entries(profile.renderers ?? {}));
   return {
     registry,
