@@ -73,17 +73,39 @@ function compactLines(text: string, maxLines = COMPACT_OUTPUT_LINES): string[] {
 
 function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
   if (!info.result) return [];
-  const lines = resultText(info.result).split("\n");
   const visible = EXPANDED_OUTPUT_LINES - 1;
   const head = Math.ceil(visible / 2);
   const tail = Math.floor(visible / 2);
+  const text = resultText(info.result);
+  const first: string[] = [];
+  const recent: string[] = Array(tail + 1);
+  let recentCount = 0;
+  let lineCount = 0;
+  let lineStart = 0;
+  for (let index = 0; index <= text.length; index++) {
+    if (index < text.length && text[index] !== "\n") continue;
+    const line = text.slice(lineStart, index);
+    lineCount++;
+    if (first.length < head) first.push(line);
+    else {
+      recent[recentCount % recent.length] = line;
+      recentCount++;
+    }
+    lineStart = index + 1;
+  }
+  const recentLength = Math.min(recentCount, recent.length);
+  const recentStart = recentCount < recent.length ? 0 : recentCount % recent.length;
+  const orderedRecent = Array.from(
+    { length: recentLength },
+    (_, index) => recent[(recentStart + index) % recent.length] ?? "",
+  );
   const selected =
-    lines.length <= EXPANDED_OUTPUT_LINES
-      ? lines
+    lineCount <= EXPANDED_OUTPUT_LINES
+      ? [...first, ...orderedRecent]
       : [
-          ...lines.slice(0, head),
-          `… ${lines.length - head - tail} lines omitted · full output remains in session`,
-          ...lines.slice(-tail),
+          ...first,
+          `… ${lineCount - head - tail} lines omitted · full output remains in session`,
+          ...orderedRecent.slice(-tail),
         ];
   const lineWidth = Math.max(18, ctx.width - 4);
   return selected.flatMap((line) => toolOutputCell(truncateToWidth(line, lineWidth), ctx));
