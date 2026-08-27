@@ -16,6 +16,7 @@ import {
 import {
   APPROVAL_OPTIONS,
   approvalOverlay,
+  BLOCK_CURSOR_ON,
   composerRule,
   Editor,
   type FooterData,
@@ -1318,6 +1319,54 @@ export class App {
     const limit = Math.max(1, (this.options.height ?? 24) - 1);
     if (lines.length <= limit) return lines;
     if (limit === 1) return lines.slice(-1);
+
+    const cursor = lines.findIndex((line) => line.includes(BLOCK_CURSOR_ON));
+    const pinnedStart = lines.lastIndexOf(composerRule(this.options.width, this.options.depth));
+    if (cursor >= 0 && pinnedStart > cursor) {
+      const pinned = lines.slice(pinnedStart);
+      const scrollLimit = limit - pinned.length;
+      if (scrollLimit > 0) {
+        let contentLimit = scrollLimit;
+        let start = 0;
+        let end = 0;
+        let showAbove = false;
+        let showBelow = false;
+
+        for (let pass = 0; pass < 3; pass++) {
+          const maxStart = Math.max(0, pinnedStart - contentLimit);
+          start = Math.min(Math.max(0, cursor - Math.floor(contentLimit / 2)), maxStart);
+          end = Math.min(pinnedStart, start + contentLimit);
+          const wantsAbove = start > 0;
+          const wantsBelow = end < pinnedStart;
+          const markerLimit = Math.max(0, scrollLimit - 1);
+          showAbove = wantsAbove && markerLimit > 0;
+          showBelow = wantsBelow && markerLimit > (showAbove ? 1 : 0);
+          contentLimit = scrollLimit - Number(showAbove) - Number(showBelow);
+        }
+
+        return [
+          ...(showAbove
+            ? [
+                MARGIN +
+                  styleText(`… ${start} rows above hidden`, { dim: true }, this.options.depth),
+              ]
+            : []),
+          ...lines.slice(start, end),
+          ...(showBelow
+            ? [
+                MARGIN +
+                  styleText(
+                    `… ${pinnedStart - end} rows below hidden`,
+                    { dim: true },
+                    this.options.depth,
+                  ),
+              ]
+            : []),
+          ...pinned,
+        ];
+      }
+    }
+
     const hidden = lines.length - limit + 1;
     return [
       MARGIN + styleText(`… ${hidden} rows above hidden`, { dim: true }, this.options.depth),

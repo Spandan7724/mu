@@ -11,7 +11,7 @@ import { wrapText } from "./wrap.ts";
 const accent = (t: string, d: ColorDepth) => styleText(t, { accent: true }, d);
 const dim = (t: string, d: ColorDepth) => styleText(t, { dim: true }, d);
 const userMarker = (d: ColorDepth) => accent(GLYPHS.userMarker, d);
-const BLOCK_CURSOR_ON = "\u001b[7m";
+export const BLOCK_CURSOR_ON = "\u001b[7m";
 const BLOCK_CURSOR_OFF = "\u001b[0m";
 
 const COMMAND_TOKEN = /^\/[A-Za-z][\w:-]*/;

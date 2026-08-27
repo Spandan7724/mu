@@ -536,6 +536,36 @@ describe("input handling", () => {
     expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("one\n    two\n    three");
   });
 
+  test("a long pasted draft scrolls with the editor cursor", () => {
+    const app = new App({
+      width: 60,
+      height: 10,
+      depth: "none",
+      model: "fake/fake-1",
+      cwd: "~/code/mu",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+      },
+    });
+    app.editor.insert(
+      Array.from({ length: 20 }, (_, index) => `draft line ${index + 1}`).join("\n"),
+    );
+
+    let bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.join("\n")).toContain("draft line 20");
+    expect(bottom[0]).toContain("rows above hidden");
+
+    for (let index = 0; index < 19; index++) feed(app, `${ESC}[A`);
+    bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.join("\n")).toContain("draft line 1");
+    expect(bottom.join("\n")).not.toContain("draft line 20");
+    expect(bottom.some((line) => line.includes("rows below hidden"))).toBe(true);
+    expect(bottom.at(-2)).toContain("~/code/mu");
+    expect(bottom).toHaveLength(9);
+  });
+
   test("arrow keys move through a non-empty draft instead of replacing it with history", () => {
     const h = harness();
     feed(h.app, "previous\r");
