@@ -17,10 +17,12 @@ import {
   hyperlink,
   InputDecoder,
   RendererRegistry,
+  type RenderFrame,
   type Style,
   styleText,
   Terminal,
   type ToolRendererFn,
+  terminalRows,
 } from "@mu/tui";
 import {
   type Agent,
@@ -167,7 +169,7 @@ export function startNewInteractiveSession(
   >,
   app: Pick<
     App,
-    "setModel" | "setThinking" | "handleEvent" | "replaceTranscript" | "banner" | "renderScreen"
+    "setModel" | "setThinking" | "handleEvent" | "replaceTranscript" | "banner" | "renderFrame"
   >,
   renderer: Pick<FullScreenRenderer, "clear" | "renderNow">,
 ): string {
@@ -188,7 +190,7 @@ export function startNewInteractiveSession(
   });
   app.replaceTranscript([], app.banner());
   renderer.clear();
-  renderer.renderNow(app.renderScreen());
+  renderer.renderNow(app.renderFrame());
   return agent.sessionId;
 }
 
@@ -708,7 +710,7 @@ export async function runInteractive(
   // Layout is intentionally deferred into the renderer's throttled frame.
   // Provider streams often deliver several deltas in one frame interval; an
   // eager app.renderScreen() here would parse and wrap every discarded state.
-  const paint = () => renderer.requestRender(() => app.renderScreen());
+  const paint = () => renderer.requestRender(() => app.renderFrame());
   const commitLines = (lines: string[], source: ConversationSource = app.activeConversation) => {
     app.appendTranscript(lines, source);
     paint();
@@ -1213,7 +1215,7 @@ export async function runInteractive(
   const stopResize = terminal.onResize(() => {
     app.setSize(terminal.columns, terminal.rows);
     agent.resize(terminal.columns, terminal.rows);
-    renderer.renderNow(app.renderScreen());
+    renderer.renderNow(app.renderFrame());
   });
   agent.resize(terminal.columns, terminal.rows);
 
@@ -1278,10 +1280,15 @@ export async function runInteractive(
     unsubscribe();
     clearInterval(spinnerTimer);
     stopResize();
-    renderer.renderNow([
-      ...app.renderTranscript("main"),
-      ...(sessionResumable ? ["", formatResumeHint(agent.sessionId, depth), ""] : []),
-    ]);
+    const transcript = app.renderTranscript("main");
+    const finalFrame: RenderFrame = {
+      transcript,
+      managed: sessionResumable
+        ? terminalRows(["", formatResumeHint(agent.sessionId, depth), ""], terminal.columns)
+        : [],
+      dirtyFrom: transcript.length,
+    };
+    renderer.renderNow(finalFrame);
     renderer.stop();
     terminal.restore();
   }

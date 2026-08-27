@@ -5,12 +5,17 @@ import type { AgentEvent, AgentMessage } from "@mu/core";
 import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { InputDecoder } from "./input.ts";
 import { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
-import { FullScreenRenderer } from "./renderer.ts";
+import { FullScreenRenderer, type RenderFrame } from "./renderer.ts";
 import { stripAnsi, styleText } from "./style.ts";
 import { Terminal, type TerminalIo } from "./terminal.ts";
 import { stringWidth } from "./width.ts";
+import { terminalRows } from "./wrap.ts";
 
 const ESC = "\u001b";
+
+function physicalFrame(lines: string[], width = 80): RenderFrame {
+  return { transcript: [], managed: terminalRows(lines, width), dirtyFrom: 0 };
+}
 
 function harness(
   overrides: Partial<AppCallbacks> = {},
@@ -1447,6 +1452,26 @@ describe("tool output toggle", () => {
 });
 
 describe("resize", () => {
+  test("renderFrame stays physical, viewport-bounded, and compatible with renderScreen", () => {
+    const app = new App({
+      width: 40,
+      height: 6,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+      },
+    });
+    app.editor.insert("one two three four five six seven eight nine ten eleven twelve");
+
+    const frame = app.renderFrame();
+    expect(frame.managed.length).toBeLessThanOrEqual(5);
+    expect(frame.managed.every((row) => !row.includes("\n") && stringWidth(row) <= 40)).toBe(true);
+    expect(app.renderScreen()).toEqual([...frame.transcript, ...frame.managed]);
+  });
+
   test("the complete retained screen re-wraps to the new width", () => {
     const h = harness();
     h.app.handleEvent({
@@ -1660,26 +1685,88 @@ describe("full-screen renderer", () => {
 
   test("identical frames are not repainted", async () => {
     const { written, renderer } = setup();
-    renderer.renderNow(["a", "b"]);
+    renderer.renderNow(physicalFrame(["a", "b"]));
     const after = written.length;
-    renderer.renderNow(["a", "b"]);
+    renderer.renderNow(physicalFrame(["a", "b"]));
     expect(written.length).toBe(after);
+  });
+
+  test("a managed-only update does not scan a stable transcript", () => {
+    const { written, renderer } = setup();
+    let transcriptReads = 0;
+    const rows = Array.from({ length: 9_000 }, (_, index) => `history ${index}`);
+    const transcript = new Proxy(rows, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && /^\d+$/.test(property)) transcriptReads++;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    renderer.renderNow({ transcript, managed: ["composer a"], dirtyFrom: transcript.length });
+    transcriptReads = 0;
+    const after = written.length;
+
+    renderer.renderNow({ transcript, managed: ["composer b"], dirtyFrom: transcript.length });
+
+    expect(transcriptReads).toBe(0);
+    expect(written.length).toBe(after + 1);
+    expect(written.at(-1)).toContain("composer b");
+  });
+
+  test("an appended transcript replaces the old managed tail without duplication", () => {
+    const screen = new VirtualScreen(8);
+    const terminal = new Terminal({
+      write: (data) => screen.write(data),
+      columns: 80,
+      rows: 8,
+      isTty: true,
+    });
+    const renderer = new FullScreenRenderer(terminal, 0);
+    renderer.renderNow({ transcript: ["history"], managed: ["draft"], dirtyFrom: 1 });
+    renderer.renderNow({
+      transcript: ["history", "committed"],
+      managed: ["composer"],
+      dirtyFrom: 2,
+    });
+
+    const rendered = [...screen.scrollback, ...screen.lines];
+    expect(rendered.filter((row) => row === "history")).toHaveLength(1);
+    expect(rendered.filter((row) => row === "committed")).toHaveLength(1);
+    expect(rendered.filter((row) => row === "composer")).toHaveLength(1);
+    expect(rendered).not.toContain("draft");
   });
 
   test("a changed frame repaints", async () => {
     const { written, renderer } = setup();
-    renderer.renderNow(["a"]);
+    renderer.renderNow(physicalFrame(["a"]));
     const after = written.length;
-    renderer.renderNow(["b"]);
+    renderer.renderNow(physicalFrame(["b"]));
     expect(written.length).toBeGreaterThan(after);
   });
 
   test("embedded newlines are counted as physical screen rows", () => {
     const { written, renderer } = setup();
-    renderer.renderNow(["first\nsecond", "third"]);
+    renderer.renderNow(physicalFrame(["first\nsecond", "third"]));
     expect(renderer.lineCount).toBe(3);
 
-    renderer.renderNow(["replacement"]);
+    renderer.renderNow(physicalFrame(["replacement"]));
+    expect(written.at(-1)).toContain(`${ESC}[2J${ESC}[H${ESC}[3J`);
+  });
+
+  test("a terminal resize forces a complete replay", () => {
+    const written: string[] = [];
+    const io: TerminalIo = {
+      write: (data) => written.push(data),
+      columns: 80,
+      rows: 24,
+      isTty: true,
+    };
+    const renderer = new FullScreenRenderer(new Terminal(io), 0);
+    const frame = physicalFrame(["history", "composer"]);
+    renderer.renderNow(frame);
+    io.columns = 40;
+
+    renderer.renderNow(frame);
+
     expect(written.at(-1)).toContain(`${ESC}[2J${ESC}[H${ESC}[3J`);
   });
 
@@ -1692,7 +1779,9 @@ describe("full-screen renderer", () => {
       isTty: true,
     });
     const renderer = new FullScreenRenderer(terminal, 0);
-    renderer.renderNow(["user", "tool compact", "final response", "rule", "composer"]);
+    renderer.renderNow(
+      physicalFrame(["user", "tool compact", "final response", "rule", "composer"]),
+    );
 
     const expanded = [
       "user",
@@ -1702,7 +1791,7 @@ describe("full-screen renderer", () => {
       "rule",
       "composer",
     ];
-    renderer.renderNow(expanded);
+    renderer.renderNow(physicalFrame(expanded));
     const rendered = [...screen.scrollback, ...screen.lines];
     expect(rendered).not.toContain("tool compact");
     expect(rendered.indexOf("output 6")).toBeLessThan(rendered.indexOf("final response"));
@@ -1757,10 +1846,10 @@ describe("full-screen renderer", () => {
       ),
     });
 
-    renderer.renderNow(app.renderScreen());
+    renderer.renderNow(app.renderFrame());
     for (let index = 0; index < 3; index++) {
       feed(app, "\u000f");
-      renderer.renderNow(app.renderScreen());
+      renderer.renderNow(app.renderFrame());
     }
 
     const rendered = [...screen.scrollback, ...screen.lines].join("\n");
@@ -1778,9 +1867,9 @@ describe("full-screen renderer", () => {
       isTty: true,
     });
     const renderer = new FullScreenRenderer(terminal, 10);
-    renderer.render(["1"]);
-    renderer.render(["2"]);
-    renderer.render(["3"]);
+    renderer.render(physicalFrame(["1"]));
+    renderer.render(physicalFrame(["2"]));
+    renderer.render(physicalFrame(["3"]));
     expect(written.length).toBe(0);
     await Bun.sleep(25);
     expect(written.length).toBe(1);
@@ -1799,11 +1888,11 @@ describe("full-screen renderer", () => {
     let produced = 0;
     renderer.requestRender(() => {
       produced++;
-      return ["discarded"];
+      return physicalFrame(["discarded"]);
     });
     renderer.requestRender(() => {
       produced++;
-      return ["latest"];
+      return physicalFrame(["latest"]);
     });
 
     expect(produced).toBe(0);
@@ -2185,7 +2274,7 @@ describe("live streaming region", () => {
     });
 
     const live = app.renderScreen().map(stripAnsi);
-    expect(live.join("\n")).toContain("earlier characters retained while streaming");
+    expect(live.join("\n")).toContain("rows above hidden");
     expect(live.join("\n")).not.toContain("firstGeneratedLine");
     expect(live.join("\n")).toContain("finalGeneratedLine");
     expect(live.length).toBeLessThan(1_000);

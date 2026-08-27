@@ -28,6 +28,7 @@ import {
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
 import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
+import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
@@ -1016,7 +1017,17 @@ export class App {
   }
 
   renderScreen(): string[] {
-    return [...this.transcriptRows(), ...this.toTerminalRows(this.renderManaged())];
+    const frame = this.renderFrame();
+    return [...frame.transcript, ...frame.managed];
+  }
+
+  renderFrame(): RenderFrame {
+    const transcript = this.transcriptRows();
+    return {
+      transcript,
+      managed: this.fitToViewport(this.toTerminalRows(this.renderManaged())),
+      dirtyFrom: transcript.length,
+    };
   }
 
   renderTranscript(source: ConversationSource = this.activeSource): string[] {

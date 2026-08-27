@@ -14,10 +14,12 @@ import {
   type InputEvent,
   MARGIN,
   RendererRegistry,
+  type RenderFrame,
   type SelectItem,
   SelectList,
   styleText,
   Terminal,
+  terminalRows,
   truncateToWidth,
   wrapText,
 } from "@mu/tui";
@@ -593,7 +595,13 @@ export async function runAgentView(
   let active: ActiveConversation | undefined;
   let attaching = false;
   let app: AgentsApp;
-  const paint = () => renderer.requestRender(() => active?.app.renderScreen() ?? app.render());
+  const emptyTranscript: readonly string[] = [];
+  const dashboardFrame = (): RenderFrame => ({
+    transcript: emptyTranscript,
+    managed: terminalRows(app.render(), terminal.columns),
+    dirtyFrom: 0,
+  });
+  const paint = () => renderer.requestRender(() => active?.app.renderFrame() ?? dashboardFrame());
 
   const showError = (error: unknown) => {
     app.setNotice(error instanceof Error ? error.message : String(error));

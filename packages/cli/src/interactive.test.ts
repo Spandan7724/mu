@@ -152,7 +152,8 @@ test("/new starts a fresh chat and clears the terminal", () => {
 
   const sessionId = startNewInteractiveSession(agent, app, {
     clear: () => calls.push("clear"),
-    renderNow: (lines) => calls.push(lines.map(stripAnsi).join("\n")),
+    renderNow: (frame) =>
+      calls.push([...frame.transcript, ...frame.managed].map(stripAnsi).join("\n")),
   });
 
   expect(sessionId).not.toBe(oldSessionId);
