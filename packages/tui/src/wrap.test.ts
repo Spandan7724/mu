@@ -29,6 +29,13 @@ describe("width measurement", () => {
     expect(graphemes("éx")).toEqual(["é", "x"]);
   });
 
+  test("emoji sequences are one two-cell grapheme", () => {
+    for (const emoji of ["👨‍👩‍👧‍👦", "👍🏽", "1️⃣", "🇺🇸"]) {
+      expect(graphemes(emoji)).toEqual([emoji]);
+      expect(stringWidth(emoji)).toBe(2);
+    }
+  });
+
   test("truncate respects wide characters", () => {
     expect(stringWidth(truncateToWidth("你好世界", 5))).toBeLessThanOrEqual(5);
     expect(truncateToWidth("hello world", 8)).toBe("hello w…");
@@ -57,6 +64,11 @@ describe("wrapping", () => {
   test("never exceeds the width with CJK content", () => {
     const lines = wrapLine("你好世界你好世界你好", 7);
     for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(7);
+  });
+
+  test("never splits joined emoji, modifiers, keycaps, or flags", () => {
+    const emoji = ["👨‍👩‍👧‍👦", "👍🏽", "1️⃣", "🇺🇸"];
+    expect(wrapLine(emoji.join(""), 2)).toEqual(emoji);
   });
 
   test("preserves styling across a wrap and closes it on each line", () => {

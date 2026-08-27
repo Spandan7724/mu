@@ -1,5 +1,8 @@
 import { stripAnsi } from "./style.ts";
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const EMOJI_CLUSTER = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u;
+
 // Terminal cell width. Wide (East-Asian W/F) and emoji occupy two columns;
 // combining marks and zero-width joiners occupy none. Getting this wrong is
 // what makes CJK and emoji input break a layout.
@@ -43,28 +46,24 @@ export function charWidth(codePoint: number): number {
   return isWide(codePoint) ? 2 : 1;
 }
 
-// Width of a string in terminal cells, ignoring ANSI styling.
-export function stringWidth(text: string): number {
+export function graphemeWidth(cluster: string): number {
+  if (EMOJI_CLUSTER.test(cluster)) return 2;
   let width = 0;
-  for (const char of stripAnsi(text)) {
-    width += charWidth(char.codePointAt(0) ?? 0);
-  }
+  for (const char of cluster) width += charWidth(char.codePointAt(0) ?? 0);
   return width;
 }
 
-// Splits into grapheme-ish clusters so a wide char or emoji sequence is never
-// cut in half.
+// Width of a string in terminal cells, ignoring ANSI styling.
+export function stringWidth(text: string): number {
+  let width = 0;
+  for (const cluster of graphemes(stripAnsi(text))) width += graphemeWidth(cluster);
+  return width;
+}
+
+// Splits by Unicode extended grapheme cluster so cursor movement and wrapping
+// cannot cut combining text, flags, modifiers, keycaps, or ZWJ emoji sequences.
 export function graphemes(text: string): string[] {
-  const out: string[] = [];
-  for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
-    if (out.length > 0 && isCombining(code)) {
-      out[out.length - 1] += char;
-    } else {
-      out.push(char);
-    }
-  }
-  return out;
+  return Array.from(graphemeSegmenter.segment(text), ({ segment }) => segment);
 }
 
 // Truncates to a cell width, appending an ellipsis when it had to cut.

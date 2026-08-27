@@ -60,6 +60,37 @@ function paintRange(
   return out;
 }
 
+function graphemeOffsets(line: string): number[] {
+  const offsets = [0];
+  for (const cluster of graphemes(line)) offsets.push((offsets.at(-1) ?? 0) + cluster.length);
+  return offsets;
+}
+
+function floorGraphemeOffset(line: string, offset: number): number {
+  let floor = 0;
+  for (const boundary of graphemeOffsets(line)) {
+    if (boundary > offset) break;
+    floor = boundary;
+  }
+  return floor;
+}
+
+function previousGraphemeOffset(line: string, offset: number): number {
+  let previous = 0;
+  for (const boundary of graphemeOffsets(line)) {
+    if (boundary >= offset) break;
+    previous = boundary;
+  }
+  return previous;
+}
+
+function nextGraphemeOffset(line: string, offset: number): number {
+  for (const boundary of graphemeOffsets(line)) {
+    if (boundary > offset) return boundary;
+  }
+  return line.length;
+}
+
 // Multi-line editor with history. Paste never submits — that is the decoder's
 // job, but the editor must accept embedded newlines without treating them as
 // a submit either.
@@ -107,7 +138,7 @@ export class Editor {
       const length = (this.lines[row] ?? "").length;
       if (remaining <= length) {
         this.row = row;
-        this.col = remaining;
+        this.col = floorGraphemeOffset(this.lines[row] ?? "", remaining);
         return;
       }
       remaining -= length + 1;
@@ -179,14 +210,14 @@ export class Editor {
     const line = this.lines[this.row] ?? "";
     switch (direction) {
       case "left":
-        if (this.col > 0) this.col -= 1;
+        if (this.col > 0) this.col = previousGraphemeOffset(line, this.col);
         else if (this.row > 0) {
           this.row -= 1;
           this.col = (this.lines[this.row] ?? "").length;
         }
         break;
       case "right":
-        if (this.col < line.length) this.col += 1;
+        if (this.col < line.length) this.col = nextGraphemeOffset(line, this.col);
         else if (this.row < this.lines.length - 1) {
           this.row += 1;
           this.col = 0;
@@ -195,13 +226,15 @@ export class Editor {
       case "up":
         if (this.row > 0) {
           this.row -= 1;
-          this.col = Math.min(this.col, (this.lines[this.row] ?? "").length);
+          const target = this.lines[this.row] ?? "";
+          this.col = floorGraphemeOffset(target, Math.min(this.col, target.length));
         }
         break;
       case "down":
         if (this.row < this.lines.length - 1) {
           this.row += 1;
-          this.col = Math.min(this.col, (this.lines[this.row] ?? "").length);
+          const target = this.lines[this.row] ?? "";
+          this.col = floorGraphemeOffset(target, Math.min(this.col, target.length));
         }
         break;
       case "home":

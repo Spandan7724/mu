@@ -1,5 +1,5 @@
 import { RESET } from "./style.ts";
-import { charWidth, stringWidth } from "./width.ts";
+import { graphemes, graphemeWidth, stringWidth } from "./width.ts";
 
 interface Token {
   text: string; // visible characters
@@ -30,7 +30,7 @@ function readLink(line: string, start: number): { open: string; next: number } |
   return { open: url === "" ? "" : line.slice(start, next), next };
 }
 
-// Splits a styled string into visible characters, each carrying the ANSI state
+// Splits a styled string into visible graphemes, each carrying the ANSI state
 // active at that point — so a wrapped line can re-open the styles it inherited.
 function tokenize(line: string): Token[] {
   const tokens: Token[] = [];
@@ -52,9 +52,17 @@ function tokenize(line: string): Token[] {
       i = hyperlink.next;
       continue;
     }
-    const char = String.fromCodePoint(line.codePointAt(i) ?? 0);
-    tokens.push({ text: char, ansi: active, link });
-    i += char.length;
+    const nextEscape = line.indexOf("\u001b", i);
+    const end = nextEscape === -1 ? line.length : nextEscape;
+    if (end === i) {
+      tokens.push({ text: line[i] ?? "", ansi: active, link });
+      i++;
+      continue;
+    }
+    for (const cluster of graphemes(line.slice(i, end))) {
+      tokens.push({ text: cluster, ansi: active, link });
+    }
+    i = end;
   }
   return tokens;
 }
@@ -113,7 +121,7 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
   };
 
   for (const token of tokens) {
-    const w = charWidth(token.text.codePointAt(0) ?? 0);
+    const w = graphemeWidth(token.text);
 
     if (currentWidth + w > usable) {
       // Prefer breaking at the last space; hard-break if the word is too long.
@@ -125,7 +133,7 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
         current = current.slice(0, wordStart);
         flush();
         current = carried;
-        currentWidth = carried.reduce((sum, t) => sum + charWidth(t.text.codePointAt(0) ?? 0), 0);
+        currentWidth = carried.reduce((sum, t) => sum + graphemeWidth(t.text), 0);
         wordStart = 0;
       } else {
         flush();

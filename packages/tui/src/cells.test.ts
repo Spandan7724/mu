@@ -764,9 +764,24 @@ describe("editor", () => {
 
   test("backspace removes a whole grapheme", () => {
     const editor = new Editor();
-    editor.insert("é");
-    editor.backspace();
-    expect(editor.text).toBe("");
+    for (const grapheme of ["é", "👨‍👩‍👧‍👦", "👍🏽", "1️⃣", "🇺🇸"]) {
+      editor.insert(grapheme);
+      editor.backspace();
+      expect(editor.text).toBe("");
+    }
+  });
+
+  test("left and right move only across grapheme boundaries", () => {
+    const editor = new Editor();
+    const family = "👨‍👩‍👧‍👦";
+    editor.insert(`${family}x`);
+
+    editor.move("left");
+    expect(editor.textBeforeCursor).toBe(family);
+    editor.move("left");
+    expect(editor.textBeforeCursor).toBe("");
+    editor.move("right");
+    expect(editor.textBeforeCursor).toBe(family);
   });
 
   test("backspace at the start of a line joins it to the previous one", () => {
