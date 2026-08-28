@@ -1,7 +1,13 @@
 // The mu integration layer: an AgentEvent consumer that retains transcript
 // cells and keeps the live region (composer / approval / footer) up to date. It
 // holds no agent logic — everything arrives as events.
-import type { AgentEvent, AgentMessage, AssistantMessage, PermissionRequest } from "@mu/core";
+import type {
+  AgentEvent,
+  AgentMessage,
+  AssistantMessage,
+  CheckpointDiffFile,
+  PermissionRequest,
+} from "@mu/core";
 import {
   agentCell,
   compactionCell,
@@ -31,12 +37,19 @@ import {
   Spinner,
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
-import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
+import { type ActivityKind, RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
-export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
+export type AppMode =
+  | "composing"
+  | "activity"
+  | "approval"
+  | "select"
+  | "mention"
+  | "picker"
+  | "prompt";
 export type ConversationSource = "main" | "side";
 
 export interface PickerRequest {
@@ -113,7 +126,6 @@ interface PendingInput {
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
-const EXPANDED_TOOL_ROWS = 24;
 const PENDING_INPUT_ROWS = 3;
 const MIN_STREAMING_PREVIEW_CHARS = 8_000;
 const MAX_STREAMING_PREVIEW_CHARS = 16_000;
@@ -227,6 +239,13 @@ class LiveToolOutput {
 }
 
 type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
+interface ActivityTool {
+  id: string;
+  info: ToolRenderInfo;
+  expanded: boolean;
+  rendered?: { width: number; expanded: boolean; lines: string[] };
+}
+
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
   | { kind: "user"; text: string }
@@ -237,8 +256,17 @@ type TranscriptItem =
     }
   | {
       kind: "tool";
+      id: string;
       info: ToolRenderInfo;
+      expanded: boolean;
       rendered?: { width: number; expanded: boolean; superseded: boolean; lines: string[] };
+    }
+  | {
+      kind: "activity";
+      id: string;
+      activityKind: ActivityKind;
+      tools: ActivityTool[];
+      expanded: boolean;
     };
 
 function hasAssistantDisplay(message: AssistantMessage): boolean {
@@ -263,7 +291,6 @@ interface ConversationView {
     | {
         version: number;
         width: number;
-        expanded: boolean;
         rows: string[];
       }
     | undefined;
@@ -280,6 +307,7 @@ interface ConversationView {
   footerData: FooterData;
   thinkingLevel: string;
   thinkingLevels: string[];
+  activitySelection: string | undefined;
 }
 
 function conversationView(
@@ -303,6 +331,7 @@ function conversationView(
     footerData,
     thinkingLevel: thinkingLevels[0] ?? "off",
     thinkingLevels: [...thinkingLevels],
+    activitySelection: undefined,
   };
 }
 
@@ -328,7 +357,6 @@ export class App {
     | "failed"
     | "finished"
     | undefined;
-  private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   private ctrlCArmedAt = 0;
   private commands: { label: string; description?: string }[] = [];
@@ -415,6 +443,12 @@ export class App {
   }
   private set transcriptCache(value: ConversationView["transcriptCache"]) {
     this.view.transcriptCache = value;
+  }
+  private get activitySelection(): string | undefined {
+    return this.view.activitySelection;
+  }
+  private set activitySelection(value: string | undefined) {
+    this.view.activitySelection = value;
   }
   private get streaming(): string | undefined {
     return this.view.streaming;
@@ -581,7 +615,11 @@ export class App {
   }
 
   get areToolOutputsExpanded(): boolean {
-    return this.toolOutputExpanded;
+    return this.transcript.some(
+      (item) =>
+        (item.kind === "tool" && item.expanded) ||
+        (item.kind === "activity" && (item.expanded || item.tools.some((tool) => tool.expanded))),
+    );
   }
 
   get isShellMode(): boolean {
@@ -775,17 +813,7 @@ export class App {
           result: event.result,
         };
         const lines = this.registry.render(info, this.ctx);
-        this.pushTranscript({
-          kind: "tool",
-          info,
-          rendered: {
-            width: this.options.width,
-            expanded: false,
-            // Newest by construction — it is the call that just landed.
-            superseded: false,
-            lines,
-          },
-        });
+        this.pushTool(event.toolCallId, info, lines);
         return lines;
       }
 
@@ -979,6 +1007,8 @@ export class App {
     this.pendingInputs = [];
     this.streaming = undefined;
     this.streamingCache = undefined;
+    this.activitySelection = undefined;
+    if (this.mode === "activity") this.mode = "composing";
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
     for (const message of messages) {
@@ -1001,14 +1031,12 @@ export class App {
       }
       if (message.role === "toolResult") {
         const call = calls.get(message.toolCallId);
-        this.pushTranscript({
-          kind: "tool",
-          info: {
-            toolName: call?.toolName ?? message.toolName,
-            args: call?.args ?? {},
-            result: message,
-          },
-        });
+        const info = {
+          toolName: call?.toolName ?? message.toolName,
+          args: call?.args ?? {},
+          result: message,
+        };
+        this.pushTool(message.toolCallId, info);
         calls.delete(message.toolCallId);
       }
     }
@@ -1020,6 +1048,13 @@ export class App {
   }
 
   renderFrame(): RenderFrame {
+    if (this.mode === "activity") {
+      return {
+        transcript: [],
+        managed: this.activityReviewRows(),
+        dirtyFrom: 0,
+      };
+    }
     const transcript = this.transcriptRows();
     return {
       transcript,
@@ -1042,11 +1077,7 @@ export class App {
 
   private transcriptRows(): string[] {
     const cached = this.transcriptCache;
-    if (
-      cached?.version === this.transcriptVersion &&
-      cached.width === this.options.width &&
-      cached.expanded === this.toolOutputExpanded
-    ) {
+    if (cached?.version === this.transcriptVersion && cached.width === this.options.width) {
       return cached.rows;
     }
     // A tool whose calls replace one another leaves only its newest call still
@@ -1069,18 +1100,23 @@ export class App {
         }
         return [...item.rendered.lines, ""];
       }
+      if (item.kind === "activity") {
+        const lines = this.renderActivity(item);
+        const next = this.transcript[index + 1];
+        return next?.kind === "activity" ? lines : [...lines, ""];
+      }
       const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
       if (
         item.rendered?.width !== this.options.width ||
-        item.rendered.expanded !== this.toolOutputExpanded ||
+        item.rendered.expanded !== item.expanded ||
         item.rendered.superseded !== superseded
       ) {
         item.rendered = {
           width: this.options.width,
-          expanded: this.toolOutputExpanded,
+          expanded: item.expanded,
           superseded,
           lines: this.registry.render(
-            { ...item.info, expanded: this.toolOutputExpanded, superseded },
+            { ...item.info, expanded: item.expanded, superseded },
             this.ctx,
           ),
         };
@@ -1094,13 +1130,13 @@ export class App {
         (next.kind === "user" || next.kind === "assistant"
           ? true
           : next.kind === "tool" && item.rendered.lines.length > 1);
-      return separated ? [...item.rendered.lines, ""] : item.rendered.lines;
+      const lines = this.disclosureLines(item.rendered.lines, item.expanded, false);
+      return separated ? [...lines, ""] : lines;
     });
     const rows = this.toTerminalRows(logical);
     this.transcriptCache = {
       version: this.transcriptVersion,
       width: this.options.width,
-      expanded: this.toolOutputExpanded,
       rows,
     };
     return rows;
@@ -1125,12 +1161,12 @@ export class App {
             args: pending.args,
             running: pending.running === true,
             argsStreaming: pending.argsStreaming === true,
-            expanded: this.toolOutputExpanded,
+            expanded: false,
           },
           this.ctx,
         ),
       );
-      const output = pending.output.display(this.toolOutputExpanded ? EXPANDED_TOOL_ROWS : 4);
+      const output = pending.output.display(4);
       for (const line of output) {
         if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
       }
@@ -1292,6 +1328,212 @@ export class App {
     return rows;
   }
 
+  private pushTool(id: string, info: ToolRenderInfo, renderedLines?: string[]): void {
+    const activityKind = this.registry.activityKind(info);
+    if (!activityKind) {
+      this.pushTranscript({
+        kind: "tool",
+        id,
+        info,
+        expanded: false,
+        ...(renderedLines
+          ? {
+              rendered: {
+                width: this.options.width,
+                expanded: false,
+                superseded: false,
+                lines: renderedLines,
+              },
+            }
+          : {}),
+      });
+      return;
+    }
+
+    const tool: ActivityTool = {
+      id,
+      info,
+      expanded: false,
+      ...(renderedLines
+        ? {
+            rendered: {
+              width: this.options.width,
+              expanded: false,
+              lines: renderedLines,
+            },
+          }
+        : {}),
+    };
+    const previous = this.transcript.at(-1);
+    if (previous?.kind === "activity" && previous.activityKind === activityKind) {
+      previous.tools.push(tool);
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+      return;
+    }
+    this.pushTranscript({
+      kind: "activity",
+      id: `activity:${id}`,
+      activityKind,
+      tools: [tool],
+      expanded: false,
+    });
+  }
+
+  private disclosureLines(
+    lines: string[],
+    expanded: boolean,
+    selected: boolean,
+    nested = false,
+  ): string[] {
+    if (lines.length === 0) return [];
+    const marker = styleText(
+      selected ? "❯" : expanded ? "⌄" : "›",
+      {
+        ...(selected ? { accent: true, bold: true } : { dim: true }),
+      },
+      this.options.depth,
+    );
+    const [first = "", ...rest] = lines;
+    const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
+    const indent = nested ? `${MARGIN}  ` : MARGIN;
+    return [
+      `${indent}${marker} ${body}`,
+      ...rest.map((line) => (nested ? `${MARGIN}  ${line}` : line)),
+    ];
+  }
+
+  private activitySummary(item: Extract<TranscriptItem, { kind: "activity" }>): string {
+    const count = item.tools.length;
+    if (item.activityKind === "explore") {
+      const searches = item.tools.filter((tool) => tool.info.toolName === "bash").length;
+      const files = count - searches;
+      const parts = [
+        files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
+        searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
+      ].filter(Boolean);
+      return `Explored ${parts.join(", ")}`;
+    }
+    if (item.activityKind === "command") {
+      const failed = item.tools.filter((tool) => tool.info.result?.isError).length;
+      const failure =
+        failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, this.options.depth)}` : "";
+      return `Ran ${count} command${count === 1 ? "" : "s"}${failure}`;
+    }
+    const totals = item.tools.reduce(
+      (sum, tool) => {
+        const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+        return {
+          added: sum.added + (diff?.added ?? 0),
+          removed: sum.removed + (diff?.removed ?? 0),
+        };
+      },
+      { added: 0, removed: 0 },
+    );
+    const added = styleText(`+${totals.added}`, { green: true }, this.options.depth);
+    const removed = styleText(`-${totals.removed}`, { red: true }, this.options.depth);
+    return `Edited ${count} file${count === 1 ? "" : "s"} ${added} ${removed}`;
+  }
+
+  private renderActivityTool(
+    tool: ActivityTool,
+    activityKind: ActivityKind,
+    selected: boolean,
+    nested: boolean,
+  ): string[] {
+    if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== tool.expanded) {
+      tool.rendered = {
+        width: this.options.width,
+        expanded: tool.expanded,
+        lines: this.registry.render({ ...tool.info, expanded: tool.expanded }, this.ctx),
+      };
+    }
+    const lines = [...tool.rendered.lines];
+    if (activityKind === "edit" && lines.length > 0) {
+      const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+      if (diff) {
+        lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
+      }
+    }
+    return this.disclosureLines(lines, tool.expanded, selected, nested);
+  }
+
+  private renderActivity(
+    item: Extract<TranscriptItem, { kind: "activity" }>,
+    selectedId?: string,
+  ): string[] {
+    if (item.tools.length === 1) {
+      const tool = item.tools[0] as ActivityTool;
+      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, false);
+    }
+    const marker = styleText(
+      selectedId === item.id ? "❯" : item.expanded ? "⌄" : "›",
+      {
+        ...(selectedId === item.id ? { accent: true, bold: true } : { dim: true }),
+      },
+      this.options.depth,
+    );
+    const summary = `${MARGIN}${marker} ${styleText(this.activitySummary(item), { bold: true }, this.options.depth)}`;
+    if (!item.expanded) return [summary];
+    return [
+      summary,
+      ...item.tools.flatMap((tool) =>
+        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, true),
+      ),
+    ];
+  }
+
+  private activityNodes(): { id: string; item: TranscriptItem; tool?: ActivityTool }[] {
+    const nodes: { id: string; item: TranscriptItem; tool?: ActivityTool }[] = [];
+    for (const item of this.transcript) {
+      if (item.kind === "tool") nodes.push({ id: item.id, item });
+      if (item.kind !== "activity") continue;
+      if (item.tools.length === 1) {
+        const tool = item.tools[0] as ActivityTool;
+        nodes.push({ id: tool.id, item, tool });
+      } else {
+        nodes.push({ id: item.id, item });
+        if (item.expanded) {
+          for (const tool of item.tools) nodes.push({ id: tool.id, item, tool });
+        }
+      }
+    }
+    return nodes;
+  }
+
+  private activityReviewRows(): string[] {
+    const logical = [
+      `${MARGIN}${styleText("Activity", { bold: true }, this.options.depth)}`,
+      "",
+      ...this.transcript.flatMap((item) => {
+        if (item.kind === "activity") return this.renderActivity(item, this.activitySelection);
+        if (item.kind !== "tool") return [];
+        const superseded = false;
+        const lines = this.registry.render(
+          { ...item.info, expanded: item.expanded, superseded },
+          this.ctx,
+        );
+        return this.disclosureLines(lines, item.expanded, this.activitySelection === item.id);
+      }),
+      "",
+      `${MARGIN}${styleText("↑↓ select · →/enter expand · ← collapse · ctrl+o toggle · esc close", { dim: true }, this.options.depth)}`,
+    ];
+    const rows = this.toTerminalRows(logical);
+    const limit = Math.max(1, (this.options.height ?? 24) - 1);
+    if (rows.length <= limit) return rows;
+    const selected = Math.max(
+      0,
+      rows.findIndex((line) => line.includes("❯")),
+    );
+    const footer = rows.slice(-2);
+    const contentLimit = Math.max(1, limit - footer.length);
+    const start = Math.max(
+      0,
+      Math.min(selected - Math.floor(contentLimit / 2), rows.length - 2 - contentLimit),
+    );
+    return [...rows.slice(start, start + contentLimit), ...footer];
+  }
+
   private pushTranscript(item: TranscriptItem): void {
     this.transcript.push(item);
     this.transcriptVersion++;
@@ -1375,6 +1617,65 @@ export class App {
     ];
   }
 
+  private toggleActivityNode(expanded?: boolean): void {
+    const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
+    if (!node) return;
+    if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
+    else if (node.item.kind === "activity") {
+      node.item.expanded = expanded ?? !node.item.expanded;
+    } else if (node.item.kind === "tool") {
+      node.item.expanded = expanded ?? !node.item.expanded;
+    }
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
+  private openActivity(): void {
+    const nodes = this.activityNodes();
+    const latest = nodes.at(-1);
+    if (!latest) return;
+    this.activitySelection = latest.id;
+    this.mode = "activity";
+    this.toggleActivityNode();
+  }
+
+  private handleActivityKey(key: Key): void {
+    if (key.name === "escape") {
+      this.mode = this.approvals.length > 0 ? "approval" : "composing";
+      return;
+    }
+    const nodes = this.activityNodes();
+    let index = nodes.findIndex((node) => node.id === this.activitySelection);
+    if (index < 0) index = Math.max(0, nodes.length - 1);
+    if (["up", "down", "pageup", "pagedown"].includes(key.name)) {
+      const page = Math.max(1, (this.options.height ?? 24) - 6);
+      const offset =
+        key.name === "up" ? -1 : key.name === "down" ? 1 : key.name === "pageup" ? -page : page;
+      const next = Math.max(0, Math.min(nodes.length - 1, index + offset));
+      this.activitySelection = nodes[next]?.id;
+      return;
+    }
+    if (key.name === "return" || key.name === "right") {
+      this.toggleActivityNode(true);
+      return;
+    }
+    if (key.name !== "left") return;
+    const node = nodes[index];
+    if (!node) return;
+    const isExpanded = node.tool
+      ? node.tool.expanded
+      : node.item.kind === "activity" || node.item.kind === "tool"
+        ? node.item.expanded
+        : false;
+    if (isExpanded) {
+      this.toggleActivityNode(false);
+      return;
+    }
+    if (node.tool && node.item.kind === "activity" && node.item.tools.length > 1) {
+      this.activitySelection = node.item.id;
+    }
+  }
+
   // Mirrors Escape: aborts an active run rather than killing the session
   // outright. When idle, clears composer text like a normal interrupt (pi's
   // behavior); an empty composer arms a "press again" exit window instead of
@@ -1406,6 +1707,7 @@ export class App {
       this.ctrlCArmedAt = 0;
     }
     if (event.type === "paste") {
+      if (this.mode === "activity") return;
       if (this.mode === "prompt") {
         this.promptEditor.insert(event.text.replace(/[\r\n]+/g, ""));
         return;
@@ -1428,8 +1730,8 @@ export class App {
     }
 
     if (key.ctrl && key.name === "o") {
-      this.toolOutputExpanded = !this.toolOutputExpanded;
-      this.transcriptCache = undefined;
+      if (this.mode === "activity") this.toggleActivityNode();
+      else if (this.mode === "composing") this.openActivity();
       return;
     }
 
@@ -1458,6 +1760,11 @@ export class App {
 
     if (this.mode === "approval") {
       this.handleApprovalKey(key);
+      return;
+    }
+
+    if (this.mode === "activity") {
+      this.handleActivityKey(key);
       return;
     }
 

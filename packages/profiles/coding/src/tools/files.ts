@@ -246,7 +246,11 @@ export function writeTool(deps: ToolDeps) {
             text: `${exists ? "Updated" : "Created"} ${display(deps.root, absolute)} (${lines} lines)`,
           },
         ],
-        details: { path: absolute, created: !exists },
+        details: {
+          path: absolute,
+          created: !exists,
+          diff: filePermissionDiff(display(deps.root, absolute), currentContent, content),
+        },
       };
     },
   });
@@ -513,7 +517,13 @@ export function editTool(deps: ToolDeps) {
             text: `Edited ${display(deps.root, absolute)} (${occurrences} replacement${occurrences === 1 ? "" : "s"})`,
           },
         ],
-        details: { path: absolute, occurrences, edits: edits.length, hunks },
+        details: {
+          path: absolute,
+          occurrences,
+          edits: edits.length,
+          hunks,
+          diff: filePermissionDiff(display(deps.root, absolute), text, updated),
+        },
       };
     },
   });

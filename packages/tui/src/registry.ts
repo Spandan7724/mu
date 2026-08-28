@@ -30,6 +30,8 @@ export interface ToolRenderInfo {
   superseded?: boolean;
 }
 
+export type ActivityKind = "explore" | "edit" | "command";
+
 export interface ToolRendererFn {
   (info: ToolRenderInfo, ctx: RenderContext): string[];
   // The renderer draws its own expanded form, so the registry must not staple
@@ -39,6 +41,10 @@ export interface ToolRendererFn {
   // is still true. Earlier ones render as `superseded` and are expected to
   // shrink to a record of what changed.
   supersedes?: boolean;
+  // Consecutive calls with the same activity kind may be presented as one
+  // collapsible transcript group. Profiles declare the semantic class here;
+  // the TUI remains unaware of tool names and domains.
+  activityKind?: ActivityKind | ((info: ToolRenderInfo) => ActivityKind);
 }
 
 function firstString(args: unknown, keys: string[]): string | undefined {
@@ -331,6 +337,11 @@ export class RendererRegistry {
     return this.renderers.get(toolName)?.supersedes === true;
   }
 
+  activityKind(info: ToolRenderInfo): ActivityKind | undefined {
+    const activityKind = this.renderers.get(info.toolName)?.activityKind;
+    return typeof activityKind === "function" ? activityKind(info) : activityKind;
+  }
+
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
     let lines: string[];
@@ -526,3 +537,19 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ...resultPreview(info, ctx),
   ],
 };
+
+for (const name of ["read", "ls"]) {
+  const renderer = codingRenderers[name];
+  if (renderer) renderer.activityKind = "explore";
+}
+for (const name of ["write", "edit"]) {
+  const renderer = codingRenderers[name];
+  if (renderer) renderer.activityKind = "edit";
+}
+const bashRenderer = codingRenderers.bash;
+if (bashRenderer) {
+  bashRenderer.activityKind = (info) => {
+    const command = firstString(info.args, ["command"])?.trim() ?? "";
+    return /^(?:rg|ripgrep)(?:\s|$)/.test(command) ? "explore" : "command";
+  };
+}

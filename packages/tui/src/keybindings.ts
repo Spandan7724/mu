@@ -16,7 +16,10 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
     title: "Global",
     bindings: [
       { keys: "ctrl+c", description: "exit mu" },
-      { keys: "ctrl+o", description: "toggle a completed tool's expanded output" },
+      {
+        keys: "ctrl+o",
+        description: "open activity navigation and toggle the selected group or tool",
+      },
       {
         keys: "ctrl+t",
         description: "cycle the model's thinking effort, if it supports more than one level",

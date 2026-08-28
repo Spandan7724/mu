@@ -82,6 +82,10 @@ function feed(app: App, raw: string): void {
   for (const event of new InputDecoder().push(raw)) app.handleInput(event);
 }
 
+function press(app: App, name: string): void {
+  app.handleInput({ type: "key", key: { name, ctrl: false, alt: false, shift: false } });
+}
+
 const assistant = (text: string) => ({
   role: "assistant" as const,
   content: [{ type: "text" as const, text }],
@@ -146,7 +150,7 @@ describe("fake-agent session", () => {
     const visible = app.renderTranscript().map(stripAnsi);
 
     expect(visible).toContain("  ▸ add retries");
-    expect(visible).toContain("  │ read src/api/client.ts · 142 lines");
+    expect(visible).toContain("  › │ read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
     const bottom = app.renderBottom().map(stripAnsi);
@@ -1149,7 +1153,7 @@ describe("transcript spacing", () => {
     });
   };
 
-  test("a cell that spans rows gets air; a run of one-liners stays tight", () => {
+  test("consecutive commands collapse into one chronological activity group", () => {
     const { app } = harness();
     app.handleEvent({ type: "agent_start" });
     ran(app, "c1", "bun test", "270 pass\n0 fail");
@@ -1157,12 +1161,8 @@ describe("transcript spacing", () => {
     ran(app, "c3", "whoami", "");
 
     const screen = app.renderScreen().map(stripAnsi);
-    const first = screen.findIndex((line) => line.includes("270 pass"));
-    // Output runs into the next verb without this blank.
-    expect(screen[first + 2]).toBe("");
-    // Two bare one-line calls are one stream, not two paragraphs.
-    const bare = screen.findIndex((line) => line.includes("ran pwd"));
-    expect(screen[bare + 1]).toContain("ran whoami");
+    expect(screen).toContain("  › Ran 3 commands");
+    expect(screen.some((line) => line.includes("270 pass"))).toBe(false);
   });
 
   test("speech after machinery always gets a break", () => {
@@ -1175,6 +1175,84 @@ describe("transcript spacing", () => {
     const cell = screen.findIndex((line) => line.includes("ran pwd"));
     expect(screen[cell + 1]).toBe("");
     expect(screen[cell + 2]).toContain("Done — that is the cwd.");
+  });
+});
+
+describe("activity disclosure", () => {
+  const complete = (
+    app: App,
+    id: string,
+    toolName: string,
+    args: unknown,
+    output: string,
+    details: unknown = {},
+    isError = false,
+  ) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: output }],
+        details,
+        isError,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("groups exploration and expands a selected child with the keyboard", () => {
+    const { app } = harness();
+    complete(app, "r1", "read", { path: "a.ts" }, "a1\na2\na3\na4\na5\na6", { lines: 6 });
+    complete(app, "r2", "read", { path: "b.ts" }, "b", { lines: 1 });
+    complete(app, "s1", "bash", { command: "rg -n TODO packages" }, "packages/a.ts:4:TODO", {
+      exitCode: 0,
+    });
+
+    expect(app.renderTranscript().map(stripAnsi)).toContain("  › Explored 2 files, 1 search");
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    let review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
+    expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
+
+    press(app, "down");
+    press(app, "return");
+    review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("│ a4"))).toBe(true);
+
+    press(app, "escape");
+    expect(app.currentMode).toBe("composing");
+    expect(
+      app
+        .renderTranscript()
+        .map(stripAnsi)
+        .some((line) => line.includes("│ a4")),
+    ).toBe(true);
+  });
+
+  test("edit groups show colored aggregate and per-file line totals", () => {
+    const { app } = harness({}, { depth: "truecolor" });
+    complete(app, "e1", "edit", { path: "a.ts", edits: [] }, "Edited a.ts", {
+      diff: { path: "a.ts", added: 3, removed: 1, hunks: [] },
+    });
+    complete(app, "e2", "write", { path: "b.ts", content: "x\ny" }, "Updated b.ts", {
+      diff: { path: "b.ts", added: 1, removed: 2, hunks: [] },
+    });
+
+    const collapsed = app.renderTranscript().join("\n");
+    expect(stripAnsi(collapsed)).toContain("Edited 2 files +4 -3");
+    expect(collapsed).toContain("[32m+4");
+    expect(collapsed).toContain("[31m-3");
+
+    feed(app, "\u000f");
+    const expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("edited a.ts +3 -1");
+    expect(expanded).toContain("updated b.ts +1 -2");
   });
 });
 
@@ -1212,10 +1290,10 @@ describe("superseded plans", () => {
     record(app, "p3", plan(["completed", "completed", "in_progress"]));
 
     const screen = app.renderScreen().map(stripAnsi);
-    expect(screen).toContain("  │ plan · 0/3 · task 1");
-    expect(screen).toContain("  │ plan · 1/3 · task 2");
+    expect(screen).toContain("  › │ plan · 0/3 · task 1");
+    expect(screen).toContain("  › │ plan · 1/3 · task 2");
     // The newest keeps its bracket and its tasks.
-    expect(screen).toContain("  ┌ plan · 2/3 done");
+    expect(screen).toContain("  › ┌ plan · 2/3 done");
     expect(screen).toContain("  └ ▸ task 3");
     // Three plans of three tasks would be twelve rows unfolded.
     expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
@@ -1227,7 +1305,7 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["completed", "completed"]));
     record(app, "p2", plan(["completed", "completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 2/2 done");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › │ plan · 2/2 done");
   });
 
   test("ctrl+o restores a superseded plan to its full list", () => {
@@ -1236,14 +1314,16 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["in_progress", "pending"]));
     record(app, "p2", plan(["completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 0/2 · task 1");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › │ plan · 0/2 · task 1");
+    feed(app, "\u000f");
+    feed(app, "\u001b[A");
     feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
-    expect(expanded.filter((line) => line === "  ┌ plan · 0/2 done")).toHaveLength(1);
+    expect(expanded.filter((line) => line.includes("┌ plan · 0/2 done"))).toHaveLength(1);
     expect(expanded.filter((line) => line.includes("task 1"))).toHaveLength(2);
   });
 
-  test("tools that do not supersede keep every call in full", () => {
+  test("consecutive exploration tools collapse without losing their count", () => {
     const { app } = harness();
     app.handleEvent({ type: "agent_start" });
     for (const id of ["c1", "c2"]) {
@@ -1262,7 +1342,7 @@ describe("superseded plans", () => {
       });
     }
     const screen = app.renderScreen().map(stripAnsi);
-    expect(screen.filter((line) => line.includes("read · 4 lines"))).toHaveLength(2);
+    expect(screen).toContain("  › Explored 2 files");
   });
 });
 
@@ -1340,6 +1420,7 @@ describe("tool output toggle", () => {
     });
 
     feed(app, "\u000f");
+    press(app, "escape");
     const expanded = app.renderScreen().map(stripAnsi);
     const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
     const toolIndex = expanded.findIndex((line) => line.includes("ran bun test"));
@@ -1383,6 +1464,7 @@ describe("tool output toggle", () => {
       message: assistant("Done — this response stays after the expanded output."),
     });
     feed(app, "\u000f");
+    press(app, "escape");
     const screen = app.renderScreen().map(stripAnsi);
     const toolIndex = screen.findIndex((line) => line.includes("ran long command"));
     const resultIndex = screen.findIndex((line) => line.includes("line 80"));
@@ -1439,6 +1521,7 @@ describe("tool output toggle", () => {
     expect(screen.join("\n")).not.toContain("source line 6");
 
     feed(app, "\u000f");
+    press(app, "escape");
     screen = app.renderScreen().map(stripAnsi);
     const preambleIndex = screen.findIndex((line) => line.includes("read it first"));
     const toolIndex = screen.findIndex((line) => line.includes("read numpy_stock_trading.py"));
@@ -1910,6 +1993,8 @@ describe("full-screen renderer", () => {
     renderer.renderNow(app.renderFrame());
     for (let index = 0; index < 3; index++) {
       feed(app, "\u000f");
+      renderer.renderNow(app.renderFrame());
+      press(app, "escape");
       renderer.renderNow(app.renderFrame());
     }
 

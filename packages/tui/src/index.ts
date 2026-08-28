@@ -55,7 +55,7 @@ export type { InputEvent, Key } from "./input.ts";
 export { InputDecoder, PasteBurstDetector } from "./input.ts";
 export type { Keybinding, KeybindingGroup } from "./keybindings.ts";
 export { formatKeybindings, KEYBINDING_GROUPS } from "./keybindings.ts";
-export type { ToolRendererFn, ToolRenderInfo } from "./registry.ts";
+export type { ActivityKind, ToolRendererFn, ToolRenderInfo } from "./registry.ts";
 export { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
 export type { RenderFrame } from "./renderer.ts";
 export { FullScreenRenderer } from "./renderer.ts";
