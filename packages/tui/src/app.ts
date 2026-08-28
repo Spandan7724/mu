@@ -1048,17 +1048,25 @@ export class App {
   }
 
   renderFrame(): RenderFrame {
+    const managed = this.fitToViewport(this.toTerminalRows(this.renderManaged()));
     if (this.mode === "activity") {
+      const rows = this.transcriptRows(this.activitySelection);
+      const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
+      const selected = Math.max(
+        0,
+        rows.findIndex((line) => line.includes("❯")),
+      );
+      const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
       return {
-        transcript: [],
-        managed: this.activityReviewRows(),
+        transcript: rows.slice(start, start + limit),
+        managed,
         dirtyFrom: 0,
       };
     }
     const transcript = this.transcriptRows();
     return {
       transcript,
-      managed: this.fitToViewport(this.toTerminalRows(this.renderManaged())),
+      managed,
       dirtyFrom: transcript.length,
     };
   }
@@ -1075,9 +1083,13 @@ export class App {
     return this.fitToViewport(this.toTerminalRows(this.renderManaged()));
   }
 
-  private transcriptRows(): string[] {
+  private transcriptRows(selectedId?: string): string[] {
     const cached = this.transcriptCache;
-    if (cached?.version === this.transcriptVersion && cached.width === this.options.width) {
+    if (
+      selectedId === undefined &&
+      cached?.version === this.transcriptVersion &&
+      cached.width === this.options.width
+    ) {
       return cached.rows;
     }
     // A tool whose calls replace one another leaves only its newest call still
@@ -1101,7 +1113,7 @@ export class App {
         return [...item.rendered.lines, ""];
       }
       if (item.kind === "activity") {
-        const lines = this.renderActivity(item);
+        const lines = this.renderActivity(item, selectedId);
         const next = this.transcript[index + 1];
         return next?.kind === "activity" ? lines : [...lines, ""];
       }
@@ -1130,15 +1142,21 @@ export class App {
         (next.kind === "user" || next.kind === "assistant"
           ? true
           : next.kind === "tool" && item.rendered.lines.length > 1);
-      const lines = this.disclosureLines(item.rendered.lines, item.expanded, false);
+      const lines = this.disclosureLines(
+        item.rendered.lines,
+        item.expanded,
+        selectedId === item.id,
+      );
       return separated ? [...lines, ""] : lines;
     });
     const rows = this.toTerminalRows(logical);
-    this.transcriptCache = {
-      version: this.transcriptVersion,
-      width: this.options.width,
-      rows,
-    };
+    if (selectedId === undefined) {
+      this.transcriptCache = {
+        version: this.transcriptVersion,
+        width: this.options.width,
+        rows,
+      };
+    }
     return rows;
   }
 
@@ -1263,7 +1281,7 @@ export class App {
               styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
           );
         }
-        composerLines.push(...this.editor.render(composerWidth, depth));
+        composerLines.push(...this.editor.render(composerWidth, depth, this.mode !== "activity"));
         if (this.mode === "select" || this.mode === "mention") {
           composerLines.push(...this.commandList.render(composerWidth, depth));
         }
@@ -1273,6 +1291,8 @@ export class App {
     lines.push(...composerBox(composerLines, width, depth));
 
     const toolHint = "ctrl+o";
+    const activityHint =
+      "↑↓ select · pgup/pgdn jump · →/enter expand · ← collapse · ctrl+o toggle · esc close";
     if (this.running) {
       const compactStage =
         this.compactionStage === "clearing-tool-output"
@@ -1283,21 +1303,26 @@ export class App {
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
-          this.compacting
-            ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-            : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+          this.mode === "activity"
+            ? ` ${elapsed} ${GLYPHS.separator} activity navigation`
+            : this.compacting
+              ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
+              : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
       );
     }
-    const hint = this.running
-      ? undefined
-      : this.ctrlCPending
-        ? "press ctrl+c again to exit"
-        : this.isShellMode
-          ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
-          : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+    const hint =
+      this.mode === "activity"
+        ? activityHint
+        : this.running
+          ? undefined
+          : this.ctrlCPending
+            ? "press ctrl+c again to exit"
+            : this.isShellMode
+              ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
+              : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }
@@ -1499,39 +1524,6 @@ export class App {
       }
     }
     return nodes;
-  }
-
-  private activityReviewRows(): string[] {
-    const logical = [
-      `${MARGIN}${styleText("Activity", { bold: true }, this.options.depth)}`,
-      "",
-      ...this.transcript.flatMap((item) => {
-        if (item.kind === "activity") return this.renderActivity(item, this.activitySelection);
-        if (item.kind !== "tool") return [];
-        const superseded = false;
-        const lines = this.registry.render(
-          { ...item.info, expanded: item.expanded, superseded },
-          this.ctx,
-        );
-        return this.disclosureLines(lines, item.expanded, this.activitySelection === item.id);
-      }),
-      "",
-      `${MARGIN}${styleText("↑↓ select · →/enter expand · ← collapse · ctrl+o toggle · esc close", { dim: true }, this.options.depth)}`,
-    ];
-    const rows = this.toTerminalRows(logical);
-    const limit = Math.max(1, (this.options.height ?? 24) - 1);
-    if (rows.length <= limit) return rows;
-    const selected = Math.max(
-      0,
-      rows.findIndex((line) => line.includes("❯")),
-    );
-    const footer = rows.slice(-2);
-    const contentLimit = Math.max(1, limit - footer.length);
-    const start = Math.max(
-      0,
-      Math.min(selected - Math.floor(contentLimit / 2), rows.length - 2 - contentLimit),
-    );
-    return [...rows.slice(start, start + contentLimit), ...footer];
   }
 
   private pushTranscript(item: TranscriptItem): void {

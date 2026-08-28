@@ -275,14 +275,14 @@ export class Editor {
     return true;
   }
 
-  render(width: number, depth: ColorDepth): string[] {
+  render(width: number, depth: ColorDepth, active = true): string[] {
     const marker = `${userMarker(depth)} `;
     const available = width - MARGIN.length - 2;
     const out: string[] = [];
     for (const [index, line] of this.lines.entries()) {
       const styles = inputStyles(line, index === 0);
       let display = line.length === 0 ? " " : paintRange(line, styles, 0, line.length, depth);
-      if (index === this.row) {
+      if (active && index === this.row) {
         const after = line.slice(this.col);
         const atEnd = after.length === 0;
         const cluster = graphemes(after)[0] ?? " ";

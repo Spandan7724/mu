@@ -1206,6 +1206,10 @@ describe("activity disclosure", () => {
 
   test("groups exploration and expands a selected child with the keyboard", () => {
     const { app } = harness();
+    app.handleEvent({
+      type: "message_end",
+      message: assistant("I’m checking the relevant files."),
+    });
     complete(app, "r1", "read", { path: "a.ts" }, "a1\na2\na3\na4\na5\na6", { lines: 6 });
     complete(app, "r2", "read", { path: "b.ts" }, "b", { lines: 1 });
     complete(app, "s1", "bash", { command: "rg -n TODO packages" }, "packages/a.ts:4:TODO", {
@@ -1217,6 +1221,10 @@ describe("activity disclosure", () => {
     feed(app, "\u000f");
     expect(app.currentMode).toBe("activity");
     let review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("checking the relevant files"))).toBe(true);
+    expect(review.some((line) => line.includes("fake/fake-1"))).toBe(true);
+    expect(review).not.toContain("  Activity");
+    expect(app.renderScreen().join("\n")).not.toContain("\u001b[7m");
     expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
     expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
 
