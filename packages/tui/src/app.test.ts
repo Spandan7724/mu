@@ -533,7 +533,10 @@ describe("input handling", () => {
 
     expect(h.submitted).toEqual([]);
     expect(h.app.editor.text).toBe("one\ntwo\nthree");
-    expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("one\n    two\n    three");
+    const rendered = stripAnsi(h.app.renderBottom().join("\n"));
+    expect(rendered).toContain("│ ▸ one");
+    expect(rendered).toContain("│   two");
+    expect(rendered).toContain("│   three");
   });
 
   test("a long pasted draft scrolls with the editor cursor", () => {

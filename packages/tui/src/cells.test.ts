@@ -16,7 +16,8 @@ import {
 import {
   APPROVAL_OPTIONS,
   approvalOverlay,
-  composerRule,
+  composerBox,
+  composerContentWidth,
   Editor,
   footer,
   formatCwdForFooter,
@@ -505,8 +506,19 @@ describe("components", () => {
     expect(formatCwdForFooter("/srv/mu", "/home/test")).toBe("/srv/mu");
   });
 
-  test("composer rule is the only horizontal rule", () => {
-    expect(stripAnsi(composerRule(20, "none"))).toBe("  ────────────────");
+  test("composer content is enclosed by a width-safe box", () => {
+    const width = 20;
+    expect(composerContentWidth(width)).toBe(14);
+    expect(composerBox(["  ▸ draft"], width, "none")).toEqual([
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
+    ]);
+    expect(composerBox(["  ▸ draft"], width, "truecolor")).toEqual([
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
+    ]);
   });
 
   test("spinner cycles through the identity glyph frames", () => {

@@ -38,6 +38,9 @@ export type { ApprovalData, FooterData, QueuedInputKind, SelectItem } from "./co
 export {
   APPROVAL_OPTIONS,
   approvalOverlay,
+  composerBox,
+  composerBoxBottom,
+  composerContentWidth,
   composerRule,
   Editor,
   footer,

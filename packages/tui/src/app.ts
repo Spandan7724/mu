@@ -17,6 +17,9 @@ import {
   APPROVAL_OPTIONS,
   approvalOverlay,
   BLOCK_CURSOR_ON,
+  composerBox,
+  composerBoxBottom,
+  composerContentWidth,
   composerRule,
   Editor,
   type FooterData,
@@ -1107,6 +1110,8 @@ export class App {
   private renderManaged(): string[] {
     const { width, depth } = this.ctx;
     const lines: string[] = [];
+    const composerLines: string[] = [];
+    const composerWidth = composerContentWidth(width);
     const height = this.options.height ?? 24;
 
     // Live region: streaming assistant text and running tool cells, so a long
@@ -1145,12 +1150,10 @@ export class App {
       );
     }
 
-    lines.push(composerRule(width, depth));
-
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
     if (hiddenPending > 0) {
-      lines.push(
+      composerLines.push(
         MARGIN +
           styleText(
             `… ${hiddenPending} earlier queued input${hiddenPending === 1 ? "" : "s"}`,
@@ -1160,11 +1163,11 @@ export class App {
       );
     }
     for (const [index, pending] of visiblePending.entries()) {
-      lines.push(
+      composerLines.push(
         ...queuedInputPreview(
           pending.kind,
           pending.text,
-          width,
+          composerWidth,
           depth,
           index === visiblePending.length - 1 && this.options.callbacks.onEditQueued !== undefined,
         ),
@@ -1175,7 +1178,7 @@ export class App {
       const approval = this.approvals[0];
       const request = approval.request;
       const preview = request.preview;
-      lines.push(
+      composerLines.push(
         ...approvalOverlay(
           {
             title: `${approval.source === "side" ? "side · " : ""}${request.description}`,
@@ -1194,7 +1197,7 @@ export class App {
             maxPreviewRows: Math.max(3, Math.min(12, height - 8)),
             selectedIndex: this.approvalIndex,
           },
-          width,
+          composerWidth,
           depth,
         ),
       );
@@ -1205,37 +1208,33 @@ export class App {
             ? ` ${GLYPHS.separator} ${this.pickerQuery}`
             : "";
         const back = this.picker.onBack ? ` ${GLYPHS.separator} ← back` : "";
-        lines.push(
+        composerLines.push(
           MARGIN + styleText(`${this.picker.title}${query}${back}`, { bold: true }, depth),
         );
-        lines.push(...this.commandList.render(width, depth));
+        composerLines.push(...this.commandList.render(composerWidth, depth));
       } else if (this.mode === "prompt" && this.prompt) {
-        lines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
-        lines.push(
+        composerLines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
+        composerLines.push(
           ...(this.prompt.secret
-            ? this.promptEditor.renderMasked(width, depth)
-            : this.promptEditor.render(width, depth)),
+            ? this.promptEditor.renderMasked(composerWidth, depth)
+            : this.promptEditor.render(composerWidth, depth)),
         );
       } else {
         if (this.isShellMode) {
-          lines.push(
+          composerLines.push(
             MARGIN +
               styleText("shell mode", { toolExec: true, bold: true }, depth) +
               styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
           );
         }
-        lines.push(...this.editor.render(width, depth));
+        composerLines.push(...this.editor.render(composerWidth, depth));
         if (this.mode === "select" || this.mode === "mention") {
-          lines.push(...this.commandList.render(width, depth));
+          composerLines.push(...this.commandList.render(composerWidth, depth));
         }
       }
     }
 
-    // Closes the box opened above: the composer/overlay content sits between
-    // the two rules, and the running-hint row below is footer-adjacent status
-    // (it feeds the same idle `hint` slot the footer renders when not
-    // running), not part of the input itself.
-    lines.push(composerRule(width, depth));
+    lines.push(...composerBox(composerLines, width, depth));
 
     const toolHint = "ctrl+o";
     if (this.running) {
@@ -1321,7 +1320,9 @@ export class App {
     if (limit === 1) return lines.slice(-1);
 
     const cursor = lines.findIndex((line) => line.includes(BLOCK_CURSOR_ON));
-    const pinnedStart = lines.lastIndexOf(composerRule(this.options.width, this.options.depth));
+    const pinnedStart = lines.lastIndexOf(
+      composerBoxBottom(this.options.width, this.options.depth),
+    );
     if (cursor >= 0 && pinnedStart > cursor) {
       const pinned = lines.slice(pinnedStart);
       const scrollLimit = limit - pinned.length;

@@ -565,9 +565,32 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   return [MARGIN + dim(location, depth), MARGIN + stats];
 }
 
-// Brackets the composer: once above it, once below (before the footer).
+const composerOuterWidth = (width: number) => Math.max(4, width - MARGIN.length * 2);
+
 export function composerRule(width: number, depth: ColorDepth): string {
   return MARGIN + dim("─".repeat(Math.max(0, width - MARGIN.length * 2)), depth);
+}
+
+export function composerContentWidth(width: number): number {
+  return Math.max(8, composerOuterWidth(width) - 2);
+}
+
+export function composerBoxBottom(width: number, _depth: ColorDepth): string {
+  const outerWidth = composerOuterWidth(width);
+  return `${MARGIN}╰${"─".repeat(outerWidth - 2)}╯`;
+}
+
+export function composerBox(lines: string[], width: number, depth: ColorDepth): string[] {
+  const outerWidth = composerOuterWidth(width);
+  const contentWidth = outerWidth - 2;
+  const top = `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
+  const body = lines.map((line) => {
+    const inset = line.startsWith(MARGIN) ? line.slice(1) : line;
+    const clipped = truncateToWidth(inset, contentWidth);
+    const padding = " ".repeat(Math.max(0, contentWidth - stringWidth(clipped)));
+    return `${MARGIN}│${clipped}${padding}│`;
+  });
+  return [top, ...body, composerBoxBottom(width, depth)];
 }
 
 export interface ApprovalData {
