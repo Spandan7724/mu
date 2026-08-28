@@ -186,26 +186,6 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
   return `${ESC}${codes.join(";")}m${text}${RESET}`;
 }
 
-// Styling nested inside a tinted row. styleText always closes with a full reset,
-// which would drop the row's tint for everything after it, so the tint is
-// re-opened. Re-opening rather than closing narrowly (22m/39m) is what keeps
-// this correct at ansi16, where the tint is itself a foreground colour.
-export function styleWithin(text: string, style: Style, tint: string, depth: ColorDepth): string {
-  const styled = styleText(text, style, depth);
-  return styled === text || tint === "" ? styled : `${styled}${tint}`;
-}
-
-export function diffLineStyle(kind: "add" | "del" | "context", depth: ColorDepth): string {
-  if (depth === "none" || kind === "context") return "";
-  if (depth === "truecolor") {
-    return kind === "add" ? `${ESC}48;2;2;40;0m` : `${ESC}48;2;61;1;0m`;
-  }
-  if (depth === "ansi256") {
-    return kind === "add" ? `${ESC}48;5;22m` : `${ESC}48;5;52m`;
-  }
-  return kind === "add" ? `${ESC}32m` : `${ESC}31m`;
-}
-
 export const GLYPHS = {
   userMarker: "▸",
   rule: "│",
