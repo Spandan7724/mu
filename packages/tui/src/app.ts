@@ -1169,13 +1169,17 @@ export class App {
           ? item.rendered.lines.slice(0, 1)
           : item.rendered.lines;
       const next = this.transcript[index + 1];
+      const previous = this.transcript[index - 1];
+      const primaryResult = this.registry.expandedByDefault(item.info);
+      const leadingBreak =
+        primaryResult && previous?.kind === "lines" && previous.lines.at(-1) !== "" ? [""] : [];
       const separated =
         next !== undefined &&
         (next.kind === "user" || next.kind === "assistant"
           ? true
           : next.kind === "tool" && visibleLines.length > 1);
       const lines = this.disclosureLines(visibleLines, item.expanded, selectedId === item.id);
-      return separated ? [...lines, ""] : lines;
+      return [...leadingBreak, ...lines, ...(primaryResult || separated ? [""] : [])];
     });
     const rows = this.toTerminalRows(logical);
     if (selectedId === undefined) {

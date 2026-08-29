@@ -1382,6 +1382,23 @@ describe("activity disclosure", () => {
     expect(collapsed).toContain("› │ $ pwd");
     expect(collapsed).not.toContain("│ /tmp");
   });
+
+  test("an explicit user shell result has a blank boundary on both sides", () => {
+    const { app } = harness();
+    app.appendTranscript(["  Keybindings"]);
+    complete(app, "shell-1", "bash", { command: "ls", userShell: true }, "README.md", {
+      exitCode: 0,
+    });
+    app.appendTranscript(["  worked for 5ms"]);
+
+    const rows = app.renderScreen().map(stripAnsi);
+    const shellIndex = rows.findIndex((line) => line.includes("$ ls"));
+    const outputIndex = rows.findIndex((line) => line.includes("│ README.md"));
+    expect(rows[shellIndex - 2]).toBe("  Keybindings");
+    expect(rows[shellIndex - 1]).toBe("");
+    expect(rows[outputIndex + 1]).toBe("");
+    expect(rows[outputIndex + 2]).toBe("  worked for 5ms");
+  });
 });
 
 describe("superseded plans", () => {
