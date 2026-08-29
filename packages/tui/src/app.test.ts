@@ -1352,6 +1352,28 @@ describe("activity disclosure", () => {
     expect(search?.indexOf("│ ran")).toBe(4);
     expect(rows[searchIndex - 1]).toBe("");
   });
+
+  test("an explicit user shell command stays standalone and starts expanded", () => {
+    const { app, commands } = harness();
+    complete(app, "c1", "bash", { command: "git status --short" }, "clean", {
+      exitCode: 0,
+    });
+    complete(app, "shell-1", "bash", { command: "pwd", userShell: true }, "/tmp", {
+      exitCode: 0,
+    });
+
+    const expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("› │ ran git status --short");
+    expect(expanded).toContain("⌄ │ $ pwd");
+    expect(expanded).toContain("│ /tmp");
+    expect(expanded).not.toContain("Ran 2 commands");
+
+    feed(app, "/collapse\r");
+    expect(commands).toEqual([]);
+    const collapsed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(collapsed).toContain("› │ $ pwd");
+    expect(collapsed).not.toContain("│ /tmp");
+  });
 });
 
 describe("superseded plans", () => {

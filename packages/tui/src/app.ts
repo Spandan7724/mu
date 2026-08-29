@@ -1164,17 +1164,17 @@ export class App {
       // A run of one-line calls reads as one stream and stays tight. A cell
       // that spans rows needs air after it, or its output runs straight into
       // the next call's verb; and speech after machinery always gets a break.
+      const visibleLines =
+        !item.expanded && this.registry.expandedByDefault(item.info)
+          ? item.rendered.lines.slice(0, 1)
+          : item.rendered.lines;
       const next = this.transcript[index + 1];
       const separated =
         next !== undefined &&
         (next.kind === "user" || next.kind === "assistant"
           ? true
-          : next.kind === "tool" && item.rendered.lines.length > 1);
-      const lines = this.disclosureLines(
-        item.rendered.lines,
-        item.expanded,
-        selectedId === item.id,
-      );
+          : next.kind === "tool" && visibleLines.length > 1);
+      const lines = this.disclosureLines(visibleLines, item.expanded, selectedId === item.id);
       return separated ? [...lines, ""] : lines;
     });
     const rows = this.toTerminalRows(logical);
@@ -1383,13 +1383,14 @@ export class App {
 
   private pushTool(id: string, info: ToolRenderInfo, renderedLines?: string[]): void {
     const activityKind = this.registry.activityKind(info);
+    const expanded = this.registry.expandedByDefault(info);
     if (!activityKind) {
       this.pushTranscript({
         kind: "tool",
         id,
         info,
-        expanded: false,
-        ...(renderedLines
+        expanded,
+        ...(renderedLines && !expanded
           ? {
               rendered: {
                 width: this.options.width,
@@ -1406,8 +1407,8 @@ export class App {
     const tool: ActivityTool = {
       id,
       info,
-      expanded: false,
-      ...(renderedLines
+      expanded,
+      ...(renderedLines && !expanded
         ? {
             rendered: {
               width: this.options.width,

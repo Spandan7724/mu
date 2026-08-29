@@ -44,7 +44,11 @@ export interface ToolRendererFn {
   // Consecutive calls with the same activity kind may be presented as one
   // collapsible transcript group. Profiles declare the semantic class here;
   // the TUI remains unaware of tool names and domains.
-  activityKind?: ActivityKind | ((info: ToolRenderInfo) => ActivityKind);
+  activityKind?: ActivityKind | ((info: ToolRenderInfo) => ActivityKind | undefined);
+  // Explicit user actions may make their result the primary response rather
+  // than supporting agent machinery. They can start open while retaining the
+  // same disclosure controls and output bound.
+  expandedByDefault?: boolean | ((info: ToolRenderInfo) => boolean);
 }
 
 function firstString(args: unknown, keys: string[]): string | undefined {
@@ -342,6 +346,11 @@ export class RendererRegistry {
     return typeof activityKind === "function" ? activityKind(info) : activityKind;
   }
 
+  expandedByDefault(info: ToolRenderInfo): boolean {
+    const expanded = this.renderers.get(info.toolName)?.expandedByDefault;
+    return typeof expanded === "function" ? expanded(info) : expanded === true;
+  }
+
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
     let lines: string[];
@@ -549,7 +558,9 @@ for (const name of ["write", "edit"]) {
 const bashRenderer = codingRenderers.bash;
 if (bashRenderer) {
   bashRenderer.activityKind = (info) => {
+    if (booleanArg(info.args, "userShell")) return undefined;
     const command = firstString(info.args, ["command"])?.trim() ?? "";
     return /^(?:rg|ripgrep)(?:\s|$)/.test(command) ? "explore" : "command";
   };
+  bashRenderer.expandedByDefault = (info) => booleanArg(info.args, "userShell");
 }
