@@ -1521,9 +1521,11 @@ export class App {
     );
     const [first = "", ...rest] = lines;
     const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
-    const content = stripAnsi(body).startsWith(`${GLYPHS.rule} `)
-      ? body.slice(rawOffsetAtVisible(body, 2))
-      : body;
+    const visibleBody = stripAnsi(body);
+    const hasHeaderRail = [GLYPHS.rule, GLYPHS.ruleOpen].some((glyph) =>
+      visibleBody.startsWith(`${glyph} `),
+    );
+    const content = hasHeaderRail ? body.slice(rawOffsetAtVisible(body, 2)) : body;
     return [`${MARGIN}${marker} ${content}`, ...rest];
   }
 

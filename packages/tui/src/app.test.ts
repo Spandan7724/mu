@@ -1698,8 +1698,9 @@ describe("superseded plans", () => {
     const screen = app.renderScreen().map(stripAnsi);
     expect(screen).toContain("  › plan · 0/3 · task 1");
     expect(screen).toContain("  › plan · 1/3 · task 2");
-    // The newest keeps its bracket and its tasks.
-    expect(screen).toContain("  › ┌ plan · 2/3 done");
+    // The disclosure marker replaces the bracket's opening glyph; its task rail still closes.
+    expect(screen).toContain("  › plan · 2/3 done");
+    expect(screen).toContain("  │ ✓ task 1");
     expect(screen).toContain("  └ ▸ task 3");
     // Three plans of three tasks would be twelve rows unfolded.
     expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
@@ -1726,7 +1727,7 @@ describe("superseded plans", () => {
     press(app, "return");
     feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
-    expect(expanded.filter((line) => line.includes("┌ plan · 0/2 done"))).toHaveLength(1);
+    expect(expanded.filter((line) => line.includes("⌄ plan · 0/2 done"))).toHaveLength(1);
     expect(expanded.filter((line) => line.includes("task 1"))).toHaveLength(2);
   });
 
