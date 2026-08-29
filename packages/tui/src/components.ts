@@ -275,24 +275,35 @@ export class Editor {
     return true;
   }
 
-  render(width: number, depth: ColorDepth, active = true): string[] {
-    const marker = `${userMarker(depth)} `;
-    const available = width - MARGIN.length - 2;
+  render(
+    width: number,
+    depth: ColorDepth,
+    active = true,
+    options: { marker?: string; firstLineHiddenPrefix?: number } = {},
+  ): string[] {
+    const marker = `${options.marker ?? userMarker(depth)} `;
+    const available = width - MARGIN.length - stringWidth(marker);
     const out: string[] = [];
     for (const [index, line] of this.lines.entries()) {
-      const styles = inputStyles(line, index === 0);
-      let display = line.length === 0 ? " " : paintRange(line, styles, 0, line.length, depth);
+      const hidden = index === 0 ? (options.firstLineHiddenPrefix ?? 0) : 0;
+      const visibleLine = line.slice(hidden);
+      const visibleCol = Math.max(0, this.col - hidden);
+      const styles = inputStyles(visibleLine, index === 0);
+      let display =
+        visibleLine.length === 0
+          ? " "
+          : paintRange(visibleLine, styles, 0, visibleLine.length, depth);
       if (active && index === this.row) {
-        const after = line.slice(this.col);
+        const after = visibleLine.slice(visibleCol);
         const atEnd = after.length === 0;
         const cluster = graphemes(after)[0] ?? " ";
-        const cursorEnd = atEnd ? this.col : this.col + cluster.length;
+        const cursorEnd = atEnd ? visibleCol : visibleCol + cluster.length;
         display =
-          paintRange(line, styles, 0, this.col, depth) +
+          paintRange(visibleLine, styles, 0, visibleCol, depth) +
           BLOCK_CURSOR_ON +
-          (atEnd ? " " : paintRange(line, styles, this.col, cursorEnd, depth)) +
+          (atEnd ? " " : paintRange(visibleLine, styles, visibleCol, cursorEnd, depth)) +
           BLOCK_CURSOR_OFF +
-          paintRange(line, styles, cursorEnd, line.length, depth);
+          paintRange(visibleLine, styles, cursorEnd, visibleLine.length, depth);
       }
       const wrapped = wrapText(display, available);
       for (const [i, chunk] of wrapped.entries()) {
@@ -580,10 +591,18 @@ export function composerBoxBottom(width: number, _depth: ColorDepth): string {
   return `${MARGIN}╰${"─".repeat(outerWidth - 2)}╯`;
 }
 
-export function composerBox(lines: string[], width: number, depth: ColorDepth): string[] {
+export function composerBox(
+  lines: string[],
+  width: number,
+  depth: ColorDepth,
+  title?: string,
+): string[] {
   const outerWidth = composerOuterWidth(width);
   const contentWidth = outerWidth - 2;
-  const top = `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
+  const label = title ? truncateToWidth(title, Math.max(0, contentWidth - 3)) : "";
+  const top = label
+    ? `${MARGIN}╭─ ${label} ${"─".repeat(Math.max(0, contentWidth - stringWidth(label) - 3))}╮`
+    : `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
   const body = lines.map((line) => {
     const inset = line.startsWith(MARGIN) ? line.slice(1) : line;
     const clipped = truncateToWidth(inset, contentWidth);

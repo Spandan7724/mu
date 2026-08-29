@@ -498,6 +498,11 @@ describe("components", () => {
       "  │ ▸ draft      │",
       "  ╰──────────────╯",
     ]);
+    expect(composerBox(["  $ test"], width, "none", "shell · local")).toEqual([
+      "  ╭─ shell · lo… ╮",
+      "  │ $ test       │",
+      "  ╰──────────────╯",
+    ]);
   });
 
   test("spinner cycles through the identity glyph frames", () => {

@@ -752,9 +752,17 @@ describe("input handling", () => {
 
     feed(h.app, "!");
     expect(h.app.isShellMode).toBe(true);
-    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("shell mode · runs locally");
+    let shell = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(shell).toContain("╭─ shell · local ");
+    expect(shell).toContain("│ $ ");
+    expect(shell).toContain("enter run · esc cancel");
 
-    feed(h.app, "printf ok\r");
+    feed(h.app, "printf ok");
+    shell = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(shell).toContain("│ $ printf ok");
+    expect(shell).not.toContain("!printf ok");
+
+    feed(h.app, "\r");
     expect(shellCommands).toEqual(["printf ok"]);
     expect(h.submitted).toEqual([]);
     expect(h.app.isShellMode).toBe(false);

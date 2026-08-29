@@ -1302,21 +1302,30 @@ export class App {
             : this.promptEditor.render(composerWidth, depth)),
         );
       } else {
-        if (this.isShellMode) {
-          composerLines.push(
-            MARGIN +
-              styleText("shell mode", { toolExec: true, bold: true }, depth) +
-              styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
-          );
-        }
-        composerLines.push(...this.editor.render(composerWidth, depth, this.mode !== "activity"));
+        composerLines.push(
+          ...this.editor.render(
+            composerWidth,
+            depth,
+            this.mode !== "activity",
+            this.isShellMode
+              ? {
+                  marker: styleText("$", { toolExec: true, bold: true }, depth),
+                  firstLineHiddenPrefix: 1,
+                }
+              : {},
+          ),
+        );
         if (this.mode === "select" || this.mode === "mention") {
           composerLines.push(...this.commandList.render(composerWidth, depth));
         }
       }
     }
 
-    lines.push(...composerBox(composerLines, width, depth));
+    const composerTitle = this.isShellMode
+      ? styleText("shell", { toolExec: true, bold: true }, depth) +
+        styleText(` ${GLYPHS.separator} local`, { dim: true }, depth)
+      : undefined;
+    lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";
     const activityHint =
@@ -1349,7 +1358,7 @@ export class App {
           : this.ctrlCPending
             ? "press ctrl+c again to exit"
             : this.isShellMode
-              ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
+              ? `enter run ${GLYPHS.separator} esc cancel`
               : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
