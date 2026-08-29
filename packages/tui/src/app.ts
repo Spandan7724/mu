@@ -74,7 +74,8 @@ export interface InputPromptRequest {
 }
 
 export interface AppCallbacks {
-  onSubmit: (text: string) => void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: false rejects; no return accepts.
+  onSubmit: (text: string) => boolean | void;
   onSteer?: (text: string) => boolean;
   onFollowUp?: (text: string) => boolean;
   onEditQueued?: (kind: QueuedInputKind, text: string) => boolean;
@@ -253,7 +254,7 @@ interface ActivityTool {
 
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; pending?: boolean }
   | {
       kind: "assistant";
       message: AssistantMessage;
@@ -696,6 +697,7 @@ export class App {
         return [];
 
       case "agent_end": {
+        this.clearPendingSubmissions();
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
@@ -785,7 +787,18 @@ export class App {
                 )
               : pendingIndex;
           if (deliveredIndex !== -1) this.pendingInputs.splice(deliveredIndex, 1);
-          this.pushTranscript({ kind: "user", text });
+          const submitted = this.transcript.find(
+            (item): item is Extract<TranscriptItem, { kind: "user" }> =>
+              item.kind === "user" && item.pending === true,
+          );
+          if (submitted) {
+            submitted.text = text;
+            submitted.pending = false;
+            this.transcriptVersion++;
+            this.transcriptCache = undefined;
+          } else {
+            this.pushTranscript({ kind: "user", text });
+          }
           return [...userCell(text, this.ctx), ""];
         }
         if (message.role === "assistant") {
@@ -1004,6 +1017,13 @@ export class App {
       return;
     }
     if (lines.length > 0) this.pushTranscript({ kind: "lines", lines: [...lines] });
+    this.eventView = previous;
+  }
+
+  discardPendingSubmissions(source: ConversationSource = this.activeSource): void {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    if (this.eventView) this.clearPendingSubmissions();
     this.eventView = previous;
   }
 
@@ -1530,6 +1550,37 @@ export class App {
     this.transcriptCache = undefined;
   }
 
+  private clearPendingSubmissions(): void {
+    const retained = this.transcript.filter(
+      (item) => item.kind !== "user" || item.pending !== true,
+    );
+    if (retained.length === this.transcript.length) return;
+    this.transcript = retained;
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
+  private submitUser(text: string): boolean | undefined {
+    const pending: TranscriptItem = { kind: "user", text, pending: true };
+    this.pushTranscript(pending);
+    try {
+      const accepted = this.options.callbacks.onSubmit(text);
+      if (accepted === false && pending.pending === true) this.removePendingSubmission(pending);
+      return accepted === false ? false : undefined;
+    } catch (error) {
+      if (pending.pending === true) this.removePendingSubmission(pending);
+      throw error;
+    }
+  }
+
+  private removePendingSubmission(pending: TranscriptItem): void {
+    const index = this.transcript.indexOf(pending);
+    if (index === -1) return;
+    this.transcript.splice(index, 1);
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
   private assistantRows(message: AssistantMessage): string[] {
     const lines: string[] = [];
     for (const block of message.content) {
@@ -1828,7 +1879,7 @@ export class App {
             ? this.options.callbacks.onFollowUp?.(text)
             : this.running && this.options.callbacks.onSteer
               ? this.options.callbacks.onSteer(text)
-              : this.options.callbacks.onSubmit(text);
+              : this.submitUser(text);
           if (this.running && accepted !== false) {
             this.pendingInputs.push({ kind: queueDuringCompaction ? "follow-up" : "steer", text });
           }

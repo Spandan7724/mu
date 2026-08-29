@@ -349,8 +349,11 @@ export async function runInteractive(
         if (activeShell) {
           commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
-        } else if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
+          return false;
+        }
+        if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
         else beginRun(text);
+        return true;
       },
       onSteer: (text) => {
         if (activeShell) {
@@ -1113,6 +1116,7 @@ export async function runInteractive(
       await target.run(text, options);
       if (source === "main") sessionResumable = true;
     } catch (error) {
+      app.discardPendingSubmissions(source);
       commitLines([`  ${error instanceof Error ? error.message : String(error)}`], source);
     }
     paint();

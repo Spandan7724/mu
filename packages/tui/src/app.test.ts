@@ -41,7 +41,7 @@ function harness(
     registry,
     ...options,
     callbacks: {
-      onSubmit: (text) => submitted.push(text),
+      onSubmit: (text) => void submitted.push(text),
       onSteer: (text) => {
         steers.push(text);
         return true;
@@ -377,6 +377,50 @@ describe("input handling", () => {
     const h = harness();
     feed(h.app, "hello\r");
     expect(h.submitted).toEqual(["hello"]);
+    expect(h.app.renderTranscript().map(stripAnsi)).toContain("  ▸ hello");
+  });
+
+  test("an immediate submitted message is reconciled with the durable user event", () => {
+    const h = harness();
+    feed(h.app, "original\r");
+    expect(
+      h.app
+        .renderTranscript()
+        .map(stripAnsi)
+        .filter((line) => line.includes("▸")),
+    ).toEqual(["  ▸ original"]);
+
+    h.app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "rewritten by hook" }],
+        timestamp: 1,
+      },
+    });
+
+    expect(
+      h.app
+        .renderTranscript()
+        .map(stripAnsi)
+        .filter((line) => line.includes("▸")),
+    ).toEqual(["  ▸ rewritten by hook"]);
+  });
+
+  test("a run that ends before accepting its submitted message removes the preview", () => {
+    const h = harness();
+    feed(h.app, "consumed by hook\r");
+    h.app.handleEvent({ type: "agent_start" });
+    h.app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+
+    expect(h.app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("consumed by hook");
+  });
+
+  test("a surface that rejects submission does not retain its preview", () => {
+    const h = harness({ onSubmit: () => false });
+    feed(h.app, "rejected\r");
+
+    expect(h.app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("rejected");
   });
 
   test("Shift+Enter inserts a newline instead of submitting", () => {
@@ -2146,7 +2190,7 @@ describe("@-file mention popup", () => {
       depth: "none",
       model: "fake/fake-1",
       callbacks: {
-        onSubmit: (text) => submitted.push(text),
+        onSubmit: (text) => void submitted.push(text),
         onAbort: () => {},
         onExit: () => {},
         onMentionQuery: (query) =>
@@ -2956,7 +3000,7 @@ describe("mid-buffer file mentions", () => {
       depth: "none",
       model: "fake/fake-1",
       callbacks: {
-        onSubmit: (text) => submitted.push(text),
+        onSubmit: (text) => void submitted.push(text),
         onAbort: () => {},
         onExit: () => {},
         onMentionQuery: (query) =>

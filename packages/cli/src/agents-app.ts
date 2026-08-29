@@ -655,7 +655,10 @@ export async function runAgentView(
         registry,
         callbacks: {
           onSubmit: (text) =>
-            void client.sessionOp(sessionId, { type: "input", text }).catch(showError),
+            void client.sessionOp(sessionId, { type: "input", text }).catch((error) => {
+              conversation.discardPendingSubmissions();
+              showError(error);
+            }),
           onSteer: (text) => {
             void client.sessionOp(sessionId, { type: "steer", text }).catch(showError);
             return true;
