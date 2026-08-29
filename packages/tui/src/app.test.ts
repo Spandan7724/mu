@@ -2116,6 +2116,25 @@ describe("full-screen renderer", () => {
     expect(written[0]).toContain("latest");
     expect(written[0]).not.toContain("discarded");
   });
+
+  test("an immediate input frame cancels a pending throttled frame", async () => {
+    const written: string[] = [];
+    const terminal = new Terminal({
+      write: (data) => written.push(data),
+      columns: 80,
+      rows: 24,
+      isTty: true,
+    });
+    const renderer = new FullScreenRenderer(terminal, 10);
+    renderer.requestRender(() => physicalFrame(["stale stream"]));
+    renderer.renderNow(physicalFrame(["typed input"]));
+
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain("typed input");
+    await Bun.sleep(25);
+    expect(written).toHaveLength(1);
+    expect(written[0]).not.toContain("stale stream");
+  });
 });
 
 describe("@-file mention popup", () => {

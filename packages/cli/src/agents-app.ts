@@ -605,6 +605,7 @@ export async function runAgentView(
     dirtyFrom: 0,
   });
   const paint = () => renderer.requestRender(() => active?.app.renderFrame() ?? dashboardFrame());
+  const paintInput = () => renderer.renderNow(active?.app.renderFrame() ?? dashboardFrame());
 
   const showError = (error: unknown) => {
     app.setNotice(error instanceof Error ? error.message : String(error));
@@ -861,11 +862,11 @@ export async function runAgentView(
           if (event) {
             if (active) active.app.handleInput(event);
             else app.handleInput(event);
-            paint();
+            paintInput();
           }
         }, 30);
       }
-      paint();
+      paintInput();
       if (exiting) break;
     }
   } finally {

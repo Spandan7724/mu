@@ -711,6 +711,7 @@ export async function runInteractive(
   // Provider streams often deliver several deltas in one frame interval; an
   // eager app.renderScreen() here would parse and wrap every discarded state.
   const paint = () => renderer.requestRender(() => app.renderFrame());
+  const paintInput = () => renderer.renderNow(app.renderFrame());
   const commitLines = (lines: string[], source: ConversationSource = app.activeConversation) => {
     app.appendTranscript(lines, source);
     paint();
@@ -1239,7 +1240,7 @@ export async function runInteractive(
       const event = decoder.flushPendingEscape();
       if (event) {
         app.handleInput(event);
-        paint();
+        paintInput();
       }
     }, 30);
   };
@@ -1260,7 +1261,7 @@ export async function runInteractive(
       for (const event of decoder.push(String(chunk))) app.handleInput(event);
       if (decoder.pending.length > 0) scheduleEscapeFlush();
       if (app.ctrlCPending) scheduleCtrlCHintClear();
-      paint();
+      paintInput();
       if (exiting) break;
     }
   } finally {
