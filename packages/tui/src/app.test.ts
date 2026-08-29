@@ -1264,6 +1264,25 @@ describe("activity disclosure", () => {
     expect(expanded).toContain("edited a.ts +3 -1");
     expect(expanded).toContain("updated b.ts +1 -2");
   });
+
+  test("expanded group children align with standalone activity", () => {
+    const { app } = harness();
+    complete(app, "c1", "bash", { command: "git status --short" }, "clean", { exitCode: 0 });
+    complete(app, "c2", "bash", { command: "git log -1" }, "abc change", { exitCode: 0 });
+    complete(app, "s1", "bash", { command: "rg -n TODO packages" }, "packages/a.ts:1:TODO", {
+      exitCode: 0,
+    });
+
+    feed(app, "\u000f");
+    press(app, "up");
+    press(app, "return");
+    const rows = app.renderScreen().map(stripAnsi);
+    const command = rows.find((line) => line.includes("ran git status --short"));
+    const search = rows.find((line) => line.includes("ran rg -n TODO packages"));
+
+    expect(command?.indexOf("│ ran")).toBe(4);
+    expect(search?.indexOf("│ ran")).toBe(4);
+  });
 });
 
 describe("superseded plans", () => {

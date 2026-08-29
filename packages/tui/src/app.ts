@@ -1405,12 +1405,7 @@ export class App {
     });
   }
 
-  private disclosureLines(
-    lines: string[],
-    expanded: boolean,
-    selected: boolean,
-    nested = false,
-  ): string[] {
+  private disclosureLines(lines: string[], expanded: boolean, selected: boolean): string[] {
     if (lines.length === 0) return [];
     const marker = styleText(
       selected ? "❯" : expanded ? "⌄" : "›",
@@ -1421,11 +1416,7 @@ export class App {
     );
     const [first = "", ...rest] = lines;
     const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
-    const indent = nested ? `${MARGIN}  ` : MARGIN;
-    return [
-      `${indent}${marker} ${body}`,
-      ...rest.map((line) => (nested ? `${MARGIN}  ${line}` : line)),
-    ];
+    return [`${MARGIN}${marker} ${body}`, ...rest];
   }
 
   private activitySummary(item: Extract<TranscriptItem, { kind: "activity" }>): string {
@@ -1464,7 +1455,6 @@ export class App {
     tool: ActivityTool,
     activityKind: ActivityKind,
     selected: boolean,
-    nested: boolean,
   ): string[] {
     if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== tool.expanded) {
       tool.rendered = {
@@ -1480,12 +1470,7 @@ export class App {
         lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
       }
     }
-    return this.disclosureLines(
-      tool.expanded ? lines : lines.slice(0, 1),
-      tool.expanded,
-      selected,
-      nested,
-    );
+    return this.disclosureLines(tool.expanded ? lines : lines.slice(0, 1), tool.expanded, selected);
   }
 
   private renderActivity(
@@ -1494,7 +1479,7 @@ export class App {
   ): string[] {
     if (item.tools.length === 1) {
       const tool = item.tools[0] as ActivityTool;
-      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, false);
+      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id);
     }
     const marker = styleText(
       selectedId === item.id ? "❯" : item.expanded ? "⌄" : "›",
@@ -1508,7 +1493,7 @@ export class App {
     return [
       summary,
       ...item.tools.flatMap((tool) =>
-        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, true),
+        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id),
       ),
     ];
   }
