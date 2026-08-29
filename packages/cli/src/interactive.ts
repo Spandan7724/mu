@@ -641,7 +641,7 @@ export async function runInteractive(
               app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking, agent.thinkingLevels);
               app.replaceTranscript(tree.messagesAt(), app.banner());
-              commitLines([`  resumed ${sessionId}`]);
+              commitLines([`  resumed ${sessionId}`, ""]);
             } catch (error) {
               commitLines([
                 `  Could not resume ${sessionId}: ${
