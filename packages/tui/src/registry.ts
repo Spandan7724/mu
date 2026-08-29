@@ -1,7 +1,8 @@
-import type { ToolResultMessage } from "@mu/core";
+import type { CheckpointDiffFile, ToolResultMessage } from "@mu/core";
 import {
   type DiffLine,
   diffCell,
+  diffLinesFromHunks,
   type PlanItem,
   type PlanStatus,
   type PrimaryRole,
@@ -130,6 +131,11 @@ function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: numb
   );
 }
 
+function errorPreview(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  if (!info.result?.isError) return [];
+  return info.expanded ? expandedResult(info, ctx) : resultPreview(info, ctx);
+}
+
 function formatDuration(durationMs: number | undefined): string | undefined {
   if (durationMs === undefined) return undefined;
   if (durationMs < 1_000) return `${Math.max(0, Math.round(durationMs))}ms`;
@@ -222,14 +228,27 @@ function displayedDiffLines(
   return bounded.map((line) => ({ ...line, text: truncateToWidth(line.text, width) }));
 }
 
-// A diff is only meaningful whole. Rendered per token it shows deletions with
-// no replacement yet, half-typed lines, and counts that climb — a change the
-// user cannot read and that never existed on disk. The path is enough to say
-// what is coming; the diff lands in one piece once the arguments are complete.
-function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
+// A diff is only meaningful whole. While arguments stream, the path is enough;
+// a running call previews its complete arguments, and a completed call replaces
+// that preview with the tool's authoritative before/after file diff.
+function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
   if (info.argsStreaming) return [];
   const path = stringArg(info.args, "path");
   if (!path) return [];
+
+  const completed = (info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+  if (completed && !info.result?.isError) {
+    const [, ...lines] = diffCell(
+      {
+        path: completed.path,
+        added: completed.added,
+        removed: completed.removed,
+        lines: displayedDiffLines(diffLinesFromHunks(completed.hunks), info, ctx),
+      },
+      ctx,
+    );
+    return lines;
+  }
 
   if (info.toolName === "write") {
     const content = stringArg(info.args, "content");
@@ -238,7 +257,7 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const lines = sourceLines.map(
       (text, index): DiffLine => ({ kind: "add", lineNumber: index + 1, text }),
     );
-    return diffCell(
+    const [, ...rendered] = diffCell(
       {
         path,
         added: sourceLines.length,
@@ -247,6 +266,7 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
       },
       ctx,
     );
+    return rendered;
   }
 
   const edits = editArgs(info.args);
@@ -285,7 +305,11 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     added += newLines.length;
   }
   if (lines.length === 0) return [];
-  return diffCell({ path, added, removed, lines: displayedDiffLines(lines, info, ctx) }, ctx);
+  const [, ...rendered] = diffCell(
+    { path, added, removed, lines: displayedDiffLines(lines, info, ctx) },
+    ctx,
+  );
+  return rendered;
 }
 
 // The generic fallback: name, primary argument, truncated result. This is what
@@ -462,8 +486,8 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...argumentDiff(info, ctx),
-      ...(info.result?.isError ? resultPreview(info, ctx) : []),
+      ...fileDiff(info, ctx),
+      ...errorPreview(info, ctx),
     ];
   },
   edit: (info, ctx) => {
@@ -485,8 +509,8 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...argumentDiff(info, ctx),
-      ...(info.result?.isError ? resultPreview(info, ctx) : []),
+      ...fileDiff(info, ctx),
+      ...errorPreview(info, ctx),
     ];
   },
   bash: (info, ctx) => {
@@ -553,7 +577,10 @@ for (const name of ["read", "ls"]) {
 }
 for (const name of ["write", "edit"]) {
   const renderer = codingRenderers[name];
-  if (renderer) renderer.activityKind = "edit";
+  if (renderer) {
+    renderer.activityKind = "edit";
+    renderer.ownsExpansion = true;
+  }
 }
 const bashRenderer = codingRenderers.bash;
 if (bashRenderer) {

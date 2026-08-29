@@ -1050,25 +1050,115 @@ describe("renderer registry", () => {
           { edit: 1, oldLine: 1, newLine: 1 },
           { edit: 0, oldLine: 3, newLine: 4 },
         ],
+        diff: {
+          path: "code.ts",
+          added: 3,
+          removed: 2,
+          hunks: [
+            "@@ -1,1 +1,2 @@",
+            "-const a = 1;",
+            "+const a = 10;",
+            "+const extra = 0;",
+            "@@ -3,1 +4,1 @@",
+            "-const c = 3;",
+            "+const c = 30;",
+          ],
+        },
       },
       isError: false,
       timestamp: 1,
     };
 
     const lines = registry
-      .render({ toolName: "edit", args, result }, { width: 60, depth: "none" })
+      .render({ toolName: "edit", args, result, expanded: true }, { width: 60, depth: "none" })
       .map(stripAnsi);
 
     // File order, not the order the model sent, and the added line shifts the
     // later hunk's new-side number past its old-side one.
     expect(lines.slice(1)).toEqual([
-      "  │ code.ts · +3 −2",
       "  │     1 − const a = 1;",
       "  │     1 + const a = 10;",
       "  │     2 + const extra = 0;",
       "  │     3 − const c = 3;",
       "  │     4 + const c = 30;",
     ]);
+    expect(lines.filter((line) => line.includes("code.ts"))).toHaveLength(1);
+  });
+
+  test("a completed edit uses the actual file diff instead of replacement payload counts", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const result = {
+      role: "toolResult" as const,
+      toolCallId: "e",
+      toolName: "edit",
+      content: [{ type: "text" as const, text: "Edited pyproject.toml (1 replacement)" }],
+      details: {
+        occurrences: 1,
+        hunks: [{ edit: 0, oldLine: 13, newLine: 13 }],
+        diff: {
+          path: "pyproject.toml",
+          added: 1,
+          removed: 0,
+          hunks: [
+            "@@ -13,3 +13,4 @@",
+            " [project.scripts]",
+            ' multiagent-coder = "multiagent_coder.cli:main"',
+            '+coding-agent = "multiagent_coder.tui:main"',
+            " ",
+          ],
+        },
+      },
+      isError: false,
+      timestamp: 1,
+    };
+    const lines = registry
+      .render(
+        {
+          toolName: "edit",
+          args: {
+            path: "pyproject.toml",
+            oldString: '[project.scripts]\nmultiagent-coder = "multiagent_coder.cli:main"\n',
+            newString:
+              '[project.scripts]\nmultiagent-coder = "multiagent_coder.cli:main"\ncoding-agent = "multiagent_coder.tui:main"\n',
+          },
+          result,
+          expanded: true,
+        },
+        { width: 80, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines[0]).toBe("  │ edited pyproject.toml · 1 replacement");
+    expect(lines.join("\n")).not.toContain("+4 −3");
+    expect(lines.filter((line) => line.includes("pyproject.toml"))).toHaveLength(1);
+    expect(lines).not.toContain("  │ Edited pyproject.toml (1 replacement)");
+    expect(lines).toContain('  │    15 + coding-agent = "multiagent_coder.tui:main"');
+  });
+
+  test("an expanded failed edit still shows its error", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry
+      .render(
+        {
+          toolName: "edit",
+          args: { path: "code.ts", oldString: "old", newString: "new" },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "e",
+            toolName: "edit",
+            content: [{ type: "text", text: "code.ts changed since it was read" }],
+            isError: true,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.join("\n")).toContain("code.ts changed since it was read");
   });
 
   test("an edit still running renders its diff without invented line numbers", () => {
@@ -1085,7 +1175,7 @@ describe("renderer registry", () => {
       )
       .map(stripAnsi);
 
-    expect(lines.slice(1)).toEqual(["  │ code.ts · +1 −1", "  │       − a", "  │       + b"]);
+    expect(lines.slice(1)).toEqual(["  │       − a", "  │       + b"]);
   });
 
   test("an edit whose arguments are still streaming renders no partial diff", () => {
@@ -1367,8 +1457,14 @@ describe("activity disclosure", () => {
 
   test("edit groups show colored aggregate and per-file line totals", () => {
     const { app } = harness({}, { depth: "truecolor" });
-    complete(app, "e1", "edit", { path: "a.ts", edits: [] }, "Edited a.ts", {
-      diff: { path: "a.ts", added: 3, removed: 1, hunks: [] },
+    complete(app, "e1", "edit", { path: "a.ts", edits: [] }, "Edited a.ts (1 replacement)", {
+      occurrences: 1,
+      diff: {
+        path: "a.ts",
+        added: 3,
+        removed: 1,
+        hunks: ["@@ -1,1 +1,3 @@", "-old", "+new", "+extra", "+more"],
+      },
     });
     complete(app, "e2", "write", { path: "b.ts", content: "x\ny" }, "Updated b.ts", {
       diff: { path: "b.ts", added: 1, removed: 2, hunks: [] },
@@ -1381,9 +1477,17 @@ describe("activity disclosure", () => {
 
     feed(app, "\u000f");
     press(app, "right");
-    const expanded = app.renderScreen().map(stripAnsi).join("\n");
-    expect(expanded).toContain("edited a.ts +3 -1");
+    let expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("edited a.ts · 1 replacement +3 -1");
     expect(expanded).toContain("updated b.ts +1 -2");
+
+    press(app, "down");
+    press(app, "right");
+    expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded.match(/a\.ts/g)).toHaveLength(1);
+    expect(expanded.match(/b\.ts/g)).toHaveLength(1);
+    expect(expanded).not.toContain("Edited a.ts (1 replacement)");
+    expect(expanded).toContain("│     1 − old");
   });
 
   test("expanded group children align with standalone activity", () => {
