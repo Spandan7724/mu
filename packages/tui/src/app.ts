@@ -261,6 +261,7 @@ interface ActivitySearchMatch {
 interface ActivitySearch {
   editor: Editor;
   editing: boolean;
+  showing: boolean;
   query: string;
   rows: string[];
   matches: ActivitySearchMatch[];
@@ -1356,7 +1357,7 @@ export class App {
             ? this.promptEditor.renderMasked(composerWidth, depth)
             : this.promptEditor.render(composerWidth, depth)),
         );
-      } else if (this.mode === "activity" && this.activitySearch) {
+      } else if (this.mode === "activity" && this.activitySearch?.showing) {
         composerLines.push(
           ...this.activitySearch.editor.render(composerWidth, depth, this.activitySearch.editing, {
             marker: styleText("/", { accent: true, bold: true }, depth),
@@ -1383,7 +1384,7 @@ export class App {
     }
 
     const composerTitle =
-      this.mode === "activity" && this.activitySearch
+      this.mode === "activity" && this.activitySearch?.showing
         ? styleText("search transcript", { accent: true, bold: true }, depth)
         : this.isShellMode
           ? styleText("shell", { toolExec: true, bold: true }, depth)
@@ -1392,11 +1393,12 @@ export class App {
 
     const toolHint = "ctrl+o";
     const search = this.activitySearch;
-    const activityHint = search?.editing
-      ? "type query · enter search · esc cancel"
-      : search
-        ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
-        : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
+    const activityHint =
+      search?.showing && search.editing
+        ? "type query · enter search · esc cancel"
+        : search?.showing
+          ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
+          : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const compactStage =
         this.compactionStage === "clearing-tool-output"
@@ -1774,6 +1776,7 @@ export class App {
   private startActivitySearch(): void {
     const existing = this.activitySearch;
     if (existing) {
+      existing.showing = true;
       existing.editing = true;
       existing.editor.setText(existing.query);
       return;
@@ -1781,6 +1784,7 @@ export class App {
     this.activitySearch = {
       editor: new Editor(),
       editing: true,
+      showing: true,
       query: "",
       rows: [],
       matches: [],
@@ -1860,7 +1864,7 @@ export class App {
 
   private handleActivityKey(key: Key): void {
     const search = this.activitySearch;
-    if (search?.editing) {
+    if (search?.showing && search.editing) {
       if (key.name === "escape") {
         this.activitySearch = undefined;
         return;
@@ -1884,9 +1888,9 @@ export class App {
       if (!key.ctrl && !key.alt && key.text) search.editor.insert(key.text);
       return;
     }
-    if (search) {
+    if (search?.showing) {
       if (key.name === "escape") {
-        this.activitySearch = undefined;
+        search.showing = false;
         return;
       }
       if (key.text === "/") {
@@ -1905,6 +1909,9 @@ export class App {
     if (key.text === "/") {
       this.startActivitySearch();
       return;
+    }
+    if (["up", "down", "pageup", "pagedown", "return", "right", "left"].includes(key.name)) {
+      this.activitySearch = undefined;
     }
     const nodes = this.activityNodes();
     let index = nodes.findIndex((node) => node.id === this.activitySelection);

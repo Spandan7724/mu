@@ -1543,10 +1543,13 @@ describe("activity disclosure", () => {
     screen = app.renderScreen().map(stripAnsi);
     expect(screen.find((line) => line.startsWith("❯ "))).toContain("private quartz thought");
 
+    feed(app, "n");
     press(app, "escape");
     expect(app.currentMode).toBe("activity");
     expect(app.areToolOutputsExpanded).toBe(false);
-    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.join("\n")).not.toContain("search transcript");
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("hidden quartz output");
     press(app, "escape");
     expect(app.currentMode).toBe("composing");
     expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
