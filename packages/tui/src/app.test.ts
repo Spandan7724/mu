@@ -682,6 +682,16 @@ describe("input handling", () => {
     expect(h.submitted).toEqual([]);
   });
 
+  test("the local collapse command remains discoverable in the slash menu", () => {
+    const h = harness();
+    h.app.setCommands([{ label: "model" }]);
+    feed(h.app, "/coll");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("Collapse all expanded");
+    feed(h.app, "\r");
+    expect(h.commands).toEqual([]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
   test("a slash command remains a command while the agent is running", () => {
     const h = harness();
     h.app.handleEvent({ type: "agent_start" });
@@ -1225,6 +1235,10 @@ describe("activity disclosure", () => {
     expect(review.some((line) => line.includes("fake/fake-1"))).toBe(true);
     expect(review).not.toContain("  Activity");
     expect(app.renderScreen().join("\n")).not.toContain("\u001b[7m");
+    expect(review.some((line) => line.includes("read a.ts"))).toBe(false);
+
+    press(app, "right");
+    review = app.renderScreen().map(stripAnsi);
     expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
     expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
     expect(review.some((line) => line.includes("│ a1"))).toBe(false);
@@ -1235,7 +1249,7 @@ describe("activity disclosure", () => {
     review = app.renderScreen().map(stripAnsi);
     expect(review.some((line) => line.includes("│ a4"))).toBe(true);
 
-    press(app, "escape");
+    feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
     expect(
       app
@@ -1243,6 +1257,10 @@ describe("activity disclosure", () => {
         .map(stripAnsi)
         .some((line) => line.includes("│ a4")),
     ).toBe(true);
+
+    feed(app, "/collapse\r");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    expect(app.renderTranscript().map(stripAnsi)).not.toContain("  › │ read a.ts · 6 lines");
   });
 
   test("edit groups show colored aggregate and per-file line totals", () => {
@@ -1260,6 +1278,7 @@ describe("activity disclosure", () => {
     expect(collapsed).toContain("[31m-3");
 
     feed(app, "\u000f");
+    press(app, "right");
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("edited a.ts +3 -1");
     expect(expanded).toContain("updated b.ts +1 -2");
@@ -1352,6 +1371,7 @@ describe("superseded plans", () => {
     expect(app.renderScreen().map(stripAnsi)).toContain("  › │ plan · 0/2 · task 1");
     feed(app, "\u000f");
     feed(app, "\u001b[A");
+    press(app, "return");
     feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
     expect(expanded.filter((line) => line.includes("┌ plan · 0/2 done"))).toHaveLength(1);
@@ -1382,8 +1402,8 @@ describe("superseded plans", () => {
 });
 
 describe("tool output toggle", () => {
-  test("ctrl+o expands completed commands and collapses them again", () => {
-    const { app } = harness();
+  test("ctrl+o navigates without toggling and /collapse closes every disclosure", () => {
+    const { app, commands } = harness();
     app.handleEvent({ type: "agent_start" });
     app.handleEvent({
       type: "tool_execution_start",
@@ -1414,13 +1434,21 @@ describe("tool output toggle", () => {
     expect(collapsed).not.toContain("lines omitted");
 
     feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    press(app, "right");
     expect(app.areToolOutputsExpanded).toBe(true);
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("ran bun test");
     expect(expanded).toContain("│ line 6");
 
     feed(app, "\u000f");
+    expect(app.currentMode).toBe("composing");
+    expect(app.areToolOutputsExpanded).toBe(true);
+
+    feed(app, "/collapse\r");
     expect(app.areToolOutputsExpanded).toBe(false);
+    expect(commands).toEqual([]);
     expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
   });
 
@@ -1456,7 +1484,8 @@ describe("tool output toggle", () => {
     });
 
     feed(app, "\u000f");
-    press(app, "escape");
+    press(app, "right");
+    feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
     const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
     const toolIndex = expanded.findIndex((line) => line.includes("ran bun test"));
@@ -1500,7 +1529,8 @@ describe("tool output toggle", () => {
       message: assistant("Done — this response stays after the expanded output."),
     });
     feed(app, "\u000f");
-    press(app, "escape");
+    press(app, "right");
+    feed(app, "\u000f");
     const screen = app.renderScreen().map(stripAnsi);
     const toolIndex = screen.findIndex((line) => line.includes("ran long command"));
     const resultIndex = screen.findIndex((line) => line.includes("line 80"));
@@ -1557,7 +1587,8 @@ describe("tool output toggle", () => {
     expect(screen.join("\n")).not.toContain("source line 6");
 
     feed(app, "\u000f");
-    press(app, "escape");
+    press(app, "right");
+    feed(app, "\u000f");
     screen = app.renderScreen().map(stripAnsi);
     const preambleIndex = screen.findIndex((line) => line.includes("read it first"));
     const toolIndex = screen.findIndex((line) => line.includes("read numpy_stock_trading.py"));
@@ -2029,8 +2060,9 @@ describe("full-screen renderer", () => {
     renderer.renderNow(app.renderFrame());
     for (let index = 0; index < 3; index++) {
       feed(app, "\u000f");
+      press(app, "right");
       renderer.renderNow(app.renderFrame());
-      press(app, "escape");
+      feed(app, "\u000f");
       renderer.renderNow(app.renderFrame());
     }
 

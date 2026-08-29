@@ -42,6 +42,11 @@ import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
+const COLLAPSE_COMMAND = {
+  label: "collapse",
+  description: "Collapse all expanded tool activity",
+};
+
 export type AppMode =
   | "composing"
   | "activity"
@@ -359,7 +364,7 @@ export class App {
     | undefined;
   private backgroundTasks = new Map<string, LiveTask>();
   private ctrlCArmedAt = 0;
-  private commands: { label: string; description?: string }[] = [];
+  private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private prompt: InputPromptRequest | undefined;
@@ -501,7 +506,10 @@ export class App {
   }
 
   setCommands(commands: { label: string; description?: string }[]): void {
-    this.commands = commands;
+    this.commands = [
+      ...commands.filter((command) => command.label !== COLLAPSE_COMMAND.label),
+      COLLAPSE_COMMAND,
+    ];
   }
 
   get activeConversation(): ConversationSource {
@@ -1292,7 +1300,7 @@ export class App {
 
     const toolHint = "ctrl+o";
     const activityHint =
-      "↑↓ select · pgup/pgdn jump · →/enter expand · ← collapse · ctrl+o toggle · esc close";
+      "↑↓ select · pgup/pgdn jump · →/enter expand · ← collapse · ctrl+o/esc close";
     if (this.running) {
       const compactStage =
         this.compactionStage === "clearing-tool-output"
@@ -1618,12 +1626,15 @@ export class App {
     if (!latest) return;
     this.activitySelection = latest.id;
     this.mode = "activity";
-    this.toggleActivityNode();
+  }
+
+  private closeActivity(): void {
+    this.mode = this.approvals.length > 0 ? "approval" : "composing";
   }
 
   private handleActivityKey(key: Key): void {
     if (key.name === "escape") {
-      this.mode = this.approvals.length > 0 ? "approval" : "composing";
+      this.closeActivity();
       return;
     }
     const nodes = this.activityNodes();
@@ -1712,7 +1723,7 @@ export class App {
     }
 
     if (key.ctrl && key.name === "o") {
-      if (this.mode === "activity") this.toggleActivityNode();
+      if (this.mode === "activity") this.closeActivity();
       else if (this.mode === "composing") this.openActivity();
       return;
     }
@@ -1808,8 +1819,8 @@ export class App {
         if (text.trim().length === 0) return;
         if (text.startsWith("!") && this.options.callbacks.onShell) {
           this.options.callbacks.onShell(text.slice(1).trim());
-        } else if (text.startsWith("/") && this.options.callbacks.onCommand) {
-          this.options.callbacks.onCommand(text);
+        } else if (text.startsWith("/")) {
+          if (!this.handleLocalCommand(text)) this.options.callbacks.onCommand?.(text);
         } else {
           const queueDuringCompaction =
             this.running && this.compacting && this.options.callbacks.onFollowUp;
@@ -2079,6 +2090,27 @@ export class App {
     );
   }
 
+  private handleLocalCommand(command: string): boolean {
+    if (command.trim() !== `/${COLLAPSE_COMMAND.label}`) return false;
+    let changed = false;
+    for (const item of this.transcript) {
+      if (item.kind === "tool") {
+        changed ||= item.expanded;
+        item.expanded = false;
+        continue;
+      }
+      if (item.kind !== "activity") continue;
+      changed ||= item.expanded || item.tools.some((tool) => tool.expanded);
+      item.expanded = false;
+      for (const tool of item.tools) tool.expanded = false;
+    }
+    if (changed) {
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+    }
+    return true;
+  }
+
   private refreshMentions(): void {
     const query = this.editor.text.slice(this.mentionStart + 1, this.editor.offset);
     this.commandList.setItems(this.options.callbacks.onMentionQuery?.(query) ?? []);
@@ -2113,7 +2145,9 @@ export class App {
       // the popup has filtered away; the highlighted item is only a shortcut.
       const hasArgs = typed.trim().includes(" ");
       const command = hasArgs || !selected ? typed.trim() : `/${selected.label}`;
-      if (command.length > 1) this.options.callbacks.onCommand?.(command);
+      if (command.length > 1 && !this.handleLocalCommand(command)) {
+        this.options.callbacks.onCommand?.(command);
+      }
       return;
     }
     if (key.name === "backspace") {
