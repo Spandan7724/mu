@@ -1275,13 +1275,19 @@ describe("activity disclosure", () => {
 
     feed(app, "\u000f");
     press(app, "up");
+    let rows = app.renderScreen().map(stripAnsi);
+    let searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
+    expect(rows[searchIndex - 1]).toBe("");
+
     press(app, "return");
-    const rows = app.renderScreen().map(stripAnsi);
+    rows = app.renderScreen().map(stripAnsi);
     const command = rows.find((line) => line.includes("ran git status --short"));
-    const search = rows.find((line) => line.includes("ran rg -n TODO packages"));
+    searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
+    const search = rows[searchIndex];
 
     expect(command?.indexOf("│ ran")).toBe(4);
     expect(search?.indexOf("│ ran")).toBe(4);
+    expect(rows[searchIndex - 1]).toBe("");
   });
 });
 

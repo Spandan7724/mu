@@ -1115,7 +1115,7 @@ export class App {
       if (item.kind === "activity") {
         const lines = this.renderActivity(item, selectedId);
         const next = this.transcript[index + 1];
-        return next?.kind === "activity" ? lines : [...lines, ""];
+        return next?.kind === "activity" && item.tools.length === 1 ? lines : [...lines, ""];
       }
       const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
       if (
