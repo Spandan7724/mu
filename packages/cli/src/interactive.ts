@@ -16,6 +16,7 @@ import {
   formatKeybindings,
   hyperlink,
   InputDecoder,
+  type PickerRequest,
   RendererRegistry,
   type RenderFrame,
   type Style,
@@ -61,7 +62,7 @@ import {
   loginMethods,
   logoutProviders,
 } from "./login.ts";
-import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
+import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { resumePickerItems } from "./session-picker.ts";
@@ -432,23 +433,6 @@ export async function runInteractive(
       if (activeRunPromise() || target.isRunning) {
         return { handled: true, message: "Cannot switch models during a run." };
       }
-      let refresh: ModelCatalogRefreshResult | undefined;
-      if (modelCatalog && !modelCatalog.hasFreshModels) {
-        commitLines(["  refreshing model catalog…"], source);
-        paint();
-        refresh = await modelCatalog.ensureFresh();
-        if (!refresh.ok) {
-          commitLines(
-            [
-              `  model discovery failed · showing ${refresh.fallback} catalog`,
-              `  ${refresh.error}`,
-            ],
-            source,
-          );
-        } else if (refresh.cacheWarning) {
-          commitLines([`  ${refresh.cacheWarning}`], source);
-        }
-      }
       let auth: Awaited<ReturnType<typeof readAuthFile>>;
       try {
         auth = await readAuthFile();
@@ -461,15 +445,8 @@ export async function runInteractive(
         };
       }
       const authenticatedProviders = new Set(Object.keys(auth.providers));
-      const models = availableModels(extensions, authenticatedProviders);
-      if (models.length === 0) {
-        return { handled: true, message: "No authenticated models. Run /login first." };
-      }
-      const sourceSuffix = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
-      app.openPicker({
-        title: `select a model · ${models.length} available${sourceSuffix}`,
-        filterable: true,
-        items: models.map((model) => {
+      const pickerItems = () =>
+        availableModels(extensions, authenticatedProviders).map((model) => {
           const ref = `${model.provider}/${model.id}`;
           const credential = auth.providers[model.provider];
           return {
@@ -484,7 +461,16 @@ export async function runInteractive(
                     : "apiKey"),
             ),
           };
-        }),
+        });
+      const items = pickerItems();
+      const refreshing = modelCatalog !== undefined && !modelCatalog.hasFreshModels;
+      if (items.length === 0 && !refreshing) {
+        return { handled: true, message: "No authenticated models. Run /login first." };
+      }
+      const picker: PickerRequest = {
+        title: `select a model · ${items.length} available${refreshing ? " · refreshing" : ""}`,
+        filterable: true,
+        items,
         onChoose: async (label) => {
           target.setModel(label);
           app.setModel(label, target.contextWindow, source);
@@ -509,7 +495,34 @@ export async function runInteractive(
           paint();
         },
         onBack: () => app.openCommandMenu(),
-      });
+      };
+      app.openPicker(picker);
+      if (refreshing) {
+        void modelCatalog.ensureFresh().then((refresh) => {
+          if (exiting) return;
+          const refreshedItems = pickerItems();
+          const suffix = refresh.ok ? "" : ` · ${refresh.fallback}`;
+          const updated = app.updatePicker(picker, {
+            title: `select a model · ${refreshedItems.length} available${suffix}`,
+            items: refreshedItems,
+          });
+          let diagnosed = false;
+          if (!refresh.ok) {
+            commitLines(
+              [
+                `  model discovery failed · showing ${refresh.fallback} catalog`,
+                `  ${refresh.error}`,
+              ],
+              source,
+            );
+            diagnosed = true;
+          } else if (refresh.cacheWarning) {
+            commitLines([`  ${refresh.cacheWarning}`], source);
+            diagnosed = true;
+          }
+          if (updated || diagnosed) paint();
+        });
+      }
       return { handled: true };
     },
   });
@@ -1283,6 +1296,7 @@ export async function runInteractive(
       if (exiting) break;
     }
   } finally {
+    exiting = true;
     if (escapeTimer) clearTimeout(escapeTimer);
     if (ctrlCHintTimer) clearTimeout(ctrlCHintTimer);
     shutdown();

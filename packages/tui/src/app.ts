@@ -669,6 +669,15 @@ export class App {
     this.mode = "picker";
   }
 
+  updatePicker(request: PickerRequest, update: Pick<PickerRequest, "title" | "items">): boolean {
+    if (this.mode !== "picker" || this.picker !== request) return false;
+    const selected = this.commandList.selected;
+    request.title = update.title;
+    request.items = update.items;
+    this.refreshPicker(selected ? (selected.value ?? selected.label) : undefined);
+    return true;
+  }
+
   openCommandMenu(): void {
     this.editor.setText("/");
     this.commandList.setItems(this.commands);
@@ -2302,12 +2311,12 @@ export class App {
     if (!key.ctrl && !key.alt && key.text) this.promptEditor.insert(key.text);
   }
 
-  private refreshPicker(): void {
+  private refreshPicker(selectedValue?: string): void {
     const picker = this.picker;
     if (!picker) return;
     const query = this.pickerQuery.trim();
     if (!query) {
-      this.commandList.setItems(picker.items);
+      this.commandList.setItems(picker.items, selectedValue);
       return;
     }
     this.commandList.setItems(
@@ -2323,6 +2332,7 @@ export class App {
         )
         .sort((a, b) => a.score - b.score || a.index - b.index)
         .map((candidate) => candidate.item),
+      selectedValue,
     );
   }
 

@@ -2589,6 +2589,37 @@ describe("selection pickers (/model, /resume)", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 
+  test("an open picker can refresh without losing its filter or selection", () => {
+    const h = harness();
+    const chosen: string[] = [];
+    const picker = {
+      title: "select a model · refreshing",
+      filterable: true,
+      items: [{ label: "openai/gpt-5.1" }, { label: "openai/gpt-5.2" }],
+      onChoose: (value: string) => chosen.push(value),
+    };
+    h.app.openPicker(picker);
+    feed(h.app, "openai");
+    press(h.app, "down");
+
+    expect(
+      h.app.updatePicker(picker, {
+        title: "select a model · 3 available",
+        items: [
+          { label: "openai/gpt-5.1" },
+          { label: "openai/gpt-5.2" },
+          { label: "openai/gpt-5.3" },
+        ],
+      }),
+    ).toBe(true);
+
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("select a model · 3 available · openai");
+    press(h.app, "return");
+    expect(chosen).toEqual(["openai/gpt-5.2"]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
   test("a picker can display a friendly label while returning an opaque value", () => {
     const chosen: string[] = [];
     const h = harness();

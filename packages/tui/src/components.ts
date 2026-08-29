@@ -370,9 +370,13 @@ export class SelectList {
     return this.index;
   }
 
-  setItems(items: SelectItem[]): void {
+  setItems(items: SelectItem[], selectedValue?: string): void {
     this.items = items;
-    this.index = 0;
+    const selected =
+      selectedValue === undefined
+        ? -1
+        : items.findIndex((item) => (item.value ?? item.label) === selectedValue);
+    this.index = Math.max(0, selected);
   }
 
   move(direction: "up" | "down"): void {
