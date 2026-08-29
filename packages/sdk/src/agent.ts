@@ -122,6 +122,7 @@ export interface CheckpointActionData {
   kind: "checkpoint";
   action: "undo" | "redo";
   files: CheckpointDiffFile[];
+  turnCount?: number;
   messageCount: number;
   prompt?: string;
 }
@@ -130,6 +131,12 @@ export interface CheckpointActionResult {
   ok: boolean;
   message: string;
   data?: CheckpointActionData;
+}
+
+export interface UndoPoint {
+  steps: number;
+  prompt: string;
+  messageCount: number;
 }
 
 export interface ManualCompactionResult {
@@ -818,31 +825,70 @@ export class Agent {
     return this.checkpoints;
   }
 
+  undoPoints(): UndoPoint[] {
+    return this.checkpoints
+      .state()
+      .done.toReversed()
+      .map((step, index) => {
+        const details = this.checkpointDetails(step);
+        return {
+          steps: index + 1,
+          prompt: details.prompt ?? "",
+          messageCount: details.messageCount,
+        };
+      });
+  }
+
   // Undo restores the workspace AND rewinds the conversation together — either
   // alone would leave the session lying about its own state.
-  async undo(): Promise<CheckpointActionResult> {
+  async undo(turnCount = 1): Promise<CheckpointActionResult> {
     if (this.running) return { ok: false, message: "Cannot undo while a run is active." };
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support undo." };
-    const step = this.checkpoints.peekUndo();
-    if (!step) return { ok: false, message: "Nothing to undo." };
+    if (!Number.isInteger(turnCount) || turnCount < 1) {
+      return { ok: false, message: "Undo count must be a positive whole number." };
+    }
+    const state = this.checkpoints.state();
+    if (state.done.length === 0) return { ok: false, message: "Nothing to undo." };
+    if (turnCount > state.done.length) {
+      return {
+        ok: false,
+        message: `Only ${state.done.length} prompt${state.done.length === 1 ? "" : "s"} can be undone.`,
+      };
+    }
+    const selected = state.done.slice(-turnCount);
+    const step = selected[0] as CheckpointEntry;
     if (!this.tree.has(step.beforeEntryId)) {
       return { ok: false, message: "Could not undo: the conversation checkpoint is missing." };
     }
 
-    let files: CheckpointDiffFile[];
+    const filesByPath = new Map<string, CheckpointDiffFile>();
     try {
-      files = await provider.diff(step.beforeRef, step.afterRef);
+      for (const selectedStep of selected) {
+        for (const file of await provider.diff(selectedStep.beforeRef, selectedStep.afterRef)) {
+          const existing = filesByPath.get(file.path);
+          if (existing) {
+            existing.added += file.added;
+            existing.removed += file.removed;
+            existing.hunks.push(...file.hunks);
+          } else {
+            filesByPath.set(file.path, { ...file, hunks: [...file.hunks] });
+          }
+        }
+      }
     } catch (error) {
       return {
         ok: false,
         message: `Could not undo: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+    const files = [...filesByPath.values()];
 
     let rollbackRef: string | undefined;
     try {
-      rollbackRef = await provider.snapshot("before undo of last turn");
+      rollbackRef = await provider.snapshot(
+        turnCount === 1 ? "before undo of last turn" : `before undo of ${turnCount} turns`,
+      );
     } catch (error) {
       return {
         ok: false,
@@ -873,9 +919,11 @@ export class Agent {
     const current = this.tree;
     const candidate = SessionTree.fromJsonl(current.toJsonl());
     candidate.fork(step.beforeEntryId);
-    const state = this.checkpoints.state();
-    const nextDone = state.done.slice(0, -1);
-    const nextUndone = [...state.undone, { ...step, redoRef: rollbackRef }];
+    const nextDone = state.done.slice(0, -turnCount);
+    const newlyUndone = selected
+      .toReversed()
+      .map((entry, index) => (index === 0 ? { ...entry, redoRef: rollbackRef } : entry));
+    const nextUndone = [...state.undone, ...newlyUndone];
     this.appendCheckpointCursor(candidate, nextDone, nextUndone);
 
     try {
@@ -889,19 +937,21 @@ export class Agent {
       };
     }
 
-    const details = this.checkpointDetails(step);
+    const details = selected.map((entry) => this.checkpointDetails(entry));
+    const prompt = details[0]?.prompt;
     this.checkpoints.restore(nextDone, nextUndone);
     this.tree = candidate;
     this.refreshContextAccounting();
     return {
       ok: true,
-      message: "Undid the last turn.",
+      message: turnCount === 1 ? "Undid the last turn." : `Undid the last ${turnCount} turns.`,
       data: {
         kind: "checkpoint",
         action: "undo",
         files,
-        messageCount: details.messageCount,
-        ...(details.prompt !== undefined ? { prompt: details.prompt } : {}),
+        turnCount,
+        messageCount: details.reduce((total, detail) => total + detail.messageCount, 0),
+        ...(prompt !== undefined ? { prompt } : {}),
       },
     };
   }
@@ -987,6 +1037,7 @@ export class Agent {
         kind: "checkpoint",
         action: "redo",
         files,
+        turnCount: 1,
         messageCount: details.messageCount,
       },
     };

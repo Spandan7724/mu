@@ -46,6 +46,7 @@ import {
   type ThinkingLevel,
   type ToolRenderer,
   toCommand,
+  type UndoPointsCommandData,
 } from "mu";
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
@@ -102,6 +103,7 @@ export function renderCheckpointCommand(
     {
       action: data.action,
       files: data.files,
+      turnCount: data.turnCount ?? 1,
       messageCount: data.messageCount,
       promptRestored: data.action === "undo" && data.prompt !== undefined,
     },
@@ -1144,6 +1146,7 @@ export async function runInteractive(
     const data = result.data as
       | CheckpointActionData
       | DiffCommandData
+      | UndoPointsCommandData
       | { kind: "fork-points"; points: { id: string; description: string }[] }
       | { kind: "compaction"; status: string }
       | MarkdownCommandRun
@@ -1155,6 +1158,17 @@ export async function runInteractive(
         app.editor.setText("");
       }
       commitLines(renderCheckpointCommand(data, terminal.columns, depth), source);
+    } else if (data?.kind === "undo-points") {
+      app.openPicker({
+        title: "undo through prompt",
+        items: data.points.map((point) => ({
+          label: point.prompt.replace(/\s+/g, " ").trim() || "(empty prompt)",
+          description: `undo ${point.steps} prompt${point.steps === 1 ? "" : "s"}`,
+          value: String(point.steps),
+        })),
+        onChoose: (steps) => void runCommand(`/undo ${steps}`),
+        onBack: () => app.openCommandMenu(),
+      });
     } else if (data?.kind === "diff") {
       commitLines(renderDiffCommand(data, terminal.columns, depth), source);
     } else if (data?.kind === "fork-points") {

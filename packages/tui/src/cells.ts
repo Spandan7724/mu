@@ -433,6 +433,7 @@ export function compactionCell(
 export interface CheckpointCellOptions {
   action: "undo" | "redo";
   files: CheckpointDiffFile[];
+  turnCount: number;
   messageCount: number;
   promptRestored?: boolean;
 }
@@ -443,9 +444,10 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
   const messageLabel = `${options.messageCount} message${options.messageCount === 1 ? "" : "s"}`;
   const fileLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
   const action = styleText(options.action, { toolMutate: true, bold: true }, ctx.depth);
+  const turnLabel = `${options.turnCount} prompt${options.turnCount === 1 ? "" : "s"}`;
   const status =
     options.action === "undo"
-      ? `${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
+      ? `${turnLabel} ${GLYPHS.separator} ${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
       : `${messageLabel} restored ${GLYPHS.separator} ${fileLabel}`;
   const lines = [MARGIN + rule + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
 

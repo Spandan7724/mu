@@ -69,6 +69,7 @@ export type {
   HaltReason,
   ManualCompactionResult,
   RunResult,
+  UndoPoint,
 } from "./agent.ts";
 export { Agent } from "./agent.ts";
 export type {
@@ -103,7 +104,7 @@ export type { AuthPageOptions } from "./auth-page.ts";
 export { authErrorPage, authSuccessPage, renderAuthPage } from "./auth-page.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
-export type { DiffCommandData, ForkPoint } from "./commands.ts";
+export type { DiffCommandData, ForkPoint, UndoPointsCommandData } from "./commands.ts";
 export { coreCommands, registryWithCoreCommands } from "./commands.ts";
 export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";

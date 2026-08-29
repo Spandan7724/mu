@@ -109,6 +109,7 @@ describe("untrusted content at every render boundary", () => {
       {
         action: "undo",
         files: [{ path: attack, added: 1, removed: 0, hunks: [] }],
+        turnCount: 1,
         messageCount: 2,
       },
       ctx,
