@@ -1227,6 +1227,8 @@ describe("activity disclosure", () => {
     expect(app.renderScreen().join("\n")).not.toContain("\u001b[7m");
     expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
     expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
+    expect(review.some((line) => line.includes("│ a1"))).toBe(false);
+    expect(review.some((line) => line.includes("packages/a.ts:4:TODO"))).toBe(false);
 
     press(app, "down");
     press(app, "return");
@@ -1364,7 +1366,7 @@ describe("tool output toggle", () => {
       toolName: "bash",
       args: { command: "bun test" },
     });
-    const collapsed = app.handleEvent({
+    app.handleEvent({
       type: "tool_execution_end",
       toolCallId: "c1",
       result: {
@@ -1382,8 +1384,9 @@ describe("tool output toggle", () => {
         timestamp: 1,
       },
     });
-    expect(collapsed.map(stripAnsi).join("\n")).toContain("lines omitted · ctrl+o to expand");
-    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
+    const collapsed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(collapsed).not.toContain("│ line 1");
+    expect(collapsed).not.toContain("lines omitted");
 
     feed(app, "\u000f");
     expect(app.areToolOutputsExpanded).toBe(true);

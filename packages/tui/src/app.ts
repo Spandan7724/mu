@@ -1480,7 +1480,12 @@ export class App {
         lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
       }
     }
-    return this.disclosureLines(lines, tool.expanded, selected, nested);
+    return this.disclosureLines(
+      tool.expanded ? lines : lines.slice(0, 1),
+      tool.expanded,
+      selected,
+      nested,
+    );
   }
 
   private renderActivity(
