@@ -151,13 +151,19 @@ export class Editor {
     return this.lines.every((line) => line.length === 0);
   }
 
+  get isRecallingHistory(): boolean {
+    return this.historyIndex >= 0 && this.historyIndex < this.history.length;
+  }
+
   setText(text: string): void {
     this.lines = text.split("\n");
     this.row = this.lines.length - 1;
     this.col = (this.lines[this.row] ?? "").length;
+    this.historyIndex = this.history.length;
   }
 
   insert(text: string): void {
+    this.historyIndex = this.history.length;
     // Terminals disagree on whether pasted line endings arrive as LF, CRLF,
     // or bare CR. Never retain a carriage return in the editor: rendering one
     // would move the real terminal cursor back to column zero and let later
@@ -189,6 +195,7 @@ export class Editor {
 
   backspace(): void {
     if (this.col > 0) {
+      this.historyIndex = this.history.length;
       const line = this.lines[this.row] ?? "";
       const clusters = graphemes(line.slice(0, this.col));
       const removed = clusters[clusters.length - 1] ?? "";
@@ -197,6 +204,7 @@ export class Editor {
       return;
     }
     if (this.row > 0) {
+      this.historyIndex = this.history.length;
       const current = this.lines[this.row] ?? "";
       const previous = this.lines[this.row - 1] ?? "";
       this.col = previous.length;
@@ -207,6 +215,7 @@ export class Editor {
   }
 
   move(direction: "left" | "right" | "up" | "down" | "home" | "end"): void {
+    this.historyIndex = this.history.length;
     const line = this.lines[this.row] ?? "";
     switch (direction) {
       case "left":
@@ -265,18 +274,19 @@ export class Editor {
 
   recallHistory(direction: "up" | "down"): boolean {
     if (this.history.length === 0) return false;
+    let nextIndex: number;
     if (direction === "up") {
       if (this.historyIndex <= 0) return false;
-      this.historyIndex -= 1;
+      nextIndex = this.historyIndex - 1;
     } else {
       if (this.historyIndex >= this.history.length - 1) {
-        this.historyIndex = this.history.length;
         this.setText("");
         return true;
       }
-      this.historyIndex += 1;
+      nextIndex = this.historyIndex + 1;
     }
-    this.setText(this.history[this.historyIndex] ?? "");
+    this.setText(this.history[nextIndex] ?? "");
+    this.historyIndex = nextIndex;
     return true;
   }
 

@@ -2130,6 +2130,10 @@ export class App {
           );
           return;
         }
+        if (this.editor.isRecallingHistory) {
+          this.editor.recallHistory("up");
+          return;
+        }
         if (this.editor.isEmpty && this.editor.recallHistory("up")) return;
         this.editor.move("up");
         return;
@@ -2138,6 +2142,10 @@ export class App {
         this.editor.backspace();
         return;
       case "down":
+        if (this.editor.isRecallingHistory) {
+          this.editor.recallHistory("down");
+          return;
+        }
         if (this.editor.isEmpty && this.editor.recallHistory("down")) return;
         this.editor.move("down");
         return;

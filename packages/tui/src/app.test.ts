@@ -638,7 +638,7 @@ describe("input handling", () => {
     expect(h.app.editor.text).toBe("previous");
   });
 
-  test("a resumed transcript replaces composer history with its persisted prompts", () => {
+  test("a resumed transcript replaces and cycles through its persisted prompt history", () => {
     const h = harness();
     feed(h.app, "prompt from current process\r");
     h.app.replaceTranscript([
@@ -659,6 +659,15 @@ describe("input handling", () => {
     feed(h.app, `${ESC}[A`);
     expect(h.app.editor.text).toBe("resumed latest prompt");
     expect(h.app.editor.text).not.toBe("prompt from current process");
+
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("resumed first prompt");
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("resumed first prompt");
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("resumed latest prompt");
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("");
   });
 
   test("escape aborts a running agent but not an idle one", () => {
