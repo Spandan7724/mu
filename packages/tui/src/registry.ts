@@ -12,7 +12,11 @@ import {
   toolCell,
   toolOutputCell,
 } from "./cells.ts";
+import { sanitizeUntrusted } from "./sanitize.ts";
+import { GLYPHS, MARGIN, styleText } from "./style.ts";
+import { highlightCode } from "./syntax-highlight.ts";
 import { truncateToWidth } from "./width.ts";
+import { wrapLine } from "./wrap.ts";
 
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
@@ -82,7 +86,7 @@ function compactLines(text: string, maxLines = COMPACT_OUTPUT_LINES): string[] {
   ];
 }
 
-function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
+function expandedResultLines(info: ToolRenderInfo): string[] {
   if (!info.result) return [];
   const visible = EXPANDED_OUTPUT_LINES - 1;
   const head = Math.ceil(visible / 2);
@@ -118,8 +122,14 @@ function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
           `… ${lineCount - head - tail} lines omitted · full output remains in session`,
           ...orderedRecent.slice(-tail),
         ];
+  return selected;
+}
+
+function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
   const lineWidth = Math.max(18, ctx.width - 4);
-  return selected.flatMap((line) => toolOutputCell(truncateToWidth(line, lineWidth), ctx));
+  return expandedResultLines(info).flatMap((line) =>
+    toolOutputCell(truncateToWidth(line, lineWidth), ctx),
+  );
 }
 
 function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: number): string[] {
@@ -134,6 +144,76 @@ function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: numb
 function errorPreview(info: ToolRenderInfo, ctx: RenderContext): string[] {
   if (!info.result?.isError) return [];
   return info.expanded ? expandedResult(info, ctx) : resultPreview(info, ctx);
+}
+
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  bash: "bash",
+  cjs: "javascript",
+  h: "c",
+  hpp: "cpp",
+  html: "xml",
+  js: "javascript",
+  jsx: "javascript",
+  jsonc: "json",
+  kts: "kotlin",
+  mdx: "markdown",
+  mjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  sh: "bash",
+  svg: "xml",
+  toml: "ini",
+  ts: "typescript",
+  tsx: "typescript",
+  yml: "yaml",
+  zsh: "bash",
+};
+
+function languageForPath(path: string): string | undefined {
+  const name = path.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  if (name === "dockerfile") return "dockerfile";
+  if (name === "makefile") return "makefile";
+  const extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+  return extension ? (EXTENSION_LANGUAGES[extension] ?? extension) : undefined;
+}
+
+function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  const path = stringArg(info.args, "path");
+  const language = languageForPath(path);
+  const selected = expandedResultLines(info).map((line) =>
+    sanitizeUntrusted(line).replace(/\t/g, "    "),
+  );
+  const parsed = selected.map((line) => /^(\s*\d+\s{2})(.*)$/.exec(line));
+  const out: string[] = [];
+  const rule = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
+
+  let index = 0;
+  while (index < selected.length) {
+    const match = parsed[index];
+    if (!match) {
+      out.push(...toolOutputCell(selected[index] ?? "", ctx));
+      index++;
+      continue;
+    }
+
+    const start = index;
+    const source: string[] = [];
+    while (index < selected.length && parsed[index]) {
+      source.push(parsed[index]?.[2] ?? "");
+      index++;
+    }
+    const highlighted = highlightCode(source.join("\n"), language, ctx.depth);
+    for (let offset = 0; offset < source.length; offset++) {
+      const prefix = parsed[start + offset]?.[1] ?? "";
+      const available = Math.max(1, ctx.width - MARGIN.length - 2 - prefix.length);
+      const chunks = wrapLine(highlighted[offset] ?? "", available);
+      for (const [chunkIndex, chunk] of chunks.entries()) {
+        const gutter = chunkIndex === 0 ? prefix : " ".repeat(prefix.length);
+        out.push(`${MARGIN}${rule}${styleText(gutter, { dim: true }, ctx.depth)}${chunk}`);
+      }
+    }
+  }
+  return out;
 }
 
 function formatDuration(durationMs: number | undefined): string | undefined {
@@ -464,7 +544,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...resultPreview(info, ctx),
+      ...(info.result?.isError
+        ? errorPreview(info, ctx)
+        : info.expanded
+          ? highlightedReadResult(info, ctx)
+          : resultPreview(info, ctx)),
     ];
   },
   write: (info, ctx) => {
@@ -573,7 +657,10 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
 
 for (const name of ["read", "ls"]) {
   const renderer = codingRenderers[name];
-  if (renderer) renderer.activityKind = "explore";
+  if (renderer) {
+    renderer.activityKind = "explore";
+    if (name === "read") renderer.ownsExpansion = true;
+  }
 }
 for (const name of ["write", "edit"]) {
   const renderer = codingRenderers[name];

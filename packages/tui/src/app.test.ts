@@ -982,6 +982,81 @@ describe("renderer registry", () => {
     expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
   });
 
+  test("an expanded read syntax-highlights source while keeping its line numbers dim", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      {
+        toolName: "read",
+        args: { path: "models.py" },
+        expanded: true,
+        result: {
+          role: "toolResult",
+          toolCallId: "r",
+          toolName: "read",
+          content: [
+            {
+              type: "text",
+              text: [
+                '    1  """Agent models."""',
+                "    2  from dataclasses import dataclass",
+                "    3  ",
+                "    4  @dataclass",
+                "    5  class Plan:",
+                "    6      name: str\u001b]52;c;unsafe\u0007",
+              ].join("\n"),
+            },
+          ],
+          details: { lines: 6 },
+          isError: false,
+          timestamp: 1,
+        },
+      },
+      { width: 80, depth: "truecolor" },
+    );
+
+    expect(lines[1]).toContain(styleText("    1  ", { dim: true }, "truecolor"));
+    expect(lines.join("\n")).toContain(styleText("from", { syntax: "keyword" }, "truecolor"));
+    expect(lines.join("\n")).toContain(
+      styleText('"""Agent models."""', { syntax: "string" }, "truecolor"),
+    );
+    expect(lines.join("\n")).not.toContain("\u001b]52");
+    expect(lines.map(stripAnsi)).toContain("  │     5  class Plan:");
+  });
+
+  test("expanded syntax-highlighted reads retain the output row bound", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const output = Array.from(
+      { length: 1_000 },
+      (_, index) => `${String(index + 1).padStart(5)}  value_${index + 1} = ${index + 1}`,
+    ).join("\n");
+    const lines = registry
+      .render(
+        {
+          toolName: "read",
+          args: { path: "values.py" },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "r",
+            toolName: "read",
+            content: [{ type: "text", text: output }],
+            details: { lines: 1_000 },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 80, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.length).toBeLessThanOrEqual(201);
+    expect(lines).toContain("  │     1  value_1 = 1");
+    expect(lines).toContain("  │  1000  value_1000 = 1000");
+    expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
+  });
+
   test("a single enormous command-output line stays compact in the transcript", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
