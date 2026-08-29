@@ -150,7 +150,7 @@ describe("fake-agent session", () => {
     const visible = app.renderTranscript().map(stripAnsi);
 
     expect(visible).toContain("  ▸ add retries");
-    expect(visible).toContain("  › │ read src/api/client.ts · 142 lines");
+    expect(visible).toContain("  › read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
     const bottom = app.renderBottom().map(stripAnsi);
@@ -1509,7 +1509,7 @@ describe("activity disclosure", () => {
 
     feed(app, "/collapse\r");
     expect(app.areToolOutputsExpanded).toBe(false);
-    expect(app.renderTranscript().map(stripAnsi)).not.toContain("  › │ read a.ts · 6 lines");
+    expect(app.renderTranscript().map(stripAnsi)).not.toContain("  › read a.ts · 6 lines");
   });
 
   test("searches the transcript and temporarily reveals collapsed content", () => {
@@ -1617,8 +1617,8 @@ describe("activity disclosure", () => {
     searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
     const search = rows[searchIndex];
 
-    expect(command?.indexOf("│ ran")).toBe(4);
-    expect(search?.indexOf("│ ran")).toBe(4);
+    expect(command?.indexOf("ran")).toBe(4);
+    expect(search?.indexOf("ran")).toBe(4);
     expect(rows[searchIndex - 1]).toBe("");
   });
 
@@ -1632,15 +1632,15 @@ describe("activity disclosure", () => {
     });
 
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
-    expect(expanded).toContain("› │ ran git status --short");
-    expect(expanded).toContain("⌄ │ $ pwd");
+    expect(expanded).toContain("› ran git status --short");
+    expect(expanded).toContain("⌄ $ pwd");
     expect(expanded).toContain("│ /tmp");
     expect(expanded).not.toContain("Ran 2 commands");
 
     feed(app, "/collapse\r");
     expect(commands).toEqual([]);
     const collapsed = app.renderScreen().map(stripAnsi).join("\n");
-    expect(collapsed).toContain("› │ $ pwd");
+    expect(collapsed).toContain("› $ pwd");
     expect(collapsed).not.toContain("│ /tmp");
   });
 
@@ -1696,8 +1696,8 @@ describe("superseded plans", () => {
     record(app, "p3", plan(["completed", "completed", "in_progress"]));
 
     const screen = app.renderScreen().map(stripAnsi);
-    expect(screen).toContain("  › │ plan · 0/3 · task 1");
-    expect(screen).toContain("  › │ plan · 1/3 · task 2");
+    expect(screen).toContain("  › plan · 0/3 · task 1");
+    expect(screen).toContain("  › plan · 1/3 · task 2");
     // The newest keeps its bracket and its tasks.
     expect(screen).toContain("  › ┌ plan · 2/3 done");
     expect(screen).toContain("  └ ▸ task 3");
@@ -1711,7 +1711,7 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["completed", "completed"]));
     record(app, "p2", plan(["completed", "completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  › │ plan · 2/2 done");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › plan · 2/2 done");
   });
 
   test("ctrl+o restores a superseded plan to its full list", () => {
@@ -1720,7 +1720,7 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["in_progress", "pending"]));
     record(app, "p2", plan(["completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  › │ plan · 0/2 · task 1");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › plan · 0/2 · task 1");
     feed(app, "\u000f");
     feed(app, "\u001b[A");
     press(app, "return");

@@ -1521,7 +1521,10 @@ export class App {
     );
     const [first = "", ...rest] = lines;
     const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
-    return [`${MARGIN}${marker} ${body}`, ...rest];
+    const content = stripAnsi(body).startsWith(`${GLYPHS.rule} `)
+      ? body.slice(rawOffsetAtVisible(body, 2))
+      : body;
+    return [`${MARGIN}${marker} ${content}`, ...rest];
   }
 
   private activitySummary(item: Extract<TranscriptItem, { kind: "activity" }>): string {
