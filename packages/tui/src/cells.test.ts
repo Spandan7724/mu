@@ -802,6 +802,20 @@ describe("editor", () => {
     expect(editor.text).toBe("first");
   });
 
+  test("replacing history discards another session's prompts", () => {
+    const editor = new Editor();
+    editor.insert("old session prompt");
+    editor.submit();
+
+    editor.replaceHistory(["resumed first", "resumed second"]);
+
+    expect(editor.recallHistory("up")).toBe(true);
+    expect(editor.text).toBe("resumed second");
+    expect(editor.recallHistory("up")).toBe(true);
+    expect(editor.text).toBe("resumed first");
+    expect(editor.recallHistory("up")).toBe(false);
+  });
+
   test("renders with the input marker and wraps long input", () => {
     const editor = new Editor();
     editor.insert("x".repeat(100));

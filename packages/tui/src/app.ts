@@ -1065,13 +1065,17 @@ export class App {
     if (this.mode === "activity") this.mode = "composing";
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
+    const history: string[] = [];
     for (const message of messages) {
       if (message.role === "user") {
         const text = message.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("");
-        if (text) this.pushTranscript({ kind: "user", text });
+        if (text) {
+          history.push(text);
+          this.pushTranscript({ kind: "user", text });
+        }
         continue;
       }
       if (message.role === "assistant") {
@@ -1094,6 +1098,7 @@ export class App {
         calls.delete(message.toolCallId);
       }
     }
+    this.editor.replaceHistory(history);
   }
 
   renderScreen(): string[] {

@@ -258,6 +258,11 @@ export class Editor {
     return text;
   }
 
+  replaceHistory(entries: readonly string[]): void {
+    this.history = entries.filter((entry) => entry.trim().length > 0);
+    this.historyIndex = this.history.length;
+  }
+
   recallHistory(direction: "up" | "down"): boolean {
     if (this.history.length === 0) return false;
     if (direction === "up") {
