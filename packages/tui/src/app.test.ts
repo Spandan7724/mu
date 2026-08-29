@@ -753,7 +753,7 @@ describe("input handling", () => {
     feed(h.app, "!");
     expect(h.app.isShellMode).toBe(true);
     let shell = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(shell).toContain("╭─ shell · local ");
+    expect(shell).toContain("╭─ shell ");
     expect(shell).toContain("│ $ ");
     expect(shell).toContain("enter run · esc cancel");
 

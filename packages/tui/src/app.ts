@@ -1322,8 +1322,7 @@ export class App {
     }
 
     const composerTitle = this.isShellMode
-      ? styleText("shell", { toolExec: true, bold: true }, depth) +
-        styleText(` ${GLYPHS.separator} local`, { dim: true }, depth)
+      ? styleText("shell", { toolExec: true, bold: true }, depth)
       : undefined;
     lines.push(...composerBox(composerLines, width, depth, composerTitle));
 

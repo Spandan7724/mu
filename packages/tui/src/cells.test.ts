@@ -498,8 +498,8 @@ describe("components", () => {
       "  │ ▸ draft      │",
       "  ╰──────────────╯",
     ]);
-    expect(composerBox(["  $ test"], width, "none", "shell · local")).toEqual([
-      "  ╭─ shell · lo… ╮",
+    expect(composerBox(["  $ test"], width, "none", "shell")).toEqual([
+      "  ╭─ shell ──────╮",
       "  │ $ test       │",
       "  ╰──────────────╯",
     ]);
