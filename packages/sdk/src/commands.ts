@@ -1,6 +1,6 @@
 import type { Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
-import type { CheckpointActionResult, ManualCompactionResult } from "./agent.ts";
+import type { CheckpointActionResult, ManualCompactionResult, UndoPoint } from "./agent.ts";
 
 export interface ForkPoint {
   id: string;
@@ -12,13 +12,19 @@ export interface DiffCommandData {
   files: CheckpointDiffFile[];
 }
 
+export interface UndoPointsCommandData {
+  kind: "undo-points";
+  points: UndoPoint[];
+}
+
 // Built-in commands available on every surface (TUI, RPC, headless).
 export interface CoreCommandHooks {
   requestCompaction?: (
     focus?: string,
   ) => ManualCompactionResult | undefined | Promise<ManualCompactionResult | undefined>;
   usage?: () => Usage & { contextPercent: number };
-  undo?: () => Promise<CheckpointActionResult>;
+  undo?: (turnCount?: number) => Promise<CheckpointActionResult>;
+  undoPoints?: () => UndoPoint[];
   redo?: () => Promise<CheckpointActionResult>;
   fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
   forkPoints?: () => ForkPoint[];
@@ -88,11 +94,23 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     },
     {
       name: "undo",
-      description: "Revert the last step — both the workspace and the conversation",
+      description: "Choose prompts to revert — both the workspace and the conversation",
       sessionScoped: true,
-      run: async () => {
+      run: async (ctx) => {
         if (!hooks.undo) return { handled: true, message: "Undo is not available here." };
-        const result = await hooks.undo();
+        const count = ctx.args.trim();
+        if (!count && hooks.undoPoints) {
+          const points = hooks.undoPoints();
+          if (points.length === 0) return { handled: true, message: "Nothing to undo." };
+          return {
+            handled: true,
+            data: { kind: "undo-points", points } satisfies UndoPointsCommandData,
+          };
+        }
+        if (count && !/^[1-9]\d*$/.test(count)) {
+          return { handled: true, message: "Usage: /undo [positive prompt count]" };
+        }
+        const result = await hooks.undo(count ? Number(count) : 1);
         return {
           handled: true,
           message: result.message,

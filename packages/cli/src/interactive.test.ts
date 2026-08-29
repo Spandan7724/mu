@@ -209,6 +209,7 @@ describe("interactive command rendering", () => {
       {
         kind: "checkpoint",
         action: "undo",
+        turnCount: 1,
         messageCount: 4,
         prompt: "create fibonacci.py",
         files: [
@@ -225,7 +226,7 @@ describe("interactive command rendering", () => {
     ).map(stripAnsi);
 
     expect(lines).toEqual([
-      "  │ undo · 4 messages reverted · 1 file · /redo to restore",
+      "  │ undo · 1 prompt · 4 messages reverted · 1 file · /redo to restore",
       "  │ fibonacci.py +17",
       "  │ prompt restored to editor",
     ]);

@@ -29,6 +29,7 @@ import {
   ExtensionHost,
   type Profile,
   readAuthFile,
+  type UndoPointsCommandData,
 } from "mu";
 import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
@@ -605,6 +606,7 @@ export async function runAgentView(
     dirtyFrom: 0,
   });
   const paint = () => renderer.requestRender(() => active?.app.renderFrame() ?? dashboardFrame());
+  const paintInput = () => renderer.renderNow(active?.app.renderFrame() ?? dashboardFrame());
 
   const showError = (error: unknown) => {
     app.setNotice(error instanceof Error ? error.message : String(error));
@@ -654,7 +656,10 @@ export async function runAgentView(
         registry,
         callbacks: {
           onSubmit: (text) =>
-            void client.sessionOp(sessionId, { type: "input", text }).catch(showError),
+            void client.sessionOp(sessionId, { type: "input", text }).catch((error) => {
+              conversation.discardPendingSubmissions();
+              showError(error);
+            }),
           onSteer: (text) => {
             void client.sessionOp(sessionId, { type: "steer", text }).catch(showError);
             return true;
@@ -795,6 +800,7 @@ export async function runAgentView(
       const data = response.data as
         | CheckpointActionData
         | DiffCommandData
+        | UndoPointsCommandData
         | { kind: "fork-points"; points: { id: string; description: string }[] }
         | { kind: "compaction"; status: string }
         | undefined;
@@ -805,6 +811,19 @@ export async function runAgentView(
           active.app.editor.setText("");
         }
         active.app.appendTranscript(renderCheckpointCommand(data, terminal.columns, depth));
+      } else if (data?.kind === "undo-points") {
+        const sessionId = active.sessionId;
+        active.app.openPicker({
+          title: "undo through prompt",
+          items: data.points.map((point) => ({
+            label: point.prompt.replace(/\s+/g, " ").trim() || "(empty prompt)",
+            description: `undo ${point.steps} prompt${point.steps === 1 ? "" : "s"}`,
+            value: String(point.steps),
+          })),
+          onChoose: (steps) =>
+            void client.sessionOp(sessionId, { type: "command", text: `/undo ${steps}` }),
+          onBack: () => active?.app.openCommandMenu(),
+        });
       } else if (data?.kind === "diff") {
         active.app.appendTranscript(renderDiffCommand(data, terminal.columns, depth));
       } else if (data?.kind === "fork-points") {
@@ -861,11 +880,11 @@ export async function runAgentView(
           if (event) {
             if (active) active.app.handleInput(event);
             else app.handleInput(event);
-            paint();
+            paintInput();
           }
         }, 30);
       }
-      paint();
+      paintInput();
       if (exiting) break;
     }
   } finally {

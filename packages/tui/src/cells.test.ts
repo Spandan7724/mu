@@ -16,7 +16,8 @@ import {
 import {
   APPROVAL_OPTIONS,
   approvalOverlay,
-  composerRule,
+  composerBox,
+  composerContentWidth,
   Editor,
   footer,
   formatCwdForFooter,
@@ -26,7 +27,7 @@ import {
   SelectList,
   Spinner,
 } from "./components.ts";
-import { diffLineStyle, RESET, stripAnsi, styleText } from "./style.ts";
+import { stripAnsi, styleText } from "./style.ts";
 import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
@@ -388,41 +389,20 @@ describe("diff rendering", () => {
     expect(lines[3]).toBe("  │    42 +   return withRetry(() => fetch(url));");
   });
 
-  test("truecolor uses background tints", () => {
-    const lines = diffCell(file, colored);
-    expect(lines[3]).toContain("48;2;");
-  });
-
-  test("ANSI-16 degrades to foreground colour only", () => {
-    const lines = diffCell(file, { width: 60, depth: "ansi16" });
-    expect(lines[3]).toContain("[32m");
-    expect(lines[3]).not.toContain("48;2;");
-  });
-
-  test("the tint opens before the line number and survives the nested styles", () => {
-    const [, , removed = "", added = ""] = diffCell(file, colored);
-    for (const [line, tint] of [
-      [removed, diffLineStyle("del", "truecolor")],
-      [added, diffLineStyle("add", "truecolor")],
-    ] as const) {
-      expect(line.lastIndexOf(tint, line.indexOf("4"))).toBeGreaterThan(-1);
-      // Each nested style resets in full, so within the tinted region every
-      // reset but the closing one has to reopen the tint.
-      const resumed = line.slice(line.indexOf(tint)).split(RESET).slice(1);
-      expect(resumed.at(-1)).toBe("");
-      for (const segment of resumed.slice(0, -1)) expect(segment.startsWith(tint)).toBe(true);
-    }
-    // A context line is not a change, so it stays untinted.
-    expect(diffCell(file, colored)[1]).not.toContain(diffLineStyle("add", "truecolor"));
-  });
-
-  test("a changed row fills the width and keeps its number dim", () => {
+  test("changed text uses foreground colour without a background band", () => {
     const [, context = "", removed = "", added = ""] = diffCell(file, colored);
-    expect(stringWidth(removed)).toBe(colored.width);
-    expect(stringWidth(added)).toBe(colored.width);
-    // Context is not a change: no band, so nothing to pad out either.
-    expect(stringWidth(context)).toBeLessThan(colored.width);
-    // Only the sign is coloured; the number reads the same on every row.
+    expect(removed).toContain(styleText("  return fetch(url);", { red: true }, "truecolor"));
+    expect(added).toContain(
+      styleText("  return withRetry(() => fetch(url));", { green: true }, "truecolor"),
+    );
+    expect(context).not.toContain("[31m");
+    expect(context).not.toContain("[32m");
+    expect(removed).not.toContain("[48;");
+    expect(added).not.toContain("[48;");
+    expect(stringWidth(removed)).toBeLessThan(colored.width);
+    expect(stringWidth(added)).toBeLessThan(colored.width);
+
+    // Line numbers remain uniformly dim; only the sign and changed text carry outcome color.
     for (const [line, number] of [
       [context, "   41"],
       [removed, "   42"],
@@ -505,8 +485,24 @@ describe("components", () => {
     expect(formatCwdForFooter("/srv/mu", "/home/test")).toBe("/srv/mu");
   });
 
-  test("composer rule is the only horizontal rule", () => {
-    expect(stripAnsi(composerRule(20, "none"))).toBe("  ────────────────");
+  test("composer content is enclosed by a width-safe box", () => {
+    const width = 20;
+    expect(composerContentWidth(width)).toBe(14);
+    expect(composerBox(["  ▸ draft"], width, "none")).toEqual([
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
+    ]);
+    expect(composerBox(["  ▸ draft"], width, "truecolor")).toEqual([
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
+    ]);
+    expect(composerBox(["  $ test"], width, "none", "shell")).toEqual([
+      "  ╭─ shell ──────╮",
+      "  │ $ test       │",
+      "  ╰──────────────╯",
+    ]);
   });
 
   test("spinner cycles through the identity glyph frames", () => {
@@ -804,6 +800,20 @@ describe("editor", () => {
     expect(editor.text).toBe("second");
     editor.recallHistory("up");
     expect(editor.text).toBe("first");
+  });
+
+  test("replacing history discards another session's prompts", () => {
+    const editor = new Editor();
+    editor.insert("old session prompt");
+    editor.submit();
+
+    editor.replaceHistory(["resumed first", "resumed second"]);
+
+    expect(editor.recallHistory("up")).toBe(true);
+    expect(editor.text).toBe("resumed second");
+    expect(editor.recallHistory("up")).toBe(true);
+    expect(editor.text).toBe("resumed first");
+    expect(editor.recallHistory("up")).toBe(false);
   });
 
   test("renders with the input marker and wraps long input", () => {

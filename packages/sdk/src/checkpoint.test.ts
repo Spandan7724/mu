@@ -318,6 +318,40 @@ describe("undo and redo pair workspace with conversation", () => {
     expect(checkpoints.state).toBe("v2");
   });
 
+  test("undo points list prompts newest-first and a selected depth reverts atomically", async () => {
+    const { agent, checkpoints, session } = await sessionWithTwoEdits();
+
+    expect(agent.undoPoints().map(({ steps, prompt }) => ({ steps, prompt }))).toEqual([
+      { steps: 1, prompt: "second change" },
+      { steps: 2, prompt: "first change" },
+    ]);
+
+    checkpoints.state = "user edits after both turns";
+    const result = await agent.undo(2);
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.turnCount).toBe(2);
+    expect(result.data?.prompt).toBe("first change");
+    expect(checkpoints.state).toBe("initial");
+    expect(agent.checkpointHistory.canUndo).toBe(false);
+    expect(agent.checkpointHistory.canRedo).toBe(true);
+
+    const resumed = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
+      sessionId: agent.sessionId,
+    });
+    resumed.resume((await session.load(agent.sessionId)) as SessionTree);
+
+    expect((await resumed.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("v1");
+    expect((await resumed.redo()).ok).toBe(true);
+    expect(checkpoints.state).toBe("user edits after both turns");
+  });
+
   test("checkpoint history and an undone cursor survive resume", async () => {
     const { agent, checkpoints, session } = await sessionWithTwoEdits();
     await agent.undo();
@@ -569,6 +603,7 @@ describe("commands", () => {
           kind: "checkpoint",
           action: "undo",
           files: [],
+          turnCount: 1,
           messageCount: 2,
           prompt: "try again",
         },
@@ -581,10 +616,35 @@ describe("commands", () => {
       kind: "checkpoint",
       action: "undo",
       files: [],
+      turnCount: 1,
       messageCount: 2,
       prompt: "try again",
     });
     expect((await registry.execute("/redo", ctx().ctx)).message).toBe("Redid the step.");
+  });
+
+  test("/undo offers prompt depths and executes an explicit selection", async () => {
+    let selected: number | undefined;
+    const registry = registryWithCoreCommands({
+      undoPoints: () => [
+        { steps: 1, prompt: "latest", messageCount: 2 },
+        { steps: 2, prompt: "earlier", messageCount: 4 },
+      ],
+      undo: async (turnCount) => {
+        selected = turnCount;
+        return { ok: true, message: `Undid ${turnCount} prompts.` };
+      },
+    });
+
+    expect((await registry.execute("/undo", ctx().ctx)).data).toEqual({
+      kind: "undo-points",
+      points: [
+        { steps: 1, prompt: "latest", messageCount: 2 },
+        { steps: 2, prompt: "earlier", messageCount: 4 },
+      ],
+    });
+    expect((await registry.execute("/undo 2", ctx().ctx)).message).toBe("Undid 2 prompts.");
+    expect(selected).toBe(2);
   });
 
   test("/diff returns structured files with hunks", async () => {

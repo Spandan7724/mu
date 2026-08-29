@@ -151,13 +151,19 @@ export class Editor {
     return this.lines.every((line) => line.length === 0);
   }
 
+  get isRecallingHistory(): boolean {
+    return this.historyIndex >= 0 && this.historyIndex < this.history.length;
+  }
+
   setText(text: string): void {
     this.lines = text.split("\n");
     this.row = this.lines.length - 1;
     this.col = (this.lines[this.row] ?? "").length;
+    this.historyIndex = this.history.length;
   }
 
   insert(text: string): void {
+    this.historyIndex = this.history.length;
     // Terminals disagree on whether pasted line endings arrive as LF, CRLF,
     // or bare CR. Never retain a carriage return in the editor: rendering one
     // would move the real terminal cursor back to column zero and let later
@@ -189,6 +195,7 @@ export class Editor {
 
   backspace(): void {
     if (this.col > 0) {
+      this.historyIndex = this.history.length;
       const line = this.lines[this.row] ?? "";
       const clusters = graphemes(line.slice(0, this.col));
       const removed = clusters[clusters.length - 1] ?? "";
@@ -197,6 +204,7 @@ export class Editor {
       return;
     }
     if (this.row > 0) {
+      this.historyIndex = this.history.length;
       const current = this.lines[this.row] ?? "";
       const previous = this.lines[this.row - 1] ?? "";
       this.col = previous.length;
@@ -207,6 +215,7 @@ export class Editor {
   }
 
   move(direction: "left" | "right" | "up" | "down" | "home" | "end"): void {
+    this.historyIndex = this.history.length;
     const line = this.lines[this.row] ?? "";
     switch (direction) {
       case "left":
@@ -258,41 +267,58 @@ export class Editor {
     return text;
   }
 
+  replaceHistory(entries: readonly string[]): void {
+    this.history = entries.filter((entry) => entry.trim().length > 0);
+    this.historyIndex = this.history.length;
+  }
+
   recallHistory(direction: "up" | "down"): boolean {
     if (this.history.length === 0) return false;
+    let nextIndex: number;
     if (direction === "up") {
       if (this.historyIndex <= 0) return false;
-      this.historyIndex -= 1;
+      nextIndex = this.historyIndex - 1;
     } else {
       if (this.historyIndex >= this.history.length - 1) {
-        this.historyIndex = this.history.length;
         this.setText("");
         return true;
       }
-      this.historyIndex += 1;
+      nextIndex = this.historyIndex + 1;
     }
-    this.setText(this.history[this.historyIndex] ?? "");
+    this.setText(this.history[nextIndex] ?? "");
+    this.historyIndex = nextIndex;
     return true;
   }
 
-  render(width: number, depth: ColorDepth): string[] {
-    const marker = `${userMarker(depth)} `;
-    const available = width - MARGIN.length - 2;
+  render(
+    width: number,
+    depth: ColorDepth,
+    active = true,
+    options: { marker?: string; firstLineHiddenPrefix?: number } = {},
+  ): string[] {
+    const marker = `${options.marker ?? userMarker(depth)} `;
+    const available = width - MARGIN.length - stringWidth(marker);
     const out: string[] = [];
     for (const [index, line] of this.lines.entries()) {
-      const styles = inputStyles(line, index === 0);
-      let display = line.length === 0 ? " " : paintRange(line, styles, 0, line.length, depth);
-      if (index === this.row) {
-        const after = line.slice(this.col);
+      const hidden = index === 0 ? (options.firstLineHiddenPrefix ?? 0) : 0;
+      const visibleLine = line.slice(hidden);
+      const visibleCol = Math.max(0, this.col - hidden);
+      const styles = inputStyles(visibleLine, index === 0);
+      let display =
+        visibleLine.length === 0
+          ? " "
+          : paintRange(visibleLine, styles, 0, visibleLine.length, depth);
+      if (active && index === this.row) {
+        const after = visibleLine.slice(visibleCol);
         const atEnd = after.length === 0;
         const cluster = graphemes(after)[0] ?? " ";
-        const cursorEnd = atEnd ? this.col : this.col + cluster.length;
+        const cursorEnd = atEnd ? visibleCol : visibleCol + cluster.length;
         display =
-          paintRange(line, styles, 0, this.col, depth) +
+          paintRange(visibleLine, styles, 0, visibleCol, depth) +
           BLOCK_CURSOR_ON +
-          (atEnd ? " " : paintRange(line, styles, this.col, cursorEnd, depth)) +
+          (atEnd ? " " : paintRange(visibleLine, styles, visibleCol, cursorEnd, depth)) +
           BLOCK_CURSOR_OFF +
-          paintRange(line, styles, cursorEnd, line.length, depth);
+          paintRange(visibleLine, styles, cursorEnd, visibleLine.length, depth);
       }
       const wrapped = wrapText(display, available);
       for (const [i, chunk] of wrapped.entries()) {
@@ -344,9 +370,13 @@ export class SelectList {
     return this.index;
   }
 
-  setItems(items: SelectItem[]): void {
+  setItems(items: SelectItem[], selectedValue?: string): void {
     this.items = items;
-    this.index = 0;
+    const selected =
+      selectedValue === undefined
+        ? -1
+        : items.findIndex((item) => (item.value ?? item.label) === selectedValue);
+    this.index = Math.max(0, selected);
   }
 
   move(direction: "up" | "down"): void {
@@ -565,9 +595,40 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   return [MARGIN + dim(location, depth), MARGIN + stats];
 }
 
-// Brackets the composer: once above it, once below (before the footer).
+const composerOuterWidth = (width: number) => Math.max(4, width - MARGIN.length * 2);
+
 export function composerRule(width: number, depth: ColorDepth): string {
   return MARGIN + dim("─".repeat(Math.max(0, width - MARGIN.length * 2)), depth);
+}
+
+export function composerContentWidth(width: number): number {
+  return Math.max(8, composerOuterWidth(width) - 2);
+}
+
+export function composerBoxBottom(width: number, _depth: ColorDepth): string {
+  const outerWidth = composerOuterWidth(width);
+  return `${MARGIN}╰${"─".repeat(outerWidth - 2)}╯`;
+}
+
+export function composerBox(
+  lines: string[],
+  width: number,
+  depth: ColorDepth,
+  title?: string,
+): string[] {
+  const outerWidth = composerOuterWidth(width);
+  const contentWidth = outerWidth - 2;
+  const label = title ? truncateToWidth(title, Math.max(0, contentWidth - 3)) : "";
+  const top = label
+    ? `${MARGIN}╭─ ${label} ${"─".repeat(Math.max(0, contentWidth - stringWidth(label) - 3))}╮`
+    : `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
+  const body = lines.map((line) => {
+    const inset = line.startsWith(MARGIN) ? line.slice(1) : line;
+    const clipped = truncateToWidth(inset, contentWidth);
+    const padding = " ".repeat(Math.max(0, contentWidth - stringWidth(clipped)));
+    return `${MARGIN}│${clipped}${padding}│`;
+  });
+  return [top, ...body, composerBoxBottom(width, depth)];
 }
 
 export interface ApprovalData {

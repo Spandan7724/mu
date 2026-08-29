@@ -1,7 +1,13 @@
 // The mu integration layer: an AgentEvent consumer that retains transcript
 // cells and keeps the live region (composer / approval / footer) up to date. It
 // holds no agent logic — everything arrives as events.
-import type { AgentEvent, AgentMessage, AssistantMessage, PermissionRequest } from "@mu/core";
+import type {
+  AgentEvent,
+  AgentMessage,
+  AssistantMessage,
+  CheckpointDiffFile,
+  PermissionRequest,
+} from "@mu/core";
 import {
   agentCell,
   compactionCell,
@@ -17,6 +23,9 @@ import {
   APPROVAL_OPTIONS,
   approvalOverlay,
   BLOCK_CURSOR_ON,
+  composerBox,
+  composerBoxBottom,
+  composerContentWidth,
   composerRule,
   Editor,
   type FooterData,
@@ -28,12 +37,24 @@ import {
   Spinner,
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
-import { RendererRegistry, type ToolRenderInfo } from "./registry.ts";
+import { type ActivityKind, RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
-import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
-export type AppMode = "composing" | "approval" | "select" | "mention" | "picker" | "prompt";
+const COLLAPSE_COMMAND = {
+  label: "collapse",
+  description: "Collapse all expanded tool activity",
+};
+
+export type AppMode =
+  | "composing"
+  | "activity"
+  | "approval"
+  | "select"
+  | "mention"
+  | "picker"
+  | "prompt";
 export type ConversationSource = "main" | "side";
 
 export interface PickerRequest {
@@ -53,7 +74,8 @@ export interface InputPromptRequest {
 }
 
 export interface AppCallbacks {
-  onSubmit: (text: string) => void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: false rejects; no return accepts.
+  onSubmit: (text: string) => boolean | void;
   onSteer?: (text: string) => boolean;
   onFollowUp?: (text: string) => boolean;
   onEditQueued?: (kind: QueuedInputKind, text: string) => boolean;
@@ -110,7 +132,6 @@ interface PendingInput {
 const TASK_TAIL_LINES = 5;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
-const EXPANDED_TOOL_ROWS = 24;
 const PENDING_INPUT_ROWS = 3;
 const MIN_STREAMING_PREVIEW_CHARS = 8_000;
 const MAX_STREAMING_PREVIEW_CHARS = 16_000;
@@ -224,9 +245,34 @@ class LiveToolOutput {
 }
 
 type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
+interface ActivityTool {
+  id: string;
+  info: ToolRenderInfo;
+  expanded: boolean;
+  rendered?: { width: number; expanded: boolean; lines: string[] };
+}
+
+interface ActivitySearchMatch {
+  row: number;
+  start: number;
+  length: number;
+}
+
+interface ActivitySearch {
+  editor: Editor;
+  editing: boolean;
+  showing: boolean;
+  query: string;
+  rows: string[];
+  matches: ActivitySearchMatch[];
+  matchIndex: number;
+  transcriptVersion: number;
+  width: number;
+}
+
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; pending?: boolean }
   | {
       kind: "assistant";
       message: AssistantMessage;
@@ -234,8 +280,17 @@ type TranscriptItem =
     }
   | {
       kind: "tool";
+      id: string;
       info: ToolRenderInfo;
+      expanded: boolean;
       rendered?: { width: number; expanded: boolean; superseded: boolean; lines: string[] };
+    }
+  | {
+      kind: "activity";
+      id: string;
+      activityKind: ActivityKind;
+      tools: ActivityTool[];
+      expanded: boolean;
     };
 
 function hasAssistantDisplay(message: AssistantMessage): boolean {
@@ -260,7 +315,6 @@ interface ConversationView {
     | {
         version: number;
         width: number;
-        expanded: boolean;
         rows: string[];
       }
     | undefined;
@@ -277,6 +331,8 @@ interface ConversationView {
   footerData: FooterData;
   thinkingLevel: string;
   thinkingLevels: string[];
+  activitySelection: string | undefined;
+  activitySearch: ActivitySearch | undefined;
 }
 
 function conversationView(
@@ -300,6 +356,8 @@ function conversationView(
     footerData,
     thinkingLevel: thinkingLevels[0] ?? "off",
     thinkingLevels: [...thinkingLevels],
+    activitySelection: undefined,
+    activitySearch: undefined,
   };
 }
 
@@ -325,10 +383,9 @@ export class App {
     | "failed"
     | "finished"
     | undefined;
-  private toolOutputExpanded = false;
   private backgroundTasks = new Map<string, LiveTask>();
   private ctrlCArmedAt = 0;
-  private commands: { label: string; description?: string }[] = [];
+  private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private prompt: InputPromptRequest | undefined;
@@ -413,6 +470,18 @@ export class App {
   private set transcriptCache(value: ConversationView["transcriptCache"]) {
     this.view.transcriptCache = value;
   }
+  private get activitySelection(): string | undefined {
+    return this.view.activitySelection;
+  }
+  private set activitySelection(value: string | undefined) {
+    this.view.activitySelection = value;
+  }
+  private get activitySearch(): ActivitySearch | undefined {
+    return this.view.activitySearch;
+  }
+  private set activitySearch(value: ActivitySearch | undefined) {
+    this.view.activitySearch = value;
+  }
   private get streaming(): string | undefined {
     return this.view.streaming;
   }
@@ -464,7 +533,10 @@ export class App {
   }
 
   setCommands(commands: { label: string; description?: string }[]): void {
-    this.commands = commands;
+    this.commands = [
+      ...commands.filter((command) => command.label !== COLLAPSE_COMMAND.label),
+      COLLAPSE_COMMAND,
+    ];
   }
 
   get activeConversation(): ConversationSource {
@@ -578,7 +650,11 @@ export class App {
   }
 
   get areToolOutputsExpanded(): boolean {
-    return this.toolOutputExpanded;
+    return this.transcript.some(
+      (item) =>
+        (item.kind === "tool" && item.expanded) ||
+        (item.kind === "activity" && (item.expanded || item.tools.some((tool) => tool.expanded))),
+    );
   }
 
   get isShellMode(): boolean {
@@ -591,6 +667,15 @@ export class App {
     this.pickerQuery = "";
     this.commandList.setItems(request.items);
     this.mode = "picker";
+  }
+
+  updatePicker(request: PickerRequest, update: Pick<PickerRequest, "title" | "items">): boolean {
+    if (this.mode !== "picker" || this.picker !== request) return false;
+    const selected = this.commandList.selected;
+    request.title = update.title;
+    request.items = update.items;
+    this.refreshPicker(selected ? (selected.value ?? selected.label) : undefined);
+    return true;
   }
 
   openCommandMenu(): void {
@@ -647,6 +732,7 @@ export class App {
         return [];
 
       case "agent_end": {
+        this.clearPendingSubmissions();
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
@@ -736,7 +822,18 @@ export class App {
                 )
               : pendingIndex;
           if (deliveredIndex !== -1) this.pendingInputs.splice(deliveredIndex, 1);
-          this.pushTranscript({ kind: "user", text });
+          const submitted = this.transcript.find(
+            (item): item is Extract<TranscriptItem, { kind: "user" }> =>
+              item.kind === "user" && item.pending === true,
+          );
+          if (submitted) {
+            submitted.text = text;
+            submitted.pending = false;
+            this.transcriptVersion++;
+            this.transcriptCache = undefined;
+          } else {
+            this.pushTranscript({ kind: "user", text });
+          }
           return [...userCell(text, this.ctx), ""];
         }
         if (message.role === "assistant") {
@@ -772,17 +869,7 @@ export class App {
           result: event.result,
         };
         const lines = this.registry.render(info, this.ctx);
-        this.pushTranscript({
-          kind: "tool",
-          info,
-          rendered: {
-            width: this.options.width,
-            expanded: false,
-            // Newest by construction — it is the call that just landed.
-            superseded: false,
-            lines,
-          },
-        });
+        this.pushTool(event.toolCallId, info, lines);
         return lines;
       }
 
@@ -937,7 +1024,7 @@ export class App {
       ? ` ${styleText(`v${this.options.version}`, { dim: true }, depth)}`
       : "";
     const affordances = styleText(
-      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
+      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o review ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
       { dim: true },
       depth,
     );
@@ -968,6 +1055,13 @@ export class App {
     this.eventView = previous;
   }
 
+  discardPendingSubmissions(source: ConversationSource = this.activeSource): void {
+    const previous = this.eventView;
+    this.eventView = source === "side" ? this.side : this.main;
+    if (this.eventView) this.clearPendingSubmissions();
+    this.eventView = previous;
+  }
+
   replaceTranscript(messages: readonly AgentMessage[], prefix: string[] = []): void {
     this.transcript = prefix.length > 0 ? [{ kind: "lines", lines: [...prefix] }] : [];
     this.transcriptVersion++;
@@ -976,15 +1070,22 @@ export class App {
     this.pendingInputs = [];
     this.streaming = undefined;
     this.streamingCache = undefined;
+    this.activitySelection = undefined;
+    this.activitySearch = undefined;
+    if (this.mode === "activity") this.mode = "composing";
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
+    const history: string[] = [];
     for (const message of messages) {
       if (message.role === "user") {
         const text = message.content
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("");
-        if (text) this.pushTranscript({ kind: "user", text });
+        if (text) {
+          history.push(text);
+          this.pushTranscript({ kind: "user", text });
+        }
         continue;
       }
       if (message.role === "assistant") {
@@ -998,17 +1099,16 @@ export class App {
       }
       if (message.role === "toolResult") {
         const call = calls.get(message.toolCallId);
-        this.pushTranscript({
-          kind: "tool",
-          info: {
-            toolName: call?.toolName ?? message.toolName,
-            args: call?.args ?? {},
-            result: message,
-          },
-        });
+        const info = {
+          toolName: call?.toolName ?? message.toolName,
+          args: call?.args ?? {},
+          result: message,
+        };
+        this.pushTool(message.toolCallId, info);
         calls.delete(message.toolCallId);
       }
     }
+    this.editor.replaceHistory(history);
   }
 
   renderScreen(): string[] {
@@ -1017,10 +1117,37 @@ export class App {
   }
 
   renderFrame(): RenderFrame {
+    const search = this.activitySearch;
+    if (
+      this.mode === "activity" &&
+      search &&
+      !search.editing &&
+      (search.transcriptVersion !== this.transcriptVersion || search.width !== this.options.width)
+    ) {
+      this.refreshActivitySearch(search);
+    }
+    const managed = this.fitToViewport(this.toTerminalRows(this.renderManaged()));
+    if (this.mode === "activity") {
+      const match = search && !search.editing ? search.matches[search.matchIndex] : undefined;
+      const rows =
+        search && match
+          ? search.rows.map((line, index) =>
+              index === match.row ? this.highlightSearchMatch(line, match) : line,
+            )
+          : this.transcriptRows(this.activitySelection);
+      const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
+      const selected = Math.max(0, match?.row ?? rows.findIndex((line) => line.includes("❯")));
+      const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
+      return {
+        transcript: rows.slice(start, start + limit),
+        managed,
+        dirtyFrom: 0,
+      };
+    }
     const transcript = this.transcriptRows();
     return {
       transcript,
-      managed: this.fitToViewport(this.toTerminalRows(this.renderManaged())),
+      managed,
       dirtyFrom: transcript.length,
     };
   }
@@ -1037,12 +1164,13 @@ export class App {
     return this.fitToViewport(this.toTerminalRows(this.renderManaged()));
   }
 
-  private transcriptRows(): string[] {
+  private transcriptRows(selectedId?: string, revealAll = false): string[] {
     const cached = this.transcriptCache;
     if (
+      !revealAll &&
+      selectedId === undefined &&
       cached?.version === this.transcriptVersion &&
-      cached.width === this.options.width &&
-      cached.expanded === this.toolOutputExpanded
+      cached.width === this.options.width
     ) {
       return cached.rows;
     }
@@ -1058,6 +1186,7 @@ export class App {
       if (item.kind === "lines") return item.lines;
       if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
       if (item.kind === "assistant") {
+        if (revealAll) return [...this.assistantRows(item.message, true), ""];
         if (item.rendered?.width !== this.options.width) {
           item.rendered = {
             width: this.options.width,
@@ -1066,18 +1195,23 @@ export class App {
         }
         return [...item.rendered.lines, ""];
       }
+      if (item.kind === "activity") {
+        const lines = this.renderActivity(item, selectedId, revealAll);
+        const next = this.transcript[index + 1];
+        return next?.kind === "activity" && item.tools.length === 1 ? lines : [...lines, ""];
+      }
       const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
       if (
         item.rendered?.width !== this.options.width ||
-        item.rendered.expanded !== this.toolOutputExpanded ||
+        item.rendered.expanded !== item.expanded ||
         item.rendered.superseded !== superseded
       ) {
         item.rendered = {
           width: this.options.width,
-          expanded: this.toolOutputExpanded,
+          expanded: item.expanded,
           superseded,
           lines: this.registry.render(
-            { ...item.info, expanded: this.toolOutputExpanded, superseded },
+            { ...item.info, expanded: item.expanded, superseded },
             this.ctx,
           ),
         };
@@ -1085,21 +1219,37 @@ export class App {
       // A run of one-line calls reads as one stream and stays tight. A cell
       // that spans rows needs air after it, or its output runs straight into
       // the next call's verb; and speech after machinery always gets a break.
+      const visibleLines =
+        !revealAll && !item.expanded && this.registry.expandedByDefault(item.info)
+          ? item.rendered.lines.slice(0, 1)
+          : revealAll
+            ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
+            : item.rendered.lines;
       const next = this.transcript[index + 1];
+      const previous = this.transcript[index - 1];
+      const primaryResult = this.registry.expandedByDefault(item.info);
+      const leadingBreak =
+        primaryResult && previous?.kind === "lines" && previous.lines.at(-1) !== "" ? [""] : [];
       const separated =
         next !== undefined &&
         (next.kind === "user" || next.kind === "assistant"
           ? true
-          : next.kind === "tool" && item.rendered.lines.length > 1);
-      return separated ? [...item.rendered.lines, ""] : item.rendered.lines;
+          : next.kind === "tool" && visibleLines.length > 1);
+      const lines = this.disclosureLines(
+        visibleLines,
+        revealAll || item.expanded,
+        selectedId === item.id,
+      );
+      return [...leadingBreak, ...lines, ...(primaryResult || separated ? [""] : [])];
     });
     const rows = this.toTerminalRows(logical);
-    this.transcriptCache = {
-      version: this.transcriptVersion,
-      width: this.options.width,
-      expanded: this.toolOutputExpanded,
-      rows,
-    };
+    if (selectedId === undefined && !revealAll) {
+      this.transcriptCache = {
+        version: this.transcriptVersion,
+        width: this.options.width,
+        rows,
+      };
+    }
     return rows;
   }
 
@@ -1107,6 +1257,8 @@ export class App {
   private renderManaged(): string[] {
     const { width, depth } = this.ctx;
     const lines: string[] = [];
+    const composerLines: string[] = [];
+    const composerWidth = composerContentWidth(width);
     const height = this.options.height ?? 24;
 
     // Live region: streaming assistant text and running tool cells, so a long
@@ -1120,12 +1272,12 @@ export class App {
             args: pending.args,
             running: pending.running === true,
             argsStreaming: pending.argsStreaming === true,
-            expanded: this.toolOutputExpanded,
+            expanded: false,
           },
           this.ctx,
         ),
       );
-      const output = pending.output.display(this.toolOutputExpanded ? EXPANDED_TOOL_ROWS : 4);
+      const output = pending.output.display(4);
       for (const line of output) {
         if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
       }
@@ -1145,12 +1297,10 @@ export class App {
       );
     }
 
-    lines.push(composerRule(width, depth));
-
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
     if (hiddenPending > 0) {
-      lines.push(
+      composerLines.push(
         MARGIN +
           styleText(
             `… ${hiddenPending} earlier queued input${hiddenPending === 1 ? "" : "s"}`,
@@ -1160,11 +1310,11 @@ export class App {
       );
     }
     for (const [index, pending] of visiblePending.entries()) {
-      lines.push(
+      composerLines.push(
         ...queuedInputPreview(
           pending.kind,
           pending.text,
-          width,
+          composerWidth,
           depth,
           index === visiblePending.length - 1 && this.options.callbacks.onEditQueued !== undefined,
         ),
@@ -1175,7 +1325,7 @@ export class App {
       const approval = this.approvals[0];
       const request = approval.request;
       const preview = request.preview;
-      lines.push(
+      composerLines.push(
         ...approvalOverlay(
           {
             title: `${approval.source === "side" ? "side · " : ""}${request.description}`,
@@ -1194,7 +1344,7 @@ export class App {
             maxPreviewRows: Math.max(3, Math.min(12, height - 8)),
             selectedIndex: this.approvalIndex,
           },
-          width,
+          composerWidth,
           depth,
         ),
       );
@@ -1205,39 +1355,59 @@ export class App {
             ? ` ${GLYPHS.separator} ${this.pickerQuery}`
             : "";
         const back = this.picker.onBack ? ` ${GLYPHS.separator} ← back` : "";
-        lines.push(
+        composerLines.push(
           MARGIN + styleText(`${this.picker.title}${query}${back}`, { bold: true }, depth),
         );
-        lines.push(...this.commandList.render(width, depth));
+        composerLines.push(...this.commandList.render(composerWidth, depth));
       } else if (this.mode === "prompt" && this.prompt) {
-        lines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
-        lines.push(
+        composerLines.push(MARGIN + styleText(this.prompt.title, { bold: true }, depth));
+        composerLines.push(
           ...(this.prompt.secret
-            ? this.promptEditor.renderMasked(width, depth)
-            : this.promptEditor.render(width, depth)),
+            ? this.promptEditor.renderMasked(composerWidth, depth)
+            : this.promptEditor.render(composerWidth, depth)),
+        );
+      } else if (this.mode === "activity" && this.activitySearch?.showing) {
+        composerLines.push(
+          ...this.activitySearch.editor.render(composerWidth, depth, this.activitySearch.editing, {
+            marker: styleText("/", { accent: true, bold: true }, depth),
+          }),
         );
       } else {
-        if (this.isShellMode) {
-          lines.push(
-            MARGIN +
-              styleText("shell mode", { toolExec: true, bold: true }, depth) +
-              styleText(` ${GLYPHS.separator} runs locally`, { dim: true }, depth),
-          );
-        }
-        lines.push(...this.editor.render(width, depth));
+        composerLines.push(
+          ...this.editor.render(
+            composerWidth,
+            depth,
+            this.mode !== "activity",
+            this.isShellMode
+              ? {
+                  marker: styleText("$", { toolExec: true, bold: true }, depth),
+                  firstLineHiddenPrefix: 1,
+                }
+              : {},
+          ),
+        );
         if (this.mode === "select" || this.mode === "mention") {
-          lines.push(...this.commandList.render(width, depth));
+          composerLines.push(...this.commandList.render(composerWidth, depth));
         }
       }
     }
 
-    // Closes the box opened above: the composer/overlay content sits between
-    // the two rules, and the running-hint row below is footer-adjacent status
-    // (it feeds the same idle `hint` slot the footer renders when not
-    // running), not part of the input itself.
-    lines.push(composerRule(width, depth));
+    const composerTitle =
+      this.mode === "activity" && this.activitySearch?.showing
+        ? styleText("search transcript", { accent: true, bold: true }, depth)
+        : this.isShellMode
+          ? styleText("shell", { toolExec: true, bold: true }, depth)
+          : undefined;
+    lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";
+    const search = this.activitySearch;
+    const activityHint =
+      search?.showing && search.editing
+        ? "type query · enter search · esc cancel"
+        : search?.showing
+          ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
+          : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const compactStage =
         this.compactionStage === "clearing-tool-output"
@@ -1248,21 +1418,26 @@ export class App {
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
-          this.compacting
-            ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-            : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+          this.mode === "activity"
+            ? ` ${elapsed} ${GLYPHS.separator} transcript review`
+            : this.compacting
+              ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
+              : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
       );
     }
-    const hint = this.running
-      ? undefined
-      : this.ctrlCPending
-        ? "press ctrl+c again to exit"
-        : this.isShellMode
-          ? `shell mode ${GLYPHS.separator} enter to run ${GLYPHS.separator} esc to cancel`
-          : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
+    const hint =
+      this.mode === "activity"
+        ? activityHint
+        : this.running
+          ? undefined
+          : this.ctrlCPending
+            ? "press ctrl+c again to exit"
+            : this.isShellMode
+              ? `enter run ${GLYPHS.separator} esc cancel`
+              : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
     lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
     return lines;
   }
@@ -1293,17 +1468,221 @@ export class App {
     return rows;
   }
 
+  private pushTool(id: string, info: ToolRenderInfo, renderedLines?: string[]): void {
+    const activityKind = this.registry.activityKind(info);
+    const expanded = this.registry.expandedByDefault(info);
+    if (!activityKind) {
+      this.pushTranscript({
+        kind: "tool",
+        id,
+        info,
+        expanded,
+        ...(renderedLines && !expanded
+          ? {
+              rendered: {
+                width: this.options.width,
+                expanded: false,
+                superseded: false,
+                lines: renderedLines,
+              },
+            }
+          : {}),
+      });
+      return;
+    }
+
+    const tool: ActivityTool = {
+      id,
+      info,
+      expanded,
+      ...(renderedLines && !expanded
+        ? {
+            rendered: {
+              width: this.options.width,
+              expanded: false,
+              lines: renderedLines,
+            },
+          }
+        : {}),
+    };
+    const previous = this.transcript.at(-1);
+    if (previous?.kind === "activity" && previous.activityKind === activityKind) {
+      previous.tools.push(tool);
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+      return;
+    }
+    this.pushTranscript({
+      kind: "activity",
+      id: `activity:${id}`,
+      activityKind,
+      tools: [tool],
+      expanded: false,
+    });
+  }
+
+  private disclosureLines(lines: string[], expanded: boolean, selected: boolean): string[] {
+    if (lines.length === 0) return [];
+    const marker = styleText(
+      selected ? "❯" : expanded ? "⌄" : "›",
+      {
+        ...(selected ? { accent: true, bold: true } : { dim: true }),
+      },
+      this.options.depth,
+    );
+    const [first = "", ...rest] = lines;
+    const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
+    const visibleBody = stripAnsi(body);
+    const hasHeaderRail = [GLYPHS.rule, GLYPHS.ruleOpen].some((glyph) =>
+      visibleBody.startsWith(`${glyph} `),
+    );
+    const content = hasHeaderRail ? body.slice(rawOffsetAtVisible(body, 2)) : body;
+    return [`${MARGIN}${marker} ${content}`, ...rest];
+  }
+
+  private activitySummary(item: Extract<TranscriptItem, { kind: "activity" }>): string {
+    const count = item.tools.length;
+    if (item.activityKind === "explore") {
+      const searches = item.tools.filter((tool) => tool.info.toolName === "bash").length;
+      const files = count - searches;
+      const parts = [
+        files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
+        searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
+      ].filter(Boolean);
+      return `Explored ${parts.join(", ")}`;
+    }
+    if (item.activityKind === "command") {
+      const failed = item.tools.filter((tool) => tool.info.result?.isError).length;
+      const failure =
+        failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, this.options.depth)}` : "";
+      return `Ran ${count} command${count === 1 ? "" : "s"}${failure}`;
+    }
+    const totals = item.tools.reduce(
+      (sum, tool) => {
+        const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+        return {
+          added: sum.added + (diff?.added ?? 0),
+          removed: sum.removed + (diff?.removed ?? 0),
+        };
+      },
+      { added: 0, removed: 0 },
+    );
+    const added = styleText(`+${totals.added}`, { green: true }, this.options.depth);
+    const removed = styleText(`-${totals.removed}`, { red: true }, this.options.depth);
+    return `Edited ${count} file${count === 1 ? "" : "s"} ${added} ${removed}`;
+  }
+
+  private renderActivityTool(
+    tool: ActivityTool,
+    activityKind: ActivityKind,
+    selected: boolean,
+    reveal = false,
+  ): string[] {
+    const expanded = reveal || tool.expanded;
+    if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== expanded) {
+      tool.rendered = {
+        width: this.options.width,
+        expanded,
+        lines: this.registry.render({ ...tool.info, expanded }, this.ctx),
+      };
+    }
+    const lines = [...tool.rendered.lines];
+    if (activityKind === "edit" && lines.length > 0) {
+      const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+      if (diff) {
+        lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
+      }
+    }
+    return this.disclosureLines(expanded ? lines : lines.slice(0, 1), expanded, selected);
+  }
+
+  private renderActivity(
+    item: Extract<TranscriptItem, { kind: "activity" }>,
+    selectedId?: string,
+    revealAll = false,
+  ): string[] {
+    if (item.tools.length === 1) {
+      const tool = item.tools[0] as ActivityTool;
+      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll);
+    }
+    const expanded = revealAll || item.expanded;
+    const marker = styleText(
+      selectedId === item.id ? "❯" : expanded ? "⌄" : "›",
+      {
+        ...(selectedId === item.id ? { accent: true, bold: true } : { dim: true }),
+      },
+      this.options.depth,
+    );
+    const summary = `${MARGIN}${marker} ${styleText(this.activitySummary(item), { bold: true }, this.options.depth)}`;
+    if (!expanded) return [summary];
+    return [
+      summary,
+      ...item.tools.flatMap((tool) =>
+        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll),
+      ),
+    ];
+  }
+
+  private activityNodes(): { id: string; item: TranscriptItem; tool?: ActivityTool }[] {
+    const nodes: { id: string; item: TranscriptItem; tool?: ActivityTool }[] = [];
+    for (const item of this.transcript) {
+      if (item.kind === "tool") nodes.push({ id: item.id, item });
+      if (item.kind !== "activity") continue;
+      if (item.tools.length === 1) {
+        const tool = item.tools[0] as ActivityTool;
+        nodes.push({ id: tool.id, item, tool });
+      } else {
+        nodes.push({ id: item.id, item });
+        if (item.expanded) {
+          for (const tool of item.tools) nodes.push({ id: tool.id, item, tool });
+        }
+      }
+    }
+    return nodes;
+  }
+
   private pushTranscript(item: TranscriptItem): void {
     this.transcript.push(item);
     this.transcriptVersion++;
     this.transcriptCache = undefined;
   }
 
-  private assistantRows(message: AssistantMessage): string[] {
+  private clearPendingSubmissions(): void {
+    const retained = this.transcript.filter(
+      (item) => item.kind !== "user" || item.pending !== true,
+    );
+    if (retained.length === this.transcript.length) return;
+    this.transcript = retained;
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
+  private submitUser(text: string): boolean | undefined {
+    const pending: TranscriptItem = { kind: "user", text, pending: true };
+    this.pushTranscript(pending);
+    try {
+      const accepted = this.options.callbacks.onSubmit(text);
+      if (accepted === false && pending.pending === true) this.removePendingSubmission(pending);
+      return accepted === false ? false : undefined;
+    } catch (error) {
+      if (pending.pending === true) this.removePendingSubmission(pending);
+      throw error;
+    }
+  }
+
+  private removePendingSubmission(pending: TranscriptItem): void {
+    const index = this.transcript.indexOf(pending);
+    if (index === -1) return;
+    this.transcript.splice(index, 1);
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
+  private assistantRows(message: AssistantMessage, revealThinking = false): string[] {
     const lines: string[] = [];
     for (const block of message.content) {
       if (block.type === "thinking" && block.thinking.trim()) {
-        lines.push(...thinkingCell(block.thinking, this.ctx));
+        lines.push(...thinkingCell(block.thinking, this.ctx, revealThinking));
       } else if (block.type === "text" && block.text.trim()) {
         lines.push(...this.toTerminalRows(agentCell(block.text, this.ctx)));
       }
@@ -1321,7 +1700,9 @@ export class App {
     if (limit === 1) return lines.slice(-1);
 
     const cursor = lines.findIndex((line) => line.includes(BLOCK_CURSOR_ON));
-    const pinnedStart = lines.lastIndexOf(composerRule(this.options.width, this.options.depth));
+    const pinnedStart = lines.lastIndexOf(
+      composerBoxBottom(this.options.width, this.options.depth),
+    );
     if (cursor >= 0 && pinnedStart > cursor) {
       const pinned = lines.slice(pinnedStart);
       const scrollLimit = limit - pinned.length;
@@ -1374,6 +1755,205 @@ export class App {
     ];
   }
 
+  private toggleActivityNode(expanded?: boolean): void {
+    const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
+    if (!node) return;
+    if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
+    else if (node.item.kind === "activity") {
+      node.item.expanded = expanded ?? !node.item.expanded;
+    } else if (node.item.kind === "tool") {
+      node.item.expanded = expanded ?? !node.item.expanded;
+    }
+    this.transcriptVersion++;
+    this.transcriptCache = undefined;
+  }
+
+  private openActivity(): void {
+    const nodes = this.activityNodes();
+    const latest = nodes.at(-1);
+    if (this.transcript.length === 0) return;
+    this.activitySelection = latest?.id;
+    this.activitySearch = undefined;
+    this.mode = "activity";
+  }
+
+  private closeActivity(): void {
+    this.activitySearch = undefined;
+    this.mode = this.approvals.length > 0 ? "approval" : "composing";
+  }
+
+  private startActivitySearch(): void {
+    const existing = this.activitySearch;
+    if (existing) {
+      existing.showing = true;
+      existing.editing = true;
+      existing.editor.setText(existing.query);
+      return;
+    }
+    this.activitySearch = {
+      editor: new Editor(),
+      editing: true,
+      showing: true,
+      query: "",
+      rows: [],
+      matches: [],
+      matchIndex: 0,
+      transcriptVersion: -1,
+      width: this.options.width,
+    };
+  }
+
+  private refreshActivitySearch(search: ActivitySearch, reset = false): void {
+    const previous = search.matches[search.matchIndex];
+    const rows = this.transcriptRows(undefined, true);
+    const query = search.query.toLowerCase();
+    const matches: ActivitySearchMatch[] = [];
+    for (const [row, line] of rows.entries()) {
+      const visible = stripAnsi(line).toLowerCase();
+      let start = 0;
+      while (start <= visible.length - query.length) {
+        const found = visible.indexOf(query, start);
+        if (found === -1) break;
+        matches.push({ row, start: found, length: query.length });
+        start = found + Math.max(1, query.length);
+      }
+    }
+    search.rows = rows;
+    search.matches = matches;
+    search.transcriptVersion = this.transcriptVersion;
+    search.width = this.options.width;
+    if (reset || !previous || matches.length === 0) {
+      search.matchIndex = 0;
+      return;
+    }
+    let closest = 0;
+    let distance = Number.POSITIVE_INFINITY;
+    for (const [index, match] of matches.entries()) {
+      const candidate =
+        Math.abs(match.row - previous.row) * this.options.width +
+        Math.abs(match.start - previous.start);
+      if (candidate < distance) {
+        closest = index;
+        distance = candidate;
+      }
+    }
+    search.matchIndex = closest;
+  }
+
+  private submitActivitySearch(): void {
+    const search = this.activitySearch;
+    if (!search) return;
+    const query = search.editor.text.trim();
+    if (!query) return;
+    search.query = query;
+    search.editing = false;
+    this.refreshActivitySearch(search, true);
+  }
+
+  private moveActivitySearch(offset: number): void {
+    const search = this.activitySearch;
+    if (!search || search.editing || search.matches.length === 0) return;
+    search.matchIndex =
+      (search.matchIndex + offset + search.matches.length) % search.matches.length;
+  }
+
+  private highlightSearchMatch(line: string, match: ActivitySearchMatch): string {
+    const start = rawOffsetAtVisible(line, match.start);
+    const end = rawOffsetAtVisible(line, match.start + match.length);
+    const highlighted = `${line.slice(0, start)}${styleText(
+      line.slice(start, end),
+      { accent: true, bold: true, underline: true },
+      this.options.depth,
+    )}${line.slice(end)}`;
+    const marker = styleText("❯", { accent: true, bold: true }, this.options.depth);
+    return highlighted.startsWith(MARGIN)
+      ? `${marker} ${highlighted.slice(MARGIN.length)}`
+      : `${marker} ${highlighted}`;
+  }
+
+  private handleActivityKey(key: Key): void {
+    const search = this.activitySearch;
+    if (search?.showing && search.editing) {
+      if (key.name === "escape") {
+        this.activitySearch = undefined;
+        return;
+      }
+      if (key.name === "return") {
+        this.submitActivitySearch();
+        return;
+      }
+      if (key.name === "backspace") {
+        search.editor.backspace();
+        return;
+      }
+      if (["left", "right", "home", "end"].includes(key.name)) {
+        search.editor.move(key.name as "left" | "right" | "home" | "end");
+        return;
+      }
+      if (key.name === "space") {
+        search.editor.insert(" ");
+        return;
+      }
+      if (!key.ctrl && !key.alt && key.text) search.editor.insert(key.text);
+      return;
+    }
+    if (search?.showing) {
+      if (key.name === "escape") {
+        search.showing = false;
+        return;
+      }
+      if (key.text === "/") {
+        this.startActivitySearch();
+        return;
+      }
+      if (key.text === "n" || key.text === "N") {
+        this.moveActivitySearch(key.shift || key.text === "N" ? -1 : 1);
+      }
+      return;
+    }
+    if (key.name === "escape") {
+      this.closeActivity();
+      return;
+    }
+    if (key.text === "/") {
+      this.startActivitySearch();
+      return;
+    }
+    if (["up", "down", "pageup", "pagedown", "return", "right", "left"].includes(key.name)) {
+      this.activitySearch = undefined;
+    }
+    const nodes = this.activityNodes();
+    let index = nodes.findIndex((node) => node.id === this.activitySelection);
+    if (index < 0) index = Math.max(0, nodes.length - 1);
+    if (["up", "down", "pageup", "pagedown"].includes(key.name)) {
+      const page = Math.max(1, (this.options.height ?? 24) - 6);
+      const offset =
+        key.name === "up" ? -1 : key.name === "down" ? 1 : key.name === "pageup" ? -page : page;
+      const next = Math.max(0, Math.min(nodes.length - 1, index + offset));
+      this.activitySelection = nodes[next]?.id;
+      return;
+    }
+    if (key.name === "return" || key.name === "right") {
+      this.toggleActivityNode(true);
+      return;
+    }
+    if (key.name !== "left") return;
+    const node = nodes[index];
+    if (!node) return;
+    const isExpanded = node.tool
+      ? node.tool.expanded
+      : node.item.kind === "activity" || node.item.kind === "tool"
+        ? node.item.expanded
+        : false;
+    if (isExpanded) {
+      this.toggleActivityNode(false);
+      return;
+    }
+    if (node.tool && node.item.kind === "activity" && node.item.tools.length > 1) {
+      this.activitySelection = node.item.id;
+    }
+  }
+
   // Mirrors Escape: aborts an active run rather than killing the session
   // outright. When idle, clears composer text like a normal interrupt (pi's
   // behavior); an empty composer arms a "press again" exit window instead of
@@ -1405,6 +1985,12 @@ export class App {
       this.ctrlCArmedAt = 0;
     }
     if (event.type === "paste") {
+      if (this.mode === "activity") {
+        if (this.activitySearch?.editing) {
+          this.activitySearch.editor.insert(event.text.replace(/[\r\n]+/g, " "));
+        }
+        return;
+      }
       if (this.mode === "prompt") {
         this.promptEditor.insert(event.text.replace(/[\r\n]+/g, ""));
         return;
@@ -1427,8 +2013,8 @@ export class App {
     }
 
     if (key.ctrl && key.name === "o") {
-      this.toolOutputExpanded = !this.toolOutputExpanded;
-      this.transcriptCache = undefined;
+      if (this.mode === "activity") this.closeActivity();
+      else if (this.mode === "composing") this.openActivity();
       return;
     }
 
@@ -1457,6 +2043,11 @@ export class App {
 
     if (this.mode === "approval") {
       this.handleApprovalKey(key);
+      return;
+    }
+
+    if (this.mode === "activity") {
+      this.handleActivityKey(key);
       return;
     }
 
@@ -1518,8 +2109,8 @@ export class App {
         if (text.trim().length === 0) return;
         if (text.startsWith("!") && this.options.callbacks.onShell) {
           this.options.callbacks.onShell(text.slice(1).trim());
-        } else if (text.startsWith("/") && this.options.callbacks.onCommand) {
-          this.options.callbacks.onCommand(text);
+        } else if (text.startsWith("/")) {
+          if (!this.handleLocalCommand(text)) this.options.callbacks.onCommand?.(text);
         } else {
           const queueDuringCompaction =
             this.running && this.compacting && this.options.callbacks.onFollowUp;
@@ -1527,7 +2118,7 @@ export class App {
             ? this.options.callbacks.onFollowUp?.(text)
             : this.running && this.options.callbacks.onSteer
               ? this.options.callbacks.onSteer(text)
-              : this.options.callbacks.onSubmit(text);
+              : this.submitUser(text);
           if (this.running && accepted !== false) {
             this.pendingInputs.push({ kind: queueDuringCompaction ? "follow-up" : "steer", text });
           }
@@ -1560,6 +2151,10 @@ export class App {
           );
           return;
         }
+        if (this.editor.isRecallingHistory) {
+          this.editor.recallHistory("up");
+          return;
+        }
         if (this.editor.isEmpty && this.editor.recallHistory("up")) return;
         this.editor.move("up");
         return;
@@ -1568,6 +2163,10 @@ export class App {
         this.editor.backspace();
         return;
       case "down":
+        if (this.editor.isRecallingHistory) {
+          this.editor.recallHistory("down");
+          return;
+        }
         if (this.editor.isEmpty && this.editor.recallHistory("down")) return;
         this.editor.move("down");
         return;
@@ -1712,12 +2311,12 @@ export class App {
     if (!key.ctrl && !key.alt && key.text) this.promptEditor.insert(key.text);
   }
 
-  private refreshPicker(): void {
+  private refreshPicker(selectedValue?: string): void {
     const picker = this.picker;
     if (!picker) return;
     const query = this.pickerQuery.trim();
     if (!query) {
-      this.commandList.setItems(picker.items);
+      this.commandList.setItems(picker.items, selectedValue);
       return;
     }
     this.commandList.setItems(
@@ -1733,6 +2332,7 @@ export class App {
         )
         .sort((a, b) => a.score - b.score || a.index - b.index)
         .map((candidate) => candidate.item),
+      selectedValue,
     );
   }
 
@@ -1789,6 +2389,27 @@ export class App {
     );
   }
 
+  private handleLocalCommand(command: string): boolean {
+    if (command.trim() !== `/${COLLAPSE_COMMAND.label}`) return false;
+    let changed = false;
+    for (const item of this.transcript) {
+      if (item.kind === "tool") {
+        changed ||= item.expanded;
+        item.expanded = false;
+        continue;
+      }
+      if (item.kind !== "activity") continue;
+      changed ||= item.expanded || item.tools.some((tool) => tool.expanded);
+      item.expanded = false;
+      for (const tool of item.tools) tool.expanded = false;
+    }
+    if (changed) {
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+    }
+    return true;
+  }
+
   private refreshMentions(): void {
     const query = this.editor.text.slice(this.mentionStart + 1, this.editor.offset);
     this.commandList.setItems(this.options.callbacks.onMentionQuery?.(query) ?? []);
@@ -1823,7 +2444,9 @@ export class App {
       // the popup has filtered away; the highlighted item is only a shortcut.
       const hasArgs = typed.trim().includes(" ");
       const command = hasArgs || !selected ? typed.trim() : `/${selected.label}`;
-      if (command.length > 1) this.options.callbacks.onCommand?.(command);
+      if (command.length > 1 && !this.handleLocalCommand(command)) {
+        this.options.callbacks.onCommand?.(command);
+      }
       return;
     }
     if (key.name === "backspace") {
@@ -1842,6 +2465,35 @@ export class App {
       this.filterCommands();
     }
   }
+}
+
+function rawOffsetAtVisible(text: string, target: number): number {
+  let raw = 0;
+  let visible = 0;
+  while (raw < text.length && visible < target) {
+    if (text[raw] === "\u001b" && text[raw + 1] === "[") {
+      raw += 2;
+      while (raw < text.length && !/[A-Za-z]/.test(text[raw] ?? "")) raw++;
+      if (raw < text.length) raw++;
+      continue;
+    }
+    if (text[raw] === "\u001b" && text[raw + 1] === "]") {
+      const bell = text.indexOf("\u0007", raw + 2);
+      const stringTerminator = text.indexOf("\u001b\\", raw + 2);
+      const end =
+        bell === -1
+          ? stringTerminator
+          : stringTerminator === -1
+            ? bell
+            : Math.min(bell, stringTerminator);
+      if (end === -1) return text.length;
+      raw = end + (end === stringTerminator ? 2 : 1);
+      continue;
+    }
+    raw++;
+    visible++;
+  }
+  return raw;
 }
 
 function fuzzyScore(value: string, query: string): number | undefined {

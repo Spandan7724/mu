@@ -16,6 +16,7 @@ import {
   formatKeybindings,
   hyperlink,
   InputDecoder,
+  type PickerRequest,
   RendererRegistry,
   type RenderFrame,
   type Style,
@@ -46,6 +47,7 @@ import {
   type ThinkingLevel,
   type ToolRenderer,
   toCommand,
+  type UndoPointsCommandData,
 } from "mu";
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
@@ -60,7 +62,7 @@ import {
   loginMethods,
   logoutProviders,
 } from "./login.ts";
-import type { ModelCatalog, ModelCatalogRefreshResult } from "./model-catalog.ts";
+import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { resumePickerItems } from "./session-picker.ts";
@@ -102,6 +104,7 @@ export function renderCheckpointCommand(
     {
       action: data.action,
       files: data.files,
+      turnCount: data.turnCount ?? 1,
       messageCount: data.messageCount,
       promptRestored: data.action === "undo" && data.prompt !== undefined,
     },
@@ -349,8 +352,11 @@ export async function runInteractive(
         if (activeShell) {
           commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
-        } else if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
+          return false;
+        }
+        if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
         else beginRun(text);
+        return true;
       },
       onSteer: (text) => {
         if (activeShell) {
@@ -427,23 +433,6 @@ export async function runInteractive(
       if (activeRunPromise() || target.isRunning) {
         return { handled: true, message: "Cannot switch models during a run." };
       }
-      let refresh: ModelCatalogRefreshResult | undefined;
-      if (modelCatalog && !modelCatalog.hasFreshModels) {
-        commitLines(["  refreshing model catalog…"], source);
-        paint();
-        refresh = await modelCatalog.ensureFresh();
-        if (!refresh.ok) {
-          commitLines(
-            [
-              `  model discovery failed · showing ${refresh.fallback} catalog`,
-              `  ${refresh.error}`,
-            ],
-            source,
-          );
-        } else if (refresh.cacheWarning) {
-          commitLines([`  ${refresh.cacheWarning}`], source);
-        }
-      }
       let auth: Awaited<ReturnType<typeof readAuthFile>>;
       try {
         auth = await readAuthFile();
@@ -456,15 +445,8 @@ export async function runInteractive(
         };
       }
       const authenticatedProviders = new Set(Object.keys(auth.providers));
-      const models = availableModels(extensions, authenticatedProviders);
-      if (models.length === 0) {
-        return { handled: true, message: "No authenticated models. Run /login first." };
-      }
-      const sourceSuffix = refresh && !refresh.ok ? ` · ${refresh.fallback}` : "";
-      app.openPicker({
-        title: `select a model · ${models.length} available${sourceSuffix}`,
-        filterable: true,
-        items: models.map((model) => {
+      const pickerItems = () =>
+        availableModels(extensions, authenticatedProviders).map((model) => {
           const ref = `${model.provider}/${model.id}`;
           const credential = auth.providers[model.provider];
           return {
@@ -479,7 +461,16 @@ export async function runInteractive(
                     : "apiKey"),
             ),
           };
-        }),
+        });
+      const items = pickerItems();
+      const refreshing = modelCatalog !== undefined && !modelCatalog.hasFreshModels;
+      if (items.length === 0 && !refreshing) {
+        return { handled: true, message: "No authenticated models. Run /login first." };
+      }
+      const picker: PickerRequest = {
+        title: `select a model · ${items.length} available${refreshing ? " · refreshing" : ""}`,
+        filterable: true,
+        items,
         onChoose: async (label) => {
           target.setModel(label);
           app.setModel(label, target.contextWindow, source);
@@ -504,7 +495,34 @@ export async function runInteractive(
           paint();
         },
         onBack: () => app.openCommandMenu(),
-      });
+      };
+      app.openPicker(picker);
+      if (refreshing) {
+        void modelCatalog.ensureFresh().then((refresh) => {
+          if (exiting) return;
+          const refreshedItems = pickerItems();
+          const suffix = refresh.ok ? "" : ` · ${refresh.fallback}`;
+          const updated = app.updatePicker(picker, {
+            title: `select a model · ${refreshedItems.length} available${suffix}`,
+            items: refreshedItems,
+          });
+          let diagnosed = false;
+          if (!refresh.ok) {
+            commitLines(
+              [
+                `  model discovery failed · showing ${refresh.fallback} catalog`,
+                `  ${refresh.error}`,
+              ],
+              source,
+            );
+            diagnosed = true;
+          } else if (refresh.cacheWarning) {
+            commitLines([`  ${refresh.cacheWarning}`], source);
+            diagnosed = true;
+          }
+          if (updated || diagnosed) paint();
+        });
+      }
       return { handled: true };
     },
   });
@@ -638,7 +656,7 @@ export async function runInteractive(
               app.setModel(agent.modelRef, agent.contextWindow);
               app.setThinking(agent.thinking, agent.thinkingLevels);
               app.replaceTranscript(tree.messagesAt(), app.banner());
-              commitLines([`  resumed ${sessionId}`]);
+              commitLines([`  resumed ${sessionId}`, ""]);
             } catch (error) {
               commitLines([
                 `  Could not resume ${sessionId}: ${
@@ -711,6 +729,7 @@ export async function runInteractive(
   // Provider streams often deliver several deltas in one frame interval; an
   // eager app.renderScreen() here would parse and wrap every discarded state.
   const paint = () => renderer.requestRender(() => app.renderFrame());
+  const paintInput = () => renderer.renderNow(app.renderFrame());
   const commitLines = (lines: string[], source: ConversationSource = app.activeConversation) => {
     app.appendTranscript(lines, source);
     paint();
@@ -1112,6 +1131,7 @@ export async function runInteractive(
       await target.run(text, options);
       if (source === "main") sessionResumable = true;
     } catch (error) {
+      app.discardPendingSubmissions(source);
       commitLines([`  ${error instanceof Error ? error.message : String(error)}`], source);
     }
     paint();
@@ -1139,6 +1159,7 @@ export async function runInteractive(
     const data = result.data as
       | CheckpointActionData
       | DiffCommandData
+      | UndoPointsCommandData
       | { kind: "fork-points"; points: { id: string; description: string }[] }
       | { kind: "compaction"; status: string }
       | MarkdownCommandRun
@@ -1150,6 +1171,17 @@ export async function runInteractive(
         app.editor.setText("");
       }
       commitLines(renderCheckpointCommand(data, terminal.columns, depth), source);
+    } else if (data?.kind === "undo-points") {
+      app.openPicker({
+        title: "undo through prompt",
+        items: data.points.map((point) => ({
+          label: point.prompt.replace(/\s+/g, " ").trim() || "(empty prompt)",
+          description: `undo ${point.steps} prompt${point.steps === 1 ? "" : "s"}`,
+          value: String(point.steps),
+        })),
+        onChoose: (steps) => void runCommand(`/undo ${steps}`),
+        onBack: () => app.openCommandMenu(),
+      });
     } else if (data?.kind === "diff") {
       commitLines(renderDiffCommand(data, terminal.columns, depth), source);
     } else if (data?.kind === "fork-points") {
@@ -1239,7 +1271,7 @@ export async function runInteractive(
       const event = decoder.flushPendingEscape();
       if (event) {
         app.handleInput(event);
-        paint();
+        paintInput();
       }
     }, 30);
   };
@@ -1260,10 +1292,11 @@ export async function runInteractive(
       for (const event of decoder.push(String(chunk))) app.handleInput(event);
       if (decoder.pending.length > 0) scheduleEscapeFlush();
       if (app.ctrlCPending) scheduleCtrlCHintClear();
-      paint();
+      paintInput();
       if (exiting) break;
     }
   } finally {
+    exiting = true;
     if (escapeTimer) clearTimeout(escapeTimer);
     if (ctrlCHintTimer) clearTimeout(ctrlCHintTimer);
     shutdown();

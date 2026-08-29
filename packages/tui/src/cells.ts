@@ -5,13 +5,10 @@ import {
   AGENT_INDENT,
   AGENT_LABEL,
   type ColorDepth,
-  diffLineStyle,
   GLYPHS,
   MARGIN,
-  RESET,
   type Style,
   styleText,
-  styleWithin,
 } from "./style.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { wrapText } from "./wrap.ts";
@@ -436,6 +433,7 @@ export function compactionCell(
 export interface CheckpointCellOptions {
   action: "undo" | "redo";
   files: CheckpointDiffFile[];
+  turnCount: number;
   messageCount: number;
   promptRestored?: boolean;
 }
@@ -446,9 +444,10 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
   const messageLabel = `${options.messageCount} message${options.messageCount === 1 ? "" : "s"}`;
   const fileLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
   const action = styleText(options.action, { toolMutate: true, bold: true }, ctx.depth);
+  const turnLabel = `${options.turnCount} prompt${options.turnCount === 1 ? "" : "s"}`;
   const status =
     options.action === "undo"
-      ? `${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
+      ? `${turnLabel} ${GLYPHS.separator} ${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
       : `${messageLabel} restored ${GLYPHS.separator} ${fileLabel}`;
   const lines = [MARGIN + rule + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
 
@@ -532,27 +531,20 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
     // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.
     const available = ctx.width - MARGIN.length - 2 - gutterWidth - 3;
     const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
-    // The tint opens at the gutter and runs to the terminal edge, so a changed
-    // row reads as one band rather than a coloured fragment beside a plain
-    // number. The number itself stays dim — the sign carries the colour.
-    const tint = diffLineStyle(line.kind, ctx.depth);
     const accentStyle: Style =
       line.kind === "add" ? { green: true } : line.kind === "del" ? { red: true } : {};
 
     for (const [i, chunk] of wrapText(text, available).entries()) {
-      const numberCell = styleWithin(
+      const numberCell = styleText(
         i === 0 ? number.padStart(gutterWidth) : " ".repeat(gutterWidth),
         { dim: true },
-        tint,
         ctx.depth,
       );
       const gutter = i === 0 ? sign : " ";
       const signStyled =
-        line.kind === "context" ? gutter : styleWithin(gutter, accentStyle, tint, ctx.depth);
-      const pad = tint === "" ? "" : " ".repeat(Math.max(0, available - stringWidth(chunk)));
-      out.push(
-        `${MARGIN}${rule}${tint}${numberCell} ${signStyled} ${chunk}${pad}${tint === "" ? "" : RESET}`,
-      );
+        line.kind === "context" ? gutter : styleText(gutter, accentStyle, ctx.depth);
+      const content = line.kind === "context" ? chunk : styleText(chunk, accentStyle, ctx.depth);
+      out.push(`${MARGIN}${rule}${numberCell} ${signStyled} ${content}`);
     }
   }
   return out;

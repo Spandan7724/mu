@@ -1,7 +1,8 @@
-import type { ToolResultMessage } from "@mu/core";
+import type { CheckpointDiffFile, ToolResultMessage } from "@mu/core";
 import {
   type DiffLine,
   diffCell,
+  diffLinesFromHunks,
   type PlanItem,
   type PlanStatus,
   type PrimaryRole,
@@ -11,7 +12,11 @@ import {
   toolCell,
   toolOutputCell,
 } from "./cells.ts";
+import { sanitizeUntrusted } from "./sanitize.ts";
+import { GLYPHS, MARGIN, styleText } from "./style.ts";
+import { highlightCode } from "./syntax-highlight.ts";
 import { truncateToWidth } from "./width.ts";
+import { wrapLine } from "./wrap.ts";
 
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
@@ -30,6 +35,8 @@ export interface ToolRenderInfo {
   superseded?: boolean;
 }
 
+export type ActivityKind = "explore" | "edit" | "command";
+
 export interface ToolRendererFn {
   (info: ToolRenderInfo, ctx: RenderContext): string[];
   // The renderer draws its own expanded form, so the registry must not staple
@@ -39,6 +46,14 @@ export interface ToolRendererFn {
   // is still true. Earlier ones render as `superseded` and are expected to
   // shrink to a record of what changed.
   supersedes?: boolean;
+  // Consecutive calls with the same activity kind may be presented as one
+  // collapsible transcript group. Profiles declare the semantic class here;
+  // the TUI remains unaware of tool names and domains.
+  activityKind?: ActivityKind | ((info: ToolRenderInfo) => ActivityKind | undefined);
+  // Explicit user actions may make their result the primary response rather
+  // than supporting agent machinery. They can start open while retaining the
+  // same disclosure controls and output bound.
+  expandedByDefault?: boolean | ((info: ToolRenderInfo) => boolean);
 }
 
 function firstString(args: unknown, keys: string[]): string | undefined {
@@ -71,7 +86,7 @@ function compactLines(text: string, maxLines = COMPACT_OUTPUT_LINES): string[] {
   ];
 }
 
-function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
+function expandedResultLines(info: ToolRenderInfo): string[] {
   if (!info.result) return [];
   const visible = EXPANDED_OUTPUT_LINES - 1;
   const head = Math.ceil(visible / 2);
@@ -107,8 +122,14 @@ function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
           `… ${lineCount - head - tail} lines omitted · full output remains in session`,
           ...orderedRecent.slice(-tail),
         ];
+  return selected;
+}
+
+function expandedResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
   const lineWidth = Math.max(18, ctx.width - 4);
-  return selected.flatMap((line) => toolOutputCell(truncateToWidth(line, lineWidth), ctx));
+  return expandedResultLines(info).flatMap((line) =>
+    toolOutputCell(truncateToWidth(line, lineWidth), ctx),
+  );
 }
 
 function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: number): string[] {
@@ -118,6 +139,81 @@ function resultPreview(info: ToolRenderInfo, ctx: RenderContext, maxLines?: numb
   return compactLines(text, maxLines).flatMap((line) =>
     toolOutputCell(truncateToWidth(line, Math.max(20, ctx.width - 6)), ctx),
   );
+}
+
+function errorPreview(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  if (!info.result?.isError) return [];
+  return info.expanded ? expandedResult(info, ctx) : resultPreview(info, ctx);
+}
+
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  bash: "bash",
+  cjs: "javascript",
+  h: "c",
+  hpp: "cpp",
+  html: "xml",
+  js: "javascript",
+  jsx: "javascript",
+  jsonc: "json",
+  kts: "kotlin",
+  mdx: "markdown",
+  mjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  sh: "bash",
+  svg: "xml",
+  toml: "ini",
+  ts: "typescript",
+  tsx: "typescript",
+  yml: "yaml",
+  zsh: "bash",
+};
+
+function languageForPath(path: string): string | undefined {
+  const name = path.split(/[\\/]/).at(-1)?.toLowerCase() ?? "";
+  if (name === "dockerfile") return "dockerfile";
+  if (name === "makefile") return "makefile";
+  const extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+  return extension ? (EXTENSION_LANGUAGES[extension] ?? extension) : undefined;
+}
+
+function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  const path = stringArg(info.args, "path");
+  const language = languageForPath(path);
+  const selected = expandedResultLines(info).map((line) =>
+    sanitizeUntrusted(line).replace(/\t/g, "    "),
+  );
+  const parsed = selected.map((line) => /^(\s*\d+\s{2})(.*)$/.exec(line));
+  const out: string[] = [];
+  const rule = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
+
+  let index = 0;
+  while (index < selected.length) {
+    const match = parsed[index];
+    if (!match) {
+      out.push(...toolOutputCell(selected[index] ?? "", ctx));
+      index++;
+      continue;
+    }
+
+    const start = index;
+    const source: string[] = [];
+    while (index < selected.length && parsed[index]) {
+      source.push(parsed[index]?.[2] ?? "");
+      index++;
+    }
+    const highlighted = highlightCode(source.join("\n"), language, ctx.depth);
+    for (let offset = 0; offset < source.length; offset++) {
+      const prefix = parsed[start + offset]?.[1] ?? "";
+      const available = Math.max(1, ctx.width - MARGIN.length - 2 - prefix.length);
+      const chunks = wrapLine(highlighted[offset] ?? "", available);
+      for (const [chunkIndex, chunk] of chunks.entries()) {
+        const gutter = chunkIndex === 0 ? prefix : " ".repeat(prefix.length);
+        out.push(`${MARGIN}${rule}${styleText(gutter, { dim: true }, ctx.depth)}${chunk}`);
+      }
+    }
+  }
+  return out;
 }
 
 function formatDuration(durationMs: number | undefined): string | undefined {
@@ -212,14 +308,27 @@ function displayedDiffLines(
   return bounded.map((line) => ({ ...line, text: truncateToWidth(line.text, width) }));
 }
 
-// A diff is only meaningful whole. Rendered per token it shows deletions with
-// no replacement yet, half-typed lines, and counts that climb — a change the
-// user cannot read and that never existed on disk. The path is enough to say
-// what is coming; the diff lands in one piece once the arguments are complete.
-function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
+// A diff is only meaningful whole. While arguments stream, the path is enough;
+// a running call previews its complete arguments, and a completed call replaces
+// that preview with the tool's authoritative before/after file diff.
+function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
   if (info.argsStreaming) return [];
   const path = stringArg(info.args, "path");
   if (!path) return [];
+
+  const completed = (info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+  if (completed && !info.result?.isError) {
+    const [, ...lines] = diffCell(
+      {
+        path: completed.path,
+        added: completed.added,
+        removed: completed.removed,
+        lines: displayedDiffLines(diffLinesFromHunks(completed.hunks), info, ctx),
+      },
+      ctx,
+    );
+    return lines;
+  }
 
   if (info.toolName === "write") {
     const content = stringArg(info.args, "content");
@@ -228,7 +337,7 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const lines = sourceLines.map(
       (text, index): DiffLine => ({ kind: "add", lineNumber: index + 1, text }),
     );
-    return diffCell(
+    const [, ...rendered] = diffCell(
       {
         path,
         added: sourceLines.length,
@@ -237,6 +346,7 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
       },
       ctx,
     );
+    return rendered;
   }
 
   const edits = editArgs(info.args);
@@ -275,7 +385,11 @@ function argumentDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     added += newLines.length;
   }
   if (lines.length === 0) return [];
-  return diffCell({ path, added, removed, lines: displayedDiffLines(lines, info, ctx) }, ctx);
+  const [, ...rendered] = diffCell(
+    { path, added, removed, lines: displayedDiffLines(lines, info, ctx) },
+    ctx,
+  );
+  return rendered;
 }
 
 // The generic fallback: name, primary argument, truncated result. This is what
@@ -329,6 +443,16 @@ export class RendererRegistry {
   // can mark all but the newest as superseded.
   supersedes(toolName: string): boolean {
     return this.renderers.get(toolName)?.supersedes === true;
+  }
+
+  activityKind(info: ToolRenderInfo): ActivityKind | undefined {
+    const activityKind = this.renderers.get(info.toolName)?.activityKind;
+    return typeof activityKind === "function" ? activityKind(info) : activityKind;
+  }
+
+  expandedByDefault(info: ToolRenderInfo): boolean {
+    const expanded = this.renderers.get(info.toolName)?.expandedByDefault;
+    return typeof expanded === "function" ? expanded(info) : expanded === true;
   }
 
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
@@ -420,7 +544,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...resultPreview(info, ctx),
+      ...(info.result?.isError
+        ? errorPreview(info, ctx)
+        : info.expanded
+          ? highlightedReadResult(info, ctx)
+          : resultPreview(info, ctx)),
     ];
   },
   write: (info, ctx) => {
@@ -442,8 +570,8 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...argumentDiff(info, ctx),
-      ...(info.result?.isError ? resultPreview(info, ctx) : []),
+      ...fileDiff(info, ctx),
+      ...errorPreview(info, ctx),
     ];
   },
   edit: (info, ctx) => {
@@ -465,8 +593,8 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
         },
         ctx,
       ),
-      ...argumentDiff(info, ctx),
-      ...(info.result?.isError ? resultPreview(info, ctx) : []),
+      ...fileDiff(info, ctx),
+      ...errorPreview(info, ctx),
     ];
   },
   bash: (info, ctx) => {
@@ -526,3 +654,27 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     ...resultPreview(info, ctx),
   ],
 };
+
+for (const name of ["read", "ls"]) {
+  const renderer = codingRenderers[name];
+  if (renderer) {
+    renderer.activityKind = "explore";
+    if (name === "read") renderer.ownsExpansion = true;
+  }
+}
+for (const name of ["write", "edit"]) {
+  const renderer = codingRenderers[name];
+  if (renderer) {
+    renderer.activityKind = "edit";
+    renderer.ownsExpansion = true;
+  }
+}
+const bashRenderer = codingRenderers.bash;
+if (bashRenderer) {
+  bashRenderer.activityKind = (info) => {
+    if (booleanArg(info.args, "userShell")) return undefined;
+    const command = firstString(info.args, ["command"])?.trim() ?? "";
+    return /^(?:rg|ripgrep)(?:\s|$)/.test(command) ? "explore" : "command";
+  };
+  bashRenderer.expandedByDefault = (info) => booleanArg(info.args, "userShell");
+}

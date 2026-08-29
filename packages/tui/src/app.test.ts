@@ -41,7 +41,7 @@ function harness(
     registry,
     ...options,
     callbacks: {
-      onSubmit: (text) => submitted.push(text),
+      onSubmit: (text) => void submitted.push(text),
       onSteer: (text) => {
         steers.push(text);
         return true;
@@ -80,6 +80,10 @@ function harness(
 
 function feed(app: App, raw: string): void {
   for (const event of new InputDecoder().push(raw)) app.handleInput(event);
+}
+
+function press(app: App, name: string): void {
+  app.handleInput({ type: "key", key: { name, ctrl: false, alt: false, shift: false } });
 }
 
 const assistant = (text: string) => ({
@@ -146,7 +150,7 @@ describe("fake-agent session", () => {
     const visible = app.renderTranscript().map(stripAnsi);
 
     expect(visible).toContain("  ▸ add retries");
-    expect(visible).toContain("  │ read src/api/client.ts · 142 lines");
+    expect(visible).toContain("  › read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
     const bottom = app.renderBottom().map(stripAnsi);
@@ -373,6 +377,50 @@ describe("input handling", () => {
     const h = harness();
     feed(h.app, "hello\r");
     expect(h.submitted).toEqual(["hello"]);
+    expect(h.app.renderTranscript().map(stripAnsi)).toContain("  ▸ hello");
+  });
+
+  test("an immediate submitted message is reconciled with the durable user event", () => {
+    const h = harness();
+    feed(h.app, "original\r");
+    expect(
+      h.app
+        .renderTranscript()
+        .map(stripAnsi)
+        .filter((line) => line.includes("▸")),
+    ).toEqual(["  ▸ original"]);
+
+    h.app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "rewritten by hook" }],
+        timestamp: 1,
+      },
+    });
+
+    expect(
+      h.app
+        .renderTranscript()
+        .map(stripAnsi)
+        .filter((line) => line.includes("▸")),
+    ).toEqual(["  ▸ rewritten by hook"]);
+  });
+
+  test("a run that ends before accepting its submitted message removes the preview", () => {
+    const h = harness();
+    feed(h.app, "consumed by hook\r");
+    h.app.handleEvent({ type: "agent_start" });
+    h.app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+
+    expect(h.app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("consumed by hook");
+  });
+
+  test("a surface that rejects submission does not retain its preview", () => {
+    const h = harness({ onSubmit: () => false });
+    feed(h.app, "rejected\r");
+
+    expect(h.app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("rejected");
   });
 
   test("Shift+Enter inserts a newline instead of submitting", () => {
@@ -533,7 +581,10 @@ describe("input handling", () => {
 
     expect(h.submitted).toEqual([]);
     expect(h.app.editor.text).toBe("one\ntwo\nthree");
-    expect(stripAnsi(h.app.renderBottom().join("\n"))).toContain("one\n    two\n    three");
+    const rendered = stripAnsi(h.app.renderBottom().join("\n"));
+    expect(rendered).toContain("│ ▸ one");
+    expect(rendered).toContain("│   two");
+    expect(rendered).toContain("│   three");
   });
 
   test("a long pasted draft scrolls with the editor cursor", () => {
@@ -585,6 +636,38 @@ describe("input handling", () => {
     feed(h.app, "previous\r");
     feed(h.app, `${ESC}[A`);
     expect(h.app.editor.text).toBe("previous");
+  });
+
+  test("a resumed transcript replaces and cycles through its persisted prompt history", () => {
+    const h = harness();
+    feed(h.app, "prompt from current process\r");
+    h.app.replaceTranscript([
+      {
+        role: "user",
+        content: [{ type: "text", text: "resumed first prompt" }],
+        timestamp: 1,
+      },
+      assistant("first answer"),
+      {
+        role: "user",
+        content: [{ type: "text", text: "resumed latest prompt" }],
+        timestamp: 2,
+      },
+      assistant("latest answer"),
+    ]);
+
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("resumed latest prompt");
+    expect(h.app.editor.text).not.toBe("prompt from current process");
+
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("resumed first prompt");
+    feed(h.app, `${ESC}[A`);
+    expect(h.app.editor.text).toBe("resumed first prompt");
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("resumed latest prompt");
+    feed(h.app, `${ESC}[B`);
+    expect(h.app.editor.text).toBe("");
   });
 
   test("escape aborts a running agent but not an idle one", () => {
@@ -675,6 +758,16 @@ describe("input handling", () => {
     expect(h.submitted).toEqual([]);
   });
 
+  test("the local collapse command remains discoverable in the slash menu", () => {
+    const h = harness();
+    h.app.setCommands([{ label: "model" }]);
+    feed(h.app, "/coll");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("Collapse all expanded");
+    feed(h.app, "\r");
+    expect(h.commands).toEqual([]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
   test("a slash command remains a command while the agent is running", () => {
     const h = harness();
     h.app.handleEvent({ type: "agent_start" });
@@ -691,9 +784,17 @@ describe("input handling", () => {
 
     feed(h.app, "!");
     expect(h.app.isShellMode).toBe(true);
-    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("shell mode · runs locally");
+    let shell = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(shell).toContain("╭─ shell ");
+    expect(shell).toContain("│ $ ");
+    expect(shell).toContain("enter run · esc cancel");
 
-    feed(h.app, "printf ok\r");
+    feed(h.app, "printf ok");
+    shell = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(shell).toContain("│ $ printf ok");
+    expect(shell).not.toContain("!printf ok");
+
+    feed(h.app, "\r");
     expect(shellCommands).toEqual(["printf ok"]);
     expect(h.submitted).toEqual([]);
     expect(h.app.isShellMode).toBe(false);
@@ -913,6 +1014,81 @@ describe("renderer registry", () => {
     expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
   });
 
+  test("an expanded read syntax-highlights source while keeping its line numbers dim", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry.render(
+      {
+        toolName: "read",
+        args: { path: "models.py" },
+        expanded: true,
+        result: {
+          role: "toolResult",
+          toolCallId: "r",
+          toolName: "read",
+          content: [
+            {
+              type: "text",
+              text: [
+                '    1  """Agent models."""',
+                "    2  from dataclasses import dataclass",
+                "    3  ",
+                "    4  @dataclass",
+                "    5  class Plan:",
+                "    6      name: str\u001b]52;c;unsafe\u0007",
+              ].join("\n"),
+            },
+          ],
+          details: { lines: 6 },
+          isError: false,
+          timestamp: 1,
+        },
+      },
+      { width: 80, depth: "truecolor" },
+    );
+
+    expect(lines[1]).toContain(styleText("    1  ", { dim: true }, "truecolor"));
+    expect(lines.join("\n")).toContain(styleText("from", { syntax: "keyword" }, "truecolor"));
+    expect(lines.join("\n")).toContain(
+      styleText('"""Agent models."""', { syntax: "string" }, "truecolor"),
+    );
+    expect(lines.join("\n")).not.toContain("\u001b]52");
+    expect(lines.map(stripAnsi)).toContain("  │     5  class Plan:");
+  });
+
+  test("expanded syntax-highlighted reads retain the output row bound", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const output = Array.from(
+      { length: 1_000 },
+      (_, index) => `${String(index + 1).padStart(5)}  value_${index + 1} = ${index + 1}`,
+    ).join("\n");
+    const lines = registry
+      .render(
+        {
+          toolName: "read",
+          args: { path: "values.py" },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "r",
+            toolName: "read",
+            content: [{ type: "text", text: output }],
+            details: { lines: 1_000 },
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 80, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.length).toBeLessThanOrEqual(201);
+    expect(lines).toContain("  │     1  value_1 = 1");
+    expect(lines).toContain("  │  1000  value_1000 = 1000");
+    expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
+  });
+
   test("a single enormous command-output line stays compact in the transcript", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
@@ -981,25 +1157,115 @@ describe("renderer registry", () => {
           { edit: 1, oldLine: 1, newLine: 1 },
           { edit: 0, oldLine: 3, newLine: 4 },
         ],
+        diff: {
+          path: "code.ts",
+          added: 3,
+          removed: 2,
+          hunks: [
+            "@@ -1,1 +1,2 @@",
+            "-const a = 1;",
+            "+const a = 10;",
+            "+const extra = 0;",
+            "@@ -3,1 +4,1 @@",
+            "-const c = 3;",
+            "+const c = 30;",
+          ],
+        },
       },
       isError: false,
       timestamp: 1,
     };
 
     const lines = registry
-      .render({ toolName: "edit", args, result }, { width: 60, depth: "none" })
+      .render({ toolName: "edit", args, result, expanded: true }, { width: 60, depth: "none" })
       .map(stripAnsi);
 
     // File order, not the order the model sent, and the added line shifts the
     // later hunk's new-side number past its old-side one.
     expect(lines.slice(1)).toEqual([
-      "  │ code.ts · +3 −2",
       "  │     1 − const a = 1;",
       "  │     1 + const a = 10;",
       "  │     2 + const extra = 0;",
       "  │     3 − const c = 3;",
       "  │     4 + const c = 30;",
     ]);
+    expect(lines.filter((line) => line.includes("code.ts"))).toHaveLength(1);
+  });
+
+  test("a completed edit uses the actual file diff instead of replacement payload counts", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const result = {
+      role: "toolResult" as const,
+      toolCallId: "e",
+      toolName: "edit",
+      content: [{ type: "text" as const, text: "Edited pyproject.toml (1 replacement)" }],
+      details: {
+        occurrences: 1,
+        hunks: [{ edit: 0, oldLine: 13, newLine: 13 }],
+        diff: {
+          path: "pyproject.toml",
+          added: 1,
+          removed: 0,
+          hunks: [
+            "@@ -13,3 +13,4 @@",
+            " [project.scripts]",
+            ' multiagent-coder = "multiagent_coder.cli:main"',
+            '+coding-agent = "multiagent_coder.tui:main"',
+            " ",
+          ],
+        },
+      },
+      isError: false,
+      timestamp: 1,
+    };
+    const lines = registry
+      .render(
+        {
+          toolName: "edit",
+          args: {
+            path: "pyproject.toml",
+            oldString: '[project.scripts]\nmultiagent-coder = "multiagent_coder.cli:main"\n',
+            newString:
+              '[project.scripts]\nmultiagent-coder = "multiagent_coder.cli:main"\ncoding-agent = "multiagent_coder.tui:main"\n',
+          },
+          result,
+          expanded: true,
+        },
+        { width: 80, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines[0]).toBe("  │ edited pyproject.toml · 1 replacement");
+    expect(lines.join("\n")).not.toContain("+4 −3");
+    expect(lines.filter((line) => line.includes("pyproject.toml"))).toHaveLength(1);
+    expect(lines).not.toContain("  │ Edited pyproject.toml (1 replacement)");
+    expect(lines).toContain('  │    15 + coding-agent = "multiagent_coder.tui:main"');
+  });
+
+  test("an expanded failed edit still shows its error", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const lines = registry
+      .render(
+        {
+          toolName: "edit",
+          args: { path: "code.ts", oldString: "old", newString: "new" },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "e",
+            toolName: "edit",
+            content: [{ type: "text", text: "code.ts changed since it was read" }],
+            isError: true,
+            timestamp: 1,
+          },
+        },
+        { width: 60, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(lines.join("\n")).toContain("code.ts changed since it was read");
   });
 
   test("an edit still running renders its diff without invented line numbers", () => {
@@ -1016,7 +1282,7 @@ describe("renderer registry", () => {
       )
       .map(stripAnsi);
 
-    expect(lines.slice(1)).toEqual(["  │ code.ts · +1 −1", "  │       − a", "  │       + b"]);
+    expect(lines.slice(1)).toEqual(["  │       − a", "  │       + b"]);
   });
 
   test("an edit whose arguments are still streaming renders no partial diff", () => {
@@ -1146,7 +1412,7 @@ describe("transcript spacing", () => {
     });
   };
 
-  test("a cell that spans rows gets air; a run of one-liners stays tight", () => {
+  test("consecutive commands collapse into one chronological activity group", () => {
     const { app } = harness();
     app.handleEvent({ type: "agent_start" });
     ran(app, "c1", "bun test", "270 pass\n0 fail");
@@ -1154,12 +1420,8 @@ describe("transcript spacing", () => {
     ran(app, "c3", "whoami", "");
 
     const screen = app.renderScreen().map(stripAnsi);
-    const first = screen.findIndex((line) => line.includes("270 pass"));
-    // Output runs into the next verb without this blank.
-    expect(screen[first + 2]).toBe("");
-    // Two bare one-line calls are one stream, not two paragraphs.
-    const bare = screen.findIndex((line) => line.includes("ran pwd"));
-    expect(screen[bare + 1]).toContain("ran whoami");
+    expect(screen).toContain("  › Ran 3 commands");
+    expect(screen.some((line) => line.includes("270 pass"))).toBe(false);
   });
 
   test("speech after machinery always gets a break", () => {
@@ -1172,6 +1434,234 @@ describe("transcript spacing", () => {
     const cell = screen.findIndex((line) => line.includes("ran pwd"));
     expect(screen[cell + 1]).toBe("");
     expect(screen[cell + 2]).toContain("Done — that is the cwd.");
+  });
+});
+
+describe("activity disclosure", () => {
+  const complete = (
+    app: App,
+    id: string,
+    toolName: string,
+    args: unknown,
+    output: string,
+    details: unknown = {},
+    isError = false,
+  ) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: output }],
+        details,
+        isError,
+        timestamp: 1,
+      },
+    });
+  };
+
+  test("groups exploration and expands a selected child with the keyboard", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "message_end",
+      message: assistant("I’m checking the relevant files."),
+    });
+    complete(app, "r1", "read", { path: "a.ts" }, "a1\na2\na3\na4\na5\na6", { lines: 6 });
+    complete(app, "r2", "read", { path: "b.ts" }, "b", { lines: 1 });
+    complete(app, "s1", "bash", { command: "rg -n TODO packages" }, "packages/a.ts:4:TODO", {
+      exitCode: 0,
+    });
+
+    expect(app.renderTranscript().map(stripAnsi)).toContain("  › Explored 2 files, 1 search");
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    let review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("checking the relevant files"))).toBe(true);
+    expect(review.some((line) => line.includes("fake/fake-1"))).toBe(true);
+    expect(review).not.toContain("  Activity");
+    expect(app.renderScreen().join("\n")).not.toContain("\u001b[7m");
+    expect(review.some((line) => line.includes("read a.ts"))).toBe(false);
+
+    press(app, "right");
+    review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
+    expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
+    expect(review.some((line) => line.includes("│ a1"))).toBe(false);
+    expect(review.some((line) => line.includes("packages/a.ts:4:TODO"))).toBe(false);
+
+    press(app, "down");
+    press(app, "return");
+    review = app.renderScreen().map(stripAnsi);
+    expect(review.some((line) => line.includes("│ a4"))).toBe(true);
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("composing");
+    expect(
+      app
+        .renderTranscript()
+        .map(stripAnsi)
+        .some((line) => line.includes("│ a4")),
+    ).toBe(true);
+
+    feed(app, "/collapse\r");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    expect(app.renderTranscript().map(stripAnsi)).not.toContain("  › read a.ts · 6 lines");
+  });
+
+  test("searches the transcript and temporarily reveals collapsed content", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "message_end",
+      message: {
+        ...assistant("The visible response has no match."),
+        content: [
+          { type: "thinking", thinking: "private quartz thought" },
+          { type: "text", text: "The visible response has no match." },
+        ],
+      },
+    });
+    complete(app, "r1", "read", { path: "a.ts" }, "hidden quartz output", { lines: 1 });
+    app.appendTranscript(["  local quartz notice"]);
+
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+    feed(app, "\u000f/QUARTZ\r");
+
+    let screen = app.renderScreen().map(stripAnsi);
+    expect(screen.join("\n")).toContain("search transcript");
+    expect(screen.join("\n")).toContain("1/3 · n/N next/previous");
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("private quartz thought");
+
+    feed(app, "n");
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("hidden quartz output");
+
+    feed(app, "N");
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("private quartz thought");
+
+    feed(app, "n");
+    press(app, "escape");
+    expect(app.currentMode).toBe("activity");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.join("\n")).not.toContain("search transcript");
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("hidden quartz output");
+    press(app, "escape");
+    expect(app.currentMode).toBe("composing");
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+  });
+
+  test("reports an empty transcript search without leaving activity navigation", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: assistant("alpha") });
+
+    feed(app, "\u000f/missing\r");
+
+    expect(app.currentMode).toBe("activity");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("no matches");
+  });
+
+  test("edit groups show colored aggregate and per-file line totals", () => {
+    const { app } = harness({}, { depth: "truecolor" });
+    complete(app, "e1", "edit", { path: "a.ts", edits: [] }, "Edited a.ts (1 replacement)", {
+      occurrences: 1,
+      diff: {
+        path: "a.ts",
+        added: 3,
+        removed: 1,
+        hunks: ["@@ -1,1 +1,3 @@", "-old", "+new", "+extra", "+more"],
+      },
+    });
+    complete(app, "e2", "write", { path: "b.ts", content: "x\ny" }, "Updated b.ts", {
+      diff: { path: "b.ts", added: 1, removed: 2, hunks: [] },
+    });
+
+    const collapsed = app.renderTranscript().join("\n");
+    expect(stripAnsi(collapsed)).toContain("Edited 2 files +4 -3");
+    expect(collapsed).toContain("[32m+4");
+    expect(collapsed).toContain("[31m-3");
+
+    feed(app, "\u000f");
+    press(app, "right");
+    let expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("edited a.ts · 1 replacement +3 -1");
+    expect(expanded).toContain("updated b.ts +1 -2");
+
+    press(app, "down");
+    press(app, "right");
+    expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded.match(/a\.ts/g)).toHaveLength(1);
+    expect(expanded.match(/b\.ts/g)).toHaveLength(1);
+    expect(expanded).not.toContain("Edited a.ts (1 replacement)");
+    expect(expanded).toContain("│     1 − old");
+  });
+
+  test("expanded group children align with standalone activity", () => {
+    const { app } = harness();
+    complete(app, "c1", "bash", { command: "git status --short" }, "clean", { exitCode: 0 });
+    complete(app, "c2", "bash", { command: "git log -1" }, "abc change", { exitCode: 0 });
+    complete(app, "s1", "bash", { command: "rg -n TODO packages" }, "packages/a.ts:1:TODO", {
+      exitCode: 0,
+    });
+
+    feed(app, "\u000f");
+    press(app, "up");
+    let rows = app.renderScreen().map(stripAnsi);
+    let searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
+    expect(rows[searchIndex - 1]).toBe("");
+
+    press(app, "return");
+    rows = app.renderScreen().map(stripAnsi);
+    const command = rows.find((line) => line.includes("ran git status --short"));
+    searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
+    const search = rows[searchIndex];
+
+    expect(command?.indexOf("ran")).toBe(4);
+    expect(search?.indexOf("ran")).toBe(4);
+    expect(rows[searchIndex - 1]).toBe("");
+  });
+
+  test("an explicit user shell command stays standalone and starts expanded", () => {
+    const { app, commands } = harness();
+    complete(app, "c1", "bash", { command: "git status --short" }, "clean", {
+      exitCode: 0,
+    });
+    complete(app, "shell-1", "bash", { command: "pwd", userShell: true }, "/tmp", {
+      exitCode: 0,
+    });
+
+    const expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("› ran git status --short");
+    expect(expanded).toContain("⌄ $ pwd");
+    expect(expanded).toContain("│ /tmp");
+    expect(expanded).not.toContain("Ran 2 commands");
+
+    feed(app, "/collapse\r");
+    expect(commands).toEqual([]);
+    const collapsed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(collapsed).toContain("› $ pwd");
+    expect(collapsed).not.toContain("│ /tmp");
+  });
+
+  test("an explicit user shell result has a blank boundary on both sides", () => {
+    const { app } = harness();
+    app.appendTranscript(["  Keybindings"]);
+    complete(app, "shell-1", "bash", { command: "ls", userShell: true }, "README.md", {
+      exitCode: 0,
+    });
+    app.appendTranscript(["  worked for 5ms"]);
+
+    const rows = app.renderScreen().map(stripAnsi);
+    const shellIndex = rows.findIndex((line) => line.includes("$ ls"));
+    const outputIndex = rows.findIndex((line) => line.includes("│ README.md"));
+    expect(rows[shellIndex - 2]).toBe("  Keybindings");
+    expect(rows[shellIndex - 1]).toBe("");
+    expect(rows[outputIndex + 1]).toBe("");
+    expect(rows[outputIndex + 2]).toBe("  worked for 5ms");
   });
 });
 
@@ -1209,10 +1699,11 @@ describe("superseded plans", () => {
     record(app, "p3", plan(["completed", "completed", "in_progress"]));
 
     const screen = app.renderScreen().map(stripAnsi);
-    expect(screen).toContain("  │ plan · 0/3 · task 1");
-    expect(screen).toContain("  │ plan · 1/3 · task 2");
-    // The newest keeps its bracket and its tasks.
-    expect(screen).toContain("  ┌ plan · 2/3 done");
+    expect(screen).toContain("  › plan · 0/3 · task 1");
+    expect(screen).toContain("  › plan · 1/3 · task 2");
+    // The disclosure marker replaces the bracket's opening glyph; its task rail still closes.
+    expect(screen).toContain("  › plan · 2/3 done");
+    expect(screen).toContain("  │ ✓ task 1");
     expect(screen).toContain("  └ ▸ task 3");
     // Three plans of three tasks would be twelve rows unfolded.
     expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
@@ -1224,7 +1715,7 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["completed", "completed"]));
     record(app, "p2", plan(["completed", "completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 2/2 done");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › plan · 2/2 done");
   });
 
   test("ctrl+o restores a superseded plan to its full list", () => {
@@ -1233,14 +1724,17 @@ describe("superseded plans", () => {
     record(app, "p1", plan(["in_progress", "pending"]));
     record(app, "p2", plan(["completed", "in_progress"]));
 
-    expect(app.renderScreen().map(stripAnsi)).toContain("  │ plan · 0/2 · task 1");
+    expect(app.renderScreen().map(stripAnsi)).toContain("  › plan · 0/2 · task 1");
+    feed(app, "\u000f");
+    feed(app, "\u001b[A");
+    press(app, "return");
     feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
-    expect(expanded.filter((line) => line === "  ┌ plan · 0/2 done")).toHaveLength(1);
+    expect(expanded.filter((line) => line.includes("⌄ plan · 0/2 done"))).toHaveLength(1);
     expect(expanded.filter((line) => line.includes("task 1"))).toHaveLength(2);
   });
 
-  test("tools that do not supersede keep every call in full", () => {
+  test("consecutive exploration tools collapse without losing their count", () => {
     const { app } = harness();
     app.handleEvent({ type: "agent_start" });
     for (const id of ["c1", "c2"]) {
@@ -1259,13 +1753,13 @@ describe("superseded plans", () => {
       });
     }
     const screen = app.renderScreen().map(stripAnsi);
-    expect(screen.filter((line) => line.includes("read · 4 lines"))).toHaveLength(2);
+    expect(screen).toContain("  › Explored 2 files");
   });
 });
 
 describe("tool output toggle", () => {
-  test("ctrl+o expands completed commands and collapses them again", () => {
-    const { app } = harness();
+  test("ctrl+o navigates without toggling and /collapse closes every disclosure", () => {
+    const { app, commands } = harness();
     app.handleEvent({ type: "agent_start" });
     app.handleEvent({
       type: "tool_execution_start",
@@ -1273,7 +1767,7 @@ describe("tool output toggle", () => {
       toolName: "bash",
       args: { command: "bun test" },
     });
-    const collapsed = app.handleEvent({
+    app.handleEvent({
       type: "tool_execution_end",
       toolCallId: "c1",
       result: {
@@ -1291,17 +1785,26 @@ describe("tool output toggle", () => {
         timestamp: 1,
       },
     });
-    expect(collapsed.map(stripAnsi).join("\n")).toContain("lines omitted · ctrl+o to expand");
-    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
+    const collapsed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(collapsed).not.toContain("│ line 1");
+    expect(collapsed).not.toContain("lines omitted");
 
     feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    press(app, "right");
     expect(app.areToolOutputsExpanded).toBe(true);
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("ran bun test");
     expect(expanded).toContain("│ line 6");
 
     feed(app, "\u000f");
+    expect(app.currentMode).toBe("composing");
+    expect(app.areToolOutputsExpanded).toBe(true);
+
+    feed(app, "/collapse\r");
     expect(app.areToolOutputsExpanded).toBe(false);
+    expect(commands).toEqual([]);
     expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
   });
 
@@ -1336,6 +1839,8 @@ describe("tool output toggle", () => {
       message: assistant("Done — the tests pass."),
     });
 
+    feed(app, "\u000f");
+    press(app, "right");
     feed(app, "\u000f");
     const expanded = app.renderScreen().map(stripAnsi);
     const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
@@ -1379,6 +1884,8 @@ describe("tool output toggle", () => {
       type: "message_end",
       message: assistant("Done — this response stays after the expanded output."),
     });
+    feed(app, "\u000f");
+    press(app, "right");
     feed(app, "\u000f");
     const screen = app.renderScreen().map(stripAnsi);
     const toolIndex = screen.findIndex((line) => line.includes("ran long command"));
@@ -1435,6 +1942,8 @@ describe("tool output toggle", () => {
     expect(screen.join("\n")).not.toContain("stale session");
     expect(screen.join("\n")).not.toContain("source line 6");
 
+    feed(app, "\u000f");
+    press(app, "right");
     feed(app, "\u000f");
     screen = app.renderScreen().map(stripAnsi);
     const preambleIndex = screen.findIndex((line) => line.includes("read it first"));
@@ -1907,6 +2416,9 @@ describe("full-screen renderer", () => {
     renderer.renderNow(app.renderFrame());
     for (let index = 0; index < 3; index++) {
       feed(app, "\u000f");
+      press(app, "right");
+      renderer.renderNow(app.renderFrame());
+      feed(app, "\u000f");
       renderer.renderNow(app.renderFrame());
     }
 
@@ -1960,6 +2472,25 @@ describe("full-screen renderer", () => {
     expect(written[0]).toContain("latest");
     expect(written[0]).not.toContain("discarded");
   });
+
+  test("an immediate input frame cancels a pending throttled frame", async () => {
+    const written: string[] = [];
+    const terminal = new Terminal({
+      write: (data) => written.push(data),
+      columns: 80,
+      rows: 24,
+      isTty: true,
+    });
+    const renderer = new FullScreenRenderer(terminal, 10);
+    renderer.requestRender(() => physicalFrame(["stale stream"]));
+    renderer.renderNow(physicalFrame(["typed input"]));
+
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain("typed input");
+    await Bun.sleep(25);
+    expect(written).toHaveLength(1);
+    expect(written[0]).not.toContain("stale stream");
+  });
 });
 
 describe("@-file mention popup", () => {
@@ -1971,7 +2502,7 @@ describe("@-file mention popup", () => {
       depth: "none",
       model: "fake/fake-1",
       callbacks: {
-        onSubmit: (text) => submitted.push(text),
+        onSubmit: (text) => void submitted.push(text),
         onAbort: () => {},
         onExit: () => {},
         onMentionQuery: (query) =>
@@ -2055,6 +2586,37 @@ describe("selection pickers (/model, /resume)", () => {
     });
 
     expect(chosen).toEqual(["openai/gpt-5.1"]);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
+  test("an open picker can refresh without losing its filter or selection", () => {
+    const h = harness();
+    const chosen: string[] = [];
+    const picker = {
+      title: "select a model · refreshing",
+      filterable: true,
+      items: [{ label: "openai/gpt-5.1" }, { label: "openai/gpt-5.2" }],
+      onChoose: (value: string) => chosen.push(value),
+    };
+    h.app.openPicker(picker);
+    feed(h.app, "openai");
+    press(h.app, "down");
+
+    expect(
+      h.app.updatePicker(picker, {
+        title: "select a model · 3 available",
+        items: [
+          { label: "openai/gpt-5.1" },
+          { label: "openai/gpt-5.2" },
+          { label: "openai/gpt-5.3" },
+        ],
+      }),
+    ).toBe(true);
+
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("select a model · 3 available · openai");
+    press(h.app, "return");
+    expect(chosen).toEqual(["openai/gpt-5.2"]);
     expect(h.app.currentMode).toBe("composing");
   });
 
@@ -2781,7 +3343,7 @@ describe("mid-buffer file mentions", () => {
       depth: "none",
       model: "fake/fake-1",
       callbacks: {
-        onSubmit: (text) => submitted.push(text),
+        onSubmit: (text) => void submitted.push(text),
         onAbort: () => {},
         onExit: () => {},
         onMentionQuery: (query) =>
