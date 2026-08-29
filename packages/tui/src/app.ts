@@ -39,7 +39,7 @@ import {
 import type { InputEvent, Key } from "./input.ts";
 import { type ActivityKind, RendererRegistry, type ToolRenderInfo } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
-import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
 const COLLAPSE_COMMAND = {
@@ -252,6 +252,23 @@ interface ActivityTool {
   rendered?: { width: number; expanded: boolean; lines: string[] };
 }
 
+interface ActivitySearchMatch {
+  row: number;
+  start: number;
+  length: number;
+}
+
+interface ActivitySearch {
+  editor: Editor;
+  editing: boolean;
+  query: string;
+  rows: string[];
+  matches: ActivitySearchMatch[];
+  matchIndex: number;
+  transcriptVersion: number;
+  width: number;
+}
+
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
   | { kind: "user"; text: string; pending?: boolean }
@@ -314,6 +331,7 @@ interface ConversationView {
   thinkingLevel: string;
   thinkingLevels: string[];
   activitySelection: string | undefined;
+  activitySearch: ActivitySearch | undefined;
 }
 
 function conversationView(
@@ -338,6 +356,7 @@ function conversationView(
     thinkingLevel: thinkingLevels[0] ?? "off",
     thinkingLevels: [...thinkingLevels],
     activitySelection: undefined,
+    activitySearch: undefined,
   };
 }
 
@@ -455,6 +474,12 @@ export class App {
   }
   private set activitySelection(value: string | undefined) {
     this.view.activitySelection = value;
+  }
+  private get activitySearch(): ActivitySearch | undefined {
+    return this.view.activitySearch;
+  }
+  private set activitySearch(value: ActivitySearch | undefined) {
+    this.view.activitySearch = value;
   }
   private get streaming(): string | undefined {
     return this.view.streaming;
@@ -989,7 +1014,7 @@ export class App {
       ? ` ${styleText(`v${this.options.version}`, { dim: true }, depth)}`
       : "";
     const affordances = styleText(
-      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o tools ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
+      `${this.footerData.model} ${GLYPHS.separator} / for commands ${GLYPHS.separator} @ for files${shell} ${GLYPHS.separator} ctrl+o review ${GLYPHS.separator} ctrl+t thinking ${GLYPHS.separator} ctrl+c to exit`,
       { dim: true },
       depth,
     );
@@ -1036,6 +1061,7 @@ export class App {
     this.streaming = undefined;
     this.streamingCache = undefined;
     this.activitySelection = undefined;
+    this.activitySearch = undefined;
     if (this.mode === "activity") this.mode = "composing";
 
     const calls = new Map<string, { toolName: string; args: unknown }>();
@@ -1076,14 +1102,26 @@ export class App {
   }
 
   renderFrame(): RenderFrame {
+    const search = this.activitySearch;
+    if (
+      this.mode === "activity" &&
+      search &&
+      !search.editing &&
+      (search.transcriptVersion !== this.transcriptVersion || search.width !== this.options.width)
+    ) {
+      this.refreshActivitySearch(search);
+    }
     const managed = this.fitToViewport(this.toTerminalRows(this.renderManaged()));
     if (this.mode === "activity") {
-      const rows = this.transcriptRows(this.activitySelection);
+      const match = search && !search.editing ? search.matches[search.matchIndex] : undefined;
+      const rows =
+        search && match
+          ? search.rows.map((line, index) =>
+              index === match.row ? this.highlightSearchMatch(line, match) : line,
+            )
+          : this.transcriptRows(this.activitySelection);
       const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
-      const selected = Math.max(
-        0,
-        rows.findIndex((line) => line.includes("❯")),
-      );
+      const selected = Math.max(0, match?.row ?? rows.findIndex((line) => line.includes("❯")));
       const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
       return {
         transcript: rows.slice(start, start + limit),
@@ -1111,9 +1149,10 @@ export class App {
     return this.fitToViewport(this.toTerminalRows(this.renderManaged()));
   }
 
-  private transcriptRows(selectedId?: string): string[] {
+  private transcriptRows(selectedId?: string, revealAll = false): string[] {
     const cached = this.transcriptCache;
     if (
+      !revealAll &&
       selectedId === undefined &&
       cached?.version === this.transcriptVersion &&
       cached.width === this.options.width
@@ -1132,6 +1171,7 @@ export class App {
       if (item.kind === "lines") return item.lines;
       if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
       if (item.kind === "assistant") {
+        if (revealAll) return [...this.assistantRows(item.message, true), ""];
         if (item.rendered?.width !== this.options.width) {
           item.rendered = {
             width: this.options.width,
@@ -1141,7 +1181,7 @@ export class App {
         return [...item.rendered.lines, ""];
       }
       if (item.kind === "activity") {
-        const lines = this.renderActivity(item, selectedId);
+        const lines = this.renderActivity(item, selectedId, revealAll);
         const next = this.transcript[index + 1];
         return next?.kind === "activity" && item.tools.length === 1 ? lines : [...lines, ""];
       }
@@ -1165,9 +1205,11 @@ export class App {
       // that spans rows needs air after it, or its output runs straight into
       // the next call's verb; and speech after machinery always gets a break.
       const visibleLines =
-        !item.expanded && this.registry.expandedByDefault(item.info)
+        !revealAll && !item.expanded && this.registry.expandedByDefault(item.info)
           ? item.rendered.lines.slice(0, 1)
-          : item.rendered.lines;
+          : revealAll
+            ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
+            : item.rendered.lines;
       const next = this.transcript[index + 1];
       const previous = this.transcript[index - 1];
       const primaryResult = this.registry.expandedByDefault(item.info);
@@ -1178,11 +1220,15 @@ export class App {
         (next.kind === "user" || next.kind === "assistant"
           ? true
           : next.kind === "tool" && visibleLines.length > 1);
-      const lines = this.disclosureLines(visibleLines, item.expanded, selectedId === item.id);
+      const lines = this.disclosureLines(
+        visibleLines,
+        revealAll || item.expanded,
+        selectedId === item.id,
+      );
       return [...leadingBreak, ...lines, ...(primaryResult || separated ? [""] : [])];
     });
     const rows = this.toTerminalRows(logical);
-    if (selectedId === undefined) {
+    if (selectedId === undefined && !revealAll) {
       this.transcriptCache = {
         version: this.transcriptVersion,
         width: this.options.width,
@@ -1305,6 +1351,12 @@ export class App {
             ? this.promptEditor.renderMasked(composerWidth, depth)
             : this.promptEditor.render(composerWidth, depth)),
         );
+      } else if (this.mode === "activity" && this.activitySearch) {
+        composerLines.push(
+          ...this.activitySearch.editor.render(composerWidth, depth, this.activitySearch.editing, {
+            marker: styleText("/", { accent: true, bold: true }, depth),
+          }),
+        );
       } else {
         composerLines.push(
           ...this.editor.render(
@@ -1325,14 +1377,21 @@ export class App {
       }
     }
 
-    const composerTitle = this.isShellMode
-      ? styleText("shell", { toolExec: true, bold: true }, depth)
-      : undefined;
+    const composerTitle =
+      this.mode === "activity" && this.activitySearch
+        ? styleText("search transcript", { accent: true, bold: true }, depth)
+        : this.isShellMode
+          ? styleText("shell", { toolExec: true, bold: true }, depth)
+          : undefined;
     lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";
-    const activityHint =
-      "↑↓ select · pgup/pgdn jump · →/enter expand · ← collapse · ctrl+o/esc close";
+    const search = this.activitySearch;
+    const activityHint = search?.editing
+      ? "type query · enter search · esc cancel"
+      : search
+        ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
+        : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const compactStage =
         this.compactionStage === "clearing-tool-output"
@@ -1344,7 +1403,7 @@ export class App {
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
           this.mode === "activity"
-            ? ` ${elapsed} ${GLYPHS.separator} activity navigation`
+            ? ` ${elapsed} ${GLYPHS.separator} transcript review`
             : this.compacting
               ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
               : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
@@ -1496,12 +1555,14 @@ export class App {
     tool: ActivityTool,
     activityKind: ActivityKind,
     selected: boolean,
+    reveal = false,
   ): string[] {
-    if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== tool.expanded) {
+    const expanded = reveal || tool.expanded;
+    if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== expanded) {
       tool.rendered = {
         width: this.options.width,
-        expanded: tool.expanded,
-        lines: this.registry.render({ ...tool.info, expanded: tool.expanded }, this.ctx),
+        expanded,
+        lines: this.registry.render({ ...tool.info, expanded }, this.ctx),
       };
     }
     const lines = [...tool.rendered.lines];
@@ -1511,30 +1572,32 @@ export class App {
         lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
       }
     }
-    return this.disclosureLines(tool.expanded ? lines : lines.slice(0, 1), tool.expanded, selected);
+    return this.disclosureLines(expanded ? lines : lines.slice(0, 1), expanded, selected);
   }
 
   private renderActivity(
     item: Extract<TranscriptItem, { kind: "activity" }>,
     selectedId?: string,
+    revealAll = false,
   ): string[] {
     if (item.tools.length === 1) {
       const tool = item.tools[0] as ActivityTool;
-      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id);
+      return this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll);
     }
+    const expanded = revealAll || item.expanded;
     const marker = styleText(
-      selectedId === item.id ? "❯" : item.expanded ? "⌄" : "›",
+      selectedId === item.id ? "❯" : expanded ? "⌄" : "›",
       {
         ...(selectedId === item.id ? { accent: true, bold: true } : { dim: true }),
       },
       this.options.depth,
     );
     const summary = `${MARGIN}${marker} ${styleText(this.activitySummary(item), { bold: true }, this.options.depth)}`;
-    if (!item.expanded) return [summary];
+    if (!expanded) return [summary];
     return [
       summary,
       ...item.tools.flatMap((tool) =>
-        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id),
+        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll),
       ),
     ];
   }
@@ -1594,11 +1657,11 @@ export class App {
     this.transcriptCache = undefined;
   }
 
-  private assistantRows(message: AssistantMessage): string[] {
+  private assistantRows(message: AssistantMessage, revealThinking = false): string[] {
     const lines: string[] = [];
     for (const block of message.content) {
       if (block.type === "thinking" && block.thinking.trim()) {
-        lines.push(...thinkingCell(block.thinking, this.ctx));
+        lines.push(...thinkingCell(block.thinking, this.ctx, revealThinking));
       } else if (block.type === "text" && block.text.trim()) {
         lines.push(...this.toTerminalRows(agentCell(block.text, this.ctx)));
       }
@@ -1687,18 +1750,150 @@ export class App {
   private openActivity(): void {
     const nodes = this.activityNodes();
     const latest = nodes.at(-1);
-    if (!latest) return;
-    this.activitySelection = latest.id;
+    if (this.transcript.length === 0) return;
+    this.activitySelection = latest?.id;
+    this.activitySearch = undefined;
     this.mode = "activity";
   }
 
   private closeActivity(): void {
+    this.activitySearch = undefined;
     this.mode = this.approvals.length > 0 ? "approval" : "composing";
   }
 
+  private startActivitySearch(): void {
+    const existing = this.activitySearch;
+    if (existing) {
+      existing.editing = true;
+      existing.editor.setText(existing.query);
+      return;
+    }
+    this.activitySearch = {
+      editor: new Editor(),
+      editing: true,
+      query: "",
+      rows: [],
+      matches: [],
+      matchIndex: 0,
+      transcriptVersion: -1,
+      width: this.options.width,
+    };
+  }
+
+  private refreshActivitySearch(search: ActivitySearch, reset = false): void {
+    const previous = search.matches[search.matchIndex];
+    const rows = this.transcriptRows(undefined, true);
+    const query = search.query.toLowerCase();
+    const matches: ActivitySearchMatch[] = [];
+    for (const [row, line] of rows.entries()) {
+      const visible = stripAnsi(line).toLowerCase();
+      let start = 0;
+      while (start <= visible.length - query.length) {
+        const found = visible.indexOf(query, start);
+        if (found === -1) break;
+        matches.push({ row, start: found, length: query.length });
+        start = found + Math.max(1, query.length);
+      }
+    }
+    search.rows = rows;
+    search.matches = matches;
+    search.transcriptVersion = this.transcriptVersion;
+    search.width = this.options.width;
+    if (reset || !previous || matches.length === 0) {
+      search.matchIndex = 0;
+      return;
+    }
+    let closest = 0;
+    let distance = Number.POSITIVE_INFINITY;
+    for (const [index, match] of matches.entries()) {
+      const candidate =
+        Math.abs(match.row - previous.row) * this.options.width +
+        Math.abs(match.start - previous.start);
+      if (candidate < distance) {
+        closest = index;
+        distance = candidate;
+      }
+    }
+    search.matchIndex = closest;
+  }
+
+  private submitActivitySearch(): void {
+    const search = this.activitySearch;
+    if (!search) return;
+    const query = search.editor.text.trim();
+    if (!query) return;
+    search.query = query;
+    search.editing = false;
+    this.refreshActivitySearch(search, true);
+  }
+
+  private moveActivitySearch(offset: number): void {
+    const search = this.activitySearch;
+    if (!search || search.editing || search.matches.length === 0) return;
+    search.matchIndex =
+      (search.matchIndex + offset + search.matches.length) % search.matches.length;
+  }
+
+  private highlightSearchMatch(line: string, match: ActivitySearchMatch): string {
+    const start = rawOffsetAtVisible(line, match.start);
+    const end = rawOffsetAtVisible(line, match.start + match.length);
+    const highlighted = `${line.slice(0, start)}${styleText(
+      line.slice(start, end),
+      { accent: true, bold: true, underline: true },
+      this.options.depth,
+    )}${line.slice(end)}`;
+    const marker = styleText("❯", { accent: true, bold: true }, this.options.depth);
+    return highlighted.startsWith(MARGIN)
+      ? `${marker} ${highlighted.slice(MARGIN.length)}`
+      : `${marker} ${highlighted}`;
+  }
+
   private handleActivityKey(key: Key): void {
+    const search = this.activitySearch;
+    if (search?.editing) {
+      if (key.name === "escape") {
+        this.activitySearch = undefined;
+        return;
+      }
+      if (key.name === "return") {
+        this.submitActivitySearch();
+        return;
+      }
+      if (key.name === "backspace") {
+        search.editor.backspace();
+        return;
+      }
+      if (["left", "right", "home", "end"].includes(key.name)) {
+        search.editor.move(key.name as "left" | "right" | "home" | "end");
+        return;
+      }
+      if (key.name === "space") {
+        search.editor.insert(" ");
+        return;
+      }
+      if (!key.ctrl && !key.alt && key.text) search.editor.insert(key.text);
+      return;
+    }
+    if (search) {
+      if (key.name === "escape") {
+        this.activitySearch = undefined;
+        return;
+      }
+      if (key.text === "/") {
+        this.startActivitySearch();
+        return;
+      }
+      if (key.text === "n" || key.text === "N") {
+        this.moveActivitySearch(key.shift || key.text === "N" ? -1 : 1);
+      }
+      return;
+    }
     if (key.name === "escape") {
       this.closeActivity();
+      return;
+    }
+    if (key.text === "/") {
+      this.startActivitySearch();
       return;
     }
     const nodes = this.activityNodes();
@@ -1764,7 +1959,12 @@ export class App {
       this.ctrlCArmedAt = 0;
     }
     if (event.type === "paste") {
-      if (this.mode === "activity") return;
+      if (this.mode === "activity") {
+        if (this.activitySearch?.editing) {
+          this.activitySearch.editor.insert(event.text.replace(/[\r\n]+/g, " "));
+        }
+        return;
+      }
       if (this.mode === "prompt") {
         this.promptEditor.insert(event.text.replace(/[\r\n]+/g, ""));
         return;
@@ -2230,6 +2430,35 @@ export class App {
       this.filterCommands();
     }
   }
+}
+
+function rawOffsetAtVisible(text: string, target: number): number {
+  let raw = 0;
+  let visible = 0;
+  while (raw < text.length && visible < target) {
+    if (text[raw] === "\u001b" && text[raw + 1] === "[") {
+      raw += 2;
+      while (raw < text.length && !/[A-Za-z]/.test(text[raw] ?? "")) raw++;
+      if (raw < text.length) raw++;
+      continue;
+    }
+    if (text[raw] === "\u001b" && text[raw + 1] === "]") {
+      const bell = text.indexOf("\u0007", raw + 2);
+      const stringTerminator = text.indexOf("\u001b\\", raw + 2);
+      const end =
+        bell === -1
+          ? stringTerminator
+          : stringTerminator === -1
+            ? bell
+            : Math.min(bell, stringTerminator);
+      if (end === -1) return text.length;
+      raw = end + (end === stringTerminator ? 2 : 1);
+      continue;
+    }
+    raw++;
+    visible++;
+  }
+  return raw;
 }
 
 function fuzzyScore(value: string, query: string): number | undefined {

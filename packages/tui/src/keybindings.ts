@@ -18,7 +18,7 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
       { keys: "ctrl+c", description: "exit mu" },
       {
         keys: "ctrl+o",
-        description: "open activity navigation and toggle the selected group or tool",
+        description: "review activity and search the transcript with /",
       },
       {
         keys: "ctrl+t",

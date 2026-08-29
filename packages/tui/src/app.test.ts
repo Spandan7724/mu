@@ -1315,6 +1315,56 @@ describe("activity disclosure", () => {
     expect(app.renderTranscript().map(stripAnsi)).not.toContain("  › │ read a.ts · 6 lines");
   });
 
+  test("searches the transcript and temporarily reveals collapsed content", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "message_end",
+      message: {
+        ...assistant("The visible response has no match."),
+        content: [
+          { type: "thinking", thinking: "private quartz thought" },
+          { type: "text", text: "The visible response has no match." },
+        ],
+      },
+    });
+    complete(app, "r1", "read", { path: "a.ts" }, "hidden quartz output", { lines: 1 });
+    app.appendTranscript(["  local quartz notice"]);
+
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+    feed(app, "\u000f/QUARTZ\r");
+
+    let screen = app.renderScreen().map(stripAnsi);
+    expect(screen.join("\n")).toContain("search transcript");
+    expect(screen.join("\n")).toContain("1/3 · n/N next/previous");
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("private quartz thought");
+
+    feed(app, "n");
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("hidden quartz output");
+
+    feed(app, "N");
+    screen = app.renderScreen().map(stripAnsi);
+    expect(screen.find((line) => line.startsWith("❯ "))).toContain("private quartz thought");
+
+    press(app, "escape");
+    expect(app.currentMode).toBe("activity");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+    press(app, "escape");
+    expect(app.currentMode).toBe("composing");
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("hidden quartz output");
+  });
+
+  test("reports an empty transcript search without leaving activity navigation", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: assistant("alpha") });
+
+    feed(app, "\u000f/missing\r");
+
+    expect(app.currentMode).toBe("activity");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("no matches");
+  });
+
   test("edit groups show colored aggregate and per-file line totals", () => {
     const { app } = harness({}, { depth: "truecolor" });
     complete(app, "e1", "edit", { path: "a.ts", edits: [] }, "Edited a.ts", {
