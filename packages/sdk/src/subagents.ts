@@ -26,7 +26,7 @@ export interface SubagentDetails {
 
 export interface SubagentExtensionOptions {
   parent: () => Agent;
-  profile?: ProfileSubagents;
+  coding?: ProfileSubagents;
   inspectionPermissions?: PermissionRule[];
   maxConcurrent?: number;
   excludeTools?: readonly string[];
@@ -150,7 +150,7 @@ class SubagentManager {
   private toolsFor(kind: SubagentKind, parent: Agent): AnyTool[] {
     const tools = parent.tools.filter((candidate) => !DELEGATION_TOOLS.has(candidate.name));
     if (kind === "task") return tools;
-    const allowed = new Set(this.options.profile?.inspectionTools ?? []);
+    const allowed = new Set(this.options.coding?.inspectionTools ?? []);
     return tools.filter((candidate) => allowed.has(candidate.name));
   }
 
@@ -158,7 +158,7 @@ class SubagentManager {
     if (kind === "task") return TASK_PROMPT;
     const base = kind === "search" ? SEARCH_PROMPT : COUNSEL_PROMPT;
     const profilePrompt =
-      kind === "search" ? this.options.profile?.searchPrompt : this.options.profile?.counselPrompt;
+      kind === "search" ? this.options.coding?.searchPrompt : this.options.coding?.counselPrompt;
     return [base, profilePrompt?.trim()].filter(Boolean).join("\n\n");
   }
 
@@ -240,7 +240,7 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
               manager.run("task", description, prompt, signal),
           }),
         );
-      if (!excluded.has("search"))
+      if (options.coding && !excluded.has("search"))
         api.registerTool(
           tool({
             name: "search",
@@ -257,7 +257,7 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             execute: ({ query }, { signal }) => manager.run("search", query, query, signal),
           }),
         );
-      if (!excluded.has("counsel"))
+      if (options.coding && !excluded.has("counsel"))
         api.registerTool(
           tool({
             name: "counsel",

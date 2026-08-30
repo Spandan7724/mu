@@ -46,7 +46,9 @@ export async function createAgent(options: CreateAgentOptions = {}): Promise<Age
   await extensions.register(
     subagentsExtension({
       parent: () => agent,
-      ...(resolvedProfile?.subagents ? { profile: resolvedProfile.subagents } : {}),
+      ...(resolvedProfile?.name === "coding" && resolvedProfile.subagents
+        ? { coding: resolvedProfile.subagents }
+        : {}),
       inspectionPermissions: [...(resolved.permissions ?? []), ...(restrictiveMode?.rules ?? [])],
       excludeTools: existingTools,
     }),

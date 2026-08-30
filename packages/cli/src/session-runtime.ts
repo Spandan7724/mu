@@ -134,7 +134,7 @@ export async function createCliSessionRuntime(
   await loaded.host.register(
     subagentsExtension({
       parent: () => agent,
-      ...(profile?.subagents ? { profile: profile.subagents } : {}),
+      ...(profile?.name === "coding" && profile.subagents ? { coding: profile.subagents } : {}),
       inspectionPermissions: rulesForPermissionMode(basePermissions, restrictiveMode),
       excludeTools: existingTools,
     }),

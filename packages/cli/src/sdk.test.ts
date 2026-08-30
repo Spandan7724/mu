@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
-import { Agent, createAgent } from "./sdk.ts";
+import { Agent, createAgent, type Profile } from "./sdk.ts";
 
 describe("public SDK factory", () => {
   test("creates a domain-neutral Agent when no profile is selected", async () => {
@@ -12,7 +12,7 @@ describe("public SDK factory", () => {
     const agent = await createAgent({ provider, model: fakeModel });
 
     expect(agent).toBeInstanceOf(Agent);
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task", "search", "counsel"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
     expect((await agent.run("hi")).text).toBe("hello");
   });
 
@@ -70,6 +70,23 @@ describe("public SDK factory", () => {
     });
 
     expect(agent.tools.find((candidate) => candidate.name === "task")).toBe(customTask);
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task", "search", "counsel"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
+  });
+
+  test("keeps search and counsel exclusive to the coding profile", async () => {
+    const profile: Profile = {
+      name: "research",
+      toolset: [],
+      promptFor: () => [{ text: "Research carefully." }],
+      permissionDefaults: [],
+      subagents: { inspectionTools: [] },
+    };
+    const agent = await createAgent({
+      profile,
+      provider: new FakeProvider([]),
+      model: fakeModel,
+    });
+
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
   });
 });

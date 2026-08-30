@@ -62,7 +62,7 @@ describe("managed subagents", () => {
     await host.register(
       subagentsExtension({
         parent: () => parent,
-        profile: { inspectionTools: ["inspect"] },
+        coding: { inspectionTools: ["inspect"] },
         inspectionPermissions: [{ permission: "*", pattern: "*", action: "allow" }],
       }),
     );
@@ -103,6 +103,7 @@ describe("managed subagents", () => {
     await host.register(
       subagentsExtension({
         parent: () => parent,
+        coding: { inspectionTools: [] },
         inspectionPermissions: [{ permission: "*", pattern: "*", action: "allow" }],
       }),
     );
@@ -149,7 +150,9 @@ describe("managed subagents", () => {
       ]);
       const host = new ExtensionHost();
       const parent = new Agent({ provider, model: parentModel, extensions: host });
-      await host.register(subagentsExtension({ parent: () => parent }));
+      await host.register(
+        subagentsExtension({ parent: () => parent, coding: { inspectionTools: [] } }),
+      );
 
       await parent.run("search");
 
@@ -187,7 +190,9 @@ describe("managed subagents", () => {
       thinkingLevel: "high",
       extensions: host,
     });
-    await host.register(subagentsExtension({ parent: () => parent }));
+    await host.register(
+      subagentsExtension({ parent: () => parent, coding: { inspectionTools: [] } }),
+    );
 
     await parent.run("consult");
 
