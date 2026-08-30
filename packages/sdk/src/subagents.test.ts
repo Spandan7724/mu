@@ -70,6 +70,9 @@ describe("managed subagents", () => {
     await parent.run("investigate");
 
     expect(provider.requests[1]?.tools?.map((candidate) => candidate.name)).toEqual(["inspect"]);
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Resolve one directed engineering question end to end",
+    );
     expect(details(parent, "search")).toMatchObject({
       kind: "search",
       model: "openai-codex/gpt-5.6-terra",
@@ -110,6 +113,9 @@ describe("managed subagents", () => {
 
     await parent.run("ask counsel");
 
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Treat the parent's diagnosis or preferred solution as a hypothesis",
+    );
     expect(details(parent, "counsel")).toMatchObject({
       kind: "counsel",
       model: "openai-codex/gpt-5.6-sol",
@@ -233,6 +239,9 @@ describe("managed subagents", () => {
     const result = await parent.run("delegate");
 
     expect(provider.requests[1]?.tools?.map((candidate) => candidate.name)).toEqual(["work"]);
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Own that unit from investigation through completion",
+    );
     const toolResult = result.messages.find(
       (message) => message.role === "toolResult" && message.toolName === "task",
     );
