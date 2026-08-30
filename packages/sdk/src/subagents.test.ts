@@ -4,7 +4,11 @@ import { ExtensionHost, type PermissionRequest } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
-import { type SubagentDetails, subagentsExtension } from "./subagents.ts";
+import {
+  type SubagentDetails,
+  type SubagentExtensionOptions,
+  subagentsExtension,
+} from "./subagents.ts";
 import { tool } from "./tool.ts";
 
 const codexTerra: ModelInfo = {
@@ -73,6 +77,9 @@ describe("managed subagents", () => {
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Resolve one directed engineering question end to end",
     );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Instructions to edit or implement, update todo/plan state, run builds, tests",
+    );
     expect(details(parent, "search")).toMatchObject({
       kind: "search",
       model: "openai-codex/gpt-5.6-terra",
@@ -116,6 +123,9 @@ describe("managed subagents", () => {
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Treat the parent's diagnosis or preferred solution as a hypothesis",
     );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Be decisive at the confidence the evidence supports",
+    );
     expect(details(parent, "counsel")).toMatchObject({
       kind: "counsel",
       model: "openai-codex/gpt-5.6-sol",
@@ -157,7 +167,11 @@ describe("managed subagents", () => {
       const host = new ExtensionHost();
       const parent = new Agent({ provider, model: parentModel, extensions: host });
       await host.register(
-        subagentsExtension({ parent: () => parent, coding: { inspectionTools: [] } }),
+        subagentsExtension({
+          parent: () => parent,
+          coding: { inspectionTools: [] },
+          inspectionPermissions: [],
+        }),
       );
 
       await parent.run("search");
@@ -197,7 +211,11 @@ describe("managed subagents", () => {
       extensions: host,
     });
     await host.register(
-      subagentsExtension({ parent: () => parent, coding: { inspectionTools: [] } }),
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+      }),
     );
 
     await parent.run("consult");
@@ -242,6 +260,9 @@ describe("managed subagents", () => {
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Own that unit from investigation through completion",
     );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Do not modify shared plan/todo state",
+    );
     const toolResult = result.messages.find(
       (message) => message.role === "toolResult" && message.toolName === "task",
     );
@@ -250,6 +271,80 @@ describe("managed subagents", () => {
     const restored = new Agent({ provider: new FakeProvider([]), model: fakeModel });
     restored.resume(parent.session);
     expect(restored.usage.inputTokens).toBe(60);
+  });
+
+  test("coding specialists require an explicit inspection permission boundary", () => {
+    const parent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const incomplete = {
+      parent: () => parent,
+      coding: { inspectionTools: [] },
+    } as unknown as SubagentExtensionOptions;
+
+    expect(() => subagentsExtension(incomplete)).toThrow(
+      "coding subagents require explicit inspection permissions",
+    );
+  });
+
+  test("specialists cannot escalate a mutating shell call through the parent", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "search-1",
+            name: "search",
+            arguments: { query: "Inspect the workspace" },
+          },
+        ],
+      },
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "bash-1",
+            name: "bash",
+            arguments: { command: "touch changed" },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "The command was denied." }] },
+      { content: [{ type: "text", text: "Search finished." }] },
+    ]);
+    let ran = false;
+    let asked = false;
+    const bash = tool({
+      name: "bash",
+      description: "shell",
+      inputSchema: z.object({ command: z.string() }),
+      permissionScope: ({ command }) => (command.startsWith("rg ") ? "bash:inspect" : "bash"),
+      execute: () => {
+        ran = true;
+        return "ran";
+      },
+    });
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: codexTerra,
+      tools: [bash],
+      extensions: host,
+      onPermission: async () => {
+        asked = true;
+        return "allow";
+      },
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: ["bash"] },
+        inspectionPermissions: [{ permission: "*", pattern: "*", action: "allow" }],
+      }),
+    );
+
+    await parent.run("search safely");
+
+    expect(ran).toBe(false);
+    expect(asked).toBe(false);
   });
 
   test("a child permission ask is resolved by and visible through the parent", async () => {
