@@ -244,7 +244,7 @@ class LiveToolOutput {
   }
 }
 
-type PendingTool = ToolRenderInfo & { output: LiveToolOutput };
+type PendingTool = ToolRenderInfo & { output: LiveToolOutput; startedAt?: number };
 interface ActivityTool {
   id: string;
   info: ToolRenderInfo;
@@ -524,6 +524,7 @@ export class App {
       width: this.options.width,
       depth: this.options.depth,
       spinner: this.spinner.glyph,
+      spinnerFrame: this.spinner.frameIndex,
     };
   }
 
@@ -793,6 +794,7 @@ export class App {
               argsStreaming: event.delta.kind !== "toolcall_end",
               running: existing?.running ?? false,
               output: existing?.output ?? new LiveToolOutput(),
+              ...(existing?.startedAt !== undefined ? { startedAt: existing.startedAt } : {}),
             });
           }
         }
@@ -860,6 +862,7 @@ export class App {
             args: event.args,
             running: true,
             output: existing?.output ?? new LiveToolOutput(),
+            startedAt: existing?.startedAt ?? Date.now(),
           });
         }
         return [];
@@ -1275,6 +1278,8 @@ export class App {
             toolName: pending.toolName,
             args: pending.args,
             running: pending.running === true,
+            elapsedMs:
+              pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
             argsStreaming: pending.argsStreaming === true,
             expanded: false,
           },

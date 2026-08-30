@@ -29,6 +29,7 @@ export interface ToolRenderInfo {
   args: unknown;
   result?: ToolResultMessage;
   running?: boolean;
+  elapsedMs?: number;
   expanded?: boolean;
   // Arguments are still arriving from the model, so anything rendered from them
   // is a fragment of itself.
@@ -586,10 +587,12 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
         ]
           .filter(Boolean)
           .join(` ${GLYPHS.separator} `)
-      : "running";
-    const name = details
-      ? action.completed
-      : `${ctx.spinner ?? (GLYPHS.spinner[0] as string)} ${action.running}`;
+      : (formatDuration(info.elapsedMs) ?? "0ms");
+    const spinnerFrame = ctx.spinnerFrame ?? 0;
+    const spinner =
+      GLYPHS.subagentSpinner[spinnerFrame % GLYPHS.subagentSpinner.length] ??
+      GLYPHS.subagentSpinner[0];
+    const name = details ? action.completed : `${spinner} ${action.running}`;
     const lines = toolCell(
       {
         name,

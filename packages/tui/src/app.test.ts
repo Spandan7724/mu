@@ -4,7 +4,12 @@ import { describe, expect, spyOn, test } from "bun:test";
 import type { AgentEvent, AgentMessage } from "@mu/core";
 import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { InputDecoder } from "./input.ts";
-import { codingRenderers, genericRenderer, RendererRegistry } from "./registry.ts";
+import {
+  codingRenderers,
+  genericRenderer,
+  RendererRegistry,
+  subagentRenderers,
+} from "./registry.ts";
 import { FullScreenRenderer, type RenderFrame } from "./renderer.ts";
 import { stripAnsi, styleText } from "./style.ts";
 import { Terminal, type TerminalIo } from "./terminal.ts";
@@ -31,6 +36,7 @@ function harness(
 
   const registry = new RendererRegistry();
   registry.registerAll(codingRenderers);
+  registry.registerAll(subagentRenderers);
 
   const app = new App({
     width: 60,
@@ -219,6 +225,30 @@ describe("fake-agent session", () => {
       app.handleEvent({ type: "agent_start" });
       const nextTurn = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
       expect(nextTurn).toContain("0ms");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a running subagent uses Braille and replaces running with elapsed time", () => {
+    const { app } = harness();
+    const now = Date.now();
+    const spy = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      app.handleEvent({
+        type: "tool_execution_start",
+        toolCallId: "counsel-1",
+        toolName: "counsel",
+        args: { question: "Review parser" },
+      });
+      const started = app.renderScreen().map(stripAnsi).join("\n");
+      expect(started).toContain("⠋ consulting counsel Review parser · 0ms");
+
+      spy.mockReturnValue(now + 12_000);
+      app.tickSpinner();
+      const later = app.renderScreen().map(stripAnsi).join("\n");
+      expect(later).toContain("⠙ consulting counsel Review parser · 12s");
+      expect(later).not.toContain("· running");
     } finally {
       spy.mockRestore();
     }

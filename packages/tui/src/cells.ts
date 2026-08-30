@@ -17,6 +17,7 @@ export interface RenderContext {
   width: number;
   depth: ColorDepth;
   spinner?: string;
+  spinnerFrame?: number;
 }
 
 const dim = (text: string, depth: ColorDepth) => styleText(text, { dim: true }, depth);

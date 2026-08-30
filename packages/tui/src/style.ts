@@ -212,6 +212,7 @@ export const GLYPHS = {
   bullet: "•",
   separator: "·",
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
+  subagentSpinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const;
 
 export const MARGIN = "  ";

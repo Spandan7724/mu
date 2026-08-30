@@ -426,11 +426,15 @@ export class Spinner {
   private frame = 0;
 
   get glyph(): string {
-    return GLYPHS.spinner[this.frame] as string;
+    return GLYPHS.spinner[this.frame % GLYPHS.spinner.length] as string;
+  }
+
+  get frameIndex(): number {
+    return this.frame;
   }
 
   tick(): void {
-    this.frame = (this.frame + 1) % GLYPHS.spinner.length;
+    this.frame++;
   }
 
   render(depth: ColorDepth, label = ""): string {

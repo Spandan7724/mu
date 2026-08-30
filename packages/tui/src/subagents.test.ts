@@ -154,7 +154,7 @@ describe("subagent transcript rendering", () => {
     expect(ansi16[0]).toContain("93m");
   });
 
-  test("animates running specialist rows with the current spinner frame", () => {
+  test("animates running specialist rows with Braille and elapsed time", () => {
     const renderer = subagentRenderers.search;
     if (!renderer) throw new Error("missing search renderer");
     const info = {
@@ -163,11 +163,18 @@ describe("subagent transcript rendering", () => {
       running: true,
     };
 
-    const first = renderer(info, { width: 100, depth: "none", spinner: "▸▹▹" });
-    const second = renderer(info, { width: 100, depth: "none", spinner: "▹▸▹" });
+    const first = renderer(
+      { ...info, elapsedMs: 0 },
+      { width: 100, depth: "none", spinnerFrame: 0 },
+    );
+    const second = renderer(
+      { ...info, elapsedMs: 12_000 },
+      { width: 100, depth: "none", spinnerFrame: 1 },
+    );
 
-    expect(first[0]).toContain("▸▹▹ searching codebase");
-    expect(second[0]).toContain("▹▸▹ searching codebase");
+    expect(first[0]).toContain("⠋ searching codebase Trace parser ownership · 0ms");
+    expect(second[0]).toContain("⠙ searching codebase Trace parser ownership · 12s");
+    expect(second[0]).not.toContain("running");
   });
 
   test("task expansion shows its complete delegated brief and formatted result", () => {
