@@ -219,12 +219,22 @@ class SubagentManager {
     const levels = supportedThinkingLevels(model);
     if (kind === "search") {
       if (levels.includes("low")) return "low";
+      if (model.provider === parent.modelInfo.provider && model.id === parent.modelInfo.id) {
+        return parent.thinking;
+      }
       return defaultThinkingLevel(model);
     }
-    const current = levels.indexOf(parent.thinking);
-    if (current !== -1) return levels[Math.min(current + 1, levels.length - 1)] ?? parent.thinking;
-    const base = levels.indexOf(defaultThinkingLevel(model));
-    return levels[Math.min(Math.max(0, base) + 1, levels.length - 1)] ?? parent.thinking;
+    const xhigh = levels.indexOf("xhigh");
+    const capped =
+      xhigh === -1
+        ? levels.filter((level) => level !== "max" && level !== "ultra")
+        : levels.slice(0, xhigh + 1);
+    if (capped.length === 0) return defaultThinkingLevel(model);
+    const current = capped.indexOf(parent.thinking);
+    if (current !== -1) return capped[Math.min(current + 1, capped.length - 1)] ?? parent.thinking;
+    if (levels.includes(parent.thinking)) return capped.at(-1) ?? parent.thinking;
+    const base = capped.indexOf(defaultThinkingLevel(model));
+    return capped[Math.min(Math.max(0, base) + 1, capped.length - 1)] ?? parent.thinking;
   }
 }
 
@@ -234,11 +244,9 @@ function refs(provider: string, ids: string[]): string[] {
 
 function searchCandidates(parent: Agent): string[] {
   const { provider } = parent.modelInfo;
-  if (provider === "anthropic") {
-    return refs(provider, ["claude-sonnet-5", "claude-haiku-4-5"]);
-  }
+  if (provider === "anthropic") return refs(provider, ["claude-sonnet-5"]);
   if (provider === "openai" || provider === "openai-codex") {
-    return refs(provider, ["gpt-5.6-terra", "gpt-5.6-sol"]);
+    return refs(provider, ["gpt-5.6-terra"]);
   }
   return [];
 }

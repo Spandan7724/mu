@@ -134,22 +134,36 @@ describe("managed subagents", () => {
   });
 
   test("search uses configured fast models and otherwise retains the parent model", async () => {
-    const cases: { parentModel: ModelInfo; expected: string }[] = [
+    const cases: { parentModel: ModelInfo; expectedModel: string; expectedThinking: string }[] = [
       {
         parentModel: { ...fakeModel, provider: "openai", id: "gpt-5.6-sol" },
-        expected: "openai/gpt-5.6-terra",
+        expectedModel: "openai/gpt-5.6-terra",
+        expectedThinking: "low",
       },
       {
         parentModel: { ...fakeModel, provider: "anthropic", id: "claude-opus-5" },
-        expected: "anthropic/claude-sonnet-5",
+        expectedModel: "anthropic/claude-sonnet-5",
+        expectedThinking: "low",
       },
       {
         parentModel: { ...fakeModel, provider: "google", id: "gemini-2.5-pro" },
-        expected: "google/gemini-2.5-pro",
+        expectedModel: "google/gemini-2.5-pro",
+        expectedThinking: "low",
+      },
+      {
+        parentModel: {
+          ...fakeModel,
+          provider: "custom",
+          id: "reasoner",
+          thinkingLevels: ["high", "xhigh"],
+          defaultThinkingLevel: "high",
+        },
+        expectedModel: "custom/reasoner",
+        expectedThinking: "high",
       },
     ];
 
-    for (const { parentModel, expected } of cases) {
+    for (const { parentModel, expectedModel, expectedThinking } of cases) {
       const provider = new FakeProvider([
         {
           content: [
@@ -176,17 +190,17 @@ describe("managed subagents", () => {
 
       await parent.run("search");
 
-      expect(details(parent, "search").model).toBe(expected);
-      expect(details(parent, "search").thinkingLevel).toBe("low");
+      expect(details(parent, "search").model).toBe(expectedModel);
+      expect(details(parent, "search").thinkingLevel).toBe(expectedThinking);
     }
   });
 
-  test("counsel retains a Google parent model and never downshifts maximum reasoning", async () => {
+  test("counsel retains a Google parent model and caps reasoning at xhigh", async () => {
     const model: ModelInfo = {
       ...fakeModel,
       provider: "google",
       id: "gemini-2.5-pro",
-      thinkingLevels: ["low", "medium", "high"],
+      thinkingLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultThinkingLevel: "medium",
     };
     const provider = new FakeProvider([
@@ -207,7 +221,7 @@ describe("managed subagents", () => {
     const parent = new Agent({
       provider,
       model,
-      thinkingLevel: "high",
+      thinkingLevel: "max",
       extensions: host,
     });
     await host.register(
@@ -222,7 +236,7 @@ describe("managed subagents", () => {
 
     expect(details(parent, "counsel")).toMatchObject({
       model: "google/gemini-2.5-pro",
-      thinkingLevel: "high",
+      thinkingLevel: "xhigh",
     });
   });
 
