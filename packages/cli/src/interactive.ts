@@ -144,7 +144,10 @@ const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
   unrestricted: { red: true },
 };
 
-export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): string {
+// A trailing blank, not a leading one: shift+tab commits one of these per press,
+// and the composer sits flush against the transcript, so one line below each
+// notice separates a run of them from each other and the last from the box.
+export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): string[] {
   // Bold as well as coloured: the four modes have to stay apart under NO_COLOR
   // and for anyone who does not separate them by hue.
   const style = {
@@ -152,7 +155,7 @@ export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): s
     bold: true,
   };
   const suffix = styleText(" · this session", { dim: true }, depth);
-  return `  permissions set to ${styleText(mode.label, style, depth)}${suffix}`;
+  return [`  permissions set to ${styleText(mode.label, style, depth)}${suffix}`, ""];
 }
 
 export async function initializeInteractiveSession(
@@ -780,8 +783,7 @@ export async function runInteractive(
     target.setPermissions(rulesForPermissionMode(basePermissions, mode));
     if (source === "side") sidePermissionMode = mode;
     else activePermissionMode = mode;
-    commitLines([formatPermissionMode(mode, depth)], source);
-    paint();
+    commitLines(formatPermissionMode(mode, depth), source);
   }
 
   function cyclePermissionMode(): void {

@@ -45,27 +45,39 @@ describe("permission mode notice", () => {
     return mode;
   };
 
+  const line = (mode: ReturnType<typeof modeFor>, depth: "truecolor" | "none") =>
+    formatPermissionMode(mode, depth)[0] ?? "";
+
   test("each mode is coloured by how it moves the gate", () => {
     // Loosening reads green, opening fully reads red, restricting reads blue,
     // and the baseline keeps mu's own accent.
-    expect(formatPermissionMode(modeFor("accept-edits"), "truecolor")).toContain(
-      "74;222;128maccept edits",
-    );
-    expect(formatPermissionMode(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
-    expect(formatPermissionMode(modeFor("plan-readonly"), "truecolor")).toContain(
-      "96;165;250mplan (read-only)",
-    );
-    expect(formatPermissionMode(modeFor("default"), "truecolor")).toContain("177;249;223mdefault");
+    expect(line(modeFor("accept-edits"), "truecolor")).toContain("74;222;128maccept edits");
+    expect(line(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
+    expect(line(modeFor("plan-readonly"), "truecolor")).toContain("96;165;250mplan (read-only)");
+    expect(line(modeFor("default"), "truecolor")).toContain("177;249;223mdefault");
   });
 
   test("the mode stays legible without colour", () => {
     // Bold carries the distinction when hue cannot, and NO_COLOR keeps the text.
     for (const mode of CODING_PERMISSION_MODES) {
-      expect(formatPermissionMode(mode, "truecolor")).toContain("[1;");
-      expect(formatPermissionMode(mode, "none")).toBe(
-        `  permissions set to ${mode.label} \u00b7 this session`,
-      );
+      expect(line(mode, "truecolor")).toContain("[1;");
+      expect(line(mode, "none")).toBe(`  permissions set to ${mode.label} · this session`);
     }
+  });
+
+  test("one blank line below keeps a run of mode changes apart", () => {
+    // shift+tab commits one of these per press, so without the gap consecutive
+    // notices stack into a solid block — and the composer sits flush under the
+    // last one. Exactly one line, so cycling does not open a growing hole.
+    for (const mode of CODING_PERMISSION_MODES) {
+      expect(formatPermissionMode(mode, "none")).toHaveLength(2);
+      expect(formatPermissionMode(mode, "none")[1]).toBe("");
+    }
+    const cycled = CODING_PERMISSION_MODES.flatMap((mode) =>
+      formatPermissionMode(mode, "none"),
+    ).join("\n");
+    expect(cycled).not.toMatch(/this session\n {2}permissions/);
+    expect(cycled).not.toContain("\n\n\n");
   });
 });
 
