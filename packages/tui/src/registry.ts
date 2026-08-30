@@ -15,7 +15,7 @@ import {
 } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { GLYPHS, MARGIN, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
 import { highlightCode } from "./syntax-highlight.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { wrapLine, wrapText } from "./wrap.ts";
@@ -43,7 +43,7 @@ export interface ToolRenderInfo {
 export type ActivityKind = "explore" | "edit" | "command";
 
 export interface ToolRendererFn {
-  (info: ToolRenderInfo, ctx: RenderContext): string[];
+  (info: ToolRenderInfo, ctx: RenderContext, registry?: RendererRegistry): string[];
   // The renderer draws its own expanded form, so the registry must not staple
   // the raw result text underneath it as well.
   ownsExpansion?: boolean;
@@ -550,34 +550,31 @@ function subagentDescription(info: ToolRenderInfo, kind: SubagentKind): string {
   );
 }
 
-type SubagentActivityKind = "files" | "commands" | "other actions";
-
-interface SubagentActivity {
-  id: string;
-  kind: SubagentActivityKind;
-  text: string;
+interface SubagentToolCall {
+  info: ToolRenderInfo;
 }
 
-function toolTrace(message: AgentMessage): SubagentActivity[] {
-  if (message.role !== "assistant") return [];
-  return message.content.flatMap((block) => {
-    if (block.type !== "toolCall") return [];
-    const args = block.arguments;
-    const path = firstString(args, ["path"]);
-    const command = firstString(args, ["command"]);
-    const primary = path ?? command ?? firstString(args, ["query", "pattern", "name"]);
-    let text = primary ? `${block.name} ${primary}` : block.name;
-    let kind: SubagentActivityKind = path ? "files" : "other actions";
-    if (block.name === "bash" && command) {
-      text = `$ ${command}`;
-      kind = "commands";
-    }
-    if (block.name === "read" && path) {
-      const offset = typeof args.offset === "number" ? args.offset : 1;
-      const limit = typeof args.limit === "number" ? args.limit : undefined;
-      if (limit !== undefined) text = `read ${path} L${offset}-${offset + limit - 1}`;
-    }
-    return [{ id: block.id, kind, text }];
+function subagentToolCalls(messages: AgentMessage[], running: boolean): SubagentToolCall[] {
+  const results = new Map(
+    messages
+      .filter((message): message is ToolResultMessage => message.role === "toolResult")
+      .map((message) => [message.toolCallId, message]),
+  );
+  return messages.flatMap((message) => {
+    if (message.role !== "assistant") return [];
+    return message.content.flatMap((block) => {
+      if (block.type !== "toolCall") return [];
+      const result = results.get(block.id);
+      return [
+        {
+          info: {
+            toolName: block.name,
+            args: block.arguments,
+            ...(result ? { result } : running ? { running: true } : {}),
+          },
+        },
+      ];
+    });
   });
 }
 
@@ -601,17 +598,77 @@ function boundedSubagentRows(lines: string[], ctx: RenderContext): string[] {
   ];
 }
 
+function renderSubagentTool(
+  call: SubagentToolCall,
+  activityKind: ActivityKind | undefined,
+  contentIndent: string,
+  contentWidth: number,
+  ctx: RenderContext,
+  registry: RendererRegistry,
+): string[] {
+  const nestedContext = {
+    ...ctx,
+    width: contentWidth + stringWidth(MARGIN),
+  };
+  const [header] = registry.render({ ...call.info, expanded: false }, nestedContext);
+  if (!header) return [];
+  let rendered = header;
+  if (activityKind === "edit") {
+    const diff = (call.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+    if (diff) {
+      rendered += ` ${styleText(`+${diff.added}`, { green: true }, ctx.depth)} ${styleText(`-${diff.removed}`, { red: true }, ctx.depth)}`;
+    }
+  }
+  const body = rendered.startsWith(MARGIN) ? rendered.slice(MARGIN.length) : rendered;
+  return wrapLine(body, contentWidth, "  ").map((line) => `${contentIndent}${line}`);
+}
+
+function renderSubagentActivity(
+  calls: SubagentToolCall[],
+  contentIndent: string,
+  contentWidth: number,
+  ctx: RenderContext,
+  registry: RendererRegistry,
+): string[] {
+  const groups: { kind?: ActivityKind; calls: SubagentToolCall[] }[] = [];
+  for (const call of calls) {
+    const kind = registry.activityKind(call.info);
+    const previous = groups.at(-1);
+    if (kind && previous?.kind === kind) previous.calls.push(call);
+    else groups.push({ ...(kind ? { kind } : {}), calls: [call] });
+  }
+
+  return groups.flatMap((group) => {
+    const lines: string[] = [];
+    if (group.kind && group.calls.length > 1) {
+      lines.push(
+        `${contentIndent}${styleText(
+          registry.activitySummary(
+            group.kind,
+            group.calls.map((call) => call.info),
+            ctx.depth,
+          ),
+          { bold: true },
+          ctx.depth,
+        )}`,
+      );
+    }
+    for (const call of group.calls) {
+      lines.push(
+        ...renderSubagentTool(call, group.kind, contentIndent, contentWidth, ctx, registry),
+      );
+    }
+    return lines;
+  });
+}
+
 function subagentTrace(
   details: SubagentDetails | SubagentProgressState,
   info: ToolRenderInfo,
   ctx: RenderContext,
+  registry: RendererRegistry,
 ): string[] {
-  const results = new Map(
-    details.messages
-      .filter((message): message is ToolResultMessage => message.role === "toolResult")
-      .map((message) => [message.toolCallId, message]),
-  );
-  const calls = details.messages.flatMap(toolTrace);
+  const calls = subagentToolCalls(details.messages, details.type === "subagent-progress-state");
   const sectionIndent = `${MARGIN}  `;
   const contentIndent = `${sectionIndent}  `;
   const contentWidth = Math.max(1, ctx.width - stringWidth(contentIndent));
@@ -631,23 +688,7 @@ function subagentTrace(
         ctx.depth,
       )}`,
     );
-    for (const kind of ["files", "commands", "other actions"] as const) {
-      const group = calls.filter((call) => call.kind === kind);
-      if (group.length === 0) continue;
-      trace.push(`${contentIndent}${styleText(kind, { dim: true }, ctx.depth)}`);
-      for (const call of group) {
-        const result = results.get(call.id);
-        const status = result?.isError ? ` ${GLYPHS.separator} failed` : "";
-        const styledStatus = result?.isError ? styleText(status, { red: true }, ctx.depth) : "";
-        trace.push(
-          ...wrapLine(
-            `${styleText("·", { dim: true }, ctx.depth)} ${styleText(sanitizeUntrusted(call.text), { code: true }, ctx.depth)}${styledStatus}`,
-            contentWidth,
-            "  ",
-          ).map((line) => contentIndent + line),
-        );
-      }
-    }
+    trace.push(...renderSubagentActivity(calls, contentIndent, contentWidth, ctx, registry));
   }
   const answer = (details.type === "subagent" ? resultText(info.result) : details.answer).trim();
   if (answer) {
@@ -667,13 +708,15 @@ function subagentTrace(
 }
 
 function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
-  const renderer: ToolRendererFn = (info, ctx) => {
+  const renderer: ToolRendererFn = (info, ctx, registry) => {
     const details = subagentDetails(info);
     const progress = subagentProgress(info);
     const state = details ?? progress;
     const action = SUBAGENT_ACTIONS[kind];
     const description = state?.description ?? subagentDescription(info, kind);
-    const callCount = state?.messages.flatMap(toolTrace).length ?? 0;
+    const callCount = state
+      ? subagentToolCalls(state.messages, state.type === "subagent-progress-state").length
+      : 0;
     const summary = details
       ? [
           details.model,
@@ -707,7 +750,9 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
       },
       ctx,
     );
-    return info.expanded && state ? [...lines, ...subagentTrace(state, info, ctx)] : lines;
+    return info.expanded && state
+      ? [...lines, ...subagentTrace(state, info, ctx, registry ?? new RendererRegistry())]
+      : lines;
   };
   renderer.ownsExpansion = true;
   renderer.supportsLiveExpansion = true;
@@ -755,12 +800,46 @@ export class RendererRegistry {
     return this.renderers.get(toolName)?.supportsLiveExpansion === true;
   }
 
+  activitySummary(
+    activityKind: ActivityKind,
+    infos: readonly ToolRenderInfo[],
+    depth: ColorDepth,
+  ): string {
+    if (activityKind === "explore") {
+      const searches = infos.filter((info) => info.toolName === "bash").length;
+      const files = infos.length - searches;
+      const parts = [
+        files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
+        searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
+      ].filter(Boolean);
+      return `Explored ${parts.join(", ")}`;
+    }
+    if (activityKind === "command") {
+      const failed = infos.filter((info) => info.result?.isError).length;
+      const failure = failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, depth)}` : "";
+      return `Ran ${infos.length} command${infos.length === 1 ? "" : "s"}${failure}`;
+    }
+    const totals = infos.reduce(
+      (sum, info) => {
+        const diff = (info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
+        return {
+          added: sum.added + (diff?.added ?? 0),
+          removed: sum.removed + (diff?.removed ?? 0),
+        };
+      },
+      { added: 0, removed: 0 },
+    );
+    const added = styleText(`+${totals.added}`, { green: true }, depth);
+    const removed = styleText(`-${totals.removed}`, { red: true }, depth);
+    return `Edited ${infos.length} file${infos.length === 1 ? "" : "s"} ${added} ${removed}`;
+  }
+
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {
     const renderer = this.renderers.get(info.toolName) ?? genericRenderer;
     let lines: string[];
     let ownsExpansion = renderer.ownsExpansion === true;
     try {
-      lines = renderer(info, ctx);
+      lines = renderer(info, ctx, this);
     } catch {
       // A broken renderer must never take the UI down with it — and the
       // fallback has no expanded form of its own.

@@ -1613,35 +1613,11 @@ export class App {
   }
 
   private activitySummary(item: Extract<TranscriptItem, { kind: "activity" }>): string {
-    const count = item.tools.length;
-    if (item.activityKind === "explore") {
-      const searches = item.tools.filter((tool) => tool.info.toolName === "bash").length;
-      const files = count - searches;
-      const parts = [
-        files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
-        searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
-      ].filter(Boolean);
-      return `Explored ${parts.join(", ")}`;
-    }
-    if (item.activityKind === "command") {
-      const failed = item.tools.filter((tool) => tool.info.result?.isError).length;
-      const failure =
-        failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, this.options.depth)}` : "";
-      return `Ran ${count} command${count === 1 ? "" : "s"}${failure}`;
-    }
-    const totals = item.tools.reduce(
-      (sum, tool) => {
-        const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
-        return {
-          added: sum.added + (diff?.added ?? 0),
-          removed: sum.removed + (diff?.removed ?? 0),
-        };
-      },
-      { added: 0, removed: 0 },
+    return this.registry.activitySummary(
+      item.activityKind,
+      item.tools.map((tool) => tool.info),
+      this.options.depth,
     );
-    const added = styleText(`+${totals.added}`, { green: true }, this.options.depth);
-    const removed = styleText(`-${totals.removed}`, { red: true }, this.options.depth);
-    return `Edited ${count} file${count === 1 ? "" : "s"} ${added} ${removed}`;
   }
 
   private renderActivityTool(

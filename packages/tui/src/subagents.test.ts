@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { ToolResultMessage } from "@mu/core";
-import { subagentRenderers } from "./registry.ts";
+import { codingRenderers, RendererRegistry, subagentRenderers } from "./registry.ts";
 import { stripAnsi } from "./style.ts";
+
+function rendererRegistry(): RendererRegistry {
+  const registry = new RendererRegistry();
+  registry.registerAll(subagentRenderers);
+  registry.registerAll(codingRenderers);
+  return registry;
+}
 
 const result: ToolResultMessage = {
   role: "toolResult",
@@ -59,6 +66,7 @@ const result: ToolResultMessage = {
         toolCallId: "read-1",
         toolName: "read",
         content: [{ type: "text", text: "source" }],
+        details: { lines: 31 },
         isError: false,
         timestamp: 2,
       },
@@ -67,6 +75,7 @@ const result: ToolResultMessage = {
         toolCallId: "bash-1",
         toolName: "bash",
         content: [{ type: "text", text: "match" }],
+        details: { exitCode: 0, durationMs: 334 },
         isError: false,
         timestamp: 3,
       },
@@ -86,6 +95,7 @@ describe("subagent transcript rendering", () => {
   test("shows the full prompt, grouped activity, and an indented Markdown result", () => {
     const renderer = subagentRenderers.search;
     if (!renderer) throw new Error("missing search renderer");
+    const registry = rendererRegistry();
     const compact = renderer(
       { toolName: "search", args: { query: "Trace parser ownership" }, result },
       { width: 100, depth: "none" },
@@ -93,6 +103,7 @@ describe("subagent transcript rendering", () => {
     const expanded = renderer(
       { toolName: "search", args: { query: "Trace parser ownership" }, result, expanded: true },
       { width: 100, depth: "none" },
+      registry,
     ).map(stripAnsi);
 
     expect(compact).toHaveLength(1);
@@ -103,10 +114,11 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("    prompt");
     expect(expanded).toContain("      Trace parser ownership");
     expect(expanded).toContain("    activity · 2 actions");
-    expect(expanded).toContain("      files");
-    expect(expanded).toContain("      · read packages/parser.ts L10-40");
-    expect(expanded).toContain("      commands");
-    expect(expanded).toContain("      · $ rg -n 'parse' packages");
+    expect(expanded).toContain("      Explored 1 file, 1 search");
+    expect(expanded).toContain("      │ read packages/parser.ts · 31 lines");
+    expect(expanded).toContain("      │ ran rg -n 'parse' packages · ✓ 334ms");
+    expect(expanded).not.toContain("      files");
+    expect(expanded).not.toContain("      commands");
     expect(expanded).toContain("    result");
     expect(expanded).toContain("      Ownership");
     expect(expanded).toContain("      • Keep this boundary.");
@@ -120,6 +132,7 @@ describe("subagent transcript rendering", () => {
   test("dims the complete prompt instead of only retaining its compact prefix", () => {
     const renderer = subagentRenderers.counsel;
     if (!renderer) throw new Error("missing counsel renderer");
+    const registry = rendererRegistry();
     const prompt =
       "Review the current design end to end.\nReturn the decisive evidence and reversal condition.";
     const colored = renderer(
@@ -135,6 +148,7 @@ describe("subagent transcript rendering", () => {
         expanded: true,
       },
       { width: 100, depth: "truecolor" },
+      registry,
     );
 
     expect(colored.join("\n")).toContain("\u001b[2mReview the current design end to end.");
@@ -180,6 +194,7 @@ describe("subagent transcript rendering", () => {
   test("task expansion shows its complete delegated brief and formatted result", () => {
     const renderer = subagentRenderers.task;
     if (!renderer) throw new Error("missing task renderer");
+    const registry = rendererRegistry();
     const expanded = renderer(
       {
         toolName: "task",
@@ -196,6 +211,7 @@ describe("subagent transcript rendering", () => {
         expanded: true,
       },
       { width: 100, depth: "none" },
+      registry,
     ).map(stripAnsi);
 
     expect(expanded[0]).toContain("delegated");
@@ -204,5 +220,55 @@ describe("subagent transcript rendering", () => {
       "      Implement the parser in `packages/parser.ts`, then run its focused tests.",
     );
     expect(expanded).toContain("      Ownership");
+  });
+
+  test("task activity reuses renderers registered by a custom profile", () => {
+    const registry = rendererRegistry();
+    registry.register("inspect_domain", () => ["  │ inspected widget · ✓ 9ms"]);
+    const messages = (result.details as { messages: unknown[] }).messages;
+    const customResult: ToolResultMessage = {
+      ...result,
+      toolCallId: "task-2",
+      toolName: "task",
+      details: {
+        ...(result.details as object),
+        kind: "task",
+        messages: [
+          {
+            ...(messages[0] as object),
+            content: [
+              {
+                type: "toolCall",
+                id: "inspect-1",
+                name: "inspect_domain",
+                arguments: { name: "widget" },
+              },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "inspect-1",
+            toolName: "inspect_domain",
+            content: [{ type: "text", text: "done" }],
+            isError: false,
+            timestamp: 2,
+          },
+        ],
+      },
+    };
+
+    const expanded = registry
+      .render(
+        {
+          toolName: "task",
+          args: { description: "Inspect widget", prompt: "Inspect the widget." },
+          result: customResult,
+          expanded: true,
+        },
+        { width: 100, depth: "none" },
+      )
+      .map(stripAnsi);
+
+    expect(expanded).toContain("      │ inspected widget · ✓ 9ms");
   });
 });

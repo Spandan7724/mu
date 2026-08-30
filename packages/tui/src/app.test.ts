@@ -315,7 +315,7 @@ describe("fake-agent session", () => {
     expect(expanded).toContain("❯ ⠋ searching codebase");
     expect(expanded).toContain("prompt");
     expect(expanded).toContain("Trace parser ownership across every relevant package");
-    expect(expanded).toContain("read packages/parser.ts L10-29");
+    expect(expanded).toContain("read packages/parser.ts");
     expect(expanded).toContain("response");
     expect(expanded).toContain("Finding");
     expect(expanded).toContain("Parser owns the flow.");
