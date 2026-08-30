@@ -596,6 +596,7 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
         tone: action.tone,
         ...(info.expanded && details ? {} : { primaryArg: description }),
         summary,
+        ...(details && !info.result?.isError ? { isSuccess: true } : {}),
         ...(info.result?.isError ? { isError: true, summaryError: true } : {}),
       },
       ctx,

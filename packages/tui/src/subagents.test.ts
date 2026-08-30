@@ -97,6 +97,7 @@ describe("subagent transcript rendering", () => {
 
     expect(compact).toHaveLength(1);
     expect(compact[0]).toContain("searched codebase Trace parser ownership");
+    expect(compact[0]).toContain("✓");
     expect(compact[0]).toContain("gpt-5.6-terra");
     expect(expanded[0]).not.toContain("Trace parser ownership");
     expect(expanded).toContain("    prompt");
