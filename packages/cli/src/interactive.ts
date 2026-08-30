@@ -21,6 +21,7 @@ import {
   type RenderFrame,
   type Style,
   styleText,
+  subagentRenderers,
   Terminal,
   type ToolRendererFn,
   terminalRows,
@@ -285,6 +286,7 @@ export async function runInteractive(
   let sessionResumable = Boolean(args.resumeSessionId);
 
   const registry = new RendererRegistry();
+  registry.registerAll(subagentRenderers);
   if (profile?.name === "coding") registry.registerAll(codingRenderers);
   registerDeclaredRenderers(registry, Object.entries(profileRenderers));
   registerDeclaredRenderers(registry, extensions.renderers);

@@ -12,6 +12,9 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "task_output", pattern: "*", action: "allow" },
   { permission: "task_list", pattern: "*", action: "allow" },
   { permission: "bash:inspect", pattern: "*", action: "allow" },
+  { permission: "task", pattern: "*", action: "allow" },
+  { permission: "search", pattern: "*", action: "allow" },
+  { permission: "counsel", pattern: "*", action: "allow" },
 ];
 
 export const CODING_PERMISSION_MODES: PermissionMode[] = [

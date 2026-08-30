@@ -1,4 +1,5 @@
-import type { CheckpointDiffFile, ToolResultMessage } from "@mu/core";
+import type { AgentMessage, CheckpointDiffFile, ToolResultMessage } from "@mu/core";
+import type { SubagentDetails, SubagentKind } from "mu";
 import {
   type DiffLine,
   diffCell,
@@ -422,6 +423,128 @@ export const genericRenderer: ToolRendererFn = (info, ctx) => {
         : {}),
   };
   return toolCell(options, ctx);
+};
+
+function subagentDetails(info: ToolRenderInfo): SubagentDetails | undefined {
+  const details = info.result?.details;
+  if (typeof details !== "object" || details === null) return undefined;
+  const candidate = details as Partial<SubagentDetails>;
+  if (
+    candidate.type !== "subagent" ||
+    !["task", "search", "counsel"].includes(candidate.kind ?? "") ||
+    typeof candidate.description !== "string" ||
+    typeof candidate.model !== "string" ||
+    typeof candidate.thinkingLevel !== "string" ||
+    typeof candidate.durationMs !== "number" ||
+    !Array.isArray(candidate.messages)
+  ) {
+    return undefined;
+  }
+  return candidate as SubagentDetails;
+}
+
+const SUBAGENT_ACTIONS: Record<
+  SubagentKind,
+  { running: string; completed: string; tone: NonNullable<ToolCellOptions["tone"]> }
+> = {
+  task: { running: "delegating", completed: "delegated", tone: "state" },
+  search: { running: "searching codebase", completed: "searched codebase", tone: "read" },
+  counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "state" },
+};
+
+function subagentDescription(info: ToolRenderInfo, kind: SubagentKind): string {
+  return (
+    firstString(info.args, kind === "task" ? ["description", "prompt"] : ["query", "question"]) ??
+    kind
+  );
+}
+
+function toolTrace(message: AgentMessage): { id: string; text: string }[] {
+  if (message.role !== "assistant") return [];
+  return message.content.flatMap((block) => {
+    if (block.type !== "toolCall") return [];
+    const args = block.arguments;
+    const primary = firstString(args, ["path", "query", "pattern", "command", "name"]);
+    let text = primary ? `${block.name} ${primary}` : block.name;
+    if (block.name === "bash" && primary) text = `$ ${primary}`;
+    if (block.name === "read" && primary) {
+      const offset = typeof args.offset === "number" ? args.offset : 1;
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
+      if (limit !== undefined) text = `read ${primary} L${offset}-${offset + limit - 1}`;
+    }
+    return [{ id: block.id, text }];
+  });
+}
+
+function subagentTrace(
+  details: SubagentDetails,
+  info: ToolRenderInfo,
+  ctx: RenderContext,
+): string[] {
+  const results = new Map(
+    details.messages
+      .filter((message): message is ToolResultMessage => message.role === "toolResult")
+      .map((message) => [message.toolCallId, message]),
+  );
+  const calls = details.messages.flatMap(toolTrace);
+  const indent = `${MARGIN}  `;
+  const width = Math.max(1, ctx.width - 4);
+  const trace = calls.flatMap((call) => {
+    const result = results.get(call.id);
+    const status = result?.isError ? ` ${GLYPHS.separator} failed` : "";
+    const styledStatus = result?.isError ? styleText(status, { red: true }, ctx.depth) : "";
+    return wrapLine(
+      `${styleText("·", { dim: true }, ctx.depth)} ${styleText(sanitizeUntrusted(call.text), { code: true }, ctx.depth)}${styledStatus}`,
+      width,
+      "  ",
+    ).map((line) => indent + line);
+  });
+  const answer = resultText(info.result).trim();
+  if (answer) {
+    trace.push(`${indent}${styleText("result", { dim: true }, ctx.depth)}`);
+    trace.push(
+      ...wrapLine(sanitizeUntrusted(answer), width, "  ").map((line) => `${indent}${line}`),
+    );
+  }
+  return compactLines(trace.join("\n"), EXPANDED_OUTPUT_LINES);
+}
+
+function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
+  const renderer: ToolRendererFn = (info, ctx) => {
+    const details = subagentDetails(info);
+    const action = SUBAGENT_ACTIONS[kind];
+    const description = details?.description ?? subagentDescription(info, kind);
+    const callCount = details?.messages.flatMap(toolTrace).length ?? 0;
+    const summary = details
+      ? [
+          details.model,
+          details.thinkingLevel,
+          callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
+          formatDuration(details.durationMs),
+        ]
+          .filter(Boolean)
+          .join(` ${GLYPHS.separator} `)
+      : "running";
+    const lines = toolCell(
+      {
+        name: details ? action.completed : action.running,
+        tone: action.tone,
+        primaryArg: description,
+        summary,
+        ...(info.result?.isError ? { isError: true, summaryError: true } : {}),
+      },
+      ctx,
+    );
+    return info.expanded && details ? [...lines, ...subagentTrace(details, info, ctx)] : lines;
+  };
+  renderer.ownsExpansion = true;
+  return renderer;
+}
+
+export const subagentRenderers: Record<string, ToolRendererFn> = {
+  task: makeSubagentRenderer("task"),
+  search: makeSubagentRenderer("search"),
+  counsel: makeSubagentRenderer("counsel"),
 };
 
 export class RendererRegistry {

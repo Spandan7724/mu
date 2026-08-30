@@ -61,6 +61,32 @@ describe("SessionTree", () => {
     }
   });
 
+  test("subagent usage on tool results round-trips through storage", () => {
+    const tree = newTree();
+    tree.appendMessage({
+      role: "toolResult",
+      toolCallId: "task-1",
+      toolName: "task",
+      content: [{ type: "text", text: "done" }],
+      usage: {
+        inputTokens: 12,
+        outputTokens: 4,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 0,
+      },
+      isError: false,
+      timestamp: 1,
+    });
+
+    const [message] = SessionTree.fromJsonl(tree.toJsonl()).messagesAt();
+    expect(message?.role === "toolResult" && message.usage).toEqual({
+      inputTokens: 12,
+      outputTokens: 4,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 0,
+    });
+  });
+
   test("entries form a parent chain", () => {
     const tree = newTree();
     const a = tree.appendMessage(userMessage("a"));

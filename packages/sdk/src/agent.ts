@@ -155,6 +155,15 @@ export interface AgentRunOptions<T = unknown> {
   allowedTools?: string[];
 }
 
+export interface ChildAgentOptions {
+  model?: ModelInfo;
+  thinkingLevel?: ThinkingLevel;
+  systemPrompt: string;
+  tools: AnyTool[];
+  permissions?: PermissionRule[];
+  budget?: Budget;
+}
+
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
   if (model && typeof model !== "string") return model;
   const ref = model ?? defaultModelRef();
@@ -264,6 +273,10 @@ export class Agent {
     return `${this.model.provider}/${this.model.id}`;
   }
 
+  get modelInfo(): ModelInfo {
+    return this.model;
+  }
+
   get contextWindow(): number {
     return this.model.contextWindow;
   }
@@ -286,6 +299,43 @@ export class Agent {
 
   get permissions(): PermissionRule[] {
     return [...this.permissionRules];
+  }
+
+  get tools(): AnyTool[] {
+    return [
+      ...(this.options.tools ?? []),
+      ...(this.options.extensions ? [...this.options.extensions.tools.values()] : []),
+    ];
+  }
+
+  availableModel(ref: string): ModelInfo | undefined {
+    return this.options.extensions?.findModel(ref) ?? findModel(ref);
+  }
+
+  createChild(options: ChildAgentOptions): Agent {
+    const model = options.model ?? this.model;
+    return new Agent({
+      model,
+      provider: this.providerFor(model),
+      systemPrompt: [
+        ...resolveSystemPrompt(this.options.systemPrompt),
+        { text: options.systemPrompt },
+      ],
+      tools: options.tools,
+      permissions: options.permissions ?? this.permissions,
+      onPermission: (request) => this.resolveChildPermission(request),
+      ...(options.budget ? { budget: options.budget } : {}),
+      session: new MemorySessionStore(),
+      ...(this.options.sessionProfile ? { sessionProfile: this.options.sessionProfile } : {}),
+      ...(this.options.sessionEnvironment
+        ? { sessionEnvironment: this.options.sessionEnvironment }
+        : {}),
+      thinkingLevel: options.thinkingLevel ?? this.currentThinking,
+      ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
+      ...(this.options.getCredentials ? { getCredentials: this.options.getCredentials } : {}),
+      ...(this.options.initialMessages ? { initialMessages: this.options.initialMessages } : {}),
+      ...(this.options.refreshContext ? { refreshContext: this.options.refreshContext } : {}),
+    });
   }
 
   setPermissions(rules: PermissionRule[]): void {
@@ -357,6 +407,12 @@ export class Agent {
     let restoredTotals = zeroUsage();
     for (const entry of candidate.all()) {
       if (entry.type === "message" && entry.message.role === "assistant") {
+        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+      } else if (
+        entry.type === "message" &&
+        entry.message.role === "toolResult" &&
+        entry.message.usage
+      ) {
         restoredTotals = addUsage(restoredTotals, entry.message.usage);
       } else if (entry.type === "compaction" && entry.usage) {
         restoredTotals = addUsage(restoredTotals, entry.usage);
@@ -1819,6 +1875,9 @@ export class Agent {
       },
       shouldStopAfterTurn: async (turn: TurnInfo) => {
         this.recoveryAttempted = false;
+        for (const result of turn.toolResults) {
+          if (result.usage) this.totals = addUsage(this.totals, result.usage);
+        }
         const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);
         if (breach) {
           return true;
@@ -1883,6 +1942,15 @@ export class Agent {
       this.options.extensions?.providers.get(model.provider) ??
       getProvider(model.provider)
     );
+  }
+
+  private async resolveChildPermission(request: PermissionRequest): Promise<"allow" | "deny"> {
+    this.publishEvent({ type: "permission_asked", request });
+    const outcome = this.options.onPermission
+      ? await this.options.onPermission(request).catch(() => "deny" as const)
+      : "deny";
+    this.publishEvent({ type: "permission_resolved", requestId: request.id, outcome });
+    return outcome;
   }
 
   private publishEvent(event: AgentEvent): void {

@@ -402,6 +402,7 @@ function resultMessage(
     toolName: call.name,
     content: result.content ?? [],
     ...(result.details !== undefined ? { details: result.details } : {}),
+    ...(result.usage !== undefined ? { usage: result.usage } : {}),
     isError,
     timestamp: Date.now(),
   };

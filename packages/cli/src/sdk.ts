@@ -1,5 +1,13 @@
 import { type CodingProfile, type CodingProfileOptions, codingProfile } from "@mu/profile-coding";
-import { Agent, type AgentOptions, defaultModelRef, optionsFromProfile, type Profile } from "mu";
+import {
+  Agent,
+  type AgentOptions,
+  defaultModelRef,
+  ExtensionHost,
+  optionsFromProfile,
+  type Profile,
+  subagentsExtension,
+} from "mu";
 
 export * from "mu";
 export { codingProfile };
@@ -18,10 +26,30 @@ function modelRefFor(options: AgentOptions): string {
 
 export async function createAgent(options: CreateAgentOptions = {}): Promise<Agent> {
   const { profile, profileOptions, ...agentOptions } = options;
-  if (!profile) return new Agent(agentOptions);
-
-  const resolvedProfile = profile === "coding" ? await codingProfile(profileOptions) : profile;
-  return new Agent(
-    await optionsFromProfile(resolvedProfile, modelRefFor(agentOptions), agentOptions),
+  const resolvedProfile = profile
+    ? profile === "coding"
+      ? await codingProfile(profileOptions)
+      : profile
+    : undefined;
+  const resolved = resolvedProfile
+    ? await optionsFromProfile(resolvedProfile, modelRefFor(agentOptions), agentOptions)
+    : agentOptions;
+  const extensions = resolved.extensions ?? new ExtensionHost();
+  const agent = new Agent({ ...resolved, extensions });
+  const restrictiveMode = resolvedProfile?.permissionModes?.find(
+    (mode) => mode.tone === "restrictive",
   );
+  const existingTools = [
+    ...(resolved.tools?.map((candidate) => candidate.name) ?? []),
+    ...extensions.tools.keys(),
+  ];
+  await extensions.register(
+    subagentsExtension({
+      parent: () => agent,
+      ...(resolvedProfile?.subagents ? { profile: resolvedProfile.subagents } : {}),
+      inspectionPermissions: [...(resolved.permissions ?? []), ...(restrictiveMode?.rules ?? [])],
+      excludeTools: existingTools,
+    }),
+  );
+  return agent;
 }

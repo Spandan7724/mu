@@ -1,9 +1,10 @@
-import type { ToolResultContent } from "@mu/ai";
+import type { ToolResultContent, Usage } from "@mu/ai";
 import type { ToolPermissionDetails } from "./permission.ts";
 
 export interface ToolResult {
   content: ToolResultContent[];
   details?: unknown; // renderer/session-visible only
+  usage?: Usage; // provider usage incurred by work performed inside this tool
   isError?: boolean;
   // When every call in a batch returns terminate, the loop stops after it.
   terminate?: boolean;

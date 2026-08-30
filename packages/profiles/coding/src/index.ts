@@ -24,7 +24,12 @@ import {
   loadProjectConfig,
   rememberAllow,
 } from "./permissions.ts";
-import { CODING_SIDE_BOUNDARY, codingPrompt } from "./prompts.ts";
+import {
+  CODING_COUNSEL_PROMPT,
+  CODING_SEARCH_PROMPT,
+  CODING_SIDE_BOUNDARY,
+  codingPrompt,
+} from "./prompts.ts";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
@@ -171,6 +176,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     environment,
     contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
     sideBoundary: () => CODING_SIDE_BOUNDARY,
+    subagents: {
+      inspectionTools: ["read", "ls", "bash"],
+      searchPrompt: CODING_SEARCH_PROMPT,
+      counselPrompt: CODING_COUNSEL_PROMPT,
+    },
     refreshContext: (messages, context) =>
       instructionLoader.refreshedMessages(messages, context.sessionId),
     diagnostics: [

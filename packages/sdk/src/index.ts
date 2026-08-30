@@ -66,6 +66,7 @@ export type {
   AgentRunOptions,
   CheckpointActionData,
   CheckpointActionResult,
+  ChildAgentOptions,
   HaltReason,
   ManualCompactionResult,
   RunResult,
@@ -147,6 +148,12 @@ export {
   structuredOutputPrompt,
   structuredOutputTool,
 } from "./structured-output.ts";
+export type {
+  SubagentDetails,
+  SubagentExtensionOptions,
+  SubagentKind,
+} from "./subagents.ts";
+export { subagentsExtension } from "./subagents.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";
 export { tool } from "./tool.ts";
 export type {

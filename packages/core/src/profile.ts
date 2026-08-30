@@ -35,6 +35,14 @@ export interface ProfileRuntime {
   shutdown?: () => void | Promise<void>;
 }
 
+export interface ProfileSubagents {
+  // Tools a read-only investigator may use. Their permission rules remain the
+  // enforcement boundary; this list only limits the child's visible toolset.
+  inspectionTools: string[];
+  searchPrompt?: string;
+  counselPrompt?: string;
+}
+
 // A profile bundles everything that makes the kernel behave as a particular
 // kind of agent. The kernel knows nothing about what is inside — coding,
 // computer-use and automation profiles are all just this shape.
@@ -57,6 +65,8 @@ export interface Profile {
   contextMessages?: () => Promise<AgentMessage[]> | AgentMessage[];
   // Domain-specific constraints appended to the neutral side-conversation boundary.
   sideBoundary?: () => string;
+  // Optional domain contribution to the profile-independent subagent extension.
+  subagents?: ProfileSubagents;
   // Re-evaluates domain context against the active transcript before a run.
   // The profile returns only new typed messages that should be appended.
   refreshContext?: (

@@ -64,6 +64,7 @@ export interface ToolResultMessage {
   toolName: string;
   content: ToolResultContent[]; // model-visible
   details?: unknown; // renderer/session-visible only
+  usage?: Usage; // model usage incurred inside the tool (for example, a subagent)
   isError: boolean;
   evicted?: boolean; // microcompaction replaced content with tombstone
   timestamp: number;

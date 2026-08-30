@@ -24,6 +24,13 @@ Tools:
 - During repository exploration, batch read-only bash inspection, search and narrow first,
   then read only the relevant line ranges instead of whole files unless full context is needed.
 - Independent read-only lookups can be issued together in one turn.
+- Use search only for directed, multi-file investigations that require correlating several
+  lookups; use ordinary read and bash for routine paths, symbols, and grep queries.
+- Use task for substantial independent workstreams that can be owned and verified separately.
+  Issue independent task calls together when they can safely run against the same workspace.
+- Use counsel selectively for difficult debugging, review, or design decisions where a slower,
+  more expensive independent opinion could materially improve the result. Use it when the user
+  explicitly asks for counsel; do not call it for routine implementation or reassurance.
 
 Communication:
 - Lead with the outcome, then the detail. Answer what was asked without padding.
@@ -41,6 +48,10 @@ const GEMINI_ADDENDUM = `
 Prefer a small number of well-chosen tool calls over many exploratory ones. When editing, reproduce the exact surrounding text in oldString so the match is unambiguous.`;
 
 export const CODING_SIDE_BOUNDARY = `This is a coding side conversation. Do not modify files, source, git state, configuration, or workspace state unless the user deliberately changes the side conversation's permission mode. Do not request broader permissions or use subagents.`;
+
+export const CODING_SEARCH_PROMPT = `Use rg and rg --files through bash for broad discovery, then read only the relevant ranges. Ground every finding in exact workspace-relative paths and 1-based line ranges. Distinguish observed code behavior from hypotheses.`;
+
+export const CODING_COUNSEL_PROMPT = `Inspect the current implementation and tests before judging. Cite exact workspace-relative paths and 1-based line ranges for the evidence behind the recommendation.`;
 
 export function codingPrompt(modelRef: string): PromptSection[] {
   const sections: PromptSection[] = [{ text: BASE }];

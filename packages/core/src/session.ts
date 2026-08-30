@@ -170,6 +170,7 @@ function validMessage(value: unknown): boolean {
       string(value.toolCallId) &&
       string(value.toolName) &&
       typeof value.isError === "boolean" &&
+      optional(value.usage, validUsage) &&
       optional(value.evicted, (candidate) => typeof candidate === "boolean") &&
       value.content.every((block) => validContent(block, ["text", "image"]))
     );

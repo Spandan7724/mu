@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { z } from "zod";
 import { Agent, createAgent } from "./sdk.ts";
 
 describe("public SDK factory", () => {
@@ -11,6 +12,7 @@ describe("public SDK factory", () => {
     const agent = await createAgent({ provider, model: fakeModel });
 
     expect(agent).toBeInstanceOf(Agent);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task", "search", "counsel"]);
     expect((await agent.run("hi")).text).toBe("hello");
   });
 
@@ -41,6 +43,9 @@ describe("public SDK factory", () => {
       model: fakeModel,
     });
 
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(
+      expect.arrayContaining(["read", "bash", "task", "search", "counsel"]),
+    );
     const result = await agent.run("Read note.txt");
     const toolResult = result.messages.find((message) => message.role === "toolResult");
     expect(
@@ -49,5 +54,22 @@ describe("public SDK factory", () => {
         toolResult.content[0].text,
     ).toContain("from the coding profile");
     await agent.shutdown();
+  });
+
+  test("does not replace a caller's tool with a managed subagent tool", async () => {
+    const customTask = {
+      name: "task",
+      description: "custom task",
+      inputSchema: z.toJSONSchema(z.object({})),
+      execute: async () => ({ content: [{ type: "text" as const, text: "custom" }] }),
+    };
+    const agent = await createAgent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      tools: [customTask],
+    });
+
+    expect(agent.tools.find((candidate) => candidate.name === "task")).toBe(customTask);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task", "search", "counsel"]);
   });
 });

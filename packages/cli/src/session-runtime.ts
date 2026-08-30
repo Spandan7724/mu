@@ -10,6 +10,7 @@ import {
   type PermissionRule,
   type Profile,
   registryWithCoreCommands,
+  subagentsExtension,
   toCommand,
 } from "mu";
 import { withStoredCredentials } from "./auth.ts";
@@ -125,6 +126,19 @@ export async function createCliSessionRuntime(
         }
       : {}),
   });
+  const restrictiveMode = profile?.permissionModes?.find((mode) => mode.tone === "restrictive");
+  const existingTools = [
+    ...(resolved.tools?.map((candidate) => candidate.name) ?? []),
+    ...loaded.host.tools.keys(),
+  ];
+  await loaded.host.register(
+    subagentsExtension({
+      parent: () => agent,
+      ...(profile?.subagents ? { profile: profile.subagents } : {}),
+      inspectionPermissions: rulesForPermissionMode(basePermissions, restrictiveMode),
+      excludeTools: existingTools,
+    }),
+  );
 
   if (options.resumeSessionId) {
     const tree = await agent.sessionStore.load(options.resumeSessionId);
