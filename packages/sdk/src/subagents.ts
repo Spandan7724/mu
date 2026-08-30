@@ -237,9 +237,8 @@ function searchCandidates(parent: Agent): string[] {
   if (provider === "anthropic") {
     return refs(provider, ["claude-sonnet-5", "claude-haiku-4-5"]);
   }
-  if (provider === "google") return refs(provider, ["gemini-2.5-flash", "gemini-2.5-pro"]);
   if (provider === "openai" || provider === "openai-codex") {
-    return refs(provider, ["gpt-5.6-terra", "gpt-5-mini", "gpt-5.6-sol"]);
+    return refs(provider, ["gpt-5.6-terra", "gpt-5.6-sol"]);
   }
   return [];
 }
@@ -247,7 +246,6 @@ function searchCandidates(parent: Agent): string[] {
 function counselCandidates(parent: Agent): string[] {
   const { provider } = parent.modelInfo;
   if (provider === "anthropic") return refs(provider, ["claude-opus-5", "claude-sonnet-5"]);
-  if (provider === "google") return refs(provider, ["gemini-2.5-pro"]);
   if (provider === "openai" || provider === "openai-codex") {
     return refs(provider, ["gpt-5.6-sol"]);
   }

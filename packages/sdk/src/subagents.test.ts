@@ -133,7 +133,7 @@ describe("managed subagents", () => {
     });
   });
 
-  test("search uses each provider's fast same-provider model", async () => {
+  test("search uses configured fast models and otherwise retains the parent model", async () => {
     const cases: { parentModel: ModelInfo; expected: string }[] = [
       {
         parentModel: { ...fakeModel, provider: "openai", id: "gpt-5.6-sol" },
@@ -145,7 +145,7 @@ describe("managed subagents", () => {
       },
       {
         parentModel: { ...fakeModel, provider: "google", id: "gemini-2.5-pro" },
-        expected: "google/gemini-2.5-flash",
+        expected: "google/gemini-2.5-pro",
       },
     ];
 
@@ -181,11 +181,11 @@ describe("managed subagents", () => {
     }
   });
 
-  test("counsel retains an unknown provider model and never downshifts maximum reasoning", async () => {
+  test("counsel retains a Google parent model and never downshifts maximum reasoning", async () => {
     const model: ModelInfo = {
       ...fakeModel,
-      provider: "custom",
-      id: "gpt-reasoner",
+      provider: "google",
+      id: "gemini-2.5-pro",
       thinkingLevels: ["low", "medium", "high"],
       defaultThinkingLevel: "medium",
     };
@@ -221,7 +221,7 @@ describe("managed subagents", () => {
     await parent.run("consult");
 
     expect(details(parent, "counsel")).toMatchObject({
-      model: "custom/gpt-reasoner",
+      model: "google/gemini-2.5-pro",
       thinkingLevel: "high",
     });
   });
