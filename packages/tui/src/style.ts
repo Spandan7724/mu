@@ -52,6 +52,10 @@ const TOOL_MUTATE_RGB = [249, 179, 197] as const;
 const TOOL_MUTATE_256 = 218;
 const TOOL_EXEC_RGB = [177, 185, 249] as const;
 const TOOL_EXEC_256 = 147;
+// Counsel is deliberation rather than inspection or mutation. Warm amber keeps
+// it visually separate from mu's mint identity and the cool tool-action hues.
+const COUNSEL_RGB = [230, 195, 132] as const;
+const COUNSEL_256 = 180;
 const PATH_RGB = [148, 163, 184] as const;
 const PATH_256 = 109;
 
@@ -100,6 +104,7 @@ export interface Style {
   toolRead?: boolean;
   toolMutate?: boolean;
   toolExec?: boolean;
+  counsel?: boolean;
   path?: boolean;
   syntax?: SyntaxRole;
 }
@@ -169,6 +174,12 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
       codes.push(`38;2;${TOOL_EXEC_RGB[0]};${TOOL_EXEC_RGB[1]};${TOOL_EXEC_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_EXEC_256}`);
     else codes.push("94");
+  }
+  if (style.counsel) {
+    if (depth === "truecolor")
+      codes.push(`38;2;${COUNSEL_RGB[0]};${COUNSEL_RGB[1]};${COUNSEL_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${COUNSEL_256}`);
+    else codes.push("93");
   }
   // No ANSI-16 gray exists that is not `dim`, which paths are not; they fall
   // back to the terminal's own foreground rather than borrowing another role.

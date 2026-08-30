@@ -7,7 +7,12 @@ const result: ToolResultMessage = {
   role: "toolResult",
   toolCallId: "search-1",
   toolName: "search",
-  content: [{ type: "text", text: "The parser is owned by packages/parser.ts:10-40." }],
+  content: [
+    {
+      type: "text",
+      text: "## Ownership\n\nThe parser is owned by `packages/parser.ts:10-40`.\n\n- Keep this boundary.",
+    },
+  ],
   details: {
     type: "subagent",
     kind: "search",
@@ -78,7 +83,7 @@ const result: ToolResultMessage = {
 };
 
 describe("subagent transcript rendering", () => {
-  test("uses a compact disclosure summary and a clean indented activity trace", () => {
+  test("shows the full prompt, grouped activity, and an indented Markdown result", () => {
     const renderer = subagentRenderers.search;
     if (!renderer) throw new Error("missing search renderer");
     const compact = renderer(
@@ -93,10 +98,103 @@ describe("subagent transcript rendering", () => {
     expect(compact).toHaveLength(1);
     expect(compact[0]).toContain("searched codebase Trace parser ownership");
     expect(compact[0]).toContain("gpt-5.6-terra");
-    expect(expanded).toContain("    · read packages/parser.ts L10-40");
-    expect(expanded).toContain("    · $ rg -n 'parse' packages");
+    expect(expanded[0]).not.toContain("Trace parser ownership");
+    expect(expanded).toContain("    prompt");
+    expect(expanded).toContain("      Trace parser ownership");
+    expect(expanded).toContain("    activity · 2 actions");
+    expect(expanded).toContain("      files");
+    expect(expanded).toContain("      · read packages/parser.ts L10-40");
+    expect(expanded).toContain("      commands");
+    expect(expanded).toContain("      · $ rg -n 'parse' packages");
     expect(expanded).toContain("    result");
+    expect(expanded).toContain("      Ownership");
+    expect(expanded).toContain("      • Keep this boundary.");
     expect(expanded.join("\n")).toContain("packages/parser.ts:10-40");
+    for (const line of expanded.slice(1)) {
+      if (line.length > 0) expect(line.startsWith("    ")).toBe(true);
+    }
     expect(expanded.some((line) => line.includes("│ │"))).toBe(false);
+  });
+
+  test("dims the complete prompt instead of only retaining its compact prefix", () => {
+    const renderer = subagentRenderers.counsel;
+    if (!renderer) throw new Error("missing counsel renderer");
+    const prompt =
+      "Review the current design end to end.\nReturn the decisive evidence and reversal condition.";
+    const colored = renderer(
+      {
+        toolName: "counsel",
+        args: { question: prompt },
+        result: {
+          ...result,
+          toolCallId: "counsel-1",
+          toolName: "counsel",
+          details: { ...(result.details as object), kind: "counsel", description: prompt },
+        },
+        expanded: true,
+      },
+      { width: 100, depth: "truecolor" },
+    );
+
+    expect(colored.join("\n")).toContain("\u001b[2mReview the current design end to end.");
+    expect(colored.join("\n")).toContain(
+      "\u001b[2mReturn the decisive evidence and reversal condition.",
+    );
+    expect(colored[0]).toContain("38;2;230;195;132m");
+    const ansi256 = renderer(
+      { toolName: "counsel", args: { question: prompt }, running: true },
+      { width: 100, depth: "ansi256" },
+    );
+    const ansi16 = renderer(
+      { toolName: "counsel", args: { question: prompt }, running: true },
+      { width: 100, depth: "ansi16" },
+    );
+    expect(ansi256[0]).toContain("38;5;180m");
+    expect(ansi16[0]).toContain("93m");
+  });
+
+  test("animates running specialist rows with the current spinner frame", () => {
+    const renderer = subagentRenderers.search;
+    if (!renderer) throw new Error("missing search renderer");
+    const info = {
+      toolName: "search",
+      args: { query: "Trace parser ownership" },
+      running: true,
+    };
+
+    const first = renderer(info, { width: 100, depth: "none", spinner: "▸▹▹" });
+    const second = renderer(info, { width: 100, depth: "none", spinner: "▹▸▹" });
+
+    expect(first[0]).toContain("▸▹▹ searching codebase");
+    expect(second[0]).toContain("▹▸▹ searching codebase");
+  });
+
+  test("task expansion shows its complete delegated brief and formatted result", () => {
+    const renderer = subagentRenderers.task;
+    if (!renderer) throw new Error("missing task renderer");
+    const expanded = renderer(
+      {
+        toolName: "task",
+        args: {
+          description: "Implement parser",
+          prompt: "Implement the parser in `packages/parser.ts`, then run its focused tests.",
+        },
+        result: {
+          ...result,
+          toolCallId: "task-1",
+          toolName: "task",
+          details: { ...(result.details as object), kind: "task", description: "Implement parser" },
+        },
+        expanded: true,
+      },
+      { width: 100, depth: "none" },
+    ).map(stripAnsi);
+
+    expect(expanded[0]).toContain("delegated");
+    expect(expanded[0]).not.toContain("Implement parser");
+    expect(expanded).toContain(
+      "      Implement the parser in `packages/parser.ts`, then run its focused tests.",
+    );
+    expect(expanded).toContain("      Ownership");
   });
 });

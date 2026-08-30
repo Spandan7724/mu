@@ -425,12 +425,16 @@ export class SelectList {
 export class Spinner {
   private frame = 0;
 
+  get glyph(): string {
+    return GLYPHS.spinner[this.frame] as string;
+  }
+
   tick(): void {
     this.frame = (this.frame + 1) % GLYPHS.spinner.length;
   }
 
   render(depth: ColorDepth, label = ""): string {
-    const glyph = accent(GLYPHS.spinner[this.frame] as string, depth);
+    const glyph = accent(this.glyph, depth);
     return label ? `${glyph} ${dim(label, depth)}` : glyph;
   }
 }

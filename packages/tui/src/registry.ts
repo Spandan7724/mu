@@ -13,11 +13,12 @@ import {
   toolCell,
   toolOutputCell,
 } from "./cells.ts";
+import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { GLYPHS, MARGIN, styleText } from "./style.ts";
 import { highlightCode } from "./syntax-highlight.ts";
-import { truncateToWidth } from "./width.ts";
-import { wrapLine } from "./wrap.ts";
+import { stringWidth, truncateToWidth } from "./width.ts";
+import { wrapLine, wrapText } from "./wrap.ts";
 
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
@@ -449,7 +450,7 @@ const SUBAGENT_ACTIONS: Record<
 > = {
   task: { running: "delegating", completed: "delegated", tone: "state" },
   search: { running: "searching codebase", completed: "searched codebase", tone: "read" },
-  counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "state" },
+  counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "counsel" },
 };
 
 function subagentDescription(info: ToolRenderInfo, kind: SubagentKind): string {
@@ -459,21 +460,55 @@ function subagentDescription(info: ToolRenderInfo, kind: SubagentKind): string {
   );
 }
 
-function toolTrace(message: AgentMessage): { id: string; text: string }[] {
+type SubagentActivityKind = "files" | "commands" | "other actions";
+
+interface SubagentActivity {
+  id: string;
+  kind: SubagentActivityKind;
+  text: string;
+}
+
+function toolTrace(message: AgentMessage): SubagentActivity[] {
   if (message.role !== "assistant") return [];
   return message.content.flatMap((block) => {
     if (block.type !== "toolCall") return [];
     const args = block.arguments;
-    const primary = firstString(args, ["path", "query", "pattern", "command", "name"]);
+    const path = firstString(args, ["path"]);
+    const command = firstString(args, ["command"]);
+    const primary = path ?? command ?? firstString(args, ["query", "pattern", "name"]);
     let text = primary ? `${block.name} ${primary}` : block.name;
-    if (block.name === "bash" && primary) text = `$ ${primary}`;
-    if (block.name === "read" && primary) {
+    let kind: SubagentActivityKind = path ? "files" : "other actions";
+    if (block.name === "bash" && command) {
+      text = `$ ${command}`;
+      kind = "commands";
+    }
+    if (block.name === "read" && path) {
       const offset = typeof args.offset === "number" ? args.offset : 1;
       const limit = typeof args.limit === "number" ? args.limit : undefined;
-      if (limit !== undefined) text = `read ${primary} L${offset}-${offset + limit - 1}`;
+      if (limit !== undefined) text = `read ${path} L${offset}-${offset + limit - 1}`;
     }
-    return [{ id: block.id, text }];
+    return [{ id: block.id, kind, text }];
   });
+}
+
+function subagentPrompt(info: ToolRenderInfo, kind: SubagentKind, fallback: string): string {
+  return firstString(info.args, kind === "task" ? ["prompt"] : ["query", "question"]) ?? fallback;
+}
+
+function boundedSubagentRows(lines: string[], ctx: RenderContext): string[] {
+  if (lines.length <= EXPANDED_OUTPUT_LINES) return lines;
+  const visible = EXPANDED_OUTPUT_LINES - 1;
+  const head = Math.ceil(visible / 2);
+  const tail = Math.floor(visible / 2);
+  return [
+    ...lines.slice(0, head),
+    `${MARGIN}  ${styleText(
+      `… ${lines.length - head - tail} rows omitted · full output remains in session`,
+      { dim: true },
+      ctx.depth,
+    )}`,
+    ...lines.slice(-tail),
+  ];
 }
 
 function subagentTrace(
@@ -487,26 +522,53 @@ function subagentTrace(
       .map((message) => [message.toolCallId, message]),
   );
   const calls = details.messages.flatMap(toolTrace);
-  const indent = `${MARGIN}  `;
-  const width = Math.max(1, ctx.width - 4);
-  const trace = calls.flatMap((call) => {
-    const result = results.get(call.id);
-    const status = result?.isError ? ` ${GLYPHS.separator} failed` : "";
-    const styledStatus = result?.isError ? styleText(status, { red: true }, ctx.depth) : "";
-    return wrapLine(
-      `${styleText("·", { dim: true }, ctx.depth)} ${styleText(sanitizeUntrusted(call.text), { code: true }, ctx.depth)}${styledStatus}`,
-      width,
-      "  ",
-    ).map((line) => indent + line);
-  });
+  const sectionIndent = `${MARGIN}  `;
+  const contentIndent = `${sectionIndent}  `;
+  const contentWidth = Math.max(1, ctx.width - stringWidth(contentIndent));
+  const prompt = subagentPrompt(info, details.kind, details.description);
+  const trace: string[] = [
+    `${sectionIndent}${styleText("prompt", { dim: true }, ctx.depth)}`,
+    ...wrapText(sanitizeUntrusted(prompt), contentWidth).map((line) =>
+      line.length === 0 ? "" : `${contentIndent}${styleText(line, { dim: true }, ctx.depth)}`,
+    ),
+  ];
+  if (calls.length > 0) {
+    trace.push(
+      "",
+      `${sectionIndent}${styleText(
+        `activity ${GLYPHS.separator} ${calls.length} action${calls.length === 1 ? "" : "s"}`,
+        { dim: true },
+        ctx.depth,
+      )}`,
+    );
+    for (const kind of ["files", "commands", "other actions"] as const) {
+      const group = calls.filter((call) => call.kind === kind);
+      if (group.length === 0) continue;
+      trace.push(`${contentIndent}${styleText(kind, { dim: true }, ctx.depth)}`);
+      for (const call of group) {
+        const result = results.get(call.id);
+        const status = result?.isError ? ` ${GLYPHS.separator} failed` : "";
+        const styledStatus = result?.isError ? styleText(status, { red: true }, ctx.depth) : "";
+        trace.push(
+          ...wrapLine(
+            `${styleText("·", { dim: true }, ctx.depth)} ${styleText(sanitizeUntrusted(call.text), { code: true }, ctx.depth)}${styledStatus}`,
+            contentWidth,
+            "  ",
+          ).map((line) => contentIndent + line),
+        );
+      }
+    }
+  }
   const answer = resultText(info.result).trim();
   if (answer) {
-    trace.push(`${indent}${styleText("result", { dim: true }, ctx.depth)}`);
+    trace.push("", `${sectionIndent}${styleText("result", { dim: true }, ctx.depth)}`);
     trace.push(
-      ...wrapLine(sanitizeUntrusted(answer), width, "  ").map((line) => `${indent}${line}`),
+      ...renderMarkdown(answer, contentWidth, ctx.depth).map((line) =>
+        line.length === 0 ? "" : `${contentIndent}${line}`,
+      ),
     );
   }
-  return compactLines(trace.join("\n"), EXPANDED_OUTPUT_LINES);
+  return boundedSubagentRows(trace, ctx);
 }
 
 function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
@@ -525,11 +587,14 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
           .filter(Boolean)
           .join(` ${GLYPHS.separator} `)
       : "running";
+    const name = details
+      ? action.completed
+      : `${ctx.spinner ?? (GLYPHS.spinner[0] as string)} ${action.running}`;
     const lines = toolCell(
       {
-        name: details ? action.completed : action.running,
+        name,
         tone: action.tone,
-        primaryArg: description,
+        ...(info.expanded && details ? {} : { primaryArg: description }),
         summary,
         ...(info.result?.isError ? { isError: true, summaryError: true } : {}),
       },

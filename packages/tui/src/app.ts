@@ -520,7 +520,11 @@ export class App {
   }
 
   private get ctx(): RenderContext {
-    return { width: this.options.width, depth: this.options.depth };
+    return {
+      width: this.options.width,
+      depth: this.options.depth,
+      spinner: this.spinner.glyph,
+    };
   }
 
   setWidth(width: number): void {

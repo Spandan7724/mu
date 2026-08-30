@@ -16,6 +16,7 @@ import { wrapText } from "./wrap.ts";
 export interface RenderContext {
   width: number;
   depth: ColorDepth;
+  spinner?: string;
 }
 
 const dim = (text: string, depth: ColorDepth) => styleText(text, { dim: true }, depth);
@@ -24,12 +25,13 @@ const accent = (text: string, depth: ColorDepth) => styleText(text, { accent: tr
 // What a tool did, not which tool it was: an unknown tool that reads still reads.
 // `state` is the odd one out — it changes the agent's own working state rather
 // than the world's, so it speaks in mu's voice the way a heading does.
-export type ToolTone = "read" | "mutate" | "exec" | "state";
+export type ToolTone = "read" | "mutate" | "exec" | "state" | "counsel";
 const TOOL_TONES: Record<ToolTone, Style> = {
   read: { toolRead: true },
   mutate: { toolMutate: true },
   exec: { toolExec: true },
   state: { accent: true },
+  counsel: { counsel: true },
 };
 // A path is a location and a command is code; neither is mu speaking, which is
 // what the accent means everywhere else.
