@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@mu/ai";
 import { ExtensionHost, type PermissionRequest } from "@mu/core";
-import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { FakeProvider, fakeModel, type ScriptedTurn } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
 import {
@@ -240,7 +240,7 @@ describe("managed subagents", () => {
     });
   });
 
-  test("task uses the parent model, excludes delegation tools, and persists its usage", async () => {
+  test("task uses the parent model, cannot delegate, and persists its usage", async () => {
     const provider = new FakeProvider([
       {
         content: [
@@ -285,6 +285,48 @@ describe("managed subagents", () => {
     const restored = new Agent({ provider: new FakeProvider([]), model: fakeModel });
     restored.resume(parent.session);
     expect(restored.usage.inputTokens).toBe(60);
+  });
+
+  test("task children have no managed turn limit", async () => {
+    const childTurns: ScriptedTurn[] = Array.from({ length: 13 }, (_, index) => ({
+      content: [
+        {
+          type: "toolCall",
+          id: `work-${index}`,
+          name: "work",
+          arguments: { index },
+        },
+      ],
+    }));
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "task-1",
+            name: "task",
+            arguments: { description: "extended work", prompt: "Complete every step" },
+          },
+        ],
+      },
+      ...childTurns,
+      { content: [{ type: "text", text: "All steps completed." }] },
+      { content: [{ type: "text", text: "Integrated." }] },
+    ]);
+    const work = tool({
+      name: "work",
+      description: "work",
+      inputSchema: z.object({ index: z.number() }),
+      execute: ({ index }) => `completed ${index}`,
+    });
+    const host = new ExtensionHost();
+    const parent = new Agent({ provider, model: fakeModel, tools: [work], extensions: host });
+    await host.register(subagentsExtension({ parent: () => parent }));
+
+    await parent.run("delegate extended work");
+
+    expect(details(parent, "task").reason).toBe("done");
+    expect(provider.callCount).toBe(16);
   });
 
   test("coding specialists require an explicit inspection permission boundary", () => {
@@ -417,26 +459,20 @@ describe("managed subagents", () => {
     expect(events).toContain("permission_resolved");
   });
 
-  test("independent task calls start concurrently", async () => {
+  test("all independent task calls start without a manager concurrency cap", async () => {
+    const calls = Array.from({ length: 5 }, (_, index) => ({
+      type: "toolCall" as const,
+      id: `task-${index}`,
+      name: "task",
+      arguments: { description: `file ${index}`, prompt: `Edit file ${index}` },
+    }));
+    const childTurns: ScriptedTurn[] = Array.from({ length: 5 }, (_, index) => ({
+      content: [{ type: "text", text: `File ${index} done.` }],
+      delayMs: 50,
+    }));
     const provider = new FakeProvider([
-      {
-        content: [
-          {
-            type: "toolCall",
-            id: "task-1",
-            name: "task",
-            arguments: { description: "first file", prompt: "Edit the first file" },
-          },
-          {
-            type: "toolCall",
-            id: "task-2",
-            name: "task",
-            arguments: { description: "second file", prompt: "Edit the second file" },
-          },
-        ],
-      },
-      { content: [{ type: "text", text: "First done." }], delayMs: 50 },
-      { content: [{ type: "text", text: "Second done." }], delayMs: 50 },
+      { content: calls },
+      ...childTurns,
       { content: [{ type: "text", text: "Integrated." }] },
     ]);
     const host = new ExtensionHost();
@@ -446,7 +482,7 @@ describe("managed subagents", () => {
     const running = parent.run("delegate both");
     await Bun.sleep(10);
 
-    expect(provider.callCount).toBe(3);
+    expect(provider.callCount).toBe(6);
     expect((await running).reason).toBe("done");
   });
 

@@ -26,7 +26,6 @@ export interface SubagentDetails {
 
 interface SubagentExtensionBaseOptions {
   parent: () => Agent;
-  maxConcurrent?: number;
   excludeTools?: readonly string[];
   searchModel?: (parent: Agent) => ModelInfo | undefined;
   counselModel?: (parent: Agent) => ModelInfo | undefined;
@@ -51,7 +50,6 @@ Operating contract:
 - Assume the workspace and coordination state may be shared with the parent and sibling subagents. Inspect relevant existing state before editing so you can distinguish pre-existing or concurrent work from your own. Never revert, overwrite, stage, commit, or "clean up" changes you did not make. Do not modify shared plan/todo state or perform workspace-wide state operations—including commits, resets, checkouts, stashes, or cleanup—unless the delegated request explicitly assigns them; if assigned, include only artifacts inside your ownership boundary.
 - Verify the result at the narrowest meaningful level, then run broader checks only when the blast radius requires them. Diagnose failures far enough to determine whether your work caused them; report rather than repair unrelated or concurrent failures.
 - If the request cannot be completed safely, stop at the real blocker and explain exactly what is missing. Do not broaden scope or invent a workaround that changes the requested outcome.
-- You have a hard turn budget. Keep investigation proportional and reserve enough capacity for verification and the final handoff.
 
 Return a compact but complete handoff containing: the outcome, files or artifacts changed by you, verification performed and its result, and any remaining concern or blocker. Include exact paths and useful evidence when relevant. Do not delegate to another agent, create subagents, or ask the user questions; the parent agent owns coordination and user communication.`;
 
@@ -65,7 +63,6 @@ Operating contract:
 - Verify claims against implementation and, when they materially define the contract or regression, relevant tests, configuration, and history. Distinguish observed behavior from inference and label missing evidence explicitly.
 - Capture exact workspace-relative file paths and 1-based line ranges for every material finding. Name the key types, functions, and boundaries involved.
 - Stop when the requested flow and constraints are clear. Do not turn a focused search into a broad architecture review. If the delegated question proves answerable by a routine lookup, answer it directly and briefly; do not refuse it or broaden it to justify the role.
-- You have a hard turn budget. Batch independent inspection, pursue only gaps that could change the answer, and reserve a final response.
 
 Return: (1) a direct answer or traced flow, (2) the supporting paths and line ranges beside each claim, (3) the key types/functions and constraints, and (4) any unresolved gap that would change the conclusion. Do not edit files, run mutating commands, propose unrelated improvements, delegate to another agent, or create subagents.`;
 
@@ -79,22 +76,16 @@ Operating contract:
 - Compare only alternatives that are genuinely viable under the stated constraints. Evaluate correctness first, then maintainability, complexity, performance, compatibility, and migration risk as applicable.
 - Be decisive at the confidence the evidence supports. Recommend one course—conditional when necessary—explain why it wins, identify its most important downside or failure mode, and state what evidence or constraint change would reverse the recommendation.
 - If the evidence is insufficient, say exactly what remains unknown and the smallest check that would resolve it. Do not manufacture certainty or expand into a general review.
-- You have a hard turn budget. Prioritize evidence that can change the decision, batch independent inspection, and reserve a final advisory response.
 
 Return: the recommendation first, followed by the decisive evidence, tradeoffs or failure sequence, and the reversal condition or unresolved question. Cite exact paths and line ranges when repository evidence is involved. Do not implement changes, edit files, provide routine reassurance, delegate to another agent, or create subagents.`;
 
 class SubagentManager {
   private readonly active = new Set<Agent>();
-  private readonly waiters: (() => void)[] = [];
-  private running = 0;
 
-  constructor(
-    private readonly options: SubagentExtensionOptions,
-    private readonly maxConcurrent: number,
-  ) {}
+  constructor(private readonly options: SubagentExtensionOptions) {}
 
   async run(kind: SubagentKind, description: string, prompt: string, signal: AbortSignal) {
-    await this.acquire(signal);
+    if (signal.aborted) throw new Error("Subagent cancelled");
     let child: Agent | undefined;
     let abort: (() => void) | undefined;
     try {
@@ -108,14 +99,13 @@ class SubagentManager {
         systemPrompt: this.promptFor(kind),
         tools,
         ...(kind === "task"
-          ? { permissions: parent.permissions, budget: { maxTurns: 12 } }
+          ? { permissions: parent.permissions }
           : {
               permissions: [
                 ...(this.options.inspectionPermissions ?? []),
                 { permission: "bash", pattern: "*", action: "deny" },
                 { permission: "bash:inspect", pattern: "*", action: "allow" },
               ],
-              budget: { maxTurns: kind === "search" ? 8 : 6 },
             }),
       });
       this.active.add(child);
@@ -144,46 +134,12 @@ class SubagentManager {
     } finally {
       if (abort) signal.removeEventListener("abort", abort);
       if (child) this.active.delete(child);
-      try {
-        await child?.shutdown();
-      } finally {
-        this.release();
-      }
+      await child?.shutdown();
     }
   }
 
   stopAll(): void {
     for (const child of this.active) child.stop();
-  }
-
-  private async acquire(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) throw new Error("Subagent cancelled");
-    if (this.running < this.maxConcurrent) {
-      this.running++;
-      return;
-    }
-    await new Promise<void>((resolve, reject) => {
-      const ready = () => {
-        signal.removeEventListener("abort", cancelled);
-        if (signal.aborted) reject(new Error("Subagent cancelled"));
-        else {
-          this.running++;
-          resolve();
-        }
-      };
-      const cancelled = () => {
-        const index = this.waiters.indexOf(ready);
-        if (index !== -1) this.waiters.splice(index, 1);
-        reject(new Error("Subagent cancelled"));
-      };
-      this.waiters.push(ready);
-      signal.addEventListener("abort", cancelled, { once: true });
-    });
-  }
-
-  private release(): void {
-    this.running--;
-    this.waiters.shift()?.();
   }
 
   private toolsFor(kind: SubagentKind, parent: Agent): AnyTool[] {
@@ -264,7 +220,7 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
   if (options.coding && !options.inspectionPermissions) {
     throw new Error("coding subagents require explicit inspection permissions");
   }
-  const manager = new SubagentManager(options, Math.max(1, options.maxConcurrent ?? 4));
+  const manager = new SubagentManager(options);
   const excluded = new Set(options.excludeTools ?? []);
   return {
     name: "subagents",
