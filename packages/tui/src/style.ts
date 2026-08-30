@@ -48,8 +48,8 @@ const PERMISSIVE_256 = 114;
 // it carries the hue and the rest of the row stays quiet.
 const TOOL_READ_RGB = [129, 140, 248] as const;
 const TOOL_READ_256 = 105;
-const TOOL_MUTATE_RGB = [249, 179, 197] as const;
-const TOOL_MUTATE_256 = 218;
+const TOOL_MUTATE_RGB = [230, 161, 92] as const;
+const TOOL_MUTATE_256 = 173;
 const TOOL_EXEC_RGB = [177, 185, 249] as const;
 const TOOL_EXEC_256 = 147;
 // Counsel is deliberation rather than inspection or mutation. Warm amber keeps
@@ -167,7 +167,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${TOOL_MUTATE_RGB[0]};${TOOL_MUTATE_RGB[1]};${TOOL_MUTATE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_MUTATE_256}`);
-    else codes.push("95");
+    else codes.push("93");
   }
   if (style.toolExec) {
     if (depth === "truecolor")

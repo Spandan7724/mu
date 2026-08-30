@@ -895,7 +895,7 @@ describe("style conformance", () => {
     const wrote = toolCell({ name: "edited", tone: "mutate" }, colored)[0] ?? "";
     const ran = toolCell({ name: "ran", tone: "exec" }, colored)[0] ?? "";
     expect(read).toContain("38;2;129;140;248");
-    expect(wrote).toContain("38;2;249;179;197");
+    expect(wrote).toContain("38;2;230;161;92");
     expect(ran).toContain("38;2;177;185;249");
     expect(new Set([read, wrote, ran]).size).toBe(3);
     for (const line of [read, wrote, ran]) expect(line).toContain("1;38;2;");
@@ -923,7 +923,7 @@ describe("style conformance", () => {
     const at = (contextPercent: number) =>
       footer({ ...footerData, contextPercent }, 80, "truecolor")[1] ?? "";
     expect(at(0.12)).toContain(ACCENT);
-    expect(at(0.61)).toContain("38;2;249;179;197");
+    expect(at(0.61)).toContain("38;2;230;161;92");
     expect(at(0.92)).toContain("\u001b[31m");
     // Too narrow to style per part: the row degrades to quiet rather than lying.
     expect(footer({ ...footerData, contextPercent: 0.92 }, 24, "truecolor")[1]).not.toContain(
