@@ -7,6 +7,7 @@ import { Agent } from "./agent.ts";
 import {
   type SubagentDetails,
   type SubagentExtensionOptions,
+  type SubagentProgressUpdate,
   subagentsExtension,
 } from "./subagents.ts";
 import { tool } from "./tool.ts";
@@ -285,6 +286,67 @@ describe("managed subagents", () => {
     const restored = new Agent({ provider: new FakeProvider([]), model: fakeModel });
     restored.resume(parent.session);
     expect(restored.usage.inputTokens).toBe(60);
+  });
+
+  test("managed children stream visible progress without exposing thinking", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "task-1",
+            name: "task",
+            arguments: { description: "inspect one file", prompt: "Inspect the parser" },
+          },
+        ],
+      },
+      {
+        content: [
+          { type: "thinking", thinking: "private chain of thought" },
+          { type: "toolCall", id: "inspect-1", name: "inspect", arguments: {} },
+        ],
+      },
+      {
+        content: [
+          { type: "thinking", thinking: "another private thought" },
+          { type: "text", text: "The parser is correct." },
+        ],
+      },
+      { content: [{ type: "text", text: "Integrated." }] },
+    ]);
+    const inspect = tool({
+      name: "inspect",
+      description: "inspect",
+      inputSchema: z.object({}),
+      execute: () => "parser contents",
+    });
+    const host = new ExtensionHost();
+    const parent = new Agent({ provider, model: fakeModel, tools: [inspect], extensions: host });
+    await host.register(subagentsExtension({ parent: () => parent }));
+    const updates: SubagentProgressUpdate[] = [];
+    const stream = parent.stream("delegate");
+    for await (const event of stream) {
+      if (
+        event.type === "tool_execution_update" &&
+        typeof event.details === "object" &&
+        event.details !== null &&
+        (event.details as Partial<SubagentProgressUpdate>).type === "subagent-progress"
+      ) {
+        updates.push(event.details as SubagentProgressUpdate);
+      }
+    }
+    await stream.result();
+
+    expect(updates.some((update) => update.event.type === "text_delta")).toBe(true);
+    expect(
+      updates.some(
+        (update) => update.event.type === "message" && update.event.message.role === "toolResult",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(updates)).not.toContain("private chain of thought");
+    expect(JSON.stringify(updates)).not.toContain("another private thought");
+    expect(JSON.stringify(updates)).not.toContain("parser contents");
+    expect(JSON.stringify(updates)).toContain("The parser is correct.");
   });
 
   test("task children have no managed turn limit", async () => {

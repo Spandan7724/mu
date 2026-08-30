@@ -1,5 +1,5 @@
 import type { AgentMessage, CheckpointDiffFile, ToolResultMessage } from "@mu/core";
-import type { SubagentDetails, SubagentKind } from "mu";
+import type { SubagentDetails, SubagentKind, SubagentProgressUpdate } from "mu";
 import {
   type DiffLine,
   diffCell,
@@ -36,6 +36,8 @@ export interface ToolRenderInfo {
   argsStreaming?: boolean;
   // A later call to the same tool has replaced what this one reported.
   superseded?: boolean;
+  // Ephemeral renderer-owned state assembled from tool_execution_update details.
+  progress?: unknown;
 }
 
 export type ActivityKind = "explore" | "edit" | "command";
@@ -57,6 +59,8 @@ export interface ToolRendererFn {
   // than supporting agent machinery. They can start open while retaining the
   // same disclosure controls and output bound.
   expandedByDefault?: boolean | ((info: ToolRenderInfo) => boolean);
+  // The renderer can present meaningful structured output before completion.
+  supportsLiveExpansion?: boolean;
 }
 
 function firstString(args: unknown, keys: string[]): string | undefined {
@@ -445,6 +449,91 @@ function subagentDetails(info: ToolRenderInfo): SubagentDetails | undefined {
   return candidate as SubagentDetails;
 }
 
+export interface SubagentProgressState {
+  type: "subagent-progress-state";
+  kind: SubagentKind;
+  description: string;
+  model: string;
+  thinkingLevel: string;
+  messages: AgentMessage[];
+  answer: string;
+}
+
+function progressUpdate(details: unknown): SubagentProgressUpdate | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const candidate = details as Partial<SubagentProgressUpdate>;
+  if (
+    candidate.type !== "subagent-progress" ||
+    !["task", "search", "counsel"].includes(candidate.kind ?? "") ||
+    typeof candidate.description !== "string" ||
+    typeof candidate.model !== "string" ||
+    typeof candidate.thinkingLevel !== "string" ||
+    typeof candidate.event !== "object" ||
+    candidate.event === null
+  ) {
+    return undefined;
+  }
+  const event = candidate.event as Partial<SubagentProgressUpdate["event"]>;
+  if (event.type === "assistant_start") return candidate as SubagentProgressUpdate;
+  if (event.type === "text_delta" && typeof event.text === "string") {
+    return candidate as SubagentProgressUpdate;
+  }
+  if (event.type !== "message" || typeof event.message !== "object" || event.message === null) {
+    return undefined;
+  }
+  const message = event.message as Partial<AgentMessage>;
+  if (
+    !["assistant", "toolResult"].includes(message.role ?? "") ||
+    !Array.isArray(message.content) ||
+    !message.content.every((block) => typeof block === "object" && block !== null)
+  ) {
+    return undefined;
+  }
+  return candidate as SubagentProgressUpdate;
+}
+
+export function updateSubagentProgress(
+  current: unknown,
+  details: unknown,
+): SubagentProgressState | undefined {
+  const update = progressUpdate(details);
+  if (!update) return undefined;
+  const previous =
+    typeof current === "object" &&
+    current !== null &&
+    (current as Partial<SubagentProgressState>).type === "subagent-progress-state"
+      ? (current as SubagentProgressState)
+      : undefined;
+  const state: SubagentProgressState = {
+    type: "subagent-progress-state",
+    kind: update.kind,
+    description: update.description,
+    model: update.model,
+    thinkingLevel: update.thinkingLevel,
+    messages: previous?.messages ?? [],
+    answer: previous?.answer ?? "",
+  };
+  if (update.event.type === "assistant_start") return { ...state, answer: "" };
+  if (update.event.type === "text_delta") {
+    return { ...state, answer: state.answer + update.event.text };
+  }
+  const messages = [...state.messages, update.event.message];
+  if (update.event.message.role !== "assistant") return { ...state, messages };
+  const answer = update.event.message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+  return { ...state, messages, answer };
+}
+
+function subagentProgress(info: ToolRenderInfo): SubagentProgressState | undefined {
+  const progress = info.progress;
+  if (typeof progress !== "object" || progress === null) return undefined;
+  return (progress as Partial<SubagentProgressState>).type === "subagent-progress-state"
+    ? (progress as SubagentProgressState)
+    : undefined;
+}
+
 const SUBAGENT_ACTIONS: Record<
   SubagentKind,
   { running: string; completed: string; tone: NonNullable<ToolCellOptions["tone"]> }
@@ -513,7 +602,7 @@ function boundedSubagentRows(lines: string[], ctx: RenderContext): string[] {
 }
 
 function subagentTrace(
-  details: SubagentDetails,
+  details: SubagentDetails | SubagentProgressState,
   info: ToolRenderInfo,
   ctx: RenderContext,
 ): string[] {
@@ -560,11 +649,16 @@ function subagentTrace(
       }
     }
   }
-  const answer = resultText(info.result).trim();
+  const answer = (details.type === "subagent" ? resultText(info.result) : details.answer).trim();
   if (answer) {
-    trace.push("", `${sectionIndent}${styleText("result", { dim: true }, ctx.depth)}`);
+    const label = details.type === "subagent" ? "result" : "response";
+    trace.push("", `${sectionIndent}${styleText(label, { dim: true }, ctx.depth)}`);
+    const liveAnswer =
+      details.type === "subagent-progress-state" && answer.length > 16_000
+        ? `… earlier response omitted while streaming\n\n${answer.slice(-16_000)}`
+        : answer;
     trace.push(
-      ...renderMarkdown(answer, contentWidth, ctx.depth).map((line) =>
+      ...renderMarkdown(liveAnswer, contentWidth, ctx.depth).map((line) =>
         line.length === 0 ? "" : `${contentIndent}${line}`,
       ),
     );
@@ -575,9 +669,11 @@ function subagentTrace(
 function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
   const renderer: ToolRendererFn = (info, ctx) => {
     const details = subagentDetails(info);
+    const progress = subagentProgress(info);
+    const state = details ?? progress;
     const action = SUBAGENT_ACTIONS[kind];
-    const description = details?.description ?? subagentDescription(info, kind);
-    const callCount = details?.messages.flatMap(toolTrace).length ?? 0;
+    const description = state?.description ?? subagentDescription(info, kind);
+    const callCount = state?.messages.flatMap(toolTrace).length ?? 0;
     const summary = details
       ? [
           details.model,
@@ -587,7 +683,14 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
         ]
           .filter(Boolean)
           .join(` ${GLYPHS.separator} `)
-      : (formatDuration(info.elapsedMs) ?? "0ms");
+      : [
+          progress?.model,
+          progress?.thinkingLevel,
+          callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
+          formatDuration(info.elapsedMs) ?? "0ms",
+        ]
+          .filter(Boolean)
+          .join(` ${GLYPHS.separator} `);
     const spinnerFrame = ctx.spinnerFrame ?? 0;
     const spinner =
       GLYPHS.subagentSpinner[spinnerFrame % GLYPHS.subagentSpinner.length] ??
@@ -597,16 +700,17 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
       {
         name,
         tone: action.tone,
-        ...(info.expanded && details ? {} : { primaryArg: description }),
+        ...(info.expanded && state ? {} : { primaryArg: description }),
         summary,
         ...(details && !info.result?.isError ? { isSuccess: true } : {}),
         ...(info.result?.isError ? { isError: true, summaryError: true } : {}),
       },
       ctx,
     );
-    return info.expanded && details ? [...lines, ...subagentTrace(details, info, ctx)] : lines;
+    return info.expanded && state ? [...lines, ...subagentTrace(state, info, ctx)] : lines;
   };
   renderer.ownsExpansion = true;
+  renderer.supportsLiveExpansion = true;
   return renderer;
 }
 
@@ -645,6 +749,10 @@ export class RendererRegistry {
   expandedByDefault(info: ToolRenderInfo): boolean {
     const expanded = this.renderers.get(info.toolName)?.expandedByDefault;
     return typeof expanded === "function" ? expanded(info) : expanded === true;
+  }
+
+  supportsLiveExpansion(toolName: string): boolean {
+    return this.renderers.get(toolName)?.supportsLiveExpansion === true;
   }
 
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {

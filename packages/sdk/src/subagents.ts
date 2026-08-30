@@ -24,6 +24,18 @@ export interface SubagentDetails {
   reason: HaltReason;
 }
 
+export interface SubagentProgressUpdate {
+  type: "subagent-progress";
+  kind: SubagentKind;
+  description: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+  event:
+    | { type: "assistant_start" }
+    | { type: "text_delta"; text: string }
+    | { type: "message"; message: AgentMessage };
+}
+
 interface SubagentExtensionBaseOptions {
   parent: () => Agent;
   excludeTools?: readonly string[];
@@ -38,6 +50,7 @@ export type SubagentExtensionOptions = SubagentExtensionBaseOptions &
   );
 
 const DELEGATION_TOOLS = new Set(["task", "search", "counsel"]);
+const PROGRESS_INTERVAL_MS = 80;
 
 const TASK_PROMPT = `You are a task subagent responsible for one substantial, self-contained work unit delegated by a parent agent. Own that unit from investigation through completion; do not merely suggest what the parent should do.
 
@@ -84,10 +97,17 @@ class SubagentManager {
 
   constructor(private readonly options: SubagentExtensionOptions) {}
 
-  async run(kind: SubagentKind, description: string, prompt: string, signal: AbortSignal) {
+  async run(
+    kind: SubagentKind,
+    description: string,
+    prompt: string,
+    signal: AbortSignal,
+    update: (text: string, details?: unknown) => void,
+  ) {
     if (signal.aborted) throw new Error("Subagent cancelled");
     let child: Agent | undefined;
     let abort: (() => void) | undefined;
+    let progressTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       const parent = this.options.parent();
       const model = this.modelFor(kind, parent);
@@ -112,7 +132,46 @@ class SubagentManager {
       abort = () => child?.stop();
       signal.addEventListener("abort", abort, { once: true });
       const startedAt = Date.now();
-      const result = await child.run(prompt);
+      const progress = (event: SubagentProgressUpdate["event"]) =>
+        update("", {
+          type: "subagent-progress",
+          kind,
+          description,
+          model: child?.modelRef ?? `${model.provider}/${model.id}`,
+          thinkingLevel: child?.thinking ?? thinkingLevel,
+          event,
+        } satisfies SubagentProgressUpdate);
+      let pendingText = "";
+      const flushText = () => {
+        if (progressTimer) clearTimeout(progressTimer);
+        progressTimer = undefined;
+        if (pendingText.length === 0) return;
+        const text = pendingText;
+        pendingText = "";
+        progress({ type: "text_delta", text });
+      };
+      const scheduleText = (text: string) => {
+        pendingText += text;
+        progressTimer ??= setTimeout(flushText, PROGRESS_INTERVAL_MS);
+      };
+      progress({ type: "assistant_start" });
+      const stream = child.stream(prompt);
+      for await (const event of stream) {
+        if (event.type === "message_start" && event.message.role === "assistant") {
+          flushText();
+          progress({ type: "assistant_start" });
+        } else if (event.type === "message_update" && event.delta.kind === "text_delta") {
+          scheduleText(event.delta.text);
+        } else if (
+          event.type === "message_end" &&
+          (event.message.role === "assistant" || event.message.role === "toolResult")
+        ) {
+          flushText();
+          progress({ type: "message", message: visibleProgressMessage(event.message) });
+        }
+      }
+      flushText();
+      const result = await stream.result();
       const details: SubagentDetails = {
         type: "subagent",
         kind,
@@ -132,6 +191,7 @@ class SubagentManager {
         ...(result.reason === "done" ? {} : { isError: true }),
       };
     } finally {
+      if (progressTimer) clearTimeout(progressTimer);
       if (abort) signal.removeEventListener("abort", abort);
       if (child) this.active.delete(child);
       await child?.shutdown();
@@ -194,6 +254,15 @@ class SubagentManager {
   }
 }
 
+function visibleProgressMessage(message: AgentMessage): AgentMessage {
+  if (message.role === "toolResult") return { ...message, content: [] };
+  if (message.role !== "assistant") return message;
+  return {
+    ...message,
+    content: message.content.filter((block) => block.type !== "thinking"),
+  };
+}
+
 function refs(provider: string, ids: string[]): string[] {
   return ids.map((id) => `${provider}/${id}`);
 }
@@ -240,8 +309,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: true,
-            execute: ({ description, prompt }, { signal }) =>
-              manager.run("task", description, prompt, signal),
+            execute: ({ description, prompt }, { signal, update }) =>
+              manager.run("task", description, prompt, signal, update),
           }),
         );
       if (options.coding && !excluded.has("search"))
@@ -258,7 +327,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: false,
-            execute: ({ query }, { signal }) => manager.run("search", query, query, signal),
+            execute: ({ query }, { signal, update }) =>
+              manager.run("search", query, query, signal, update),
           }),
         );
       if (options.coding && !excluded.has("counsel"))
@@ -275,8 +345,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: false,
-            execute: ({ question }, { signal }) =>
-              manager.run("counsel", question, question, signal),
+            execute: ({ question }, { signal, update }) =>
+              manager.run("counsel", question, question, signal, update),
           }),
         );
     },

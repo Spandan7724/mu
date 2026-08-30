@@ -516,15 +516,21 @@ async function runPrepared(
   let isError: boolean;
   let updateChain = Promise.resolve();
   try {
-    result = await prepared.tool.execute(prepared.call.id, prepared.args, signal, (partial) => {
-      updateChain = updateChain.then(() =>
-        emit({
-          type: "tool_execution_update",
-          toolCallId: prepared.call.id,
-          partial,
-        }),
-      );
-    });
+    result = await prepared.tool.execute(
+      prepared.call.id,
+      prepared.args,
+      signal,
+      (partial, details) => {
+        updateChain = updateChain.then(() =>
+          emit({
+            type: "tool_execution_update",
+            toolCallId: prepared.call.id,
+            partial,
+            ...(details !== undefined ? { details } : {}),
+          }),
+        );
+      },
+    );
     await updateChain;
     isError = result.isError === true;
   } catch (error) {

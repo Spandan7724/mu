@@ -31,7 +31,7 @@ export interface Tool<Args = Record<string, unknown>> {
     toolCallId: string,
     args: Args,
     signal: AbortSignal,
-    onUpdate?: (partial: ToolResultContent[]) => void,
+    onUpdate?: (partial: ToolResultContent[], details?: unknown) => void,
   ) => Promise<ToolResult>;
 }
 

@@ -31,7 +31,12 @@ export type AgentEvent =
   | { type: "message_update"; message: AssistantMessage; delta: StreamDelta }
   | { type: "message_end"; message: AgentMessage }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_update"; toolCallId: string; partial: ToolResultContent[] }
+  | {
+      type: "tool_execution_update";
+      toolCallId: string;
+      partial: ToolResultContent[];
+      details?: unknown;
+    }
   | { type: "tool_execution_end"; toolCallId: string; result: ToolResultMessage }
   | { type: "permission_asked"; request: PermissionRequest }
   | {

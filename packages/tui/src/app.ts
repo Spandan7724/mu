@@ -37,7 +37,12 @@ import {
   Spinner,
 } from "./components.ts";
 import type { InputEvent, Key } from "./input.ts";
-import { type ActivityKind, RendererRegistry, type ToolRenderInfo } from "./registry.ts";
+import {
+  type ActivityKind,
+  RendererRegistry,
+  type ToolRenderInfo,
+  updateSubagentProgress,
+} from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
@@ -244,13 +249,22 @@ class LiveToolOutput {
   }
 }
 
-type PendingTool = ToolRenderInfo & { output: LiveToolOutput; startedAt?: number };
+type PendingTool = Omit<ToolRenderInfo, "expanded"> & {
+  id: string;
+  expanded: boolean;
+  output: LiveToolOutput;
+  startedAt?: number;
+};
 interface ActivityTool {
   id: string;
   info: ToolRenderInfo;
   expanded: boolean;
   rendered?: { width: number; expanded: boolean; lines: string[] };
 }
+
+type ActivityNode =
+  | { id: string; item: TranscriptItem; tool?: ActivityTool }
+  | { id: string; pending: PendingTool };
 
 interface ActivitySearchMatch {
   row: number;
@@ -655,10 +669,13 @@ export class App {
   }
 
   get areToolOutputsExpanded(): boolean {
-    return this.transcript.some(
-      (item) =>
-        (item.kind === "tool" && item.expanded) ||
-        (item.kind === "activity" && (item.expanded || item.tools.some((tool) => tool.expanded))),
+    return (
+      [...this.pendingTools.values()].some((pending) => pending.expanded) ||
+      this.transcript.some(
+        (item) =>
+          (item.kind === "tool" && item.expanded) ||
+          (item.kind === "activity" && (item.expanded || item.tools.some((tool) => tool.expanded))),
+      )
     );
   }
 
@@ -789,11 +806,14 @@ export class App {
           if (block?.type === "toolCall" && block.id) {
             const existing = this.pendingTools.get(block.id);
             this.pendingTools.set(block.id, {
+              id: block.id,
               toolName: block.name,
               args: block.arguments,
               argsStreaming: event.delta.kind !== "toolcall_end",
               running: existing?.running ?? false,
+              expanded: existing?.expanded ?? false,
               output: existing?.output ?? new LiveToolOutput(),
+              ...(existing?.progress !== undefined ? { progress: existing.progress } : {}),
               ...(existing?.startedAt !== undefined ? { startedAt: existing.startedAt } : {}),
             });
           }
@@ -806,6 +826,8 @@ export class App {
           for (const block of event.partial) {
             if (block.type === "text") pending.output.append(block.text);
           }
+          const progress = updateSubagentProgress(pending.progress, event.details);
+          if (progress) pending.progress = progress;
         }
         return [];
       }
@@ -858,10 +880,13 @@ export class App {
         {
           const existing = this.pendingTools.get(event.toolCallId);
           this.pendingTools.set(event.toolCallId, {
+            id: event.toolCallId,
             toolName: event.toolName,
             args: event.args,
             running: true,
+            expanded: existing?.expanded ?? false,
             output: existing?.output ?? new LiveToolOutput(),
+            ...(existing?.progress !== undefined ? { progress: existing.progress } : {}),
             startedAt: existing?.startedAt ?? Date.now(),
           });
         }
@@ -876,7 +901,11 @@ export class App {
           result: event.result,
         };
         const lines = this.registry.render(info, this.ctx);
-        this.pushTool(event.toolCallId, info, lines);
+        const expanded =
+          pending && this.registry.supportsLiveExpansion(pending.toolName)
+            ? pending.expanded
+            : undefined;
+        this.pushTool(event.toolCallId, info, lines, expanded);
         return lines;
       }
 
@@ -1141,7 +1170,10 @@ export class App {
           ? search.rows.map((line, index) =>
               index === match.row ? this.highlightSearchMatch(line, match) : line,
             )
-          : this.transcriptRows(this.activitySelection);
+          : [
+              ...this.transcriptRows(this.activitySelection),
+              ...this.pendingActivityRows(this.activitySelection),
+            ];
       const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
       const selected = Math.max(0, match?.row ?? rows.findIndex((line) => line.includes("❯")));
       const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
@@ -1272,6 +1304,9 @@ export class App {
     // turn is never a frozen screen with only a spinner.
     if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
     for (const pending of this.pendingTools.values()) {
+      if (this.mode === "activity" && this.registry.supportsLiveExpansion(pending.toolName)) {
+        continue;
+      }
       lines.push(
         ...this.registry.render(
           {
@@ -1282,6 +1317,7 @@ export class App {
               pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
             argsStreaming: pending.argsStreaming === true,
             expanded: false,
+            ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
           },
           this.ctx,
         ),
@@ -1451,6 +1487,28 @@ export class App {
     return lines;
   }
 
+  private pendingActivityRows(selectedId?: string): string[] {
+    const logical: string[] = [];
+    for (const pending of this.pendingTools.values()) {
+      if (!pending.running || !this.registry.supportsLiveExpansion(pending.toolName)) continue;
+      const lines = this.registry.render(
+        {
+          toolName: pending.toolName,
+          args: pending.args,
+          running: true,
+          elapsedMs:
+            pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
+          argsStreaming: pending.argsStreaming === true,
+          expanded: pending.expanded,
+          ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
+        },
+        this.ctx,
+      );
+      logical.push(...this.disclosureLines(lines, pending.expanded, selectedId === pending.id));
+    }
+    return this.toTerminalRows(logical);
+  }
+
   private streamingRows(): string[] {
     if (!this.streaming) return [];
     const height = this.options.height ?? 24;
@@ -1477,9 +1535,14 @@ export class App {
     return rows;
   }
 
-  private pushTool(id: string, info: ToolRenderInfo, renderedLines?: string[]): void {
+  private pushTool(
+    id: string,
+    info: ToolRenderInfo,
+    renderedLines?: string[],
+    expandedOverride?: boolean,
+  ): void {
     const activityKind = this.registry.activityKind(info);
-    const expanded = this.registry.expandedByDefault(info);
+    const expanded = expandedOverride ?? this.registry.expandedByDefault(info);
     if (!activityKind) {
       this.pushTranscript({
         kind: "tool",
@@ -1632,8 +1695,8 @@ export class App {
     ];
   }
 
-  private activityNodes(): { id: string; item: TranscriptItem; tool?: ActivityTool }[] {
-    const nodes: { id: string; item: TranscriptItem; tool?: ActivityTool }[] = [];
+  private activityNodes(): ActivityNode[] {
+    const nodes: ActivityNode[] = [];
     for (const item of this.transcript) {
       if (item.kind === "tool") nodes.push({ id: item.id, item });
       if (item.kind !== "activity") continue;
@@ -1645,6 +1708,11 @@ export class App {
         if (item.expanded) {
           for (const tool of item.tools) nodes.push({ id: tool.id, item, tool });
         }
+      }
+    }
+    for (const pending of this.pendingTools.values()) {
+      if (pending.running && this.registry.supportsLiveExpansion(pending.toolName)) {
+        nodes.push({ id: pending.id, pending });
       }
     }
     return nodes;
@@ -1767,7 +1835,8 @@ export class App {
   private toggleActivityNode(expanded?: boolean): void {
     const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
     if (!node) return;
-    if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
+    if ("pending" in node) node.pending.expanded = expanded ?? !node.pending.expanded;
+    else if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
     else if (node.item.kind === "activity") {
       node.item.expanded = expanded ?? !node.item.expanded;
     } else if (node.item.kind === "tool") {
@@ -1780,7 +1849,7 @@ export class App {
   private openActivity(): void {
     const nodes = this.activityNodes();
     const latest = nodes.at(-1);
-    if (this.transcript.length === 0) return;
+    if (this.transcript.length === 0 && nodes.length === 0) return;
     this.activitySelection = latest?.id;
     this.activitySearch = undefined;
     this.mode = "activity";
@@ -1949,16 +2018,24 @@ export class App {
     if (key.name !== "left") return;
     const node = nodes[index];
     if (!node) return;
-    const isExpanded = node.tool
-      ? node.tool.expanded
-      : node.item.kind === "activity" || node.item.kind === "tool"
-        ? node.item.expanded
-        : false;
+    const isExpanded =
+      "pending" in node
+        ? node.pending.expanded
+        : node.tool
+          ? node.tool.expanded
+          : node.item.kind === "activity" || node.item.kind === "tool"
+            ? node.item.expanded
+            : false;
     if (isExpanded) {
       this.toggleActivityNode(false);
       return;
     }
-    if (node.tool && node.item.kind === "activity" && node.item.tools.length > 1) {
+    if (
+      !("pending" in node) &&
+      node.tool &&
+      node.item.kind === "activity" &&
+      node.item.tools.length > 1
+    ) {
       this.activitySelection = node.item.id;
     }
   }
@@ -2411,6 +2488,10 @@ export class App {
       changed ||= item.expanded || item.tools.some((tool) => tool.expanded);
       item.expanded = false;
       for (const tool of item.tools) tool.expanded = false;
+    }
+    for (const pending of this.pendingTools.values()) {
+      changed ||= pending.expanded;
+      pending.expanded = false;
     }
     if (changed) {
       this.transcriptVersion++;

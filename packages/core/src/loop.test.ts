@@ -67,19 +67,24 @@ describe("agent loop", () => {
       description: "chatty",
       inputSchema: { type: "object" },
       execute: async (_id, _args, _signal, update) => {
-        update?.([{ type: "text", text: "progress" }]);
+        update?.([{ type: "text", text: "progress" }], { phase: "halfway" });
         return textResult("complete");
       },
     };
     const completed: string[] = [];
+    let details: unknown;
     await runLoop([userMessage("go")], ctx([chatty]), baseConfig(provider), async (event) => {
-      if (event.type === "tool_execution_update") await Bun.sleep(10);
+      if (event.type === "tool_execution_update") {
+        details = event.details;
+        await Bun.sleep(10);
+      }
       if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
         completed.push(event.type);
       }
     });
 
     expect(completed).toEqual(["tool_execution_update", "tool_execution_end"]);
+    expect(details).toEqual({ phase: "halfway" });
   });
 
   test("steering messages are injected before the next LLM call", async () => {

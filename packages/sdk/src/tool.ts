@@ -22,7 +22,11 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
   execute: (
     args: z.infer<Schema>,
-    ctx: { toolCallId: string; signal: AbortSignal; update: (text: string) => void },
+    ctx: {
+      toolCallId: string;
+      signal: AbortSignal;
+      update: (text: string, details?: unknown) => void;
+    },
   ) => Promise<ToolResult | string> | ToolResult | string;
 }
 
@@ -124,7 +128,8 @@ export function tool<Schema extends z.ZodType>(
           .join("; ");
         return errorResult(`Invalid arguments for ${definition.name}: ${issues}`);
       }
-      const update = (text: string) => onUpdate?.([{ type: "text", text }]);
+      const update = (text: string, details?: unknown) =>
+        onUpdate?.(text.length > 0 ? [{ type: "text", text }] : [], details);
       return normalize(await definition.execute(parsed.data, { toolCallId, signal, update }));
     },
   };

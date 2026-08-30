@@ -152,6 +152,7 @@ export type {
   SubagentDetails,
   SubagentExtensionOptions,
   SubagentKind,
+  SubagentProgressUpdate,
 } from "./subagents.ts";
 export { subagentsExtension } from "./subagents.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";

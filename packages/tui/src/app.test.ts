@@ -254,6 +254,106 @@ describe("fake-agent session", () => {
     }
   });
 
+  test("a running subagent streams an expandable activity trace", () => {
+    const { app } = harness();
+    const progress = (event: Record<string, unknown>) => ({
+      type: "subagent-progress",
+      kind: "search",
+      description: "Trace parser ownership",
+      model: "openai/gpt-5.6-terra",
+      thinkingLevel: "low",
+      event,
+    });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "search-1",
+      toolName: "search",
+      args: { query: "Trace parser ownership across every relevant package" },
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "search-1",
+      partial: [],
+      details: progress({ type: "assistant_start" }),
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "search-1",
+      partial: [],
+      details: progress({
+        type: "message",
+        message: {
+          ...assistant(""),
+          content: [
+            {
+              type: "toolCall",
+              id: "read-1",
+              name: "read",
+              arguments: { path: "packages/parser.ts", offset: 10, limit: 20 },
+            },
+          ],
+        },
+      }),
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "search-1",
+      partial: [],
+      details: progress({ type: "assistant_start" }),
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "search-1",
+      partial: [],
+      details: progress({ type: "text_delta", text: "## Finding\n\nParser owns the flow." }),
+    });
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    press(app, "right");
+    const expanded = app.renderScreen().map(stripAnsi).join("\n");
+    expect(expanded).toContain("❯ ⠋ searching codebase");
+    expect(expanded).toContain("prompt");
+    expect(expanded).toContain("Trace parser ownership across every relevant package");
+    expect(expanded).toContain("read packages/parser.ts L10-29");
+    expect(expanded).toContain("response");
+    expect(expanded).toContain("Finding");
+    expect(expanded).toContain("Parser owns the flow.");
+
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "search-1",
+      result: {
+        role: "toolResult",
+        toolCallId: "search-1",
+        toolName: "search",
+        content: [{ type: "text", text: "## Finding\n\nParser owns the flow." }],
+        details: {
+          type: "subagent",
+          kind: "search",
+          description: "Trace parser ownership",
+          model: "openai/gpt-5.6-terra",
+          thinkingLevel: "low",
+          durationMs: 1000,
+          messages: [],
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          reason: "done",
+        },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    const completed = app.renderScreen().map(stripAnsi).join("\n");
+    expect(completed).not.toContain("❯ consulted counsel");
+    expect(completed).toContain("❯ searched codebase");
+    expect(completed).toContain("Parser owns the flow.");
+  });
+
   test("a completed run leaves a permanent 'worked for' transcript line", () => {
     const { app } = harness();
     const now = Date.now();

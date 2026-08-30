@@ -37,7 +37,12 @@ const samples: AgentEvent[] = [
   },
   { type: "message_end", message: userMessage("hi") },
   { type: "tool_execution_start", toolCallId: "c1", toolName: "echo", args: { a: 1 } },
-  { type: "tool_execution_update", toolCallId: "c1", partial: [{ type: "text", text: "part" }] },
+  {
+    type: "tool_execution_update",
+    toolCallId: "c1",
+    partial: [{ type: "text", text: "part" }],
+    details: { phase: "halfway" },
+  },
   {
     type: "tool_execution_end",
     toolCallId: "c1",
