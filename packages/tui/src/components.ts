@@ -631,7 +631,8 @@ export function composerBox(
     ? `${MARGIN}╭─ ${label} ${"─".repeat(Math.max(0, contentWidth - stringWidth(label) - 3))}╮`
     : `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
   const body = lines.map((line) => {
-    const inset = line.startsWith(MARGIN) ? line.slice(1) : line;
+    const physical = line.replace(/[\r\n]/g, " ");
+    const inset = physical.startsWith(MARGIN) ? physical.slice(1) : physical;
     const clipped = truncateToWidth(inset, contentWidth);
     const padding = " ".repeat(Math.max(0, contentWidth - stringWidth(clipped)));
     return `${MARGIN}│${clipped}${padding}│`;
@@ -651,18 +652,19 @@ export const APPROVAL_OPTIONS = ["allow once", "always allow", "deny"] as const;
 
 // Never a modal box — same quiet layout language as everything else.
 export function approvalOverlay(data: ApprovalData, width: number, depth: ColorDepth): string[] {
-  const out: string[] = [MARGIN + styleText(sanitizeUntrusted(data.title), { bold: true }, depth)];
+  const title = sanitizeUntrusted(data.title).replace(/[\r\n]+/g, " ");
+  const out: string[] = [MARGIN + styleText(title, { bold: true }, depth)];
   const preview = data.diff
     ? diffCell(data.diff, { width, depth })
     : // The command being approved is the whole question; it must not be the
       // dimmest thing on the screen.
-      (data.preview ?? []).map(
-        (line) =>
-          MARGIN +
-          styleText(
-            truncateToWidth(sanitizeUntrusted(line), width - MARGIN.length),
-            { code: true },
-            depth,
+      (data.preview ?? []).flatMap((line) =>
+        sanitizeUntrusted(line)
+          .split("\n")
+          .map(
+            (physical) =>
+              MARGIN +
+              styleText(truncateToWidth(physical, width - MARGIN.length), { code: true }, depth),
           ),
       );
   const bounded = boundPreview(preview, data.maxPreviewRows);

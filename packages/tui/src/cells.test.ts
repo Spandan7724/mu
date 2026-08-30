@@ -503,6 +503,12 @@ describe("components", () => {
       "  │ $ test       │",
       "  ╰──────────────╯",
     ]);
+    const multiline = composerBox(["  first\nsecond"], width, "none");
+    expect(multiline).toEqual(["  ╭──────────────╮", "  │ first second │", "  ╰──────────────╯"]);
+    for (const line of multiline) {
+      expect(line).not.toContain("\n");
+      expect(stringWidth(line)).toBeLessThanOrEqual(width);
+    }
   });
 
   test("spinner cycles through the identity glyph frames", () => {
@@ -547,6 +553,25 @@ describe("components", () => {
     expect(lines[1]).toBe("  rm -rf build");
     expect(lines[2]).toBe(`  ${APPROVAL_OPTIONS.join(" · ")}`);
     for (const line of lines) expect(line).not.toContain("┌");
+  });
+
+  test("approval overlay splits multiline commands into bounded physical rows", () => {
+    const lines = visible(
+      approvalOverlay(
+        {
+          title: "run bash",
+          preview: ["python3 - <<'PY'\nprint('a very long value that must truncate')\nPY"],
+          selectedIndex: 0,
+        },
+        24,
+        "none",
+      ),
+    );
+    expect(lines.slice(1, 4)).toEqual(["  python3 - <<'PY'", "  print('a very long va…", "  PY"]);
+    for (const line of lines.slice(0, 4)) {
+      expect(line).not.toContain("\n");
+      expect(stringWidth(line)).toBeLessThanOrEqual(24);
+    }
   });
 
   test("select list marks the selection with the accent glyph", () => {

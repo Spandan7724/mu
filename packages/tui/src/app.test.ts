@@ -874,6 +874,32 @@ describe("approval overlay", () => {
     expect(rendered).toContain("allow once");
   });
 
+  test("a multiline bash approval remains inside an intact composer box", () => {
+    const h = harness();
+    h.app.handleEvent({
+      type: "permission_asked",
+      request: {
+        id: "p2",
+        toolCallId: "c2",
+        toolName: "bash",
+        permission: "bash",
+        pattern: "python3 - <<'PY'\nprint('hello')\nPY",
+        description: "Run bash",
+      },
+    });
+
+    const rendered = h.app.renderBottom().map(stripAnsi);
+    for (const commandLine of ["python3 - <<'PY'", "print('hello')", "PY"]) {
+      const row = rendered.find((line) => line.includes(commandLine));
+      expect(row).toStartWith("  │ ");
+      expect(row).toEndWith("│");
+    }
+    for (const line of rendered) {
+      expect(line).not.toContain("\n");
+      expect(stringWidth(line)).toBeLessThanOrEqual(60);
+    }
+  });
+
   test("a file permission renders a colored diff preview", () => {
     const h = harness();
     h.app.handleEvent({
