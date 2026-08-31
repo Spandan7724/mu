@@ -754,7 +754,7 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
       GLYPHS.subagentSpinner[spinnerFrame % GLYPHS.subagentSpinner.length] ??
       GLYPHS.subagentSpinner[0];
     const name = details ? action.completed : `${spinner} ${action.running}`;
-    if (compactTask) {
+    if (kind === "task") {
       const lines = details
         ? toolCell(
             {
@@ -776,7 +776,9 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
             },
             ctx,
           );
-      return lines;
+      return info.expanded && state
+        ? [...lines, ...subagentTrace(state, info, ctx, registry ?? new RendererRegistry())]
+        : lines;
     }
     const lines = toolCell(
       {

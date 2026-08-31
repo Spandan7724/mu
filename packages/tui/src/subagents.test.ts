@@ -191,7 +191,7 @@ describe("subagent transcript rendering", () => {
     expect(second[0]).not.toContain("running");
   });
 
-  test("task expansion shows its complete delegated brief and formatted result", () => {
+  test("task expansion keeps its description above the complete brief and formatted result", () => {
     const renderer = subagentRenderers.task;
     if (!renderer) throw new Error("missing task renderer");
     const registry = rendererRegistry();
@@ -219,8 +219,8 @@ describe("subagent transcript rendering", () => {
     expect(compact[0]).not.toContain("delegated");
     expect(compact[0]).not.toContain("gpt-5.6-terra");
     expect(compact[0]).not.toContain("low");
-    expect(expanded[0]).toContain("delegated");
-    expect(expanded[0]).not.toContain("Implement parser");
+    expect(expanded[0]).toContain("✓ Implement parser");
+    expect(expanded[0]).not.toContain("delegated");
     expect(expanded[0]).toContain("gpt-5.6-terra");
     expect(expanded[0]).toContain("low");
     expect(expanded).toContain(
@@ -255,6 +255,37 @@ describe("subagent transcript rendering", () => {
     expect(running[0]).not.toContain("delegating");
     expect(running[0]).not.toContain("gpt-5.6-terra");
     expect(running[0]).not.toContain("none");
+  });
+
+  test("an expanded running task keeps its description and restores model details", () => {
+    const renderer = subagentRenderers.task;
+    if (!renderer) throw new Error("missing task renderer");
+    const expanded = renderer(
+      {
+        toolName: "task",
+        args: { description: "Explore SDK and CLI", prompt: "Inspect the SDK and CLI." },
+        running: true,
+        elapsedMs: 64_000,
+        expanded: true,
+        progress: {
+          type: "subagent-progress-state",
+          kind: "task",
+          description: "Explore SDK and CLI",
+          model: "openai/gpt-5.6-terra",
+          thinkingLevel: "none",
+          messages: (result.details as { messages: unknown[] }).messages,
+          answer: "",
+        },
+      },
+      { width: 100, depth: "none", spinnerFrame: 0 },
+      rendererRegistry(),
+    ).map(stripAnsi);
+
+    expect(expanded[0]).toBe(
+      "  │ ⠋ Explore SDK and CLI · openai/gpt-5.6-terra · none · 2 actions · 1m 4s",
+    );
+    expect(expanded[0]).not.toContain("delegating");
+    expect(expanded).toContain("    prompt");
   });
 
   test("task activity reuses renderers registered by a custom profile", () => {
