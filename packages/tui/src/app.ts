@@ -1542,6 +1542,7 @@ export class App {
         : this.isShellMode
           ? styleText("shell", { toolExec: true, bold: true }, depth)
           : undefined;
+    if (this.mode === "activity" && lines.at(-1) !== "") lines.push("");
     lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";

@@ -530,7 +530,10 @@ describe("fake-agent session", () => {
 
     feed(app, "\u000f");
     expect(app.currentMode).toBe("activity");
-    let review = app.renderScreen().map(stripAnsi).join("\n");
+    let reviewRows = app.renderScreen().map(stripAnsi);
+    const composer = reviewRows.findIndex((line) => line.startsWith("  ╭"));
+    expect(reviewRows[composer - 1]).toBe("");
+    let review = reviewRows.join("\n");
     expect(review).toContain("❯ running bun test · task_1 bg");
     expect(review).not.toContain("┌ background");
     expect(review).not.toContain("first");
@@ -549,7 +552,8 @@ describe("fake-agent session", () => {
 
     feed(app, "\u000f");
     app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
-    review = app.renderScreen().map(stripAnsi).join("\n");
+    reviewRows = app.renderScreen().map(stripAnsi);
+    review = reviewRows.join("\n");
     expect(review).toContain("❯ ran bun test · ✓ task_1 bg");
     expect(review).toContain("first");
     expect(review).toContain("fifth");
