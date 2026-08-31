@@ -1369,27 +1369,23 @@ export class App {
     // Live region: streaming assistant text and running tool cells, so a long
     // turn is never a frozen screen with only a spinner.
     if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
-    for (const pending of this.pendingTools.values()) {
-      if (this.mode === "activity" && this.registry.supportsLiveExpansion(pending.toolName)) {
-        continue;
-      }
-      lines.push(
-        ...this.registry.render(
-          {
-            toolName: pending.toolName,
-            args: pending.args,
-            running: pending.running === true,
-            elapsedMs:
-              pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
-            argsStreaming: pending.argsStreaming === true,
-            expanded: false,
-            // A backgrounded command keeps its start result while it runs, so
-            // the row can name the task it is waiting on.
-            ...(pending.taskId !== undefined && pending.result ? { result: pending.result } : {}),
-            ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
-          },
-          this.ctx,
-        ),
+    const backgroundPending: PendingTool[] = [];
+    const renderPending = (pending: PendingTool): string[] => {
+      const rendered = this.registry.render(
+        {
+          toolName: pending.toolName,
+          args: pending.args,
+          running: pending.running === true,
+          elapsedMs:
+            pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
+          argsStreaming: pending.argsStreaming === true,
+          expanded: false,
+          // A backgrounded command keeps its start result while it runs, so
+          // the row can name the task it is waiting on.
+          ...(pending.taskId !== undefined && pending.result ? { result: pending.result } : {}),
+          ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
+        },
+        this.ctx,
       );
       const task = pending.taskId ? this.backgroundTasks.get(pending.taskId) : undefined;
       const output = task
@@ -1398,8 +1394,32 @@ export class App {
           )
         : pending.output.display(4);
       for (const line of output) {
-        if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
+        if (line.trim().length > 0) rendered.push(...toolOutputCell(line, this.ctx));
       }
+      return rendered;
+    };
+    for (const pending of this.pendingTools.values()) {
+      if (this.mode === "activity" && this.registry.supportsLiveExpansion(pending.toolName)) {
+        continue;
+      }
+      if (pending.taskId !== undefined) backgroundPending.push(pending);
+      else lines.push(...renderPending(pending));
+    }
+    if (backgroundPending.length > 0) {
+      if (lines.length > 0) lines.push("");
+      lines.push(
+        MARGIN +
+          styleText(
+            `${GLYPHS.ruleOpen} background ${GLYPHS.separator} ${backgroundPending.length}`,
+            { dim: true },
+            depth,
+          ),
+      );
+      for (const [index, pending] of backgroundPending.entries()) {
+        if (index > 0) lines.push(MARGIN + styleText(GLYPHS.rule, { dim: true }, depth));
+        lines.push(...renderPending(pending));
+      }
+      lines.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth), "");
     }
 
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);

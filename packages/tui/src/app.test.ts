@@ -482,10 +482,40 @@ describe("fake-agent session", () => {
     // The bash row has not committed yet, so the log renders beneath it.
     expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun test");
     const live = app.renderBottom().map(stripAnsi).join("\n");
+    expect(live).toContain("┌ background · 1\n  │ running bun test · task_1 bg");
+    expect(live).toContain("\n  └\n\n  ╭");
     expect(live).toContain("running bun test · task_1 bg");
     expect(live).toContain("five");
     expect(live).toContain("seven");
     expect(live).not.toContain("one");
+  });
+
+  test("multiple background tasks share one bracket without enclosing ordinary tools", () => {
+    const { app } = harness();
+    startTask(app, "bun test", "task_1", "c1");
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "read-1",
+      toolName: "read",
+      args: { path: "README.md" },
+    });
+    startTask(app, "bun dev", "task_2", "c2");
+
+    const live = app.renderBottom().map(stripAnsi);
+    const read = live.findIndex((line) => line.includes("read README.md"));
+    const open = live.findIndex((line) => line.includes("┌ background · 2"));
+    const first = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
+    const second = live.findIndex((line) => line.includes("running bun dev · task_2 bg"));
+    const close = live.findIndex((line) => line.trim() === "└");
+
+    expect(read).toBeGreaterThanOrEqual(0);
+    expect(read).toBeLessThan(open);
+    expect(first).toBeGreaterThan(open);
+    expect(second).toBeGreaterThan(first);
+    expect(live.slice(first + 1, second)).toContain("  │");
+    expect(close).toBeGreaterThan(second);
+    expect(live[close + 1]).toBe("");
+    expect(live[close + 2]).toStartWith("  ╭");
   });
 
   test("the task's exit commits that one row, carrying its outcome", () => {
