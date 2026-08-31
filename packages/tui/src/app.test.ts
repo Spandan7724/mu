@@ -518,6 +518,44 @@ describe("fake-agent session", () => {
     expect(live[close + 2]).toStartWith("  ╭");
   });
 
+  test("a running background task is selectable and expandable in activity mode", () => {
+    const { app } = harness();
+    startTask(app);
+    app.handleEvent({
+      type: "task_output",
+      taskId: "task_1",
+      chunk: "first\nsecond\nthird\nfourth\n",
+    });
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("first");
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("activity");
+    let review = app.renderScreen().map(stripAnsi).join("\n");
+    expect(review).toContain("❯ running bun test · task_1 bg");
+    expect(review).not.toContain("┌ background");
+    expect(review).not.toContain("first");
+
+    press(app, "right");
+    review = app.renderScreen().map(stripAnsi).join("\n");
+    expect(review).toContain("first");
+    expect(review).toContain("fourth");
+
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "fifth\n" });
+    expect(app.renderScreen().map(stripAnsi).join("\n")).toContain("fifth");
+
+    feed(app, "\u000f");
+    expect(app.currentMode).toBe("composing");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("┌ background · 1");
+
+    feed(app, "\u000f");
+    app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
+    review = app.renderScreen().map(stripAnsi).join("\n");
+    expect(review).toContain("❯ ran bun test · ✓ task_1 bg");
+    expect(review).toContain("first");
+    expect(review).toContain("fifth");
+    expect(review).not.toContain("┌ background");
+  });
+
   test("the task's exit commits that one row, carrying its outcome", () => {
     const { app } = harness();
     startTask(app);

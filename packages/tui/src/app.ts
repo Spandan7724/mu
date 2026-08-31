@@ -38,12 +38,14 @@ import {
 import type { InputEvent, Key } from "./input.ts";
 import {
   type ActivityKind,
+  EXPANDED_OUTPUT_LINES,
   RendererRegistry,
   type ToolRenderInfo,
   updateSubagentProgress,
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
+import { truncateToWidth } from "./width.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
 const COLLAPSE_COMMAND = {
@@ -137,9 +139,9 @@ interface PendingInput {
   text: string;
 }
 
-function taskOutputText(task: LiveTask): string {
+function taskOutputLines(task: LiveTask): string[] {
   const lines = [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])];
-  if (task.omittedLines === 0 && task.omittedChars === 0) return lines.join("\n");
+  if (task.omittedLines === 0 && task.omittedChars === 0) return lines;
   const omitted = [
     task.omittedLines > 0
       ? `${task.omittedLines.toLocaleString()} earlier line${task.omittedLines === 1 ? "" : "s"}`
@@ -153,7 +155,24 @@ function taskOutputText(task: LiveTask): string {
     "omitted from TUI log",
     "task_output uses a separate bounded model-facing buffer",
     ...lines,
-  ].join("\n");
+  ];
+}
+
+function taskOutputText(task: LiveTask): string {
+  return taskOutputLines(task).join("\n");
+}
+
+function expandedTaskOutputLines(task: LiveTask): string[] {
+  const lines = taskOutputLines(task);
+  if (lines.length <= EXPANDED_OUTPUT_LINES) return lines;
+  const visible = EXPANDED_OUTPUT_LINES - 1;
+  const head = Math.ceil(visible / 2);
+  const tail = Math.floor(visible / 2);
+  return [
+    ...lines.slice(0, head),
+    `… ${lines.length - head - tail} lines omitted from expanded view`,
+    ...lines.slice(-tail),
+  ];
 }
 
 // A bash result describing a task it just spawned, rather than a command it ran
@@ -1399,7 +1418,7 @@ export class App {
       return rendered;
     };
     for (const pending of this.pendingTools.values()) {
-      if (this.mode === "activity" && this.registry.supportsLiveExpansion(pending.toolName)) {
+      if (this.mode === "activity" && this.isPendingActivity(pending)) {
         continue;
       }
       if (pending.taskId !== undefined) backgroundPending.push(pending);
@@ -1570,7 +1589,8 @@ export class App {
   private pendingActivityRows(selectedId?: string): string[] {
     const logical: string[] = [];
     for (const pending of this.pendingTools.values()) {
-      if (!pending.running || !this.registry.supportsLiveExpansion(pending.toolName)) continue;
+      if (!this.isPendingActivity(pending)) continue;
+      const task = pending.taskId ? this.backgroundTasks.get(pending.taskId) : undefined;
       const lines = this.registry.render(
         {
           toolName: pending.toolName,
@@ -1579,14 +1599,28 @@ export class App {
           elapsedMs:
             pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
           argsStreaming: pending.argsStreaming === true,
-          expanded: pending.expanded,
+          expanded: task ? false : pending.expanded,
+          ...(pending.result !== undefined ? { result: pending.result } : {}),
           ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
         },
         this.ctx,
       );
+      if (task && pending.expanded) {
+        const lineWidth = Math.max(18, this.options.width - 4);
+        for (const line of expandedTaskOutputLines(task)) {
+          lines.push(...toolOutputCell(truncateToWidth(line, lineWidth), this.ctx));
+        }
+      }
       logical.push(...this.disclosureLines(lines, pending.expanded, selectedId === pending.id));
     }
     return this.toTerminalRows(logical);
+  }
+
+  private isPendingActivity(pending: PendingTool): boolean {
+    return (
+      pending.running === true &&
+      (pending.taskId !== undefined || this.registry.supportsLiveExpansion(pending.toolName))
+    );
   }
 
   private streamingRows(): string[] {
@@ -1843,9 +1877,7 @@ export class App {
       }
     }
     for (const pending of this.pendingTools.values()) {
-      if (pending.running && this.registry.supportsLiveExpansion(pending.toolName)) {
-        nodes.push({ id: pending.id, pending });
-      }
+      if (this.isPendingActivity(pending)) nodes.push({ id: pending.id, pending });
     }
     return nodes;
   }

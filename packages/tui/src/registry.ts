@@ -22,7 +22,7 @@ import { wrapLine, wrapText } from "./wrap.ts";
 
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
-const EXPANDED_OUTPUT_LINES = 200;
+export const EXPANDED_OUTPUT_LINES = 200;
 
 export interface ToolRenderInfo {
   toolName: string;
