@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@mu/ai";
-import { ExtensionHost, type PermissionRequest } from "@mu/core";
+import { customMessage, ExtensionHost, type PermissionRequest } from "@mu/core";
 import { FakeProvider, fakeModel, type ScriptedTurn } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
@@ -63,6 +63,7 @@ describe("managed subagents", () => {
       thinkingLevel: "medium",
       tools: [inspect, mutate],
       extensions: host,
+      initialMessages: [customMessage("parent-only", "do not expose this bootstrap message")],
     });
     await host.register(
       subagentsExtension({
@@ -75,6 +76,9 @@ describe("managed subagents", () => {
     await parent.run("investigate");
 
     expect(provider.requests[1]?.tools?.map((candidate) => candidate.name)).toEqual(["inspect"]);
+    expect(JSON.stringify(provider.requests[1]?.messages)).not.toContain(
+      "do not expose this bootstrap message",
+    );
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Resolve one directed engineering question end to end",
     );
@@ -389,6 +393,47 @@ describe("managed subagents", () => {
 
     expect(details(parent, "task").reason).toBe("done");
     expect(provider.callCount).toBe(16);
+  });
+
+  test("managed children inherit the parent's remaining token budget", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "task-budget",
+            name: "task",
+            arguments: { description: "bounded work", prompt: "Work until the budget stops you" },
+          },
+        ],
+      },
+      {
+        content: [{ type: "toolCall", id: "work-1", name: "work", arguments: { index: 1 } }],
+      },
+      {
+        content: [{ type: "toolCall", id: "work-2", name: "work", arguments: { index: 2 } }],
+      },
+    ]);
+    const work = tool({
+      name: "work",
+      description: "work",
+      inputSchema: z.object({ index: z.number() }),
+      execute: ({ index }) => `completed ${index}`,
+    });
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [work],
+      extensions: host,
+      budget: { maxTokens: 30 },
+    });
+    await host.register(subagentsExtension({ parent: () => parent }));
+
+    await parent.run("delegate bounded work");
+
+    expect(details(parent, "task").reason).toBe("maxTokens");
+    expect(provider.callCount).toBe(3);
   });
 
   test("coding specialists require an explicit inspection permission boundary", () => {

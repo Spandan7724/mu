@@ -27,6 +27,7 @@ import {
   type CheckpointProvider,
   CompactionError,
   type CompactionTrigger,
+  type CustomMessage,
   compact as compactContext,
   contextState,
   DEFAULT_KEEP_RECENT_TOKENS,
@@ -52,7 +53,7 @@ import {
   userMessage,
 } from "@mu/core";
 import type { z } from "zod";
-import { type Budget, checkBudget } from "./budget.ts";
+import { type Budget, checkBudget, totalTokens } from "./budget.ts";
 import {
   STRUCTURED_OUTPUT_TOOL,
   structuredOutputPrompt,
@@ -314,6 +315,21 @@ export class Agent {
 
   createChild(options: ChildAgentOptions): Agent {
     const model = options.model ?? this.model;
+    const parentBudget = this.options.budget;
+    const childBudget: Budget = { ...options.budget };
+    if (parentBudget?.maxCostUsd !== undefined) {
+      childBudget.maxCostUsd = Math.min(
+        childBudget.maxCostUsd ?? Number.POSITIVE_INFINITY,
+        Math.max(0, parentBudget.maxCostUsd - (this.totals.costUsd ?? 0)),
+      );
+    }
+    if (parentBudget?.maxTokens !== undefined) {
+      childBudget.maxTokens = Math.min(
+        childBudget.maxTokens ?? Number.POSITIVE_INFINITY,
+        Math.max(0, parentBudget.maxTokens - totalTokens(this.totals)),
+      );
+    }
+    const hasChildBudget = Object.values(childBudget).some((value) => value !== undefined);
     return new Agent({
       model,
       provider: this.providerFor(model),
@@ -324,7 +340,7 @@ export class Agent {
       tools: options.tools,
       permissions: options.permissions ?? this.permissions,
       onPermission: (request) => this.resolveChildPermission(request),
-      ...(options.budget ? { budget: options.budget } : {}),
+      ...(hasChildBudget ? { budget: childBudget } : {}),
       session: new MemorySessionStore(),
       ...(this.options.sessionProfile ? { sessionProfile: this.options.sessionProfile } : {}),
       ...(this.options.sessionEnvironment
@@ -333,7 +349,6 @@ export class Agent {
       thinkingLevel: options.thinkingLevel ?? this.currentThinking,
       ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
       ...(this.options.getCredentials ? { getCredentials: this.options.getCredentials } : {}),
-      ...(this.options.initialMessages ? { initialMessages: this.options.initialMessages } : {}),
       ...(this.options.refreshContext ? { refreshContext: this.options.refreshContext } : {}),
     });
   }
@@ -501,9 +516,11 @@ export class Agent {
   }
 
   // Wake a run that would otherwise stop (also how background work resumes it).
-  followUp(message: string): void {
+  // A string is the user's own words; a message lets a caller wake the run with
+  // context the user never typed.
+  followUp(message: string | CustomMessage): void {
     if (this.stopping) return;
-    this.followUps.push(userMessage(message));
+    this.followUps.push(typeof message === "string" ? userMessage(message) : message);
     if (!this.running) this.scheduleAutonomousRun();
   }
 
@@ -1386,7 +1403,7 @@ export class Agent {
   }
 
   private execute<T>(
-    prompt: string | UserContent[],
+    prompt: string | UserContent[] | AgentMessage,
     opts: AgentRunOptions<T> | undefined,
     emit: (event: AgentEvent) => void,
   ): Promise<RunResult & { output?: T }> {
@@ -1423,7 +1440,7 @@ export class Agent {
   }
 
   private async executeRun<T>(
-    prompt: string | UserContent[],
+    prompt: string | UserContent[] | AgentMessage,
     opts: AgentRunOptions<T> | undefined,
     emit: (event: AgentEvent) => void,
   ): Promise<RunResult & { output?: T }> {
@@ -1463,7 +1480,9 @@ export class Agent {
     const promptMessage: AgentMessage =
       typeof effectivePrompt === "string"
         ? userMessage(effectivePrompt)
-        : { role: "user", content: effectivePrompt, timestamp: Date.now() };
+        : Array.isArray(effectivePrompt)
+          ? { role: "user", content: effectivePrompt, timestamp: Date.now() }
+          : effectivePrompt;
 
     let captured: T | undefined;
     let tools: AnyTool[] = [
@@ -2010,12 +2029,15 @@ export class Agent {
         this.resolveIdleIfDone();
         return;
       }
+      // The queued message goes through whole: a follow-up may be custom
+      // context rather than a user turn, and rebuilding it from content alone
+      // would silently promote it to one.
       const message = this.followUps.shift();
-      if (!message || message.role !== "user") {
+      if (!message) {
         this.resolveIdleIfDone();
         return;
       }
-      void this.execute(message.content, undefined, () => {}).catch(() => {});
+      void this.execute(message, undefined, () => {}).catch(() => {});
     });
   }
 

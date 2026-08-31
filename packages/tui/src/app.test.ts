@@ -445,60 +445,237 @@ describe("fake-agent session", () => {
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("1 bg");
   });
 
-  test("background task output streams in a bounded live cell then collapses", () => {
-    const { app } = harness();
+  // A background task is always started by a bash call, and that call's row is
+  // the one that stays live until the task exits.
+  const startTask = (app: App, command = "bun test", taskId = "task_1", id = "c1") => {
     app.handleEvent({
-      type: "task_started",
-      taskId: "task_1",
-      command: "bun test",
-      background: true,
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "bash",
+      args: { command, run_in_background: true },
     });
+    // ProcessManager publishes this synchronously while bash is still inside
+    // execute; the tool result follows after the task has been created.
+    app.handleEvent({ type: "task_started", taskId, command, background: true });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName: "bash",
+        content: [{ type: "text", text: `Started ${taskId} in the background.` }],
+        details: { taskId, command, background: true },
+        isError: false,
+        timestamp: Date.now(),
+      },
+    });
+  };
+
+  test("a running task streams under the command that started it, not on its own", () => {
+    const { app } = harness();
+    startTask(app);
     app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "one\ntwo\nthr" });
     app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "ee\n" });
-    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("three");
-    app.handleEvent({
-      type: "task_output",
-      taskId: "task_1",
-      chunk: "four\nfive\nsix\nseven",
-    });
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "four\nfive\nsix\nseven" });
 
+    // The bash row has not committed yet, so the log renders beneath it.
+    expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun test");
     const live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("task_1 · bun test");
+    expect(live).toContain("running bun test · task_1 bg");
     expect(live).toContain("five");
     expect(live).toContain("seven");
     expect(live).not.toContain("one");
+  });
 
-    const completed = app
-      .handleEvent({
-        type: "task_exited",
-        taskId: "task_1",
-        exitCode: 0,
-        status: "exited",
-      })
+  test("the task's exit commits that one row, carrying its outcome", () => {
+    const { app } = harness();
+    startTask(app);
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "one\ntwo\nthree\n" });
+    const committed = app
+      .handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" })
       .map(stripAnsi)
       .join("\n");
-    expect(completed).toContain("task_1 · bun test · ✓");
+
+    // One row for the whole lifecycle, and nothing left in the live region.
+    expect(committed).toContain("ran bun test · ✓ task_1 bg");
     expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("task_1");
+    const rows = app
+      .renderTranscript("main")
+      .map(stripAnsi)
+      .filter((row) => row.trim());
+    expect(rows).toHaveLength(1);
+  });
+
+  test("a fast exit waits for the spawning tool result instead of losing the row", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "fast",
+      toolName: "bash",
+      args: { command: "true", run_in_background: true },
+    });
+    app.handleEvent({
+      type: "task_started",
+      taskId: "task_fast",
+      command: "true",
+      background: true,
+    });
+    app.handleEvent({ type: "task_exited", taskId: "task_fast", exitCode: 0, status: "exited" });
+    const committed = app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "fast",
+      result: {
+        role: "toolResult",
+        toolCallId: "fast",
+        toolName: "bash",
+        content: [{ type: "text", text: "Started task_fast in the background." }],
+        details: { taskId: "task_fast", command: "true", background: true },
+        isError: false,
+        timestamp: Date.now(),
+      },
+    });
+    expect(committed.map(stripAnsi).join("\n")).toContain("ran true · ✓ task_fast bg");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("task_fast");
+  });
+
+  test("an attached running task reclaims its persisted bash row", () => {
+    const { app } = harness();
+    app.replaceTranscript([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "attached-call",
+            name: "bash",
+            arguments: { command: "bun dev", run_in_background: true },
+          },
+        ],
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
+        model: "fake/fake-1",
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      },
+      {
+        role: "toolResult",
+        toolCallId: "attached-call",
+        toolName: "bash",
+        content: [{ type: "text", text: "Started task_attached in the background." }],
+        details: { taskId: "task_attached", command: "bun dev", background: true },
+        isError: false,
+        timestamp: Date.now(),
+      },
+    ]);
+    expect(app.renderTranscript("main").map(stripAnsi).join("\n")).toContain("bun dev");
+
+    app.handleEvent({
+      type: "task_started",
+      taskId: "task_attached",
+      command: "bun dev",
+      background: true,
+    });
+    app.handleEvent({ type: "task_output", taskId: "task_attached", chunk: "ready\n" });
+    expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun dev");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("ready");
+
+    const committed = app.handleEvent({
+      type: "task_exited",
+      taskId: "task_attached",
+      exitCode: 0,
+      status: "exited",
+    });
+    expect(committed.map(stripAnsi).join("\n")).toContain("ran bun dev · ✓ task_attached bg");
+  });
+
+  const taskLog = (app: App, lineCount: number) => {
+    startTask(app);
+    app.handleEvent({
+      type: "task_output",
+      taskId: "task_1",
+      chunk: `${Array.from({ length: lineCount }, (_, index) => `line ${index + 1}`).join("\n")}\n`,
+    });
+    app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
+    app.handleInput({ type: "key", key: { name: "o", ctrl: true, alt: false, shift: false } });
+    app.handleInput({ type: "key", key: { name: "right", ctrl: false, alt: false, shift: false } });
+    // The screen is viewport-clipped; the transcript is the whole cell.
+    return app.renderTranscript("main").map(stripAnsi);
+  };
+
+  test("expanding shows the whole log when it fits the tool output bound", () => {
+    const rows = taskLog(harness().app, 150);
+    expect(rows.filter((row) => /line \d+$/.test(row))).toHaveLength(150);
+    expect(rows.join("\n")).toContain("line 1");
+    expect(rows.join("\n")).toContain("line 150");
+    expect(rows.join("\n")).not.toContain("omitted");
+  });
+
+  test("a longer log elides its middle exactly like any other tool output", () => {
+    // The row is an ordinary tool row now, so it inherits the shared expanded
+    // output bound rather than carrying a rule of its own.
+    const rows = taskLog(harness().app, 5_000);
+    expect(rows.join("\n")).toContain("line 1");
+    expect(rows.join("\n")).toContain("line 5000");
+    expect(rows.join("\n")).toMatch(/lines omitted/);
+    expect(rows.filter((row) => /line \d+$/.test(row)).length).toBeLessThan(250);
+  });
+
+  test("retained task output has an aggregate character ceiling with honest copy", () => {
+    const { app } = harness();
+    startTask(app);
+    const wide = "x".repeat(10_000);
+    app.handleEvent({
+      type: "task_output",
+      taskId: "task_1",
+      chunk: Array.from({ length: 600 }, (_, index) => `${index + 1}:${wide}`).join("\n"),
+    });
+    app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
+    app.handleInput({ type: "key", key: { name: "o", ctrl: true, alt: false, shift: false } });
+    app.handleInput({ type: "key", key: { name: "right", ctrl: false, alt: false, shift: false } });
+    const expanded = app.renderTranscript("main").map(stripAnsi).join("\n");
+    expect(expanded).toContain("omitted from TUI log");
+    expect(expanded).toContain("task_output uses a separate bounded model-facing buffer");
+    expect(expanded).not.toContain("task_output has the full log");
+  });
+
+  test("a background task exit notification is context, not a user turn", () => {
+    const { app } = harness();
+    startTask(app);
+    app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
+    const before = app.renderTranscript("main").map(stripAnsi).join("\n");
+
+    // The profile wakes the run with a custom message so the model still reads
+    // the notification while the transcript keeps only the command's own row.
+    app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "background_task",
+        content: [
+          { type: "text", text: "Background task task_1 (bun test) finished successfully." },
+        ],
+        display: false,
+        timestamp: Date.now(),
+      },
+    });
+    const after = app.renderTranscript("main").map(stripAnsi).join("\n");
+    expect(after).toBe(before);
+    expect(after).not.toContain("Background task task_1");
   });
 
   test("a killed background task commits an explicit killed summary", () => {
     const { app } = harness();
-    app.handleEvent({
-      type: "task_started",
-      taskId: "task_2",
-      command: "bun dev",
-      background: true,
-    });
-    const completed = app
-      .handleEvent({
-        type: "task_exited",
-        taskId: "task_2",
-        exitCode: null,
-        status: "killed",
-      })
+    startTask(app, "bun dev", "task_2", "c2");
+    const committed = app
+      .handleEvent({ type: "task_exited", taskId: "task_2", exitCode: null, status: "killed" })
       .map(stripAnsi)
       .join("\n");
-    expect(completed).toContain("✗ · killed");
+    expect(committed).toContain("task_2 bg · killed");
   });
 });
 

@@ -14,7 +14,6 @@ import {
   diffLinesFromHunks,
   errorCell,
   type RenderContext,
-  taskCell,
   thinkingCell,
   toolOutputCell,
   userCell,
@@ -127,6 +126,10 @@ interface LiveTask {
   startedAt: number;
   tail: string[];
   partial: string;
+  retainedChars: number;
+  omittedLines: number;
+  omittedChars: number;
+  exit?: Extract<AgentEvent, { type: "task_exited" }>;
 }
 
 interface PendingInput {
@@ -134,10 +137,79 @@ interface PendingInput {
   text: string;
 }
 
-const TASK_TAIL_LINES = 5;
+function taskOutputText(task: LiveTask): string {
+  const lines = [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])];
+  if (task.omittedLines === 0 && task.omittedChars === 0) return lines.join("\n");
+  const omitted = [
+    task.omittedLines > 0
+      ? `${task.omittedLines.toLocaleString()} earlier line${task.omittedLines === 1 ? "" : "s"}`
+      : "",
+    task.omittedChars > 0
+      ? `${task.omittedChars.toLocaleString()} character${task.omittedChars === 1 ? "" : "s"}`
+      : "",
+  ].filter(Boolean);
+  return [
+    `… ${omitted.join(" and ")}`,
+    "omitted from TUI log",
+    "task_output uses a separate bounded model-facing buffer",
+    ...lines,
+  ].join("\n");
+}
+
+// A bash result describing a task it just spawned, rather than a command it ran
+// to completion. `exitCode` is what separates the two.
+function backgroundTaskDetails(details: unknown): { taskId: string } | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const record = details as { background?: unknown; taskId?: unknown; exitCode?: unknown };
+  if (record.background !== true || typeof record.taskId !== "string") return undefined;
+  return record.exitCode === undefined ? { taskId: record.taskId } : undefined;
+}
+
+// Guardrails against a runaway process, independent of core's much tighter
+// model-facing token budget. Both dimensions matter: a line count alone still
+// permits a small number of enormous lines to exhaust the TUI.
+const TASK_RETAINED_LINES = 50_000;
+const TASK_RETAINED_CHARS = 5_000_000;
+const TASK_RETAINED_LINE_CHARS = 10_000;
+// The live row is transient and shares space with the composer.
+const TASK_LIVE_TAIL_LINES = 3;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
 const PENDING_INPUT_ROWS = 3;
+
+function appendTaskOutput(task: LiveTask, chunk: string): void {
+  const parts = `${task.partial}${chunk}`.split(/\r\n|\n|\r/);
+  task.partial = parts.pop() ?? "";
+  if (task.partial.length > TASK_PARTIAL_CHARS) {
+    task.omittedChars += task.partial.length - TASK_PARTIAL_CHARS;
+    task.partial = `…${task.partial.slice(-(TASK_PARTIAL_CHARS - 1))}`;
+  }
+  for (const part of parts) {
+    if (part.length <= TASK_RETAINED_LINE_CHARS) {
+      task.tail.push(part);
+      task.retainedChars += part.length;
+      continue;
+    }
+    task.omittedChars += part.length - TASK_RETAINED_LINE_CHARS;
+    const retained = `…${part.slice(-(TASK_RETAINED_LINE_CHARS - 1))}`;
+    task.tail.push(retained);
+    task.retainedChars += retained.length;
+  }
+  let dropped = Math.max(0, task.tail.length - TASK_RETAINED_LINES);
+  let retainedChars = task.retainedChars;
+  for (let index = 0; index < dropped; index++) {
+    retainedChars -= task.tail[index]?.length ?? 0;
+  }
+  while (dropped < task.tail.length && retainedChars + task.partial.length > TASK_RETAINED_CHARS) {
+    retainedChars -= task.tail[dropped]?.length ?? 0;
+    dropped++;
+  }
+  if (dropped > 0) {
+    task.tail.splice(0, dropped);
+    task.retainedChars = retainedChars;
+    task.omittedLines += dropped;
+  }
+}
 const MIN_STREAMING_PREVIEW_CHARS = 8_000;
 const MAX_STREAMING_PREVIEW_CHARS = 16_000;
 const STREAMING_VIEWPORTS = 2;
@@ -254,6 +326,10 @@ type PendingTool = Omit<ToolRenderInfo, "expanded"> & {
   expanded: boolean;
   output: LiveToolOutput;
   startedAt?: number;
+  // A backgrounded command's tool call returns the moment the process spawns,
+  // but the row it owns stays live until the task itself exits, so its output
+  // lands under the command that produced it instead of floating on its own.
+  taskId?: string;
 };
 interface ActivityTool {
   id: string;
@@ -894,6 +970,13 @@ export class App {
 
       case "tool_execution_end": {
         const pending = this.pendingTools.get(event.toolCallId);
+        const started = backgroundTaskDetails(event.result.details);
+        if (pending && started) {
+          pending.result = event.result;
+          pending.taskId = started.taskId;
+          pending.running = true;
+          return this.completeBackgroundTask(started.taskId) ?? [];
+        }
         this.pendingTools.delete(event.toolCallId);
         const info: ToolRenderInfo = {
           toolName: pending?.toolName ?? event.result.toolName,
@@ -992,16 +1075,21 @@ export class App {
         return [];
 
       case "task_started": {
-        this.backgroundTasks.set(event.taskId, {
+        const task: LiveTask = {
           taskId: event.taskId,
           command: event.command,
           startedAt: Date.now(),
           tail: [],
           partial: "",
-        });
+          retainedChars: 0,
+          omittedLines: 0,
+          omittedChars: 0,
+        };
+        this.backgroundTasks.set(event.taskId, task);
+        this.adoptRestoredBackgroundOwner(event.taskId);
         this.footerData = {
           ...this.footerData,
-          backgroundTasks: this.backgroundTasks.size,
+          backgroundTasks: this.runningBackgroundTaskCount(),
         };
         return [];
       }
@@ -1009,41 +1097,19 @@ export class App {
       case "task_output": {
         const task = this.backgroundTasks.get(event.taskId);
         if (!task) return [];
-        const parts = `${task.partial}${event.chunk}`.split(/\r\n|\n|\r/);
-        task.partial = parts.pop() ?? "";
-        if (task.partial.length > TASK_PARTIAL_CHARS) {
-          task.partial = `…${task.partial.slice(-(TASK_PARTIAL_CHARS - 1))}`;
-        }
-        task.tail.push(...parts);
-        if (task.tail.length > TASK_TAIL_LINES) {
-          task.tail = task.tail.slice(-TASK_TAIL_LINES);
-        }
+        appendTaskOutput(task, event.chunk);
         return [];
       }
 
       case "task_exited": {
         const task = this.backgroundTasks.get(event.taskId);
-        this.backgroundTasks.delete(event.taskId);
+        if (!task) return [];
+        task.exit = event;
         this.footerData = {
           ...this.footerData,
-          backgroundTasks: this.backgroundTasks.size,
+          backgroundTasks: this.runningBackgroundTaskCount(),
         };
-        if (!task) return [];
-        const lines = [
-          ...taskCell(
-            {
-              taskId: task.taskId,
-              command: task.command,
-              status: event.status === "killed" ? "killed" : "exited",
-              exitCode: event.exitCode,
-              durationMs: Date.now() - task.startedAt,
-            },
-            this.ctx,
-          ),
-          "",
-        ];
-        this.appendTranscript(lines);
-        return lines;
+        return this.completeBackgroundTask(event.taskId) ?? [];
       }
 
       default:
@@ -1317,29 +1383,23 @@ export class App {
               pending.startedAt === undefined ? 0 : Math.max(0, Date.now() - pending.startedAt),
             argsStreaming: pending.argsStreaming === true,
             expanded: false,
+            // A backgrounded command keeps its start result while it runs, so
+            // the row can name the task it is waiting on.
+            ...(pending.taskId !== undefined && pending.result ? { result: pending.result } : {}),
             ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
           },
           this.ctx,
         ),
       );
-      const output = pending.output.display(4);
+      const task = pending.taskId ? this.backgroundTasks.get(pending.taskId) : undefined;
+      const output = task
+        ? [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])].slice(
+            -TASK_LIVE_TAIL_LINES,
+          )
+        : pending.output.display(4);
       for (const line of output) {
         if (line.trim().length > 0) lines.push(...toolOutputCell(line, this.ctx));
       }
-    }
-    for (const task of this.backgroundTasks.values()) {
-      const tail = [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])].slice(-3);
-      lines.push(
-        ...taskCell(
-          {
-            taskId: task.taskId,
-            command: task.command,
-            status: "running",
-            tail,
-          },
-          this.ctx,
-        ),
-      );
     }
 
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
@@ -1533,6 +1593,82 @@ export class App {
       rows,
     };
     return rows;
+  }
+
+  private runningBackgroundTaskCount(): number {
+    return [...this.backgroundTasks.values()].filter((task) => task.exit === undefined).length;
+  }
+
+  private adoptRestoredBackgroundOwner(taskId: string): void {
+    if ([...this.pendingTools.values()].some((candidate) => candidate.taskId === taskId)) return;
+    for (let index = this.transcript.length - 1; index >= 0; index--) {
+      const item = this.transcript[index];
+      if (item?.kind === "tool") {
+        if (backgroundTaskDetails(item.info.result?.details)?.taskId !== taskId) continue;
+        this.transcript.splice(index, 1);
+        this.pendingTools.set(item.id, {
+          id: item.id,
+          ...item.info,
+          running: true,
+          expanded: item.expanded,
+          output: new LiveToolOutput(),
+          taskId,
+          startedAt: Date.now(),
+        });
+        this.transcriptVersion++;
+        this.transcriptCache = undefined;
+        return;
+      }
+      if (item?.kind !== "activity") continue;
+      const toolIndex = item.tools.findIndex(
+        (tool) => backgroundTaskDetails(tool.info.result?.details)?.taskId === taskId,
+      );
+      if (toolIndex === -1) continue;
+      const [tool] = item.tools.splice(toolIndex, 1);
+      if (!tool) return;
+      if (item.tools.length === 0) this.transcript.splice(index, 1);
+      this.pendingTools.set(tool.id, {
+        id: tool.id,
+        ...tool.info,
+        running: true,
+        expanded: tool.expanded,
+        output: new LiveToolOutput(),
+        taskId,
+        startedAt: Date.now(),
+      });
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+      return;
+    }
+  }
+
+  private completeBackgroundTask(taskId: string): string[] | undefined {
+    const task = this.backgroundTasks.get(taskId);
+    const event = task?.exit;
+    const owner = [...this.pendingTools.values()].find((candidate) => candidate.taskId === taskId);
+    if (!task || !event || !owner?.result) return undefined;
+    this.backgroundTasks.delete(taskId);
+    this.pendingTools.delete(owner.id);
+    const info: ToolRenderInfo = {
+      toolName: owner.toolName,
+      args: owner.args,
+      result: {
+        ...owner.result,
+        content: [{ type: "text", text: taskOutputText(task) }],
+        isError: event.status === "killed" || event.exitCode !== 0,
+        details: {
+          ...(typeof owner.result.details === "object" && owner.result.details !== null
+            ? owner.result.details
+            : {}),
+          exitCode: event.exitCode,
+          durationMs: Date.now() - task.startedAt,
+          ...(event.status === "killed" ? { killed: true } : {}),
+        },
+      },
+    };
+    const lines = this.registry.render(info, this.ctx);
+    this.pushTool(owner.id, info, lines, owner.expanded ? true : undefined);
+    return lines;
   }
 
   private pushTool(

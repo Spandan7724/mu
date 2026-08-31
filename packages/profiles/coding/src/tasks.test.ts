@@ -275,6 +275,19 @@ describe("exit wakes an idle agent", () => {
     expect(eventTypes).toContain("task_output");
     expect(eventTypes).toContain("task_exited");
     expect(JSON.stringify(provider.requests[2]?.messages)).toContain("Background task task_1");
+
+    // The notification is written for the model, so it is tagged context in the
+    // session rather than a turn the user appears to have typed. The transcript
+    // already reports the exit through the task's own row.
+    const notice = agent.session
+      .messagesAt()
+      .find((message) =>
+        message.content.some(
+          (block) => block.type === "text" && block.text.includes("Background task task_1"),
+        ),
+      );
+    expect(notice?.role).toBe("custom");
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("<background_task>");
     await agent.shutdown();
   });
 });

@@ -271,4 +271,59 @@ describe("subagent transcript rendering", () => {
 
     expect(expanded).toContain("      │ inspected widget · ✓ 9ms");
   });
+
+  test("malformed nested delegation details cannot recursively render subagents", () => {
+    const registry = rendererRegistry();
+    const nestedResult: ToolResultMessage = {
+      ...result,
+      toolCallId: "nested-task",
+      toolName: "task",
+      details: { ...(result.details as object), kind: "task" },
+    };
+    const malformed: ToolResultMessage = {
+      ...result,
+      details: {
+        ...(result.details as object),
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "nested-task",
+                name: "task",
+                arguments: { prompt: "recurse" },
+              },
+            ],
+            model: "fake/fake-1",
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            stopReason: "toolUse",
+            timestamp: 1,
+          },
+          nestedResult,
+        ],
+      },
+    };
+
+    const expanded = registry
+      .render(
+        {
+          toolName: "search",
+          args: { query: "malformed trace" },
+          result: malformed,
+          expanded: true,
+        },
+        { width: 100, depth: "none" },
+      )
+      .map(stripAnsi)
+      .join("\n");
+    expect(expanded).toContain("searched codebase");
+    expect(expanded).not.toContain("activity · 1 action");
+    expect(expanded).not.toContain("delegated");
+  });
 });

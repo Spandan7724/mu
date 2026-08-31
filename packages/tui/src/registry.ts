@@ -126,7 +126,7 @@ function expandedResultLines(info: ToolRenderInfo): string[] {
       ? [...first, ...orderedRecent]
       : [
           ...first,
-          `… ${lineCount - head - tail} lines omitted · full output remains in session`,
+          `… ${lineCount - head - tail} lines omitted from expanded view`,
           ...orderedRecent.slice(-tail),
         ];
   return selected;
@@ -557,13 +557,20 @@ interface SubagentToolCall {
 function subagentToolCalls(messages: AgentMessage[], running: boolean): SubagentToolCall[] {
   const results = new Map(
     messages
-      .filter((message): message is ToolResultMessage => message.role === "toolResult")
+      .filter(
+        (message): message is ToolResultMessage =>
+          typeof message === "object" && message !== null && message.role === "toolResult",
+      )
       .map((message) => [message.toolCallId, message]),
   );
   return messages.flatMap((message) => {
-    if (message.role !== "assistant") return [];
+    if (typeof message !== "object" || message === null || message.role !== "assistant") return [];
     return message.content.flatMap((block) => {
       if (block.type !== "toolCall") return [];
+      // Managed children never receive delegation tools. Persisted details that
+      // claim otherwise are malformed and must not recursively invoke these
+      // renderers through an untrusted nested result.
+      if (["task", "search", "counsel"].includes(block.name)) return [];
       const result = results.get(block.id);
       return [
         {
@@ -983,11 +990,25 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           background?: boolean;
           taskId?: string;
           durationMs?: number;
+          killed?: boolean;
         }
       | undefined;
     const ok = details?.exitCode === 0;
     const duration = formatDuration(details?.durationMs);
     const userShell = booleanArg(info.args, "userShell");
+    // A backgrounded command reports the task it is waiting on until that task
+    // exits, and then reports like any other finished command — the row is the
+    // same row throughout, so its summary tracks the process, not the call.
+    const task = details?.background ? `${details.taskId ?? "task"} bg` : undefined;
+    const pendingTask = task !== undefined && details?.exitCode === undefined;
+    const outcome = [
+      task,
+      details?.killed ? "killed" : `exit ${details?.exitCode ?? "?"}`,
+      duration,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const succeeded = [task, duration].filter(Boolean).join(" · ");
     return [
       ...toolCell(
         {
@@ -1001,16 +1022,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
             : {}),
           ...(info.result?.isError ? { isError: true } : {}),
           ...(info.result
-            ? details?.background
-              ? { summary: `${details.taskId ?? "task"} bg` }
+            ? pendingTask
+              ? { summary: task as string }
               : ok
-                ? { isSuccess: true, ...(duration ? { summary: duration } : {}) }
-                : {
-                    summary: [`exit ${details?.exitCode ?? "?"}`, duration]
-                      .filter(Boolean)
-                      .join(" · "),
-                    summaryError: true,
-                  }
+                ? { isSuccess: true, ...(succeeded ? { summary: succeeded } : {}) }
+                : { summary: outcome, summaryError: true }
             : {}),
         },
         ctx,

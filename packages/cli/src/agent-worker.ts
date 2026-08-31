@@ -13,6 +13,7 @@ const MAX_TASK_SNAPSHOT_CHARS = 100_000;
 interface LiveTaskSnapshot {
   start: Extract<AgentEvent, { type: "task_started" }>;
   output: string;
+  omittedChars: number;
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -96,10 +97,15 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
   const liveTasks = new Map<string, LiveTaskSnapshot>();
   const stopTaskTracking = agent.subscribe((event) => {
     if (event.type === "task_started") {
-      liveTasks.set(event.taskId, { start: event, output: "" });
+      liveTasks.set(event.taskId, { start: event, output: "", omittedChars: 0 });
     } else if (event.type === "task_output") {
       const task = liveTasks.get(event.taskId);
-      if (task) task.output = `${task.output}${event.chunk}`.slice(-MAX_TASK_SNAPSHOT_CHARS);
+      if (task) {
+        const combined = `${task.output}${event.chunk}`;
+        const omitted = Math.max(0, combined.length - MAX_TASK_SNAPSHOT_CHARS);
+        task.omittedChars += omitted;
+        task.output = combined.slice(omitted);
+      }
     } else if (event.type === "task_exited") {
       liveTasks.delete(event.taskId);
     }
@@ -142,7 +148,16 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
           events: [...liveTasks.values()].flatMap((task) => [
             task.start,
             ...(task.output
-              ? ([{ type: "task_output", taskId: task.start.taskId, chunk: task.output }] as const)
+              ? ([
+                  {
+                    type: "task_output",
+                    taskId: task.start.taskId,
+                    chunk:
+                      task.omittedChars > 0
+                        ? `… ${task.omittedChars.toLocaleString()} earlier characters omitted from attachment snapshot …\n${task.output}`
+                        : task.output,
+                  },
+                ] as const)
               : []),
           ]),
           models: selectableModels,

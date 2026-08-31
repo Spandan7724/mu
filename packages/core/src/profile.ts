@@ -3,7 +3,7 @@ import type { CheckpointProvider } from "./checkpoint.ts";
 import type { Command } from "./commands.ts";
 import type { AgentEvent } from "./events.ts";
 import type { ToolRenderer } from "./extensions.ts";
-import type { AgentMessage } from "./messages.ts";
+import type { AgentMessage, CustomMessage } from "./messages.ts";
 import type { PermissionRule } from "./permission.ts";
 import type { AnyTool } from "./tools.ts";
 
@@ -23,7 +23,9 @@ export interface PermissionMode {
 
 export interface ProfileRuntimeHost {
   emit: (event: AgentEvent) => void;
-  followUp: (message: string) => void;
+  // A string wakes the run as user-authored text. Custom context reaches the
+  // model without appearing in the transcript as something the user said.
+  followUp: (message: string | CustomMessage) => void;
 }
 
 // Session-owned resources supplied by a profile. The Agent binds their events

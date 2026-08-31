@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import {
   type AgentMessage,
   type AnyTool,
+  customMessage,
   exitNotification,
   ProcessManager,
   type Profile,
@@ -151,7 +152,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
             exitCode: task.exitCode,
             status: task.status === "killed" ? "killed" : "exited",
           });
-          if (!task.detached) host.followUp(exitNotification(task));
+          // The transcript already shows the task's own completion row, and
+          // this text is written for the model, so it wakes the run as tagged
+          // context rather than as a turn the user appears to have typed.
+          if (!task.detached) {
+            host.followUp(customMessage("background_task", exitNotification(task)));
+          }
         },
       });
     },
