@@ -10,5 +10,5 @@ packages/ripgrep-*/LICENSE-MIT
 packages/ripgrep-*/UNLICENSE
 *.tsbuildinfo
 CLAUDE.md
-scripts/
 .claude/
+examples/previews/
