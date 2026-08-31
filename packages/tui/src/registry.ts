@@ -724,28 +724,60 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
     const callCount = state
       ? subagentToolCalls(state.messages, state.type === "subagent-progress-state").length
       : 0;
-    const summary = details
+    const compactTask = kind === "task" && !info.expanded;
+    const summary = compactTask
       ? [
-          details.model,
-          details.thinkingLevel,
           callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
-          formatDuration(details.durationMs),
+          details ? formatDuration(details.durationMs) : (formatDuration(info.elapsedMs) ?? "0ms"),
         ]
           .filter(Boolean)
           .join(` ${GLYPHS.separator} `)
-      : [
-          progress?.model,
-          progress?.thinkingLevel,
-          callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
-          formatDuration(info.elapsedMs) ?? "0ms",
-        ]
-          .filter(Boolean)
-          .join(` ${GLYPHS.separator} `);
+      : details
+        ? [
+            details.model,
+            details.thinkingLevel,
+            callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
+            formatDuration(details.durationMs),
+          ]
+            .filter(Boolean)
+            .join(` ${GLYPHS.separator} `)
+        : [
+            progress?.model,
+            progress?.thinkingLevel,
+            callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
+            formatDuration(info.elapsedMs) ?? "0ms",
+          ]
+            .filter(Boolean)
+            .join(` ${GLYPHS.separator} `);
     const spinnerFrame = ctx.spinnerFrame ?? 0;
     const spinner =
       GLYPHS.subagentSpinner[spinnerFrame % GLYPHS.subagentSpinner.length] ??
       GLYPHS.subagentSpinner[0];
     const name = details ? action.completed : `${spinner} ${action.running}`;
+    if (compactTask) {
+      const lines = details
+        ? toolCell(
+            {
+              name: description,
+              summary,
+              statusFirst: true,
+              ...(info.result?.isError
+                ? { isError: true, summaryError: true }
+                : { isSuccess: true }),
+            },
+            ctx,
+          )
+        : toolCell(
+            {
+              name: spinner,
+              tone: action.tone,
+              primaryArg: description,
+              summary,
+            },
+            ctx,
+          );
+      return lines;
+    }
     const lines = toolCell(
       {
         name,

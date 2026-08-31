@@ -85,6 +85,9 @@ export interface ToolCellOptions {
   summaryError?: boolean;
   isSuccess?: boolean;
   isError?: boolean;
+  // Places success/failure before the action when the action itself is the
+  // primary subject, rather than a verb such as read, edited, or ran.
+  statusFirst?: boolean;
   nested?: boolean;
   // Overrides the left rule glyph, for a cell that brackets a block rather than
   // marking one event. Wins over `nested`.
@@ -104,31 +107,35 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     : options.isSuccess
       ? styleText(GLYPHS.ok, { green: true }, ctx.depth)
       : "";
+  const leadingStatus = options.statusFirst ? status : "";
+  const trailingStatus = options.statusFirst ? "" : status;
+  const leading = leadingStatus ? `${leadingStatus} ` : "";
+  const contentAvailable = available - stringWidth(leading);
   const rawPrimary = options.primaryArg
     ? sanitizeUntrusted(options.primaryArg).replace(/\t/g, "    ")
     : "";
   const primaryLines = rawPrimary.split("\n");
   const firstPrimary = primaryLines[0] ?? "";
   const rawSummary = options.summary ? sanitizeUntrusted(options.summary) : "";
-  const actionReserve = (firstPrimary ? 4 : 0) + (status ? 4 : 0);
+  const actionReserve = (firstPrimary ? 4 : 0) + (trailingStatus ? 4 : 0);
   const name = truncateToWidth(
     sanitizeUntrusted(options.name),
-    Math.max(1, available - actionReserve),
+    Math.max(1, contentAvailable - actionReserve),
   );
   const summaryBudget =
-    available -
+    contentAvailable -
     stringWidth(name) -
     (firstPrimary ? 4 : 0) -
     stringWidth(separator) -
-    stringWidth(status) -
-    (status ? 1 : 0);
+    stringWidth(trailingStatus) -
+    (trailingStatus ? 1 : 0);
   const summary = summaryBudget >= 2 ? truncateToWidth(rawSummary, summaryBudget) : "";
   const summaryStyle: Style = options.summaryError ? { red: true } : { dim: true };
-  const metadata = [status, summary ? styleText(summary, summaryStyle, ctx.depth) : ""]
+  const metadata = [trailingStatus, summary ? styleText(summary, summaryStyle, ctx.depth) : ""]
     .filter(Boolean)
     .join(" ");
   const primaryBudget =
-    available -
+    contentAvailable -
     stringWidth(name) -
     (firstPrimary ? 1 : 0) -
     (metadata ? stringWidth(separator) + stringWidth(metadata) : 0);
@@ -145,6 +152,7 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   const head =
     MARGIN +
     rule +
+    leading +
     action +
     (styledPrimary ? ` ${styledPrimary}` : "") +
     (metadata ? dim(separator, ctx.depth) + metadata : "");

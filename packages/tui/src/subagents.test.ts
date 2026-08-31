@@ -195,31 +195,66 @@ describe("subagent transcript rendering", () => {
     const renderer = subagentRenderers.task;
     if (!renderer) throw new Error("missing task renderer");
     const registry = rendererRegistry();
-    const expanded = renderer(
-      {
-        toolName: "task",
-        args: {
-          description: "Implement parser",
-          prompt: "Implement the parser in `packages/parser.ts`, then run its focused tests.",
-        },
-        result: {
-          ...result,
-          toolCallId: "task-1",
-          toolName: "task",
-          details: { ...(result.details as object), kind: "task", description: "Implement parser" },
-        },
-        expanded: true,
+    const taskInfo = {
+      toolName: "task",
+      args: {
+        description: "Implement parser",
+        prompt: "Implement the parser in `packages/parser.ts`, then run its focused tests.",
       },
+      result: {
+        ...result,
+        toolCallId: "task-1",
+        toolName: "task",
+        details: { ...(result.details as object), kind: "task", description: "Implement parser" },
+      },
+    };
+    const compact = renderer(taskInfo, { width: 100, depth: "none" }, registry).map(stripAnsi);
+    const expanded = renderer(
+      { ...taskInfo, expanded: true },
       { width: 100, depth: "none" },
       registry,
     ).map(stripAnsi);
 
+    expect(compact).toEqual(["  │ ✓ Implement parser · 2 actions · 1.2s"]);
+    expect(compact[0]).not.toContain("delegated");
+    expect(compact[0]).not.toContain("gpt-5.6-terra");
+    expect(compact[0]).not.toContain("low");
     expect(expanded[0]).toContain("delegated");
     expect(expanded[0]).not.toContain("Implement parser");
+    expect(expanded[0]).toContain("gpt-5.6-terra");
+    expect(expanded[0]).toContain("low");
     expect(expanded).toContain(
       "      Implement the parser in `packages/parser.ts`, then run its focused tests.",
     );
     expect(expanded).toContain("      Ownership");
+  });
+
+  test("a running task leads with its spinner and keeps model details out of the compact row", () => {
+    const renderer = subagentRenderers.task;
+    if (!renderer) throw new Error("missing task renderer");
+    const running = renderer(
+      {
+        toolName: "task",
+        args: { description: "Explore SDK and CLI", prompt: "Inspect the SDK and CLI." },
+        running: true,
+        elapsedMs: 64_000,
+        progress: {
+          type: "subagent-progress-state",
+          kind: "task",
+          description: "Explore SDK and CLI",
+          model: "openai/gpt-5.6-terra",
+          thinkingLevel: "none",
+          messages: (result.details as { messages: unknown[] }).messages,
+          answer: "",
+        },
+      },
+      { width: 100, depth: "none", spinnerFrame: 0 },
+    ).map(stripAnsi);
+
+    expect(running).toEqual(["  │ ⠋ Explore SDK and CLI · 2 actions · 1m 4s"]);
+    expect(running[0]).not.toContain("delegating");
+    expect(running[0]).not.toContain("gpt-5.6-terra");
+    expect(running[0]).not.toContain("none");
   });
 
   test("task activity reuses renderers registered by a custom profile", () => {
