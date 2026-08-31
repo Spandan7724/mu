@@ -91,6 +91,7 @@ interface SupervisorOptions {
   spawn?: typeof Bun.spawn;
   now?: () => number;
   completedIdleMs?: number;
+  supervisorIdleMs?: number;
   workerStartupMs?: number;
   forceStopMs?: number;
   terminateProcess?: (
@@ -100,6 +101,7 @@ interface SupervisorOptions {
 }
 
 export const DEFAULT_COMPLETED_RUNTIME_IDLE_MS = 10 * 60 * 1_000;
+export const DEFAULT_SUPERVISOR_IDLE_MS = 5 * 60 * 1_000;
 const WORKER_OPERATION_TIMEOUT_MS = 20_000;
 const SERVER_CLOSE_GRACE_MS = 500;
 
@@ -262,12 +264,14 @@ export class AgentSupervisor {
   private readonly spawnProcess: typeof Bun.spawn;
   private readonly now: () => number;
   private readonly completedIdleMs: number;
+  private readonly supervisorIdleMs: number;
   private readonly workerStartupMs: number;
   private readonly forceStopMs: number;
   private readonly terminateProcess: NonNullable<SupervisorOptions["terminateProcess"]>;
   private ownsLock = false;
   private closing = false;
   private closePromise: Promise<void> | undefined;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(options: SupervisorOptions = {}) {
     this.paths = options.paths ?? agentViewPaths();
@@ -276,6 +280,7 @@ export class AgentSupervisor {
     this.spawnProcess = options.spawn ?? Bun.spawn;
     this.now = options.now ?? Date.now;
     this.completedIdleMs = options.completedIdleMs ?? DEFAULT_COMPLETED_RUNTIME_IDLE_MS;
+    this.supervisorIdleMs = options.supervisorIdleMs ?? DEFAULT_SUPERVISOR_IDLE_MS;
     this.workerStartupMs = options.workerStartupMs ?? 15_000;
     this.forceStopMs = options.forceStopMs ?? 5_000;
     this.terminateProcess = options.terminateProcess ?? terminateProcessTree;
@@ -319,6 +324,7 @@ export class AgentSupervisor {
         this.paths.supervisor,
         `${JSON.stringify({ version: 1, pid: process.pid, endpoint: this.paths.endpoint, startedAt: this.now() })}\n`,
       );
+      this.scheduleIdleShutdown();
     } catch (error) {
       try {
         this.server.close();
@@ -386,6 +392,7 @@ export class AgentSupervisor {
 
   private async closeInternal(): Promise<void> {
     this.closing = true;
+    this.cancelIdleShutdown();
     const serverClosed = this.closeServer();
     const clients = [...this.clients];
     for (const client of clients) client.socket.destroy();
@@ -435,6 +442,7 @@ export class AgentSupervisor {
       socket.destroy();
       return;
     }
+    this.cancelIdleShutdown();
     const client: ClientConnection = {
       id: randomUUID(),
       socket,
@@ -467,6 +475,7 @@ export class AgentSupervisor {
   private async disconnect(client: ClientConnection): Promise<void> {
     if (!this.clients.delete(client)) return;
     if (client.attachment) await this.setAttached(client.attachment, false);
+    this.scheduleIdleShutdown();
   }
 
   private async handleLine(client: ClientConnection, line: string): Promise<void> {
@@ -638,6 +647,10 @@ export class AgentSupervisor {
         write(client.socket, { type: "ok", id: request.id });
         return;
       }
+      case "shutdown":
+        write(client.socket, { type: "ok", id: request.id });
+        setTimeout(() => void this.close(), 0);
+        return;
     }
   }
 
@@ -674,6 +687,7 @@ export class AgentSupervisor {
     } finally {
       if (this.runtimeTransitions.get(record.sessionId) === transition) {
         this.runtimeTransitions.delete(record.sessionId);
+        this.scheduleIdleShutdown();
       }
     }
   }
@@ -746,6 +760,7 @@ export class AgentSupervisor {
     },
   ): Promise<WorkerRuntime> {
     if (this.closing) throw new Error("agent supervisor is shutting down");
+    this.cancelIdleShutdown();
     if (this.runtimes.has(record.sessionId))
       throw new Error(`session ${record.sessionId} already has a runtime`);
     let ownership = await acquireSessionOwnership(this.paths, record.sessionId, {
@@ -973,7 +988,10 @@ export class AgentSupervisor {
     runtime.pendingOperations.clear();
     await releaseSessionOwnership(this.paths, runtime.ownership).catch(() => false);
     const record = this.records.get(sessionId);
-    if (!record) return;
+    if (!record) {
+      this.scheduleIdleShutdown();
+      return;
+    }
     const next =
       runtime.lifecycle === "evicting"
         ? {
@@ -994,6 +1012,7 @@ export class AgentSupervisor {
               );
     this.records.set(sessionId, next);
     await this.persistAndBroadcast(next);
+    this.scheduleIdleShutdown();
   }
 
   private finalizeWorkerExit(
@@ -1117,6 +1136,37 @@ export class AgentSupervisor {
       requestWorkerShutdown(runtime);
       this.scheduleForceStop(runtime);
     }, this.completedIdleMs);
+  }
+
+  private cancelIdleShutdown(): void {
+    if (!this.idleTimer) return;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  private scheduleIdleShutdown(): void {
+    this.cancelIdleShutdown();
+    if (
+      this.closing ||
+      this.supervisorIdleMs < 0 ||
+      this.clients.size > 0 ||
+      this.runtimes.size > 0 ||
+      this.runtimeTransitions.size > 0
+    ) {
+      return;
+    }
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      if (
+        this.closing ||
+        this.clients.size > 0 ||
+        this.runtimes.size > 0 ||
+        this.runtimeTransitions.size > 0
+      ) {
+        return;
+      }
+      void this.close();
+    }, this.supervisorIdleMs);
   }
 }
 

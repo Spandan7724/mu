@@ -4,16 +4,18 @@ import {
   App,
   type ColorDepth,
   CTRL_C_EXIT_WINDOW_MS,
-  codingRenderers,
+  composerBox,
+  composerContentWidth,
   composerRule,
   detectColorDepth,
   Editor,
   FullScreenRenderer,
+  footer,
   formatCwdForFooter,
   InputDecoder,
   type InputEvent,
   MARGIN,
-  RendererRegistry,
+  type RendererRegistry,
   type RenderFrame,
   type SelectItem,
   SelectList,
@@ -38,12 +40,9 @@ import type { AgentViewResponse } from "./agent-view-protocol.ts";
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
-import {
-  registerDeclaredRenderers,
-  renderCheckpointCommand,
-  renderDiffCommand,
-} from "./interactive.ts";
+import { renderCheckpointCommand, renderDiffCommand } from "./interactive.ts";
 import { modelPickerItems } from "./model-picker.ts";
+import { createRendererRegistry } from "./presentation.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
 
 interface AgentsAppCallbacks {
@@ -151,6 +150,7 @@ export class AgentsApp {
   private readonly modelList = new SelectList([]);
   private modelQuery = "";
   private selectingModel = false;
+  private footerCwd = ".";
 
   constructor(
     private width: number,
@@ -163,6 +163,10 @@ export class AgentsApp {
   setSize(width: number, height: number): void {
     this.width = width;
     this.height = height;
+  }
+
+  setFooterCwd(cwd: string): void {
+    this.footerCwd = cwd;
   }
 
   setRecords(records: readonly ManagedSessionRecord[]): void {
@@ -393,11 +397,6 @@ export class AgentsApp {
         { dim: true },
         this.depth,
       )}`,
-      ...(this.dispatchModel
-        ? [
-            `${MARGIN}${styleText(`new sessions · ${this.dispatchModel}`, { dim: true }, this.depth)}`,
-          ]
-        : []),
       "",
     ];
     const mutating = this.records.filter((record) =>
@@ -428,33 +427,41 @@ export class AgentsApp {
       );
     }
     if (this.notice) tail.push("", `${MARGIN}${styleText(this.notice, { dim: true }, this.depth)}`);
-    tail.push("", composerRule(width, this.depth));
-    if (this.replyTarget) {
-      tail.push(
-        `${MARGIN}${styleText("follow-up to selected session", { accent: true }, this.depth)}`,
-      );
-    }
+    tail.push("");
+    const composerWidth = composerContentWidth(width);
+    let composerTitle: string | undefined;
+    let composerLines: string[];
     if (this.selectingModel) {
-      tail.push(
-        `${MARGIN}${styleText(
-          `select model for new sessions${this.modelQuery ? ` · ${this.modelQuery}` : ""}`,
-          { bold: true },
-          this.depth,
-        )}`,
-        ...this.modelList.render(width, this.depth),
-      );
+      composerTitle = styleText("model for new sessions", { accent: true, bold: true }, this.depth);
+      composerLines = [
+        ...(this.modelQuery
+          ? [`${MARGIN}${styleText(this.modelQuery, { bold: true }, this.depth)}`]
+          : []),
+        ...this.modelList.render(composerWidth, this.depth),
+      ];
     } else {
-      tail.push(...this.editor.render(width, this.depth));
+      if (this.replyTarget) {
+        composerTitle = styleText("follow-up", { accent: true, bold: true }, this.depth);
+      }
+      composerLines = this.editor.render(composerWidth, this.depth);
     }
-    tail.push(composerRule(width, this.depth));
-    const footer = this.selectingModel
-      ? "↑/↓ select · enter choose · esc cancel"
+    tail.push(...composerBox(composerLines, width, this.depth, composerTitle));
+    const hint = this.selectingModel
+      ? "↑↓ select · enter choose · esc cancel"
       : this.ctrlCPending
         ? "press ctrl+c again to exit"
-        : "enter dispatch/attach · /model choose model · space peek · f follow-up · x stop · del remove · ? help · ctrl+c twice exit";
+        : this.replyTarget
+          ? "enter send · esc cancel"
+          : "enter dispatch/attach · ↑↓ select · space peek · ? keys";
     tail.push(
-      ...wrapText(footer, Math.max(10, width - MARGIN.length)).map(
-        (line) => `${MARGIN}${styleText(line, { dim: true }, this.depth)}`,
+      ...footer(
+        {
+          cwd: this.footerCwd,
+          model: this.dispatchModel ?? "no model",
+          hint,
+        },
+        width,
+        this.depth,
       ),
     );
 
@@ -558,20 +565,19 @@ export async function rendererRegistryForManagedProfile(
   record: Pick<ManagedSessionRecord, "profile" | "workingCwd">,
   load: typeof resolveProfile = resolveProfile,
 ): Promise<{ registry: RendererRegistry; dispose: () => Promise<void> }> {
-  const registry = new RendererRegistry();
   if (record.profile === DEFAULT_PROFILE) {
-    registry.registerAll(codingRenderers);
-    return { registry, dispose: async () => {} };
+    return {
+      registry: createRendererRegistry({ name: DEFAULT_PROFILE }),
+      dispose: async () => {},
+    };
   }
 
   const profile: Profile = await load(record.profile, {
     root: record.workingCwd,
     presentationOnly: true,
   });
-  if (profile.name === "coding") registry.registerAll(codingRenderers);
-  registerDeclaredRenderers(registry, Object.entries(profile.renderers ?? {}));
   return {
-    registry,
+    registry: createRendererRegistry(profile),
     dispose: async () => {
       await profile.runtime?.shutdown?.();
     },
@@ -782,6 +788,7 @@ export async function runAgentView(
       exiting = true;
     },
   });
+  app.setFooterCwd(formatCwdForFooter(cwd, process.env.HOME ?? process.env.USERPROFILE));
   app.setDispatchModels(selectableModels, dispatchModel);
   app.setRecords(client.records);
   const unsubscribe = client.subscribe((response: AgentViewResponse) => {

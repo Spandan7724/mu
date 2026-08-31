@@ -4,6 +4,7 @@ export interface ParsedArgs {
     | "headless"
     | "rpc"
     | "agents"
+    | "agents-stop"
     | "agents-supervisor"
     | "agents-worker"
     | "help"
@@ -78,7 +79,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
         parsed.mode = "rpc";
         break;
       case "agents":
-        parsed.mode = "agents";
+        if (argv[i + 1] === "stop") {
+          i++;
+          parsed.mode = "agents-stop";
+        } else {
+          parsed.mode = "agents";
+        }
         break;
       case "__agents-supervisor":
         parsed.mode = "agents-supervisor";
@@ -153,6 +159,7 @@ Usage:
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
   mu agents                manage several ordinary sessions
+  mu agents stop           stop the managed-session supervisor
   mu self update           update a global npm, Bun, or GitHub-release install
   mu self uninstall        remove a global npm, Bun, or GitHub-release install
 

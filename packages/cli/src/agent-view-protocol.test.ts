@@ -52,6 +52,16 @@ describe("agent-view protocol", () => {
     ).toThrow("do not accept");
   });
 
+  test("accepts a strict supervisor shutdown operation", () => {
+    expect(parseAgentViewRequest(JSON.stringify({ type: "shutdown", id: "stop" }))).toEqual({
+      type: "shutdown",
+      id: "stop",
+    });
+    expect(() =>
+      parseAgentViewRequest(JSON.stringify({ type: "shutdown", id: "stop", force: true })),
+    ).toThrow();
+  });
+
   test("allows every canonical built-in provider credential in the ephemeral handoff", () => {
     const providerKeys = [...builtinProviderConfigs.values()].flatMap((provider) => provider.env);
     expect(providerKeys.length).toBeGreaterThan(0);

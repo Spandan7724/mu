@@ -494,11 +494,11 @@ export function queuedInputPreview(
 export interface FooterData {
   cwd: string;
   model: string;
-  contextPercent: number;
-  contextWindow: number;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
+  contextPercent?: number;
+  contextWindow?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
   backgroundTasks?: number;
   status?: string;
   // Present only while rendering an ephemeral side conversation.
@@ -558,9 +558,10 @@ function contextPressure(percent: number): Style {
 // A dim cwd and live status row followed by model, context window, cumulative I/O and cost.
 export function footer(data: FooterData, width: number, depth: ColorDepth): string[] {
   const tokenParts: string[] = [];
-  if (data.inputTokens > 0) tokenParts.push(`↑${formatTokens(data.inputTokens)}`);
-  if (data.outputTokens > 0) tokenParts.push(`↓${formatTokens(data.outputTokens)}`);
-  const percent = Math.max(0, data.contextPercent);
+  if ((data.inputTokens ?? 0) > 0) tokenParts.push(`↑${formatTokens(data.inputTokens ?? 0)}`);
+  if ((data.outputTokens ?? 0) > 0) tokenParts.push(`↓${formatTokens(data.outputTokens ?? 0)}`);
+  const percent = Math.max(0, data.contextPercent ?? 0);
+  const hasContext = data.contextPercent !== undefined && data.contextWindow !== undefined;
   const quiet: Style = { dim: true };
   const parts: { text: string; style: Style }[] = [
     ...(data.side
@@ -570,12 +571,16 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
         ]
       : []),
     { text: data.model, style: quiet },
-    {
-      text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,
-      style: contextPressure(percent),
-    },
+    ...(hasContext
+      ? [
+          {
+            text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow ?? 0)}`,
+            style: contextPressure(percent),
+          },
+        ]
+      : []),
     ...(tokenParts.length > 0 ? [{ text: tokenParts.join(" "), style: quiet }] : []),
-    { text: `$${data.costUsd.toFixed(2)}`, style: quiet },
+    ...(data.costUsd !== undefined ? [{ text: `$${data.costUsd.toFixed(2)}`, style: quiet }] : []),
   ];
   if (data.backgroundTasks && data.backgroundTasks > 0) {
     parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });

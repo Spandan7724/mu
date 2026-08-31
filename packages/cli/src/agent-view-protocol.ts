@@ -115,6 +115,7 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("stop"), id: requestId, sessionId }).strict(),
   z.object({ type: z.literal("remove"), id: requestId, sessionId }).strict(),
+  z.object({ type: z.literal("shutdown"), id: requestId }).strict(),
 ]);
 
 export type AgentViewRequest = z.infer<typeof agentViewRequestSchema>;
@@ -214,6 +215,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       type: z.literal("tool_execution_update"),
       toolCallId: eventId,
       partial: z.array(z.unknown()).max(100_000),
+      details: z.unknown().optional(),
     })
     .strict(),
   z

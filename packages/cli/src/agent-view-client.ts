@@ -86,6 +86,7 @@ export class AgentViewClient {
   private helloReject: ((error: Error) => void) | undefined;
   private helloReceived = false;
   private snapshotReceived = false;
+  private supervisorPid: number | undefined;
   records: ManagedSessionRecord[] = [];
 
   constructor(private options: AgentViewClientOptions) {}
@@ -93,6 +94,7 @@ export class AgentViewClient {
   async connect(startSupervisor = true): Promise<void> {
     const paths = this.options.paths ?? agentViewPaths();
     if (startSupervisor) await ensureAgentSupervisor(paths);
+    this.supervisorPid = undefined;
     this.socket = await openSocket(paths.endpoint);
     this.socket.setEncoding("utf8");
     this.socket.on("data", (chunk: string) => this.consume(chunk));
@@ -187,9 +189,48 @@ export class AgentViewClient {
     await this.request({ type: "remove", id: crypto.randomUUID(), sessionId });
   }
 
+  async shutdownSupervisor(terminate: typeof process.kill = process.kill): Promise<void> {
+    if (!this.supervisorPid || !this.socket || this.socket.destroyed)
+      throw new Error("agent supervisor is not connected");
+    const pid = this.supervisorPid;
+    let resolveUnsupported = () => {};
+    const unsupported = new Promise<"unsupported">((resolve) => {
+      resolveUnsupported = () => resolve("unsupported");
+    });
+    const unsubscribe = this.subscribe((response) => {
+      if (
+        response.type === "error" &&
+        !response.id &&
+        response.message.startsWith("invalid request:")
+      ) {
+        resolveUnsupported();
+      }
+    });
+    const request = this.request({ type: "shutdown", id: crypto.randomUUID() });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const compatibilityTimeout = new Promise<"unsupported">((resolve) => {
+      timeout = setTimeout(() => resolve("unsupported"), 2_000);
+    });
+    try {
+      const result = await Promise.race([
+        request.then(() => "stopping" as const),
+        unsupported,
+        compatibilityTimeout,
+      ]);
+      if (result === "unsupported") {
+        void request.catch(() => {});
+        terminate(pid, "SIGTERM");
+      }
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      unsubscribe();
+    }
+  }
+
   close(): void {
     const socket = this.socket;
     this.socket = undefined;
+    this.supervisorPid = undefined;
     this.fail(new Error("agent-view client closed"));
     socket?.destroy();
   }
@@ -235,7 +276,10 @@ export class AgentViewClient {
   }
 
   private handle(response: AgentViewResponse): void {
-    if (response.type === "hello") this.helloReceived = true;
+    if (response.type === "hello") {
+      this.helloReceived = true;
+      this.supervisorPid = response.pid;
+    }
     if (response.type === "snapshot") {
       this.records = response.records;
       this.snapshotReceived = true;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentSupervisor, dispatchEnvironment, parseWorkerOutput } from "./agent-supervisor.ts";
@@ -80,6 +81,90 @@ describe("agent supervisor", () => {
     ).toEqual({ PATH: "/bin", MU_PROFILE_CUSTOM_TOKEN: "profile-value" });
   });
 
+  test("shuts down after its last client disconnects with no worker runtimes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({ paths, supervisorIdleMs: 20 });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    await client.connect(false);
+    client.close();
+    await supervisor.wait();
+  });
+
+  test("an explicit client request gracefully stops the supervisor", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({ paths, supervisorIdleMs: -1 });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    await client.connect(false);
+    await client.shutdownSupervisor();
+    await supervisor.wait();
+    client.close();
+  });
+
+  test("client stop falls back to the handshake PID for an older supervisor", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const server = createServer((socket) => {
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        for (const line of chunk.trim().split("\n")) {
+          const request = JSON.parse(line) as { type: string };
+          if (request.type === "hello") {
+            socket.write(`${JSON.stringify({ type: "hello", version: 1, pid: 4242 })}\n`);
+            socket.write(`${JSON.stringify({ type: "snapshot", records: [] })}\n`);
+          } else {
+            socket.write(`${JSON.stringify({ type: "error", message: "invalid request: old" })}\n`);
+          }
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(paths.endpoint, resolve));
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      let target: { pid: number; signal: string | number | undefined } | undefined;
+      await client.shutdownSupervisor((pid, signal) => {
+        target = { pid, signal };
+        return true;
+      });
+      expect(target).toEqual({ pid: 4242, signal: "SIGTERM" });
+    } finally {
+      client.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("idle shutdown does not stop a worker after the viewer disconnects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      supervisorIdleMs: 20,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const first = new AgentViewClient({ paths, scope: "project", cwd: root });
+    await first.connect(false);
+    await first.dispatch({ prompt: "slow work", cwd: root, profile: "coding" });
+    first.close();
+    await Bun.sleep(50);
+    const second = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await second.connect(false);
+      await waitFor(() => second.records[0]?.state === "completed");
+    } finally {
+      second.close();
+      await supervisor.close();
+    }
+  });
+
   test("hosts independent workers after a viewer disconnect and supports attach/remove semantics", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
@@ -155,6 +240,38 @@ describe("agent supervisor", () => {
       });
       await waitFor(() => client.records.every((record) => record.state === "completed"));
     } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
+  test("forwards streamed subagent progress without terminating the worker", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    let details: unknown;
+    const unsubscribe = client.subscribe((response) => {
+      if (response.type === "event" && response.event.type === "tool_execution_update") {
+        details = response.event.details;
+      }
+    });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "subagent progress", cwd: root, profile: "coding" });
+      await waitFor(() => client.records[0]?.state === "completed");
+      expect(details).toEqual({
+        type: "subagent-progress",
+        kind: "task",
+        description: "inspect the repository",
+      });
+    } finally {
+      unsubscribe();
       client.close();
       await supervisor.close();
     }

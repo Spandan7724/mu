@@ -2,6 +2,7 @@
 import { createCredentialResolver, findModel } from "mu";
 import cliPackage from "../package.json";
 import { runAgentSupervisor } from "./agent-supervisor.ts";
+import { AgentViewClient } from "./agent-view-client.ts";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import { runAgentWorker } from "./agent-worker.ts";
 import { runAgentView } from "./agents-app.ts";
@@ -81,7 +82,14 @@ async function main(): Promise<number> {
     const configured = args.model ?? (await loadUserConfig()).model;
     const needsConfiguredModel =
       typeof configured === "string" && configured.length > 0 && !findModel(configured);
-    if (args.mode !== "tui" || needsConfiguredModel) {
+    // Interactive surfaces can render from the cache/bundled catalog while the
+    // refresh started by initializeModelCatalog continues in the background.
+    // Managed workers receive an explicit model and must become ready before
+    // the supervisor's startup deadline, so they must not wait on discovery.
+    if (
+      !["tui", "agents", "agents-worker"].includes(args.mode) ||
+      (args.mode !== "agents-worker" && needsConfiguredModel)
+    ) {
       const result = await modelCatalog.ensureFresh();
       for (const diagnostic of modelCatalogDiagnostics(result, {
         includePartialWarnings: args.mode !== "headless",
@@ -123,6 +131,28 @@ async function main(): Promise<number> {
         return runHeadless(args, {}, io);
       case "agents":
         return runAgentView(args);
+      case "agents-stop": {
+        const client = new AgentViewClient({
+          scope: "supervisor-control",
+          cwd: process.cwd(),
+        });
+        try {
+          await client.connect(false);
+        } catch (error) {
+          if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+            io.stdout("agent supervisor is not running\n");
+            return 0;
+          }
+          throw error;
+        }
+        try {
+          await client.shutdownSupervisor();
+          io.stdout("agent supervisor stopping\n");
+        } finally {
+          client.close();
+        }
+        return 0;
+      }
       case "agents-supervisor":
         return runAgentSupervisor(args);
       case "agents-worker":

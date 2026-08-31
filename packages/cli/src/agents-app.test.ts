@@ -27,6 +27,36 @@ function callbacks() {
 }
 
 describe("AgentsApp", () => {
+  test("managed attachments use the ordinary subagent presentation", async () => {
+    const record = createManagedSessionRecord({
+      sessionId: "subagent-renderer",
+      scope: "scope",
+      prompt: "delegate repository exploration",
+      cwd: "/work",
+      profile: "coding",
+    });
+    const presentation = await rendererRegistryForManagedProfile(record);
+
+    expect(presentation.registry.has("task")).toBe(true);
+    expect(presentation.registry.has("search")).toBe(true);
+    expect(presentation.registry.has("counsel")).toBe(true);
+    const rendered = stripAnsi(
+      presentation.registry
+        .render(
+          {
+            toolName: "task",
+            args: { description: "Explore the repository", prompt: "Inspect the architecture." },
+            running: true,
+            elapsedMs: 5_000,
+          },
+          { width: 100, depth: "none", spinnerFrame: 0 },
+        )
+        .join("\n"),
+    );
+    expect(rendered).toContain("Explore the repository");
+    expect(rendered).not.toContain("(no output)");
+  });
+
   test("loads and disposes custom profile renderers for managed attachments", async () => {
     const calls: string[] = [];
     const record = createManagedSessionRecord({
@@ -258,6 +288,21 @@ describe("AgentsApp", () => {
     expect(cb.calls).toEqual(["dispatch:new task"]);
   });
 
+  test("dashboard uses the shared rounded composer and two-row footer", () => {
+    const cb = callbacks();
+    const app = new AgentsApp(80, 24, "none", cb.value);
+    app.setFooterCwd("~/code/mu");
+    app.setDispatchModels([{ label: "openai/gpt-5.6-terra" }], "openai/gpt-5.6-terra");
+
+    const lines = app.render().map(stripAnsi);
+    expect(lines.some((line) => line.startsWith("  ╭") && line.endsWith("╮"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("  ╰") && line.endsWith("╯"))).toBe(true);
+    expect(lines.at(-2)).toBe("  ~/code/mu");
+    expect(lines.at(-1)).toContain("openai/gpt-5.6-terra · enter dispatch/attach");
+    expect(lines.at(-1)).not.toContain("0.0%/0");
+    expect(lines.at(-1)).not.toContain("$0.00");
+  });
+
   test("dashboard /model selects the model for future dispatches without creating a session", () => {
     const cb = callbacks();
     const app = new AgentsApp(100, 30, "none", cb.value);
@@ -273,13 +318,13 @@ describe("AgentsApp", () => {
     app.handleInput(key("return"));
 
     expect(cb.calls).toEqual([]);
-    expect(stripAnsi(app.render().join("\n"))).toContain("select model for new sessions");
+    expect(stripAnsi(app.render().join("\n"))).toContain("model for new sessions");
     app.handleInput(key("down"));
     app.handleInput(key("return"));
 
     expect(cb.calls).toEqual([]);
     const output = stripAnsi(app.render().join("\n"));
-    expect(output).toContain("new sessions · anthropic/claude-opus-5");
+    expect(output).toContain("anthropic/claude-opus-5");
     expect(output).toContain("new sessions will use anthropic/claude-opus-5");
     app.editor.setText("new task");
     app.handleInput(key("return"));

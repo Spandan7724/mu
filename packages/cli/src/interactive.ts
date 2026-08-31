@@ -7,7 +7,6 @@ import {
   type ConversationSource,
   CTRL_C_EXIT_WINDOW_MS,
   checkpointCell,
-  codingRenderers,
   detectColorDepth,
   diffCell,
   diffLinesFromHunks,
@@ -17,13 +16,10 @@ import {
   hyperlink,
   InputDecoder,
   type PickerRequest,
-  RendererRegistry,
   type RenderFrame,
   type Style,
   styleText,
-  subagentRenderers,
   Terminal,
-  type ToolRendererFn,
   terminalRows,
 } from "@mu/tui";
 import {
@@ -46,7 +42,6 @@ import {
   saveApiKey,
   startSideConversation,
   type ThinkingLevel,
-  type ToolRenderer,
   toCommand,
   type UndoPointsCommandData,
 } from "mu";
@@ -66,6 +61,7 @@ import {
 import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
+import { createRendererRegistry } from "./presentation.ts";
 import {
   normalizeSessionTitle,
   resumePickerItems,
@@ -235,28 +231,7 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
   );
 }
 
-export function registerDeclaredRenderers(
-  registry: RendererRegistry,
-  renderers: Iterable<readonly [string, ToolRenderer]>,
-): void {
-  for (const [name, renderer] of renderers) {
-    const adapter: ToolRendererFn = (info) =>
-      renderer.render({
-        toolName: info.toolName,
-        args: info.args,
-        ...(info.result
-          ? {
-              result: {
-                content: info.result.content,
-                ...(info.result.details !== undefined ? { details: info.result.details } : {}),
-                ...(info.result.isError ? { isError: true } : {}),
-              },
-            }
-          : {}),
-      });
-    registry.register(name, adapter);
-  }
-}
+export { registerDeclaredRenderers } from "./presentation.ts";
 
 export async function runInteractive(
   args: ParsedArgs,
@@ -292,15 +267,10 @@ export async function runInteractive(
   const { agent, profile, extensions, commands, basePermissions } = runtime;
   const modelRef = agent.modelRef;
   const resolved = runtime.agentOptions;
-  const profileRenderers: Record<string, ToolRenderer> = profile?.renderers ?? {};
   let activePermissionMode: PermissionMode | undefined = runtime.permissionMode;
   let sessionResumable = Boolean(args.resumeSessionId);
 
-  const registry = new RendererRegistry();
-  registry.registerAll(subagentRenderers);
-  if (profile?.name === "coding") registry.registerAll(codingRenderers);
-  registerDeclaredRenderers(registry, Object.entries(profileRenderers));
-  registerDeclaredRenderers(registry, extensions.renderers);
+  const registry = createRendererRegistry(profile, extensions.renderers);
   const depth = detectColorDepth();
   let app: App;
   const renderer = new FullScreenRenderer(terminal);

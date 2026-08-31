@@ -10,6 +10,25 @@ afterEach(() => {
 });
 
 describe("llama.cpp provider", () => {
+  test("the implicit local discovery probe has its own short timeout", async () => {
+    delete process.env.LLAMA_CPP_BASE_URL;
+    const startedAt = performance.now();
+
+    await expect(
+      discoverLlamaCppModels({
+        currentModels: [],
+        fetch: ((_input, init) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) throw new Error("missing discovery signal");
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          })) as typeof fetch,
+      }),
+    ).rejects.toThrow();
+
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
+
   test("discovers the loaded alias and configured slot context", async () => {
     process.env.LLAMA_CPP_BASE_URL = "http://127.0.0.1:8000";
     const urls: string[] = [];

@@ -92,6 +92,21 @@ for await (const chunk of process.stdin) {
         write({ type: "event", event: { type: "task_started", taskId: 42 } });
       } else if (op.text.includes("crash")) {
         process.exit(7);
+      } else if (op.text.includes("subagent progress")) {
+        write({
+          type: "event",
+          event: {
+            type: "tool_execution_update",
+            toolCallId: "subagent-1",
+            partial: [],
+            details: {
+              type: "subagent-progress",
+              kind: "task",
+              description: "inspect the repository",
+            },
+          },
+        });
+        setTimeout(() => finish(op.text), 5);
       } else if (op.text.includes("permission")) {
         permissionPrompt = op.text;
         write({

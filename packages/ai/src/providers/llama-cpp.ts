@@ -2,6 +2,7 @@ import type { Credential, ModelInfo, Provider, ProviderModelDiscoveryOptions } f
 import { streamOpenAICompletions } from "./openai-completions.ts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1";
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 1_000;
 const ZERO_PRICING = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } as const;
 
 type JsonObject = Record<string, unknown>;
@@ -21,6 +22,12 @@ function configuredBaseUrl(): string {
 
 function serverRoot(baseUrl: string): string {
   return baseUrl.endsWith("/v1") ? baseUrl.slice(0, -3) : baseUrl;
+}
+
+function discoverySignal(parent: AbortSignal | undefined): AbortSignal | undefined {
+  if (process.env.LLAMA_CPP_BASE_URL !== undefined) return parent;
+  const timeout = AbortSignal.timeout(DEFAULT_DISCOVERY_TIMEOUT_MS);
+  return parent ? AbortSignal.any([parent, timeout]) : timeout;
 }
 
 async function discoveryCredential(
@@ -50,9 +57,10 @@ export async function discoverLlamaCppModels(
   const baseUrl = configuredBaseUrl();
   const credential = await discoveryCredential(options);
   const headers = discoveryHeaders(credential);
+  const signal = discoverySignal(options.signal);
   const modelsResponse = await request(`${baseUrl}/models`, {
     headers,
-    ...(options.signal ? { signal: options.signal } : {}),
+    ...(signal ? { signal } : {}),
   });
   if (!modelsResponse.ok) {
     throw new Error(
@@ -68,7 +76,7 @@ export async function discoverLlamaCppModels(
   try {
     const response = await request(`${serverRoot(baseUrl)}/props`, {
       headers,
-      ...(options.signal ? { signal: options.signal } : {}),
+      ...(signal ? { signal } : {}),
     });
     if (response.ok) {
       const value: unknown = await response.json();
