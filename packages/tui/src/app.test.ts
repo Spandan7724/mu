@@ -246,9 +246,13 @@ describe("fake-agent session", () => {
 
       spy.mockReturnValue(now + 12_000);
       app.tickSpinner();
-      const later = app.renderScreen().map(stripAnsi).join("\n");
+      const laterRows = app.renderScreen().map(stripAnsi);
+      const later = laterRows.join("\n");
       expect(later).toContain("⠙ consulting counsel Review parser · 12s");
       expect(later).not.toContain("· running");
+      const composer = laterRows.findIndex((line) => line.includes("╭"));
+      expect(composer).toBeGreaterThan(0);
+      expect(laterRows[composer - 1]).toBe("");
     } finally {
       spy.mockRestore();
     }
@@ -3040,6 +3044,25 @@ describe("selection pickers (/model, /resume)", () => {
       key: { name: "return", ctrl: false, alt: false, shift: false },
     });
     expect(chosen).toEqual(["sms3cabdw"]);
+  });
+
+  test("a picker can expose a delete action for its selected opaque value", () => {
+    const deleted: string[] = [];
+    const h = harness();
+    h.app.openPicker({
+      title: "resume a session",
+      items: [{ label: "fix the login flow", value: "sms3cabdw" }],
+      onChoose: () => {},
+      onDelete: (value) => deleted.push(value),
+    });
+
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("del delete");
+    press(h.app, "delete");
+    expect(deleted).toEqual([]);
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("del again confirm");
+    press(h.app, "delete");
+    expect(deleted).toEqual(["sms3cabdw"]);
+    expect(h.app.currentMode).toBe("composing");
   });
 
   test("escape cancels a picker without choosing", () => {

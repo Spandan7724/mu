@@ -66,7 +66,11 @@ import {
 import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
-import { resumePickerItems } from "./session-picker.ts";
+import {
+  normalizeSessionTitle,
+  resumePickerItems,
+  SESSION_TITLE_MAX_LENGTH,
+} from "./session-picker.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
@@ -136,6 +140,10 @@ export function formatAuthUrl(
 export function formatResumeHint(sessionId: string, depth: ColorDepth): string {
   const label = styleText("To resume this session:", { resumeHint: true }, depth);
   return `  ${label} mu --resume ${sessionId}`;
+}
+
+export function formatInstructionsOutput(message: string): string[] {
+  return ["", `  ${message}`, ""];
 }
 
 const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
@@ -614,6 +622,47 @@ export async function runInteractive(
     },
   });
   commands.register({
+    name: "rename",
+    description: "Name the current conversation",
+    sessionScoped: true,
+    run: async (ctx) => {
+      if (activeRun || agent.isRunning) {
+        return { handled: true, message: "Cannot rename during a run." };
+      }
+      const rename = async (input: string): Promise<string> => {
+        if (activeRun || agent.isRunning) return "Cannot rename during a run.";
+        const title = normalizeSessionTitle(input);
+        if (!title) return "Conversation name cannot be empty.";
+        if (title.length > SESSION_TITLE_MAX_LENGTH) {
+          return `Conversation names can be at most ${SESSION_TITLE_MAX_LENGTH} characters.`;
+        }
+        const previousTitle = agent.session.header?.title;
+        agent.session.setTitle(title);
+        try {
+          await agent.sessionStore.save(agent.sessionId, agent.session);
+          sessionResumable = true;
+          return `renamed conversation to ${title}`;
+        } catch (error) {
+          agent.session.setTitle(previousTitle);
+          return `Could not rename conversation: ${
+            error instanceof Error ? error.message : String(error)
+          }`;
+        }
+      };
+      if (ctx.args.trim()) return { handled: true, message: await rename(ctx.args) };
+      app.openPrompt({
+        title: "name this conversation",
+        onSubmit: (value) => {
+          void rename(value).then((message) => {
+            commitLines([`  ${message}`]);
+            paint();
+          });
+        },
+      });
+      return { handled: true };
+    },
+  });
+  commands.register({
     name: "resume",
     description: "Resume an earlier session",
     sessionScoped: true,
@@ -621,59 +670,105 @@ export async function runInteractive(
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot resume during a run." };
       }
-      const sessions = await resumePickerItems(agent.sessionStore);
-      if (sessions.length === 0) return { handled: true, message: "No saved sessions." };
-      app.openPicker({
-        title: "resume a session",
-        filterable: true,
-        items: sessions,
-        onChoose: (sessionId) => {
-          void (async () => {
-            try {
-              if (activeRun || agent.isRunning) {
-                commitLines(["  Cannot resume during a run."]);
-                paint();
-                return;
-              }
-              const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
-              if (ownership) {
+      const deleteSession = agent.sessionStore.delete?.bind(agent.sessionStore);
+      const openResumePicker = async (): Promise<boolean> => {
+        const sessions = await resumePickerItems(agent.sessionStore);
+        if (sessions.length === 0) return false;
+        app.openPicker({
+          title: "resume a session",
+          filterable: true,
+          items: sessions,
+          onChoose: (sessionId) => {
+            void (async () => {
+              try {
+                if (activeRun || agent.isRunning) {
+                  commitLines(["  Cannot resume during a run."]);
+                  paint();
+                  return;
+                }
+                const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
+                if (ownership) {
+                  commitLines([
+                    isProcessAlive(ownership.supervisorPid)
+                      ? `  ${sessionId} is live in agent view · exit and run mu --resume ${sessionId}`
+                      : `  ${sessionId} has a stale runtime owner · open mu agents to recover it safely`,
+                  ]);
+                  paint();
+                  return;
+                }
+                const tree = await agent.sessionStore.load(sessionId);
+                if (!tree) {
+                  commitLines([`  no such session: ${sessionId}`]);
+                  paint();
+                  return;
+                }
+                if (activeRun || agent.isRunning) {
+                  commitLines(["  Cannot resume during a run."]);
+                  paint();
+                  return;
+                }
+                agent.resume(tree);
+                sessionResumable = true;
+                app.setModel(agent.modelRef, agent.contextWindow);
+                app.setThinking(agent.thinking, agent.thinkingLevels);
+                app.replaceTranscript(tree.messagesAt(), app.banner());
+                commitLines([`  resumed ${sessionId}`, ""]);
+              } catch (error) {
                 commitLines([
-                  isProcessAlive(ownership.supervisorPid)
-                    ? `  ${sessionId} is live in agent view · exit and run mu --resume ${sessionId}`
-                    : `  ${sessionId} has a stale runtime owner · open mu agents to recover it safely`,
+                  `  Could not resume ${sessionId}: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
                 ]);
-                paint();
-                return;
               }
-              const tree = await agent.sessionStore.load(sessionId);
-              if (!tree) {
-                commitLines([`  no such session: ${sessionId}`]);
-                paint();
-                return;
+              paint();
+            })();
+          },
+          ...(deleteSession
+            ? {
+                onDelete: (sessionId: string) => {
+                  void (async () => {
+                    try {
+                      if (activeRun || agent.isRunning || sessionId === agent.sessionId) {
+                        commitLines([
+                          sessionId === agent.sessionId
+                            ? "  Cannot delete the current session. Start a new chat first."
+                            : "  Cannot delete a session during a run.",
+                        ]);
+                        paint();
+                        return;
+                      }
+                      const ownership = await readSessionOwnership(agentViewPaths(), sessionId);
+                      if (ownership) {
+                        commitLines([
+                          isProcessAlive(ownership.supervisorPid)
+                            ? `  Cannot delete ${sessionId} while it is live in agent view.`
+                            : `  ${sessionId} has a stale runtime owner · open mu agents to recover it safely`,
+                        ]);
+                        paint();
+                        return;
+                      }
+                      const deleted = await deleteSession(sessionId);
+                      if (deleted) await openResumePicker();
+                      else commitLines([`  no such session: ${sessionId}`]);
+                    } catch (error) {
+                      commitLines([
+                        `  Could not delete ${sessionId}: ${
+                          error instanceof Error ? error.message : String(error)
+                        }`,
+                      ]);
+                    }
+                    paint();
+                  })();
+                },
               }
-              if (activeRun || agent.isRunning) {
-                commitLines(["  Cannot resume during a run."]);
-                paint();
-                return;
-              }
-              agent.resume(tree);
-              sessionResumable = true;
-              app.setModel(agent.modelRef, agent.contextWindow);
-              app.setThinking(agent.thinking, agent.thinkingLevels);
-              app.replaceTranscript(tree.messagesAt(), app.banner());
-              commitLines([`  resumed ${sessionId}`, ""]);
-            } catch (error) {
-              commitLines([
-                `  Could not resume ${sessionId}: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              ]);
-            }
-            paint();
-          })();
-        },
-        onBack: () => app.openCommandMenu(),
-      });
+            : {}),
+          onBack: () => app.openCommandMenu(),
+        });
+        return true;
+      };
+      if (!(await openResumePicker())) {
+        return { handled: true, message: "No saved sessions." };
+      }
       return { handled: true };
     },
   });
@@ -1213,7 +1308,12 @@ export async function runInteractive(
       // Standalone compaction reports its durable boundary through AgentEvent;
       // avoid printing the same outcome twice in the interactive transcript.
     } else if (result.message) {
-      commitLines([`  ${result.message}`], source);
+      commitLines(
+        parsed?.name === "instructions"
+          ? formatInstructionsOutput(result.message)
+          : [`  ${result.message}`],
+        source,
+      );
     }
     paint();
   }

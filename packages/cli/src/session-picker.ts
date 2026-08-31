@@ -1,5 +1,7 @@
 import type { SessionStore, SessionTree } from "@mu/core";
 
+export const SESSION_TITLE_MAX_LENGTH = 120;
+
 export interface ResumePickerItem {
   label: string;
   value: string;
@@ -11,7 +13,14 @@ interface DatedResumePickerItem {
   position: number;
 }
 
+export function normalizeSessionTitle(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 export function sessionPickerLabel(tree: SessionTree | undefined, sessionId: string): string {
+  const title = normalizeSessionTitle(tree?.header?.title ?? "");
+  if (title) return title;
+
   const firstUserEntry = tree
     ?.activePath()
     .find((entry) => entry.type === "message" && entry.message.role === "user");

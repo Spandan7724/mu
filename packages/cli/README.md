@@ -56,8 +56,10 @@ set `LLAMA_CPP_BASE_URL` for another address and `LLAMA_CPP_API_KEY` for a secur
 
 Interactive runs are saved by working-directory scope under `~/.mu/sessions`; use
 `/resume` to choose one or `mu --resume <session-id>` to continue it directly. Mu prints
-the direct resume command when an interactive session closes. Use `/new` to clear the
-terminal and start a fresh chat without deleting the previous saved session. Use
+the direct resume command when an interactive session closes. Use `/rename [name]` to name
+the current conversation; named conversations use that name in `/resume`. Press Delete
+twice on a `/resume` row to permanently remove it. Use `/new` to clear the terminal and
+start a fresh chat without deleting the previous saved session. Use
 `/permissions` to choose `default`, `accept-edits`, `plan-readonly`, or full-access
 behavior, including while the agent is running. In the coding TUI, `/btw [question]`
 opens an ephemeral read-only side conversation with the current chat as reference. Press

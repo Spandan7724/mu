@@ -52,6 +52,8 @@ const TOOL_MUTATE_RGB = [230, 161, 92] as const;
 const TOOL_MUTATE_256 = 173;
 const TOOL_EXEC_RGB = [177, 185, 249] as const;
 const TOOL_EXEC_256 = 147;
+const TASK_RGB = [86, 182, 232] as const;
+const TASK_256 = 74;
 // Counsel is deliberation rather than inspection or mutation. Warm amber keeps
 // it visually separate from mu's mint identity and the cool tool-action hues.
 const COUNSEL_RGB = [230, 195, 132] as const;
@@ -104,6 +106,7 @@ export interface Style {
   toolRead?: boolean;
   toolMutate?: boolean;
   toolExec?: boolean;
+  task?: boolean;
   counsel?: boolean;
   path?: boolean;
   syntax?: SyntaxRole;
@@ -174,6 +177,11 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
       codes.push(`38;2;${TOOL_EXEC_RGB[0]};${TOOL_EXEC_RGB[1]};${TOOL_EXEC_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_EXEC_256}`);
     else codes.push("94");
+  }
+  if (style.task) {
+    if (depth === "truecolor") codes.push(`38;2;${TASK_RGB[0]};${TASK_RGB[1]};${TASK_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${TASK_256}`);
+    else codes.push("96");
   }
   if (style.counsel) {
     if (depth === "truecolor")

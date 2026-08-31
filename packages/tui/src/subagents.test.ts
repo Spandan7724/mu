@@ -288,6 +288,39 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("    prompt");
   });
 
+  test("task descriptions use cerulean at every supported color depth", () => {
+    const renderer = subagentRenderers.task;
+    if (!renderer) throw new Error("missing task renderer");
+    const info = {
+      toolName: "task",
+      args: { description: "Explore SDK and CLI", prompt: "Inspect the SDK and CLI." },
+      running: true,
+    };
+
+    expect(renderer(info, { width: 100, depth: "truecolor" })[0]).toContain(
+      "\u001b[1;38;2;86;182;232m⠋ Explore SDK and CLI\u001b[0m",
+    );
+    expect(renderer(info, { width: 100, depth: "ansi256" })[0]).toContain("38;5;74m");
+    expect(renderer(info, { width: 100, depth: "ansi16" })[0]).toContain("96m");
+    const completed = renderer(
+      {
+        ...info,
+        running: false,
+        result: {
+          ...result,
+          toolName: "task",
+          details: {
+            ...(result.details as object),
+            kind: "task",
+            description: "Explore SDK and CLI",
+          },
+        },
+      },
+      { width: 100, depth: "truecolor" },
+    );
+    expect(completed[0]).toContain("\u001b[1;38;2;86;182;232mExplore SDK and CLI\u001b[0m");
+  });
+
   test("task activity reuses renderers registered by a custom profile", () => {
     const registry = rendererRegistry();
     registry.register("inspect_domain", () => ["  │ inspected widget · ✓ 9ms"]);

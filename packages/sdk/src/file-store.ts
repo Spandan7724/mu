@@ -79,4 +79,14 @@ export class FileSessionStore implements SessionStore {
       throw error;
     }
   }
+
+  async delete(sessionId: string): Promise<boolean> {
+    try {
+      await rm(this.path(sessionId));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+  }
 }

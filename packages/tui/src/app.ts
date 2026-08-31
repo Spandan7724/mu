@@ -67,6 +67,7 @@ export interface PickerRequest {
   title: string;
   items: SelectItem[];
   onChoose: (value: string) => void;
+  onDelete?: (value: string) => void;
   onBack?: () => void;
   onCancel?: () => void;
   filterable?: boolean;
@@ -497,6 +498,7 @@ export class App {
   private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
+  private pickerDeleteValue: string | undefined;
   private prompt: InputPromptRequest | undefined;
   private promptEditor = new Editor();
   private mentionStart = -1;
@@ -782,6 +784,7 @@ export class App {
   openPicker(request: PickerRequest): void {
     this.picker = request;
     this.pickerQuery = "";
+    this.pickerDeleteValue = undefined;
     this.commandList.setItems(request.items);
     this.mode = "picker";
   }
@@ -791,6 +794,7 @@ export class App {
     const selected = this.commandList.selected;
     request.title = update.title;
     request.items = update.items;
+    this.pickerDeleteValue = undefined;
     this.refreshPicker(selected ? (selected.value ?? selected.label) : undefined);
     return true;
   }
@@ -1389,6 +1393,7 @@ export class App {
     // turn is never a frozen screen with only a spinner.
     if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
     const backgroundPending: PendingTool[] = [];
+    let hasLiveSubagent = false;
     const renderPending = (pending: PendingTool): string[] => {
       const rendered = this.registry.render(
         {
@@ -1422,7 +1427,10 @@ export class App {
         continue;
       }
       if (pending.taskId !== undefined) backgroundPending.push(pending);
-      else lines.push(...renderPending(pending));
+      else {
+        if (this.registry.supportsLiveExpansion(pending.toolName)) hasLiveSubagent = true;
+        lines.push(...renderPending(pending));
+      }
     }
     if (backgroundPending.length > 0) {
       if (lines.length > 0) lines.push("");
@@ -1440,6 +1448,7 @@ export class App {
       }
       lines.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth), "");
     }
+    if (hasLiveSubagent && lines.at(-1) !== "") lines.push("");
 
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
@@ -1498,9 +1507,12 @@ export class App {
           this.picker.filterable && this.pickerQuery
             ? ` ${GLYPHS.separator} ${this.pickerQuery}`
             : "";
+        const remove = this.picker.onDelete
+          ? ` ${GLYPHS.separator} ${this.pickerDeleteValue ? "del again confirm" : "del delete"}`
+          : "";
         const back = this.picker.onBack ? ` ${GLYPHS.separator} ← back` : "";
         composerLines.push(
-          MARGIN + styleText(`${this.picker.title}${query}${back}`, { bold: true }, depth),
+          MARGIN + styleText(`${this.picker.title}${query}${remove}${back}`, { bold: true }, depth),
         );
         composerLines.push(...this.commandList.render(composerWidth, depth));
       } else if (this.mode === "prompt" && this.prompt) {
@@ -2248,6 +2260,7 @@ export class App {
       }
       if (this.mode === "picker" && this.picker?.filterable) {
         this.pickerQuery += event.text.replace(/\s+/g, " ");
+        this.pickerDeleteValue = undefined;
         this.refreshPicker();
         return;
       }
@@ -2490,12 +2503,14 @@ export class App {
     if (!picker) return;
     if (key.name === "up" || key.name === "down") {
       this.commandList.move(key.name);
+      this.pickerDeleteValue = undefined;
       return;
     }
     if (key.name === "left" && picker.onBack) {
       const onBack = picker.onBack;
       this.picker = undefined;
       this.pickerQuery = "";
+      this.pickerDeleteValue = undefined;
       this.mode = "composing";
       onBack();
       return;
@@ -2504,13 +2519,30 @@ export class App {
       const onCancel = picker.onCancel;
       this.picker = undefined;
       this.pickerQuery = "";
+      this.pickerDeleteValue = undefined;
       this.mode = "composing";
       onCancel?.();
       return;
     }
     if (picker.filterable && key.name === "backspace") {
       this.pickerQuery = [...this.pickerQuery].slice(0, -1).join("");
+      this.pickerDeleteValue = undefined;
       this.refreshPicker();
+      return;
+    }
+    if (key.name === "delete" && picker.onDelete) {
+      const selected = this.commandList.selected;
+      if (!selected) return;
+      const value = selected.value ?? selected.label;
+      if (this.pickerDeleteValue !== value) {
+        this.pickerDeleteValue = value;
+        return;
+      }
+      this.picker = undefined;
+      this.pickerQuery = "";
+      this.pickerDeleteValue = undefined;
+      this.mode = "composing";
+      picker.onDelete(value);
       return;
     }
     if (key.name === "return") {
@@ -2518,12 +2550,14 @@ export class App {
       if (!selected) return;
       this.picker = undefined;
       this.pickerQuery = "";
+      this.pickerDeleteValue = undefined;
       this.mode = "composing";
       picker.onChoose(selected.value ?? selected.label);
       return;
     }
     if (picker.filterable && !key.ctrl && !key.alt && key.text) {
       this.pickerQuery += key.text;
+      this.pickerDeleteValue = undefined;
       this.refreshPicker();
     }
   }

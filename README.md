@@ -86,6 +86,9 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
+In an interactive session, `/rename [name]` names the current conversation for the
+`/resume` menu. Select an old conversation there and press Delete twice to remove it.
+
 ### Local llama.cpp models
 
 Mu discovers the model currently loaded by `llama-server` through its OpenAI-compatible

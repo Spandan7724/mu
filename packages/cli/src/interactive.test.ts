@@ -12,6 +12,7 @@ import {
 import {
   availableModels,
   formatAuthUrl,
+  formatInstructionsOutput,
   formatPermissionMode,
   formatResumeHint,
   formatTerminalTitle,
@@ -36,6 +37,14 @@ test("session close hint is a directly runnable resume command", () => {
   const colored = formatResumeHint("session-id", "truecolor");
   expect(colored).toContain("38;2;102;102;102mTo resume this session:");
   expect(colored).toContain("\u001b[0m mu --resume session-id");
+});
+
+test("instructions output has one blank row above and below", () => {
+  expect(formatInstructionsOutput("instructions · 1 file\n  project AGENTS.md")).toEqual([
+    "",
+    "  instructions · 1 file\n  project AGENTS.md",
+    "",
+  ]);
 });
 
 describe("permission mode notice", () => {

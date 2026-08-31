@@ -11,6 +11,7 @@ export type SessionEntry =
       createdAt: string;
       profile: string;
       environment: Record<string, string>;
+      title?: string;
     }
   | {
       type: "message";
@@ -197,7 +198,8 @@ function assertSessionEntry(value: unknown): asserts value is SessionEntry {
       !string(value.createdAt) ||
       !string(value.profile) ||
       !record(value.environment) ||
-      !Object.values(value.environment).every(string)
+      !Object.values(value.environment).every(string) ||
+      !optional(value.title, nonEmptyString)
     ) {
       throw new Error("Invalid session header");
     }
@@ -338,6 +340,16 @@ export class SessionTree {
   get header(): (SessionEntry & { type: "session" }) | undefined {
     const first = this.entries[0];
     return first?.type === "session" ? first : undefined;
+  }
+
+  setTitle(title: string | undefined): void {
+    const header = this.header;
+    if (!header) throw new Error("Invalid session: missing header");
+    if (title !== undefined && title.length === 0) {
+      throw new Error("Invalid session: title must not be empty");
+    }
+    if (title === undefined) delete header.title;
+    else header.title = title;
   }
 
   get head(): string | null {
@@ -492,6 +504,7 @@ export interface SessionStore {
   load(sessionId: string): Promise<SessionTree | undefined>;
   save(sessionId: string, tree: SessionTree): Promise<void>;
   list(): Promise<string[]>;
+  delete?(sessionId: string): Promise<boolean>;
 }
 
 export class MemorySessionStore implements SessionStore {
@@ -508,5 +521,9 @@ export class MemorySessionStore implements SessionStore {
 
   async list(): Promise<string[]> {
     return [...this.sessions.keys()];
+  }
+
+  async delete(sessionId: string): Promise<boolean> {
+    return this.sessions.delete(sessionId);
   }
 }

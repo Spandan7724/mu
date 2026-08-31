@@ -41,4 +41,16 @@ describe("FileSessionStore", () => {
     expect((await stat(root)).mode & 0o777).toBe(0o700);
     expect((await stat(join(root, file as string))).mode & 0o777).toBe(0o600);
   });
+
+  test("deletes a session without affecting other sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-delete-"));
+    const store = new FileSessionStore({ root });
+    await store.save("keep", tree("keep"));
+    await store.save("remove", tree("remove"));
+
+    expect(await store.delete("remove")).toBe(true);
+    expect(await store.delete("remove")).toBe(false);
+    expect(await store.load("remove")).toBeUndefined();
+    expect(await store.list()).toEqual(["keep"]);
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MemorySessionStore, SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
-import { resumePickerItems, sessionPickerLabel } from "./session-picker.ts";
+import { normalizeSessionTitle, resumePickerItems, sessionPickerLabel } from "./session-picker.ts";
 
 function session(
   id: string,
@@ -20,6 +20,17 @@ function session(
 }
 
 describe("resume picker labels", () => {
+  test("normalizes entered titles", () => {
+    expect(normalizeSessionTitle("  Authentication\n cleanup  ")).toBe("Authentication cleanup");
+  });
+
+  test("prefers a saved conversation title", () => {
+    const tree = session("session-a", "first prompt");
+    tree.setTitle("  Authentication\n cleanup  ");
+
+    expect(sessionPickerLabel(tree, "session-a")).toBe("Authentication cleanup");
+  });
+
   test("uses the first user message and normalizes it to one line", () => {
     const tree = session("session-a", "  fix the login\n\nflow  ");
     tree.appendMessage(userMessage("this later message is not the title"));

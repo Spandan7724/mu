@@ -538,7 +538,7 @@ const SUBAGENT_ACTIONS: Record<
   SubagentKind,
   { running: string; completed: string; tone: NonNullable<ToolCellOptions["tone"]> }
 > = {
-  task: { running: "delegating", completed: "delegated", tone: "state" },
+  task: { running: "delegating", completed: "delegated", tone: "task" },
   search: { running: "searching codebase", completed: "searched codebase", tone: "read" },
   counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "counsel" },
 };
@@ -759,6 +759,7 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
         ? toolCell(
             {
               name: description,
+              tone: action.tone,
               summary,
               statusFirst: true,
               ...(info.result?.isError
@@ -769,9 +770,8 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
           )
         : toolCell(
             {
-              name: spinner,
+              name: `${spinner} ${description}`,
               tone: action.tone,
-              primaryArg: description,
               summary,
             },
             ctx,

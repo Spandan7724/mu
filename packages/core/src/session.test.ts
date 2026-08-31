@@ -352,10 +352,19 @@ describe("jsonl helpers", () => {
         .length,
     ).toBe(1);
   });
+
+  test("session titles round-trip and can be removed", () => {
+    const tree = newTree();
+    tree.setTitle("Fix authentication");
+    expect(SessionTree.fromJsonl(tree.toJsonl()).header?.title).toBe("Fix authentication");
+
+    tree.setTitle(undefined);
+    expect(tree.header?.title).toBeUndefined();
+  });
 });
 
 describe("MemorySessionStore", () => {
-  test("saves, lists and loads sessions", async () => {
+  test("saves, lists, loads, and deletes sessions", async () => {
     const store = new MemorySessionStore();
     const tree = newTree();
     tree.appendMessage(userMessage("persisted"));
@@ -365,5 +374,8 @@ describe("MemorySessionStore", () => {
     const loaded = await store.load("s1");
     expect(loaded?.messagesAt().length).toBe(1);
     expect(await store.load("missing")).toBeUndefined();
+    expect(await store.delete("s1")).toBe(true);
+    expect(await store.delete("s1")).toBe(false);
+    expect(await store.list()).toEqual([]);
   });
 });
