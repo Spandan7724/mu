@@ -403,6 +403,12 @@ type TranscriptItem =
       expanded: boolean;
     };
 
+const SUBAGENT_TOOL_NAMES = new Set(["task", "search", "counsel"]);
+
+function isSubagentTool(item: TranscriptItem | undefined): boolean {
+  return item?.kind === "tool" && SUBAGENT_TOOL_NAMES.has(item.info.toolName);
+}
+
 function hasAssistantDisplay(message: AssistantMessage): boolean {
   return message.content.some(
     (block) =>
@@ -1356,8 +1362,15 @@ export class App {
       const next = this.transcript[index + 1];
       const previous = this.transcript[index - 1];
       const primaryResult = this.registry.expandedByDefault(item.info);
+      const startsSubagentRun =
+        isSubagentTool(item) &&
+        !isSubagentTool(previous) &&
+        (previous?.kind === "tool" || (previous?.kind === "lines" && previous.lines.at(-1) !== ""));
       const leadingBreak =
-        primaryResult && previous?.kind === "lines" && previous.lines.at(-1) !== "" ? [""] : [];
+        (primaryResult && previous?.kind === "lines" && previous.lines.at(-1) !== "") ||
+        startsSubagentRun
+          ? [""]
+          : [];
       const separated =
         next !== undefined &&
         (next.kind === "user" || next.kind === "assistant"
@@ -1394,6 +1407,7 @@ export class App {
     if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
     const backgroundPending: PendingTool[] = [];
     let hasLiveSubagent = false;
+    let previousWasLiveSubagent = false;
     const renderPending = (pending: PendingTool): string[] => {
       const rendered = this.registry.render(
         {
@@ -1428,8 +1442,11 @@ export class App {
       }
       if (pending.taskId !== undefined) backgroundPending.push(pending);
       else {
-        if (this.registry.supportsLiveExpansion(pending.toolName)) hasLiveSubagent = true;
+        const liveSubagent = SUBAGENT_TOOL_NAMES.has(pending.toolName);
+        if (liveSubagent && !previousWasLiveSubagent && lines.at(-1) !== "") lines.push("");
+        if (liveSubagent) hasLiveSubagent = true;
         lines.push(...renderPending(pending));
+        previousWasLiveSubagent = liveSubagent;
       }
     }
     if (backgroundPending.length > 0) {

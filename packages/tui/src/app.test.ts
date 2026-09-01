@@ -1799,6 +1799,23 @@ describe("renderer registry", () => {
 });
 
 describe("transcript spacing", () => {
+  const completed = (app: App, id: string, toolName: string, args: unknown) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: "done" }],
+        details: {},
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+
   const ran = (app: App, id: string, command: string, output: string) => {
     app.handleEvent({
       type: "tool_execution_start",
@@ -1843,6 +1860,53 @@ describe("transcript spacing", () => {
     const cell = screen.findIndex((line) => line.includes("ran pwd"));
     expect(screen[cell + 1]).toBe("");
     expect(screen[cell + 2]).toContain("Done — that is the cwd.");
+  });
+
+  test("a subagent run has one leading blank while sibling subagents stay together", () => {
+    const { app } = harness();
+    completed(app, "plan", "todo", {
+      items: [{ content: "Map the repository", status: "in_progress" }],
+    });
+    app.appendTranscript(["  Cannot switch models during a run."]);
+    completed(app, "task-1", "task", {
+      description: "Repository architecture map",
+      prompt: "Inspect the architecture.",
+    });
+    completed(app, "search-1", "search", {
+      query: "Core packages review",
+    });
+
+    const rows = app.renderTranscript().map(stripAnsi);
+    const first = rows.findIndex((line) => line.includes("Repository architecture map"));
+    const second = rows.findIndex((line) => line.includes("Core packages review"));
+    expect(rows[first - 2]).toContain("Cannot switch models during a run.");
+    expect(rows[first - 1]).toBe("");
+    expect(rows[second - 1]).not.toBe("");
+  });
+
+  test("running subagents have the same leading blank above the composer", () => {
+    const { app } = harness();
+    completed(app, "plan", "todo", {
+      items: [{ content: "Delegate project reviews", status: "in_progress" }],
+    });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: { description: "Review Mu monorepo", prompt: "Inspect Mu." },
+    });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "task-2",
+      toolName: "task",
+      args: { description: "Review Songbird project", prompt: "Inspect Songbird." },
+    });
+
+    const rows = app.renderScreen().map(stripAnsi);
+    const first = rows.findIndex((line) => line.includes("Review Mu monorepo"));
+    const second = rows.findIndex((line) => line.includes("Review Songbird project"));
+    expect(rows[first - 1]).toBe("");
+    expect(rows[second - 1]).not.toBe("");
   });
 });
 
