@@ -25,9 +25,9 @@ export function detectColorDepth(
 const ESC = "\u001b[";
 export const RESET = "\u001b[0m";
 
-// mu's accent: mint at truecolor, bright cyan below it.
-const ACCENT_RGB = [177, 249, 223] as const;
-const ACCENT_256 = 158;
+// mu's accent: periwinkle blue at truecolor, bright blue below it.
+const ACCENT_RGB = [95, 135, 255] as const;
+const ACCENT_256 = 69;
 // Headings are mu's own colour rather than a hue of their own: a heading in mu's
 // prose is mu speaking, and with eleven roles placed there is no slot left on the
 // wheel that clears its neighbours. Aliased rather than copied so the two cannot
@@ -55,7 +55,7 @@ const TOOL_EXEC_256 = 147;
 const TASK_RGB = [86, 182, 232] as const;
 const TASK_256 = 74;
 // Counsel is deliberation rather than inspection or mutation. Warm amber keeps
-// it visually separate from mu's mint identity and the cool tool-action hues.
+// it visually separate from mu's identity and the cool tool-action hues.
 const COUNSEL_RGB = [230, 195, 132] as const;
 const COUNSEL_256 = 180;
 const PATH_RGB = [148, 163, 184] as const;
@@ -124,7 +124,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${ACCENT_RGB[0]};${ACCENT_RGB[1]};${ACCENT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${ACCENT_256}`);
-    else codes.push("96");
+    else codes.push("94");
   }
   if (style.green) codes.push("32");
   if (style.red) codes.push("31");
@@ -132,7 +132,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
-    else codes.push("96");
+    else codes.push("94");
   }
   if (style.link) {
     if (depth === "truecolor") codes.push(`38;2;${LINK_RGB[0]};${LINK_RGB[1]};${LINK_RGB[2]}`);

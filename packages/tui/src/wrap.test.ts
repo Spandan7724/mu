@@ -171,10 +171,10 @@ describe("colour depth", () => {
     expect(detectColorDepth({ WT_SESSION: "abc" }, "win32")).toBe("truecolor");
   });
 
-  test("the accent degrades to bright cyan at 16 colours", () => {
-    expect(styleText("mu", { accent: true }, "ansi256")).toContain("38;5;158");
-    expect(styleText("mu", { accent: true }, "ansi16")).toContain("[96m");
-    expect(styleText("mu", { accent: true }, "truecolor")).toContain("38;2;177;249;223");
+  test("the accent degrades to bright blue at 16 colours", () => {
+    expect(styleText("mu", { accent: true }, "ansi256")).toContain("38;5;69");
+    expect(styleText("mu", { accent: true }, "ansi16")).toContain("[94m");
+    expect(styleText("mu", { accent: true }, "truecolor")).toContain("38;2;95;135;255");
   });
 
   test("the Markdown palette degrades by terminal colour depth", () => {
