@@ -1423,6 +1423,40 @@ describe("renderer registry", () => {
     expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
   });
 
+  test("read summaries distinguish returned ranges, total size, and truncation", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const render = (details: Record<string, unknown>) =>
+      stripAnsi(
+        registry.render(
+          {
+            toolName: "read",
+            args: { path: "large.ts", offset: 300, limit: 40 },
+            result: {
+              role: "toolResult",
+              toolCallId: "r",
+              toolName: "read",
+              content: [{ type: "text", text: "source" }],
+              details,
+              isError: false,
+              timestamp: 1,
+            },
+          },
+          { width: 100, depth: "none" },
+        )[0] ?? "",
+      );
+
+    expect(
+      render({ lines: 2_052, startLine: 300, endLine: 339, returnedLines: 40, truncated: false }),
+    ).toBe("  │ read large.ts · lines 300–339 of 2052");
+    expect(render({ lines: 2_052, truncated: true })).toBe(
+      "  │ read large.ts · 2052 lines · output truncated",
+    );
+    expect(render({ lines: 2_052, returnedLines: 0, truncated: false })).toBe(
+      "  │ read large.ts · 0 lines returned · 2052 total",
+    );
+  });
+
   test("an expanded read syntax-highlights source while keeping its line numbers dim", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);

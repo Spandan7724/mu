@@ -950,7 +950,26 @@ planRenderer.supersedes = true;
 export const codingRenderers: Record<string, ToolRendererFn> = {
   todo: planRenderer,
   read: (info, ctx) => {
-    const details = info.result?.details as { lines?: number } | undefined;
+    const details = info.result?.details as
+      | {
+          lines?: number;
+          startLine?: number;
+          endLine?: number;
+          returnedLines?: number;
+          truncated?: boolean;
+        }
+      | undefined;
+    let summary: string | undefined;
+    if (details?.lines !== undefined) {
+      if (details.returnedLines === 0) {
+        summary = `0 lines returned · ${details.lines} total`;
+      } else if (details.startLine !== undefined && details.endLine !== undefined) {
+        summary = `lines ${details.startLine}–${details.endLine} of ${details.lines}`;
+      } else {
+        summary = `${details.lines} ${details.lines === 1 ? "line" : "lines"}`;
+      }
+      if (details.truncated) summary += " · output truncated";
+    }
     return [
       ...toolCell(
         {
@@ -960,7 +979,7 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
             ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
             : {}),
           ...(info.result?.isError ? { isError: true } : {}),
-          ...(details?.lines ? { summary: `${details.lines} lines` } : {}),
+          ...(summary ? { summary } : {}),
         },
         ctx,
       ),

@@ -66,7 +66,13 @@ const result: ToolResultMessage = {
         toolCallId: "read-1",
         toolName: "read",
         content: [{ type: "text", text: "source" }],
-        details: { lines: 31 },
+        details: {
+          lines: 100,
+          startLine: 10,
+          endLine: 40,
+          returnedLines: 31,
+          truncated: false,
+        },
         isError: false,
         timestamp: 2,
       },
@@ -115,7 +121,7 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("      Trace parser ownership");
     expect(expanded).toContain("    activity · 2 actions");
     expect(expanded).toContain("      Explored 1 file, 1 search");
-    expect(expanded).toContain("      │ read packages/parser.ts · 31 lines");
+    expect(expanded).toContain("      │ read packages/parser.ts · lines 10–40 of 100");
     expect(expanded).toContain("      │ ran rg -n 'parse' packages · ✓ 334ms");
     expect(expanded).not.toContain("      files");
     expect(expanded).not.toContain("      commands");

@@ -165,15 +165,26 @@ export function readTool(deps: ToolDeps) {
       const start = (offset ?? 1) - 1;
       const slice = allLines.slice(start, limit ? start + limit : undefined);
       const numbered = slice.map((line, i) => `${String(start + i + 1).padStart(5)}  ${line}`);
-      const body = withNotice(truncateOutput(numbered.join("\n")), "file is large");
+      const output = truncateOutput(numbered.join("\n"));
+      const body = withNotice(output, "file is large");
       const instructions = await deps.instructions?.instructionsForPath(absolute);
       const text = [body || "(empty file)", instructions?.text].filter(Boolean).join("\n\n");
+      const ranged = offset !== undefined || limit !== undefined;
 
       return {
         content: [{ type: "text", text }],
         details: {
           path: absolute,
           lines: allLines.length,
+          ...(ranged
+            ? {
+                returnedLines: slice.length,
+                ...(slice.length > 0
+                  ? { startLine: start + 1, endLine: start + slice.length }
+                  : {}),
+              }
+            : {}),
+          truncated: output.truncated,
           ...(instructions && instructions.sources.length > 0
             ? { loadedInstructions: instructions.sources }
             : {}),

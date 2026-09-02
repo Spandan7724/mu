@@ -56,6 +56,13 @@ describe("read", () => {
     expect(text).toContain("2  l2");
     expect(text).toContain("3  l3");
     expect(text).not.toContain("l4");
+    expect(result.details).toMatchObject({
+      lines: 5,
+      startLine: 2,
+      endLine: 3,
+      returnedLines: 2,
+      truncated: false,
+    });
   });
 
   test("a missing file is a helpful error, not a throw", async () => {
@@ -764,6 +771,7 @@ describe("truncation", () => {
     );
     const result = await run(readTool({ root, state: new FileState() }), { path: "big.txt" });
     expect(textOf(result)).toContain("output truncated");
+    expect(result.details).toMatchObject({ lines: 4000, truncated: true });
   });
 });
 
