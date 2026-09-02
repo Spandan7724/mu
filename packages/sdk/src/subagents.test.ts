@@ -80,10 +80,16 @@ describe("managed subagents", () => {
       "do not expose this bootstrap message",
     );
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Resolve one directed engineering question end to end",
+      "Answer one directed engineering question within its stated scope",
     );
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Instructions to edit or implement, update todo/plan state, run builds, tests",
+    );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Similar terminology or shared infrastructure alone does not put another subsystem in scope",
+    );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "do not reread unchanged content",
     );
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Begin with one concise paragraph, with no heading",
@@ -100,6 +106,13 @@ describe("managed subagents", () => {
       thinkingLevel: "low",
       reason: "done",
     });
+    const search = parent.tools.find((candidate) => candidate.name === "search");
+    expect(search?.description).toContain(
+      "delegation is not a reason to broaden the user's requested subject or output",
+    );
+    expect(JSON.stringify(search?.inputSchema)).toContain(
+      "preserving the user's named subject, requested output, and qualifiers",
+    );
   });
 
   test("counsel selects the stronger same-provider model and raises reasoning one level", async () => {
