@@ -192,7 +192,7 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("exit 1");
   });
 
-  test("native web search completion renders its query as activity", () => {
+  test("native web searches stay compact with one blank before streamed response text", () => {
     const { app } = harness();
     expect(
       app.handleEvent({
@@ -217,6 +217,27 @@ describe("fake-agent session", () => {
     });
 
     expect(lines.map(stripAnsi)).toEqual(["  searched · mu agent"]);
+    app.handleEvent({
+      type: "web_search_end",
+      search: {
+        type: "webSearch",
+        id: "ws_2",
+        status: "completed",
+        action: { type: "openPage", url: "https://example.com" },
+      },
+    });
+    app.handleEvent({
+      type: "message_update",
+      message: assistant("response"),
+      delta: { kind: "text_delta", contentIndex: 0, text: "response" },
+    });
+
+    expect(app.renderTranscript().map(stripAnsi)).toEqual([
+      "  searched · mu agent",
+      "  searched · https://example.com",
+      "",
+    ]);
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("mu  response");
   });
 
   test("the spinner and interrupt hint appear only while running", () => {

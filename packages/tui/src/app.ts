@@ -437,6 +437,7 @@ interface ConversationView {
   compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
   pendingTools: Map<string, PendingTool>;
   pendingInputs: PendingInput[];
+  webSearchBoundaryPending: boolean;
   transcript: TranscriptItem[];
   transcriptVersion: number;
   transcriptCache:
@@ -475,6 +476,7 @@ function conversationView(
     compactionStage: undefined,
     pendingTools: new Map(),
     pendingInputs: [],
+    webSearchBoundaryPending: false,
     transcript: [],
     transcriptVersion: 0,
     transcriptCache: undefined,
@@ -580,6 +582,12 @@ export class App {
   }
   private set pendingInputs(value: PendingInput[]) {
     this.view.pendingInputs = value;
+  }
+  private get webSearchBoundaryPending(): boolean {
+    return this.view.webSearchBoundaryPending;
+  }
+  private set webSearchBoundaryPending(value: boolean) {
+    this.view.webSearchBoundaryPending = value;
   }
   private get transcript(): TranscriptItem[] {
     return this.view.transcript;
@@ -872,6 +880,7 @@ export class App {
 
       case "agent_end": {
         this.clearPendingSubmissions();
+        this.webSearchBoundaryPending = false;
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
@@ -912,6 +921,10 @@ export class App {
 
       case "message_update":
         if (event.delta.kind === "text_delta") {
+          if (this.webSearchBoundaryPending) {
+            this.appendTranscript([""]);
+            this.webSearchBoundaryPending = false;
+          }
           this.streaming = (this.streaming ?? "") + event.delta.text;
           this.streamingCache = undefined;
         } else if (
@@ -952,6 +965,7 @@ export class App {
       case "message_end": {
         const message = event.message;
         if (message.role === "user") {
+          this.webSearchBoundaryPending = false;
           const text = message.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
@@ -987,7 +1001,11 @@ export class App {
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
-          if (hasAssistantDisplay(message)) this.pushTranscript({ kind: "assistant", message });
+          if (hasAssistantDisplay(message)) {
+            if (this.webSearchBoundaryPending) this.appendTranscript([""]);
+            this.webSearchBoundaryPending = false;
+            this.pushTranscript({ kind: "assistant", message });
+          }
           return [];
         }
         return [];
@@ -1041,6 +1059,7 @@ export class App {
           MARGIN + styleText(`searched · ${webSearchDetail(event)}`, { dim: true }, this.ctx.depth),
         ];
         this.appendTranscript(lines);
+        this.webSearchBoundaryPending = true;
         return lines;
       }
 
@@ -1222,6 +1241,7 @@ export class App {
     this.transcriptCache = undefined;
     this.pendingTools.clear();
     this.pendingInputs = [];
+    this.webSearchBoundaryPending = false;
     this.streaming = undefined;
     this.streamingCache = undefined;
     this.activitySelection = undefined;
