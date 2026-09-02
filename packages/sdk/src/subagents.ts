@@ -328,13 +328,13 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
           tool({
             name: "search",
             description:
-              "Delegate a focused read-only codebase investigation when the user explicitly requests Search or the question benefits from correlated evidence across files. Search may trace necessary cross-file relationships, but delegation is not a reason to broaden the user's requested subject or output. For routine exact-symbol or known-path lookup not explicitly assigned to Search, use ordinary read/bash. Returns concise findings with paths and line ranges.",
+              "Delegate a focused read-only codebase investigation when the user explicitly requests Search or the question benefits from correlated evidence across files. Preserve the user's scope literally: do not add categories of files, evidence, or related systems unless requested or necessary to answer the question. For routine exact-symbol or known-path lookup not explicitly assigned to Search, use ordinary read/bash. Returns concise findings with paths and line ranges; preserve those citations when answering the user.",
             inputSchema: z.object({
               query: z
                 .string()
                 .min(1)
                 .describe(
-                  "Question to answer, preserving the user's named subject, requested output, and qualifiers, plus only context necessary to answer it",
+                  "Question to answer, preserving the user's named subject, requested output, and qualifiers; do not add categories of files or evidence the user did not request",
                 ),
             }),
             isConcurrencySafe: () => true,

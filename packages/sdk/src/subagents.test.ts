@@ -108,10 +108,11 @@ describe("managed subagents", () => {
     });
     const search = parent.tools.find((candidate) => candidate.name === "search");
     expect(search?.description).toContain(
-      "delegation is not a reason to broaden the user's requested subject or output",
+      "do not add categories of files, evidence, or related systems",
     );
+    expect(search?.description).toContain("preserve those citations when answering the user");
     expect(JSON.stringify(search?.inputSchema)).toContain(
-      "preserving the user's named subject, requested output, and qualifiers",
+      "do not add categories of files or evidence the user did not request",
     );
   });
 

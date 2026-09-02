@@ -12,7 +12,7 @@ import {
   loadProjectConfig,
   rememberAllow,
 } from "./permissions.ts";
-import { codingPrompt } from "./prompts.ts";
+import { CODING_SEARCH_PROMPT, codingPrompt } from "./prompts.ts";
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mu-profile-"));
@@ -322,6 +322,15 @@ describe("prompts", () => {
     expect(base).toContain("workspace-relative `path:line`");
     expect(base).toContain("1-based starting");
     expect(base).toContain("never invent a line number");
+    expect(base).toContain("preserve their exact citations");
+  });
+
+  test("search delegation preserves scope and reads targeted ranges", () => {
+    const base = codingPrompt("anthropic/claude-opus-5")[0]?.text ?? "";
+    expect(base).toContain("preserve the user's named subject");
+    expect(base).toContain("adding only context needed to answer it");
+    expect(CODING_SEARCH_PROMPT).toContain("use read offsets and limits");
+    expect(CODING_SEARCH_PROMPT).toContain("Do not read a whole file merely to inspect one symbol");
   });
 
   test("the base prompt asks for one edit call per file, not one per change", () => {
