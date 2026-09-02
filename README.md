@@ -1,103 +1,105 @@
-# mu
+# Mu
 
-A general-purpose, extensible AI agent platform. Out of the box mu is a polished coding
-agent; swap its **profile** (tools + prompts + permissions + UI renderers) and the same
-kernel becomes a computer-use agent, an automation agent, or any other tool-using agent.
+Mu is an extensible AI agent for the terminal and TypeScript. Its default coding profile
+provides repository inspection, file editing, shell commands, background processes,
+permissions, checkpoints, and managed subagents. The underlying agent kernel is
+domain-neutral: tools, prompts, permissions, commands, and TUI renderers are supplied by
+profiles and extensions.
 
-![mu terminal interface](assets/demo.gif)
+![Mu terminal interface](assets/demo.gif)
 
-Three surfaces, one kernel, one event stream:
+The same agent is available through three surfaces:
 
-- **TUI** — interactive terminal app (`mu`)
-- **RPC / headless** — `mu --rpc` (NDJSON events/ops), `mu -p "..."` one-shot
-- **SDK** — `import { Agent } from "@mu-agent/mu"` for building automations in TypeScript
+- `mu` — interactive terminal UI
+- `mu -p` and `mu --rpc` — one-shot and NDJSON interfaces
+- `@mu-agent/mu` — TypeScript SDK
 
 ## Install
 
+The release installers and native archives include a pinned ripgrep binary. Native installs
+do not require Bun.
+
 ```sh
-# Linux / macOS, — installs to ~/.mu/bin
+# Linux x64 or macOS arm64
 curl -fsSL https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.sh | bash
 
-# Windows, — installs to %USERPROFILE%\.mu\bin
+# Windows x64 (PowerShell)
 irm https://raw.githubusercontent.com/Spandan7724/mu/main/scripts/install.ps1 | iex
+```
 
-# With npm (requires Bun)
+You can also install the CLI and SDK package with npm or Bun. This distribution runs on
+Bun 1.3 or later.
+
+```sh
 npm install -g @mu-agent/mu
-
-# Or with Bun
+# or
 bun install -g @mu-agent/mu
+```
 
-# Update an existing install — npm, Bun, or either script above
+Native archives for Linux x64, macOS arm64, and Windows x64 are available on the
+[releases page](https://github.com/Spandan7724/mu/releases). Bare single-file release
+binaries do not include ripgrep; Mu uses `rg` from `PATH` when available.
+
+Update or remove a recognized global installation with:
+
+```sh
 mu self update
-
-# Or download the packaged native release — no runtime needed.
-# Linux:
-tar -xzf mu-linux-x64.tar.gz
-./mu-linux-x64/bin/mu --help
-
-# macOS (Apple Silicon):
-tar -xzf mu-darwin-arm64.tar.gz
-./mu-darwin-arm64/bin/mu --help
-
-# Windows PowerShell
-Expand-Archive .\mu-windows-x64.zip
-.\mu-windows-x64\bin\mu.exe --help
+mu self uninstall
+mu self uninstall --purge  # also removes ~/.mu data
 ```
 
-Every install route above includes a pinned, checksum-verified ripgrep sidecar for fast
-search: the scripts and the packaged native releases unpack it next to the binary, and
-npm uses an OS/CPU-specific optional package with no postinstall download. Only the bare
-single-file binaries from the releases page lack it, falling back to `rg` from `PATH` or
-mu's built-in search.
+## Getting started
 
-Install the same package locally to use the TypeScript SDK:
+Start the interactive app, then run `/login` to configure an account or API key and
+`/model` to choose among models available to those credentials.
 
 ```sh
-npm install @mu-agent/mu
-# or: bun add @mu-agent/mu
+mu
 ```
 
-```ts
-import { Agent, createAgent } from "@mu-agent/mu";
-
-// A domain-neutral agent with a general prompt and no tools.
-const assistant = new Agent();
-console.log((await assistant.run("Explain how an AI agent loop works")).text);
-
-// Mu's built-in coding profile: file, search, shell, task, and checkpoint tools.
-const codingAgent = await createAgent({
-  profile: "coding",
-  profileOptions: { root: process.cwd() },
-});
-console.log((await codingAgent.run("Summarize this directory")).text);
-await codingAgent.shutdown();
-```
-
-Start mu and run `/login` to choose account sign-in or a stored API key. Account sign-in
-supports OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code, OpenRouter, and xAI. Anthropic
-is API-key-only. Z.AI Coding Plan and Qwen Token Plan are also available through their
-API-key endpoints. Environment variables remain available for unattended use:
+Common non-interactive forms:
 
 ```sh
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY / GEMINI_API_KEY / provider-specific key
-mu                             # interactive; /login configures authentication
-mu --resume <session-id>       # continue a saved interactive session
-mu -p "fix the failing test"   # one-shot
-mu --rpc                       # NDJSON events out, ops in
+mu -p "explain the failing tests"       # print one result
+mu -p "review this change" --json       # stream JSON events
+mu --resume <session-id>                # resume interactively
+mu --resume <session-id> -p "continue" # resume headlessly
+mu --rpc                                # NDJSON operations in, events out
 ```
 
-OpenAI API-key and ChatGPT/Codex models automatically receive the provider-hosted web-search
-tool. Ask Mu to search normally; no flag or separate configuration is required. Other
-providers continue without web search until a standalone backend is added in a future release.
+Useful options include:
 
-In an interactive session, `/rename [name]` names the current conversation for the
-`/resume` menu. Select an old conversation there and press Delete twice to remove it.
+```text
+--model <provider/model>       select a model
+--profile <name>               load a profile (default: coding)
+--max-turns <n>                set a turn budget
+--max-cost <usd>               set a cost budget
+--permission-mode <mode>       default | accept-edits | plan-readonly | yolo
+--no-instructions              disable instruction loading for this run
+```
+
+Run `mu --help` for the complete CLI reference.
+
+## Authentication and models
+
+`/login` stores provider-scoped credentials in `~/.mu/auth.json`. Account sign-in is
+available for OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code, OpenRouter, and xAI. Direct
+API-key routes include Anthropic, OpenAI, Google, Z.AI Coding Plan, Qwen Token Plan, and
+other providers supported by the built-in transport catalog. Anthropic subscription OAuth
+is not supported.
+
+Environment variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`
+can be used instead for unattended runs. `/logout` removes only credentials saved by Mu;
+it does not change environment variables.
+
+OpenAI API-key (`openai/*`) and ChatGPT-plan (`openai-codex/*`) models use separate
+credentials and can coexist. Both routes receive OpenAI's hosted web-search tool
+automatically. Other providers currently run without web search.
 
 ### Local llama.cpp models
 
-Mu discovers the model currently loaded by `llama-server` through its OpenAI-compatible
-API. The default address is `http://127.0.0.1:8000`, so a server launched with an alias can
-be selected directly:
+Mu discovers the model loaded by `llama-server` at `http://127.0.0.1:8000` and exposes it
+as `llama-cpp/<alias>`:
 
 ```sh
 ./build/bin/llama-server \
@@ -110,56 +112,85 @@ be selected directly:
 mu --model llama-cpp/ornith-1.5-9b
 ```
 
-With the server running, `/model` also lists its loaded alias as a local model. Set
-`LLAMA_CPP_BASE_URL` when the server uses another address; either the server root or its
-`/v1` URL is accepted. If `llama-server` was started with an API key, set
-`LLAMA_CPP_API_KEY`. Tool calling requires a compatible chat template and `--jinja`; see
-the [official llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
-and [function-calling guide](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md).
+Set `LLAMA_CPP_BASE_URL` for another address and `LLAMA_CPP_API_KEY` for a protected
+server. Tool use depends on the loaded model and chat template; `--jinja` is normally
+required.
 
-Run `mu agents` to manage several sessions whose worker processes survive closing the
-viewer. Managed sessions commit the initiating prompt before contacting the provider and
-commit every completed assistant/tool turn before starting the next one. If a supervisor,
-worker, or machine stops during an in-flight provider or tool call, Mu marks that runtime
-failed and resumes from the last committed boundary; it never automatically replays the
-interrupted operation or claims exact mid-turn continuation.
+## Coding profile
 
-Coding workers that share a workspace serialize shadow-checkpoint Git operations with a
-cross-process ownership lock, including stale-owner recovery. Their filesystem itself is
-still shared: simultaneous agents can observe one another's edits, so coordinate tasks
-that modify the same files.
+The default profile provides:
 
-Managed workers support built-in and external profiles through `--profile`. Profile
-commands, scoped session storage, runtime lifecycle hooks, and TUI renderers are preserved
-in managed mode. Environment needed only by a custom profile can be forwarded with
-uppercase `MU_PROFILE_*` variables; process identity variables such as `HOME` are never
-accepted through the viewer-to-supervisor handoff.
+- file reads, directory listing, exact multi-edit writes, and new-file creation;
+- foreground and PTY-backed background shell commands;
+- repository search with `rg` and `rg --files` through the shell tool;
+- per-call permission checks with proposed diffs for file changes;
+- one shadow-git checkpoint per user turn, without committing to or changing the user's
+  Git repository;
+- `/undo`, `/redo`, `/fork`, and `/diff` over the session and its workspace changes;
+- durable JSONL session trees, transcript export, and context compaction;
+- managed `task` delegation plus coding-specific `search` and `counsel` subagents.
 
-## Context compaction
+Read-only operations are allowed by default. File changes and commands are checked by the
+coding profile's permission rules. `/permissions` changes the mode for the current process;
+an “always allow” response stores an exact project rule. `--permission-mode yolo` and
+`--allow-all` remove Mu's permission prompts but do not provide an OS sandbox.
 
-Mu automatically compacts context near 85% of the active model window and recovers once
-from provider context-overflow errors. Run `/compact` to compact immediately, or add a
-focus such as `/compact preserve the migration decisions`. If a turn is active, the
-operation queues behind it. The TUI shows compaction progress and a durable before/after
-boundary; a failed or cancelled compaction preserves the original conversation.
+Checkpoints are stored separately under `~/.mu/checkpoints`. They include tracked,
+untracked, and ignored workspace files while excluding repository metadata and Mu's own
+`.mu` state.
 
-The compactor clears old reproducible tool output first, summarizes a bounded labelled
-history, and retains a token-budgeted recent tail with tool calls and results kept
-together. Compaction metadata is stored in the JSONL session tree, so resuming reconstructs
-the same summary and verbatim tail. Switching to a smaller-window model uses the previous
-model to summarize while sizing the retained tail for the destination window.
+### Sessions and compaction
 
-## Transcript export
+CLI sessions are stored by profile scope under `~/.mu/sessions`. They are append-only JSONL
+trees, so forks, undo, and compaction add entries rather than rewriting history.
 
-Run `/export` in the interactive app to save the complete current chat branch as a
-timestamped Markdown file in the current directory, or use `/export path/to/chat.md`.
-Export includes turns older than compaction boundaries and follows the active fork/undo
-branch, while hidden instruction snapshots stay private. Existing files are never
-overwritten. SDK consumers can produce the same representation with `sessionToMarkdown()`.
+- `/resume` opens a saved conversation; `/rename` gives it a stable label.
+- `/new` starts a clean conversation without deleting the previous one.
+- `/export [path.md]` writes the complete active branch, including turns older than a
+  compaction boundary.
+- `/compact [focus]` compacts immediately. Mu also compacts automatically near 85% of the
+  active model's context window and retries once after a context-overflow error.
+- `/btw [question]` opens an ephemeral read-only side conversation using the current
+  context as reference. It is not saved or merged back into the main session.
 
-## MCP servers
+### Interactive controls
 
-Add stdio servers to `~/.mu/config.json` or a project's `.mu/config.json`:
+The TUI keeps a typed transcript in the terminal's primary buffer and renders Markdown,
+diffs, tool activity, approvals, and live background output. Notable controls are:
+
+| Input | Action |
+|---|---|
+| `Ctrl+O` | Review the transcript and expand tool activity |
+| `Ctrl+T` | Cycle the active model's reasoning level |
+| `Shift+Tab` | Cycle permission modes |
+| `Enter` during a run | Steer before the next model request |
+| `Tab` during a run | Queue a follow-up turn |
+| `Alt+Up` | Withdraw the newest queued input for editing |
+| `Ctrl+J` | Insert a newline |
+| `!command` | Run a user-authored shell command without a model call |
+| `Ctrl+B` | Switch between main and `/btw` conversations |
+
+Run `/keybindings` in the TUI for the current list.
+
+## Instructions, extensions, skills, and MCP
+
+The coding profile reads project instructions from `AGENTS.md` and compatible fallback
+files, stopping at the nearest configured project root. It supports
+`AGENTS.override.md`, `.mu/rules/`, `.claude/rules/`, conditional `paths` frontmatter, and
+scoped `@file` imports. Global instructions live under `~/.mu`; project configuration lives
+under `.mu/`.
+
+Use `/instructions` to inspect loaded sources, `/instructions reload` or `/reload` to
+rescan them, and `--no-instructions` to disable loading for one invocation.
+
+Mu also loads:
+
+- TypeScript extensions from `~/.mu/extensions` and `.mu/extensions`;
+- Markdown commands from `~/.mu/commands` and `.mu/commands`;
+- skills from the built-in user and project skill roots;
+- stdio MCP servers from user and project `.mu/config.json` files.
+
+An MCP configuration looks like this:
 
 ```json
 {
@@ -173,30 +204,111 @@ Add stdio servers to `~/.mu/config.json` or a project's `.mu/config.json`:
 }
 ```
 
-mu discovers tools and resources at startup. Remote tools are named
-`mcp_<server>_<tool>` and use the normal permission rules, so an `mcp_*` rule can ask,
-allow, or deny them. Project server entries override user entries with the same name.
+Project entries override user entries with the same name. MCP tools are registered as
+`mcp_<server>_<tool>` and pass through the normal permission and event paths.
+
+## Managing several sessions
+
+`mu agents` manages several ordinary Mu sessions for the current workspace. A local
+supervisor owns one worker process per live session, so workers can continue after the
+viewer closes. Attaching to a row opens the standard conversation UI; stopping or removing
+a row does not delete its normal JSONL session.
+
+```sh
+mu agents
+mu agents stop
+```
+
+Workers in the same workspace share its filesystem. Mu serializes its own checkpoint Git
+operations, but simultaneous agents can still observe and overwrite each other's file
+changes. Assign disjoint work or coordinate them explicitly.
+
+## TypeScript SDK
+
+Install `@mu-agent/mu` locally. The package requires Bun at runtime.
+
+```sh
+bun add @mu-agent/mu
+```
+
+`new Agent()` is the low-level, domain-neutral API. It has a general prompt, no tools, an
+in-memory session store, and no extensions unless you provide them.
+
+```ts
+import { Agent } from "@mu-agent/mu";
+
+const agent = new Agent({
+  model: "anthropic/claude-sonnet-5",
+  budget: { maxTurns: 8, maxCostUsd: 1 },
+});
+
+const result = await agent.run("Explain the trade-offs of this API design");
+console.log(result.text);
+```
+
+`createAgent()` installs managed `task` delegation. Selecting the coding profile adds the
+same tools, permissions, project context, checkpoints, runtime, and coding specialists as
+the CLI.
+
+```ts
+import { createAgent } from "@mu-agent/mu";
+
+const agent = await createAgent({
+  profile: "coding",
+  profileOptions: { root: process.cwd() },
+});
+
+const result = await agent.run("Find and fix the failing test");
+console.log(result.text);
+await agent.shutdown();
+```
+
+The SDK also exposes Zod-backed custom tools, structured output, event streaming,
+permission callbacks, custom providers and models, pluggable session stores, extensions,
+and transcript serialization. See the
+[`@mu-agent/mu` package README](packages/cli/README.md) for a compact SDK example.
+
+## Architecture
+
+Mu is a Bun workspace with a one-way dependency structure:
+
+```text
+CLI → TUI → SDK → core → AI providers
+                ↑
+             profiles
+```
+
+- `packages/ai` owns thin provider clients, streaming conversion, model metadata, and
+  pricing.
+- `packages/core` owns the domain-neutral loop, messages, events, permissions, sessions,
+  compaction, registries, and extension host.
+- `packages/sdk` exposes `Agent` and the reusable SDK services.
+- `packages/profiles/coding` owns all repository, filesystem, shell, and checkpoint logic.
+- `packages/tui` consumes the same serializable event stream used by RPC and SDK streaming.
+- `packages/cli` assembles the published binary and SDK package.
+
+The core and AI packages deliberately contain no current-directory, file-path, Git, or
+other coding-domain assumptions.
 
 ## Development
 
-Requires [Bun](https://bun.sh).
+Development uses Bun 1.3.14, strict TypeScript, Biome, and `bun test`.
 
 ```sh
 bun install
-bun run ci        # typecheck + lint + tests + kernel-purity check
-bun run build     # single-file binary at dist/mu
-bun run pack:npm  # publishable @mu-agent/mu tarball in dist/
+bun run ci          # typecheck, lint, tests, kernel-purity check
+bun run build       # dist/mu
+bun run build:npm   # package CLI and SDK outputs
+bun run verify:npm  # build and exercise an external SDK consumer
+bun run pack:npm    # create the npm tarball in dist/
 ```
 
-Building for other platforms:
+Cross-platform binary targets:
 
 ```sh
-bun run build:linux    # dist/mu-linux-x64
-bun run build:macos    # dist/mu-darwin-arm64
-bun run build:windows  # dist/mu-windows-x64.exe
-
-# After building the matching native binary:
-bun run package:linux    # dist/mu-linux-x64.tar.gz
-bun run package:macos    # dist/mu-darwin-arm64.tar.gz
-bun run package:windows  # dist/mu-windows-x64.zip
+bun run build:linux
+bun run build:macos
+bun run build:windows
 ```
+
+Mu is licensed under the [MIT License](LICENSE).
