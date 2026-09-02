@@ -63,7 +63,7 @@ describe("permission mode notice", () => {
     expect(line(modeFor("accept-edits"), "truecolor")).toContain("74;222;128maccept edits");
     expect(line(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
     expect(line(modeFor("plan-readonly"), "truecolor")).toContain("96;165;250mplan (read-only)");
-    expect(line(modeFor("default"), "truecolor")).toContain("177;249;223mdefault");
+    expect(line(modeFor("default"), "truecolor")).toContain("95;135;255mdefault");
   });
 
   test("the mode stays legible without colour", () => {

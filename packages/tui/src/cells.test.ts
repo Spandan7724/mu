@@ -32,7 +32,7 @@ import { stringWidth } from "./width.ts";
 
 // Golden lines are asserted on the *visible* text; styling is asserted
 // separately so a colour change does not churn every snapshot.
-const ACCENT = "\u001b[38;2;177;249;223m";
+const ACCENT = "\u001b[38;2;95;135;255m";
 const plain: RenderContext = { width: 60, depth: "none" };
 const colored: RenderContext = { width: 60, depth: "truecolor" };
 const footerData = {
@@ -472,9 +472,9 @@ describe("components", () => {
 
   test("footer token arrows use the accent without coloring their values", () => {
     const line = footer(footerData, 60, "truecolor").at(-1) ?? "";
-    expect(line).toContain("\u001b[38;2;177;249;223m↑\u001b[0m");
-    expect(line).toContain("\u001b[38;2;177;249;223m↓\u001b[0m");
-    expect(line).not.toContain("\u001b[38;2;177;249;223m1.1k");
+    expect(line).toContain("\u001b[38;2;95;135;255m↑\u001b[0m");
+    expect(line).toContain("\u001b[38;2;95;135;255m↓\u001b[0m");
+    expect(line).not.toContain("\u001b[38;2;95;135;255m1.1k");
   });
 
   test("footer helpers match compact values and home paths", () => {
