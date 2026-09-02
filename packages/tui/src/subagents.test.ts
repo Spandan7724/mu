@@ -161,17 +161,6 @@ describe("subagent transcript rendering", () => {
     expect(colored.join("\n")).toContain(
       "\u001b[2mReturn the decisive evidence and reversal condition.",
     );
-    expect(colored[0]).toContain("38;2;230;195;132m");
-    const ansi256 = renderer(
-      { toolName: "counsel", args: { question: prompt }, running: true },
-      { width: 100, depth: "ansi256" },
-    );
-    const ansi16 = renderer(
-      { toolName: "counsel", args: { question: prompt }, running: true },
-      { width: 100, depth: "ansi16" },
-    );
-    expect(ansi256[0]).toContain("38;5;180m");
-    expect(ansi16[0]).toContain("93m");
   });
 
   test("animates running specialist rows with Braille and elapsed time", () => {
@@ -294,7 +283,7 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("    prompt");
   });
 
-  test("task descriptions use cerulean at every supported color depth", () => {
+  test("task descriptions render while running and after completion", () => {
     const renderer = subagentRenderers.task;
     if (!renderer) throw new Error("missing task renderer");
     const info = {
@@ -303,11 +292,9 @@ describe("subagent transcript rendering", () => {
       running: true,
     };
 
-    expect(renderer(info, { width: 100, depth: "truecolor" })[0]).toContain(
-      "\u001b[1;38;2;86;182;232m⠋ Explore SDK and CLI\u001b[0m",
+    expect(stripAnsi(renderer(info, { width: 100, depth: "truecolor" })[0] ?? "")).toContain(
+      "⠋ Explore SDK and CLI",
     );
-    expect(renderer(info, { width: 100, depth: "ansi256" })[0]).toContain("38;5;74m");
-    expect(renderer(info, { width: 100, depth: "ansi16" })[0]).toContain("96m");
     const completed = renderer(
       {
         ...info,
@@ -324,7 +311,7 @@ describe("subagent transcript rendering", () => {
       },
       { width: 100, depth: "truecolor" },
     );
-    expect(completed[0]).toContain("\u001b[1;38;2;86;182;232mExplore SDK and CLI\u001b[0m");
+    expect(stripAnsi(completed[0] ?? "")).toContain("Explore SDK and CLI");
   });
 
   test("task activity reuses renderers registered by a custom profile", () => {

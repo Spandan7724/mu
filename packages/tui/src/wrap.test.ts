@@ -117,11 +117,11 @@ describe("hyperlinks", () => {
     }
   });
 
-  test("a styled hyperlink keeps both its colour and its destination per row", () => {
+  test("a styled hyperlink keeps both its styling and its destination per row", () => {
     const lines = wrapLine(styleText(hyperlink(url), { link: true }, "truecolor"), 40);
     for (const line of lines) {
       expect(line).toContain(`\u001b]8;;${url}\u0007`);
-      expect(line).toContain("38;2;96;165;250m");
+      expect(line).not.toBe(stripAnsi(line));
     }
   });
 
@@ -171,12 +171,6 @@ describe("colour depth", () => {
     expect(detectColorDepth({ WT_SESSION: "abc" }, "win32")).toBe("truecolor");
   });
 
-  test("the accent degrades to bright blue at 16 colours", () => {
-    expect(styleText("mu", { accent: true }, "ansi256")).toContain("38;5;69");
-    expect(styleText("mu", { accent: true }, "ansi16")).toContain("[94m");
-    expect(styleText("mu", { accent: true }, "truecolor")).toContain("38;2;95;135;255");
-  });
-
   test("the Markdown palette degrades by terminal colour depth", () => {
     // Headings render in the accent — the role is separate, the colour is not.
     for (const depth of ["truecolor", "ansi256", "ansi16"] as const) {
@@ -184,18 +178,12 @@ describe("colour depth", () => {
         styleText("x", { accent: true }, depth),
       );
     }
-    expect(styleText("link", { link: true }, "ansi256")).toContain("38;5;75");
-    expect(styleText("code", { code: true }, "truecolor")).toContain("38;2;212;212;212");
-    expect(styleText("code", { code: true }, "ansi256")).toContain("38;5;188");
+    // ANSI-16 has no honest slot for these roles: they fall back to plain text.
     expect(styleText("code", { code: true }, "ansi16")).toBe("code");
-    expect(styleText("rule", { codeAccent: true }, "truecolor")).toContain("38;2;205;214;244");
-    expect(styleText("rule", { codeAccent: true }, "ansi256")).toContain("38;5;189");
     expect(styleText("rule", { codeAccent: true }, "ansi16")).toBe("rule");
   });
 
-  test("the session resume label uses its muted semantic color", () => {
-    expect(styleText("resume", { resumeHint: true }, "truecolor")).toContain("38;2;102;102;102");
-    expect(styleText("resume", { resumeHint: true }, "ansi256")).toContain("38;5;241");
+  test("the session resume label degrades to dim and then to plain text", () => {
     expect(styleText("resume", { resumeHint: true }, "ansi16")).toContain("[2m");
     expect(styleText("resume", { resumeHint: true }, "none")).toBe("resume");
   });

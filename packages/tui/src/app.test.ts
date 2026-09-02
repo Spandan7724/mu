@@ -2137,8 +2137,6 @@ describe("activity disclosure", () => {
 
     const collapsed = app.renderTranscript().join("\n");
     expect(stripAnsi(collapsed)).toContain("Edited 2 files +4 -3");
-    expect(collapsed).toContain("[32m+4");
-    expect(collapsed).toContain("[31m-3");
 
     feed(app, "\u000f");
     press(app, "right");

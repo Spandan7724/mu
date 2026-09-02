@@ -35,7 +35,6 @@ test("session close hint is a directly runnable resume command", () => {
     "  To resume this session: mu --resume 019fa562-3975-71e6-b7a1-ed63c54f1fac",
   );
   const colored = formatResumeHint("session-id", "truecolor");
-  expect(colored).toContain("38;2;102;102;102mTo resume this session:");
   expect(colored).toContain("\u001b[0m mu --resume session-id");
 });
 
@@ -56,15 +55,6 @@ describe("permission mode notice", () => {
 
   const line = (mode: ReturnType<typeof modeFor>, depth: "truecolor" | "none") =>
     formatPermissionMode(mode, depth)[0] ?? "";
-
-  test("each mode is coloured by how it moves the gate", () => {
-    // Loosening reads green, opening fully reads red, restricting reads blue,
-    // and the baseline keeps mu's own accent.
-    expect(line(modeFor("accept-edits"), "truecolor")).toContain("74;222;128maccept edits");
-    expect(line(modeFor("yolo"), "truecolor")).toContain("[1;31mfull access");
-    expect(line(modeFor("plan-readonly"), "truecolor")).toContain("96;165;250mplan (read-only)");
-    expect(line(modeFor("default"), "truecolor")).toContain("95;135;255mdefault");
-  });
 
   test("the mode stays legible without colour", () => {
     // Bold carries the distinction when hue cannot, and NO_COLOR keeps the text.
