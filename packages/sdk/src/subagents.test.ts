@@ -85,6 +85,15 @@ describe("managed subagents", () => {
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
       "Instructions to edit or implement, update todo/plan state, run builds, tests",
     );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Begin with one concise paragraph, with no heading",
+    );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "bulleted list containing only the material source locations",
+    );
+    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Do not include investigation chronology, commands run, raw search matches",
+    );
     expect(details(parent, "search")).toMatchObject({
       kind: "search",
       model: "openai-codex/gpt-5.6-terra",
