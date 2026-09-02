@@ -56,6 +56,24 @@ const samples: AgentEvent[] = [
     },
   },
   {
+    type: "web_search_start",
+    search: {
+      type: "webSearch",
+      id: "s1",
+      status: "searching",
+      action: { type: "search", query: "mu" },
+    },
+  },
+  {
+    type: "web_search_end",
+    search: {
+      type: "webSearch",
+      id: "s1",
+      status: "completed",
+      action: { type: "search", query: "mu" },
+    },
+  },
+  {
     type: "permission_asked",
     request: {
       id: "p1",
@@ -112,6 +130,8 @@ describe("AgentEvent", () => {
       "tool_execution_start",
       "tool_execution_update",
       "tool_execution_end",
+      "web_search_start",
+      "web_search_end",
       "permission_asked",
       "permission_resolved",
       "compaction_start",

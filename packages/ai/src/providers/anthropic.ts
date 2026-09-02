@@ -56,7 +56,7 @@ function convertAssistantBlocks(content: AssistantContent[]): Json[] {
         // Unsigned thinking (e.g. from an aborted stream) is replayed as text.
         blocks.push({ type: "text", text: block.thinking });
       }
-    } else {
+    } else if (block.type === "toolCall") {
       blocks.push({
         type: "tool_use",
         id: block.id,

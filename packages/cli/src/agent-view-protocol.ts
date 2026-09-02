@@ -58,6 +58,7 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
       profile: z.string().min(1).max(512),
       model: z.string().min(1).max(512).optional(),
       permissionMode: z.string().min(1).max(128).optional(),
+      webSearch: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
       noInstructions: z.boolean().optional(),
       environment: z
         .record(z.string(), z.string().max(100_000))
@@ -136,6 +137,32 @@ const usageSchema = z
 
 const eventString = z.string().max(MAX_AGENT_VIEW_PROMPT_CHARS);
 const eventId = z.string().min(1).max(512);
+const webSearchActionSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("search"),
+      query: eventString.optional(),
+      queries: z.array(eventString).max(100).optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("openPage"), url: eventString.optional() }).strict(),
+  z
+    .object({
+      type: z.literal("findInPage"),
+      url: eventString.optional(),
+      pattern: eventString.optional(),
+    })
+    .strict(),
+  z.object({ type: z.literal("other") }).strict(),
+]);
+const webSearchContentSchema = z
+  .object({
+    type: z.literal("webSearch"),
+    id: eventId,
+    status: z.string().max(128).optional(),
+    action: webSearchActionSchema.optional(),
+  })
+  .strict();
 const streamDeltaSchema = z.discriminatedUnion("kind", [
   z
     .object({ kind: z.literal("text_start"), contentIndex: z.number().int().nonnegative() })
@@ -202,6 +229,8 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     .object({ type: z.literal("message_update"), message: messageSchema, delta: streamDeltaSchema })
     .strict(),
   z.object({ type: z.literal("message_end"), message: messageSchema }).strict(),
+  z.object({ type: z.literal("web_search_start"), search: webSearchContentSchema }).strict(),
+  z.object({ type: z.literal("web_search_end"), search: webSearchContentSchema }).strict(),
   z
     .object({
       type: z.literal("tool_execution_start"),

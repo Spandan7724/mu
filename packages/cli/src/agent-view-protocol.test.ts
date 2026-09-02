@@ -114,4 +114,22 @@ describe("agent-view protocol", () => {
       ),
     ).toThrow();
   });
+
+  test("accepts native web search activity from a managed worker", () => {
+    const response = {
+      type: "event",
+      sessionId: "s1",
+      event: {
+        type: "web_search_end",
+        search: {
+          type: "webSearch",
+          id: "ws_1",
+          status: "completed",
+          action: { type: "search", query: "mu agent" },
+        },
+      },
+    } as const;
+
+    expect(parseAgentViewResponse(JSON.stringify(response))).toEqual(response);
+  });
 });

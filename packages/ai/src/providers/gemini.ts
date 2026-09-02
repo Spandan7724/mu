@@ -50,7 +50,7 @@ function convertContents(messages: AiMessage[]): {
         } else if (block.type === "thinking") {
           // Gemini replays thoughts only via thought signatures on later parts;
           // plain thinking text is not resent.
-        } else {
+        } else if (block.type === "toolCall") {
           toolNames.set(block.id, block.name);
           parts.push({
             functionCall: { name: block.name, args: block.arguments ?? {} },

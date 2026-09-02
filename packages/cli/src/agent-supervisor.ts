@@ -524,6 +524,7 @@ export class AgentSupervisor {
           cwd: request.cwd,
           profile: request.profile,
           ...(request.model ? { model: request.model } : {}),
+          ...(request.webSearch ? { webSearch: request.webSearch } : {}),
           now: this.now(),
         });
         this.records.set(sessionId, record);
@@ -780,6 +781,7 @@ export class AgentSupervisor {
       "--profile",
       record.profile,
       ...(record.model ? ["--model", record.model] : []),
+      ...(record.webSearch ? ["--web-search", record.webSearch] : []),
       ...(options.permissionMode ? ["--permission-mode", options.permissionMode] : []),
       ...(options.noInstructions ? ["--no-instructions"] : []),
     ];

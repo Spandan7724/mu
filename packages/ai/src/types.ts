@@ -1,6 +1,14 @@
 export interface TextContent {
   type: "text";
   text: string;
+  citations?: WebSearchCitation[];
+}
+
+export interface WebSearchCitation {
+  url: string;
+  title?: string;
+  startIndex?: number;
+  endIndex?: number;
 }
 
 export interface ThinkingContent {
@@ -28,8 +36,21 @@ export interface ToolCallContent {
   signature?: string;
 }
 
+export type WebSearchAction =
+  | { type: "search"; query?: string; queries?: string[] }
+  | { type: "openPage"; url?: string }
+  | { type: "findInPage"; url?: string; pattern?: string }
+  | { type: "other" };
+
+export interface WebSearchContent {
+  type: "webSearch";
+  id: string;
+  status?: string;
+  action?: WebSearchAction;
+}
+
 export type UserContent = TextContent | ImageContent;
-export type AssistantContent = TextContent | ThinkingContent | ToolCallContent;
+export type AssistantContent = TextContent | ThinkingContent | ToolCallContent | WebSearchContent;
 export type ToolResultContent = TextContent | ImageContent;
 
 export interface Usage {
@@ -85,10 +106,42 @@ export interface ToolSpec {
   inputSchema: Record<string, unknown>; // JSON Schema
 }
 
+export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
+
+export interface WebSearchConfig {
+  mode: WebSearchMode;
+  allowedDomains?: string[];
+  userLocation?: {
+    country?: string;
+    region?: string;
+    city?: string;
+    timezone?: string;
+  };
+  searchContextSize?: "low" | "medium" | "high";
+}
+
+export interface HostedWebSearchToolSpec {
+  type: "web_search";
+  externalWebAccess: boolean;
+  indexedWebAccess?: boolean;
+  filters?: { allowedDomains: string[] };
+  userLocation?: {
+    type: "approximate";
+    country?: string;
+    region?: string;
+    city?: string;
+    timezone?: string;
+  };
+  searchContextSize?: "low" | "medium" | "high";
+}
+
+export type HostedToolSpec = HostedWebSearchToolSpec;
+
 export interface LlmContext {
   systemPrompt?: PromptSection[];
   messages: AiMessage[];
   tools?: ToolSpec[];
+  hostedTools?: HostedToolSpec[];
 }
 
 export interface ModelPricing {
@@ -191,6 +244,18 @@ export type ProviderStreamEvent =
       toolCall: ToolCallContent;
       partial: AssistantMessage;
     }
+  | {
+      type: "websearch_start";
+      contentIndex: number;
+      webSearch: WebSearchContent;
+      partial: AssistantMessage;
+    }
+  | {
+      type: "websearch_end";
+      contentIndex: number;
+      webSearch: WebSearchContent;
+      partial: AssistantMessage;
+    }
   | { type: "done"; message: AssistantMessage }
   | {
       type: "error";
@@ -205,6 +270,9 @@ import type { AssistantStream } from "./stream.ts";
 
 export interface Provider {
   id: string;
+  capabilities?: {
+    hostedWebSearch?: boolean;
+  };
   stream(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): AssistantStream;
   // Return undefined when discovery is not applicable (for example, before
   // login). A returned array is authoritative for this provider.

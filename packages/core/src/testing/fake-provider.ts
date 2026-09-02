@@ -103,7 +103,7 @@ export class FakeProvider implements Provider {
             content: block.thinking,
             partial: output,
           });
-        } else {
+        } else if (block.type === "toolCall") {
           output.content.push(block);
           stream.push({ type: "toolcall_start", contentIndex, partial: output });
           stream.push({
@@ -113,6 +113,20 @@ export class FakeProvider implements Provider {
             partial: output,
           });
           stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+        } else {
+          output.content.push(block);
+          stream.push({
+            type: "websearch_start",
+            contentIndex,
+            webSearch: block,
+            partial: output,
+          });
+          stream.push({
+            type: "websearch_end",
+            contentIndex,
+            webSearch: block,
+            partial: output,
+          });
         }
       }
 

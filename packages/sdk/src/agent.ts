@@ -12,6 +12,7 @@ import {
   type ThinkingLevel,
   thinkingLevelForModel,
   type Usage,
+  type WebSearchConfig,
   zeroUsage,
 } from "@mu/ai";
 import {
@@ -59,6 +60,7 @@ import {
   structuredOutputPrompt,
   structuredOutputTool,
 } from "./structured-output.ts";
+import { resolveWebSearchBackend } from "./web-search.ts";
 
 const DEFAULT_PERMISSIONS: PermissionRule[] = [{ permission: "*", pattern: "*", action: "allow" }];
 
@@ -72,6 +74,7 @@ export interface AgentOptions {
   provider?: Provider;
   systemPrompt?: string | PromptSection[];
   tools?: AnyTool[];
+  webSearch?: WebSearchConfig;
   permissions?: PermissionRule[];
   // Library default is DENY: an unattended process must never hang on a prompt.
   onPermission?: (request: PermissionRequest) => Promise<"allow" | "deny">;
@@ -338,6 +341,7 @@ export class Agent {
         { text: options.systemPrompt },
       ],
       tools: options.tools,
+      ...(this.options.webSearch ? { webSearch: this.options.webSearch } : {}),
       permissions: options.permissions ?? this.permissions,
       onPermission: (request) => this.resolveChildPermission(request),
       ...(hasChildBudget ? { budget: childBudget } : {}),
@@ -1489,8 +1493,15 @@ export class Agent {
       ...(this.options.tools ?? []),
       ...(host ? [...host.tools.values()] : []),
     ];
+    const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
+    const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
+    const webSearch = resolveWebSearchBackend(runProvider, this.options.webSearch);
+    if (webSearch.kind === "unavailable") {
+      throw new Error(`Web search is not available for provider ${webSearch.provider}`);
+    }
     if (opts?.allowedTools) {
       const available = new Set(tools.map((tool) => tool.name));
+      if (webSearch.kind === "hosted") available.add("web_search");
       const unknown = opts.allowedTools.filter((name) => !available.has(name));
       if (unknown.length > 0) {
         throw new Error(
@@ -1500,8 +1511,6 @@ export class Agent {
       const allowed = new Set(opts.allowedTools);
       tools = tools.filter((tool) => allowed.has(tool.name));
     }
-    const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
-    const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     const runThinking = thinkingLevelForModel(runModel, this.currentThinking);
     let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;
@@ -1530,6 +1539,10 @@ export class Agent {
       systemPrompt,
       messages: [...seeded, ...initial, ...refreshed],
       ...(tools.length > 0 ? { tools } : {}),
+      ...(webSearch.kind === "hosted" &&
+      (!opts?.allowedTools || opts.allowedTools.includes("web_search"))
+        ? { hostedTools: [webSearch.tool] }
+        : {}),
     };
     await this.beginCheckpoint(this.tree.head);
 

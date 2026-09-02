@@ -131,7 +131,24 @@ function validUsage(value: unknown): boolean {
 
 function validContent(value: unknown, roles: readonly string[]): boolean {
   if (!record(value) || !string(value.type) || !roles.includes(value.type)) return false;
-  if (value.type === "text") return string(value.text);
+  if (value.type === "text") {
+    return (
+      string(value.text) &&
+      optional(
+        value.citations,
+        (candidate) =>
+          Array.isArray(candidate) &&
+          candidate.every(
+            (citation) =>
+              record(citation) &&
+              string(citation.url) &&
+              optional(citation.title, string) &&
+              optional(citation.startIndex, (candidate) => finite(candidate) && candidate >= 0) &&
+              optional(citation.endIndex, (candidate) => finite(candidate) && candidate >= 0),
+          ),
+      )
+    );
+  }
   if (value.type === "image") {
     return (
       string(value.mimeType) &&
@@ -145,6 +162,25 @@ function validContent(value: unknown, roles: readonly string[]): boolean {
       optional(value.signature, string) &&
       optional(value.redacted, (candidate) => typeof candidate === "boolean")
     );
+  }
+  if (value.type === "webSearch") {
+    if (!string(value.id) || !optional(value.status, string)) return false;
+    if (value.action === undefined) return true;
+    if (!record(value.action) || !string(value.action.type)) return false;
+    if (value.action.type === "search") {
+      return (
+        optional(value.action.query, string) &&
+        optional(
+          value.action.queries,
+          (candidate) => Array.isArray(candidate) && candidate.every(string),
+        )
+      );
+    }
+    if (value.action.type === "openPage") return optional(value.action.url, string);
+    if (value.action.type === "findInPage") {
+      return optional(value.action.url, string) && optional(value.action.pattern, string);
+    }
+    return value.action.type === "other";
   }
   return (
     string(value.id) &&
@@ -182,7 +218,9 @@ function validMessage(value: unknown): boolean {
       validUsage(value.usage) &&
       ["end", "toolUse", "length", "aborted", "error"].includes(String(value.stopReason)) &&
       optional(value.errorMessage, string) &&
-      value.content.every((block) => validContent(block, ["text", "thinking", "toolCall"]))
+      value.content.every((block) =>
+        validContent(block, ["text", "thinking", "toolCall", "webSearch"]),
+      )
     );
   }
   return false;

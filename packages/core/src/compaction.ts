@@ -22,7 +22,11 @@ export function estimateTokens(messages: AgentMessage[]): number {
       for (const block of message.content) {
         if (block.type === "text") chars += block.text.length;
         else if (block.type === "thinking") chars += block.thinking.length;
-        else chars += JSON.stringify(block.arguments).length + block.name.length;
+        else if (block.type === "toolCall") {
+          chars += JSON.stringify(block.arguments).length + block.name.length;
+        } else {
+          chars += JSON.stringify(block.action ?? {}).length;
+        }
       }
     }
   }

@@ -771,6 +771,7 @@ export async function runAgentView(
           profile: args.profile ?? DEFAULT_PROFILE,
           model: model ?? dispatchModel,
           ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
+          ...(args.webSearch ? { webSearch: args.webSearch } : {}),
           ...(args.noInstructions ? { noInstructions: true } : {}),
           environment: dispatchEnvironment(),
         })

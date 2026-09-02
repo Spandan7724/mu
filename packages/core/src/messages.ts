@@ -20,6 +20,9 @@ export type {
   Usage,
   UserContent,
   UserMessage,
+  WebSearchAction,
+  WebSearchCitation,
+  WebSearchContent,
 } from "@mu/ai";
 
 // Typed injected context. Per-turn dynamic information enters the transcript as

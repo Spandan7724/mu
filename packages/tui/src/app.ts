@@ -417,6 +417,18 @@ function hasAssistantDisplay(message: AssistantMessage): boolean {
   );
 }
 
+function webSearchDetail(event: Extract<AgentEvent, { type: "web_search_end" }>): string {
+  const action = event.search.action;
+  if (action?.type === "search") return action.query ?? action.queries?.join(", ") ?? "web";
+  if (action?.type === "openPage") return action.url ?? "page";
+  if (action?.type === "findInPage") {
+    return [action.pattern ? `“${action.pattern}”` : undefined, action.url]
+      .filter(Boolean)
+      .join(" in ");
+  }
+  return "web";
+}
+
 interface ConversationView {
   editor: Editor;
   running: boolean;
@@ -1018,6 +1030,17 @@ export class App {
             ? pending.expanded
             : undefined;
         this.pushTool(event.toolCallId, info, lines, expanded);
+        return lines;
+      }
+
+      case "web_search_start":
+        return [];
+
+      case "web_search_end": {
+        const lines = [
+          MARGIN + styleText(`searched · ${webSearchDetail(event)}`, { dim: true }, this.ctx.depth),
+        ];
+        this.appendTranscript(lines);
         return lines;
       }
 

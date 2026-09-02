@@ -6,6 +6,11 @@ export type {
   ProviderModelDiscoveryOptions,
   ThinkingLevel,
   Usage,
+  WebSearchAction,
+  WebSearchCitation,
+  WebSearchConfig,
+  WebSearchContent,
+  WebSearchMode,
 } from "@mu/ai";
 export {
   builtinProviderConfigs,
@@ -162,3 +167,5 @@ export type {
   TranscriptMarkdownOptions,
 } from "./transcript-markdown.ts";
 export { sessionToMarkdown } from "./transcript-markdown.ts";
+export type { WebSearchBackend } from "./web-search.ts";
+export { resolveWebSearchBackend } from "./web-search.ts";

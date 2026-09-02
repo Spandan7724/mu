@@ -37,6 +37,7 @@ export const managedSessionRecordSchema = z
     workingCwd: z.string().min(1).max(8_192),
     profile: z.string().min(1).max(512),
     model: z.string().max(512).optional(),
+    webSearch: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
     state: managedSessionStateSchema,
     summary: z.string().max(MAX_AGENT_VIEW_SUMMARY_CHARS),
     createdAt: z.number().int().nonnegative(),
@@ -175,6 +176,22 @@ export function reduceManagedSession(
             updatedAt: now,
           };
         }
+        case "web_search_start":
+        case "web_search_end": {
+          const action = event.search.action;
+          const detail =
+            action?.type === "search"
+              ? (action.query ?? action.queries?.join(", "))
+              : action?.type === "openPage" || action?.type === "findInPage"
+                ? action.url
+                : undefined;
+          return {
+            ...previous,
+            state: "working",
+            summary: displaySummary(detail ? `web search · ${detail}` : "web search"),
+            updatedAt: now,
+          };
+        }
         case "message_start":
           return event.message.role === "assistant"
             ? { ...previous, summary: "", updatedAt: now }
@@ -223,6 +240,7 @@ export function createManagedSessionRecord(input: {
   cwd: string;
   profile: string;
   model?: string;
+  webSearch?: "disabled" | "cached" | "indexed" | "live";
   now?: number;
 }): ManagedSessionRecord {
   const now = input.now ?? Date.now();
@@ -236,6 +254,7 @@ export function createManagedSessionRecord(input: {
     workingCwd: input.cwd,
     profile: input.profile,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.webSearch ? { webSearch: input.webSearch } : {}),
     state: "starting",
     summary: displaySummary(prompt),
     createdAt: now,

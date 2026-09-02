@@ -1,4 +1,10 @@
-import type { AssistantMessage, ToolResultContent, ToolResultMessage, Usage } from "@mu/ai";
+import type {
+  AssistantMessage,
+  ToolResultContent,
+  ToolResultMessage,
+  Usage,
+  WebSearchContent,
+} from "@mu/ai";
 import type { AgentMessage } from "./messages.ts";
 import type { PermissionRequest } from "./permission.ts";
 
@@ -38,6 +44,8 @@ export type AgentEvent =
       details?: unknown;
     }
   | { type: "tool_execution_end"; toolCallId: string; result: ToolResultMessage }
+  | { type: "web_search_start"; search: WebSearchContent }
+  | { type: "web_search_end"; search: WebSearchContent }
   | { type: "permission_asked"; request: PermissionRequest }
   | {
       type: "permission_resolved";

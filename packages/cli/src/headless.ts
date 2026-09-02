@@ -36,6 +36,7 @@ export async function runHeadless(
       profile: args.profile,
       model: args.model,
       permissionMode: args.permissionMode,
+      webSearch: args.webSearch,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
       resumeSessionId: args.resumeSessionId,

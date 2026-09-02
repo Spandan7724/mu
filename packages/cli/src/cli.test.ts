@@ -68,6 +68,14 @@ describe("parseArgs", () => {
     expect(HELP_TEXT).toContain("--no-instructions");
   });
 
+  test("web search modes are explicit and validated", () => {
+    expect(parseArgs(["--web-search", "cached"]).webSearch).toBe("cached");
+    expect(parseArgs(["--web-search", "live"]).webSearch).toBe("live");
+    expect(parseArgs(["--web-search", "invalid"]).errors[0]).toContain("expects disabled");
+    expect(parseArgs(["--web-search"]).errors[0]).toContain("requires a value");
+    expect(HELP_TEXT).toContain("--web-search");
+  });
+
   test("unknown flags and bad numbers are reported", () => {
     expect(parseArgs(["--nope"]).errors[0]).toContain("Unknown flag");
     expect(parseArgs(["-p", "x", "--max-turns", "abc"]).errors[0]).toContain("expects a number");

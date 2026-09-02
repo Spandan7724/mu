@@ -61,6 +61,28 @@ describe("SessionTree", () => {
     }
   });
 
+  test("web search activity and citations round-trip through storage", () => {
+    const tree = newTree();
+    tree.appendMessage({
+      ...assistant("answer"),
+      content: [
+        {
+          type: "webSearch",
+          id: "ws_1",
+          status: "completed",
+          action: { type: "search", query: "mu agent" },
+        },
+        {
+          type: "text",
+          text: "answer",
+          citations: [{ url: "https://example.com", title: "Example", startIndex: 0, endIndex: 6 }],
+        },
+      ],
+    });
+
+    expect(SessionTree.fromJsonl(tree.toJsonl()).messagesAt()).toEqual(tree.messagesAt());
+  });
+
   test("subagent usage on tool results round-trips through storage", () => {
     const tree = newTree();
     tree.appendMessage({

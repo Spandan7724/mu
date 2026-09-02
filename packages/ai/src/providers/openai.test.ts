@@ -145,6 +145,137 @@ describe("discoverOpenAICodexModels", () => {
 });
 
 describe("streamOpenAI", () => {
+  test("sends hosted web search and preserves native activity, citations, and replay", async () => {
+    const responseEvents = [
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "web_search_call", id: "ws_1", status: "in_progress" },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "web_search_call",
+          id: "ws_1",
+          status: "completed",
+          action: { type: "search", query: "mu agent", queries: ["mu agent"] },
+        },
+      },
+      {
+        type: "response.output_item.added",
+        output_index: 1,
+        item: { type: "message", id: "msg_1" },
+      },
+      { type: "response.output_text.delta", output_index: 1, delta: "Mu is an agent." },
+      {
+        type: "response.output_item.done",
+        output_index: 1,
+        item: {
+          type: "message",
+          id: "msg_1",
+          content: [
+            {
+              type: "output_text",
+              text: "Mu is an agent.",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url: "https://example.com/mu",
+                  title: "Mu",
+                  start_index: 0,
+                  end_index: 2,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        type: "response.completed",
+        response: { usage: { input_tokens: 10, output_tokens: 4 } },
+      },
+    ];
+    const cassette = {
+      interactions: [
+        {
+          request: { method: "POST", url: "https://api.openai.com/v1/responses" },
+          response: {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+            body: responseEvents.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          },
+        },
+      ],
+    };
+    const replay = replayFetch(cassette);
+    const searchContext: LlmContext = {
+      ...ctx,
+      hostedTools: [
+        {
+          type: "web_search",
+          externalWebAccess: true,
+          indexedWebAccess: true,
+          filters: { allowedDomains: ["example.com"] },
+          userLocation: { type: "approximate", country: "US", city: "Seattle" },
+          searchContextSize: "high",
+        },
+      ],
+    };
+    const events: ProviderStreamEvent[] = [];
+    const stream = streamOpenAI(model, searchContext, {
+      apiKey: "test",
+      fetch: replay.fetch,
+    });
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(events.map((event) => event.type)).toContain("websearch_start");
+    expect(events.map((event) => event.type)).toContain("websearch_end");
+    expect(result.content).toEqual([
+      {
+        type: "webSearch",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search", query: "mu agent", queries: ["mu agent"] },
+      },
+      {
+        type: "text",
+        text: "Mu is an agent.",
+        citations: [
+          {
+            url: "https://example.com/mu",
+            title: "Mu",
+            startIndex: 0,
+            endIndex: 2,
+          },
+        ],
+      },
+    ]);
+    const body = JSON.parse(replay.calls[0]?.body ?? "{}");
+    expect(body.tools.at(-1)).toEqual({
+      type: "web_search",
+      external_web_access: true,
+      indexed_web_access: true,
+      filters: { allowed_domains: ["example.com"] },
+      user_location: { type: "approximate", country: "US", city: "Seattle" },
+      search_context_size: "high",
+    });
+
+    const historyReplay = replayFetch(textCassette);
+    await streamOpenAI(
+      model,
+      { messages: [{ ...result, timestamp: 2 }] },
+      { apiKey: "test", fetch: historyReplay.fetch },
+    ).result();
+    expect(JSON.parse(historyReplay.calls[0]?.body ?? "{}").input[0]).toEqual({
+      type: "web_search_call",
+      id: "ws_1",
+      status: "completed",
+      action: { type: "search", query: "mu agent", queries: ["mu agent"] },
+    });
+  });
+
   test("streams reasoning + text with usage split into cached/uncached", async () => {
     const replay = replayFetch(textCassette);
     const events: ProviderStreamEvent[] = [];
@@ -298,12 +429,19 @@ describe("streamOpenAI", () => {
       })),
     };
     const replay = replayFetch(cassette);
-    const stream = streamOpenAI({ ...model, provider: "openai-codex" }, ctx, {
-      getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
-      fetch: replay.fetch,
-      maxTokens: 1234,
-      sessionId: "session-123",
-    });
+    const stream = streamOpenAI(
+      { ...model, provider: "openai-codex" },
+      {
+        ...ctx,
+        hostedTools: [{ type: "web_search", externalWebAccess: false }],
+      },
+      {
+        getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
+        fetch: replay.fetch,
+        maxTokens: 1234,
+        sessionId: "session-123",
+      },
+    );
     const result = await stream.result();
     expect(result.stopReason).toBe("end");
     expect(replay.calls[0]?.headers.authorization).toBe("Bearer tok");
@@ -326,6 +464,7 @@ describe("streamOpenAI", () => {
       parallel_tool_calls: true,
     });
     expect(body.tools[0].strict).toBeNull();
+    expect(body.tools[1]).toEqual({ type: "web_search", external_web_access: false });
   });
 
   test("clamps Codex request correlation ids to the backend limit", async () => {

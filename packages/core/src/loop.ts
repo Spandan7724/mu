@@ -1,6 +1,7 @@
 import {
   type AssistantMessage,
   EventStream,
+  type HostedToolSpec,
   type LlmContext,
   type ModelInfo,
   type Provider,
@@ -22,6 +23,7 @@ export interface AgentContext {
   systemPrompt?: LlmContext["systemPrompt"];
   messages: AgentMessage[];
   tools?: AnyTool[];
+  hostedTools?: HostedToolSpec[];
 }
 
 export interface TurnInfo {
@@ -357,6 +359,7 @@ async function streamAssistant(
           })),
         }
       : {}),
+    ...(context.hostedTools ? { hostedTools: context.hostedTools } : {}),
   };
 
   const stream = config.provider.stream(config.model, llmContext, {
@@ -373,6 +376,13 @@ async function streamAssistant(
       continue;
     }
     if (event.type === "done" || event.type === "error") break;
+    if (event.type === "websearch_start" || event.type === "websearch_end") {
+      await emit({
+        type: event.type === "websearch_start" ? "web_search_start" : "web_search_end",
+        search: event.webSearch,
+      });
+      continue;
+    }
     const delta = providerDelta(event);
     if (delta) {
       await emit({ type: "message_update", message: { ...event.partial }, delta });

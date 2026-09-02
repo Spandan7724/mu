@@ -1,3 +1,5 @@
+import type { WebSearchMode } from "mu";
+
 export interface ParsedArgs {
   mode:
     | "tui"
@@ -19,6 +21,7 @@ export interface ParsedArgs {
   maxTurns?: number | undefined;
   maxCostUsd?: number | undefined;
   permissionMode?: string | undefined;
+  webSearch?: WebSearchMode | undefined;
   allowAll: boolean;
   noInstructions: boolean;
   purgeData: boolean;
@@ -141,6 +144,19 @@ export function parseArgs(argv: string[]): ParsedArgs {
         parsed.permissionMode = argv[++i];
         if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
         break;
+      case "--web-search": {
+        const mode = argv[++i];
+        if (mode === "disabled" || mode === "cached" || mode === "indexed" || mode === "live") {
+          parsed.webSearch = mode;
+        } else {
+          parsed.errors.push(
+            mode
+              ? `--web-search expects disabled, cached, indexed, or live; got "${mode}"`
+              : "--web-search requires a value",
+          );
+        }
+        break;
+      }
       default:
         if (arg.startsWith("-")) parsed.errors.push(`Unknown flag: ${arg}`);
         else if (parsed.prompt === undefined && parsed.mode === "headless") parsed.prompt = arg;
@@ -173,6 +189,7 @@ Options:
       --max-cost <usd>     stop once the run costs this much
       --permission-mode <mode>
                            default | accept-edits | plan-readonly | yolo
+      --web-search <mode>  disabled | cached | indexed | live (OpenAI/Codex)
       --allow-all          alias for --permission-mode yolo
       --no-instructions    disable global and project instruction loading
       --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)

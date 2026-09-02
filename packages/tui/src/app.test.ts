@@ -192,6 +192,33 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("exit 1");
   });
 
+  test("native web search completion renders its query as activity", () => {
+    const { app } = harness();
+    expect(
+      app.handleEvent({
+        type: "web_search_start",
+        search: {
+          type: "webSearch",
+          id: "ws_1",
+          status: "searching",
+          action: { type: "search", query: "mu agent" },
+        },
+      }),
+    ).toEqual([]);
+
+    const lines = app.handleEvent({
+      type: "web_search_end",
+      search: {
+        type: "webSearch",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search", query: "mu agent" },
+      },
+    });
+
+    expect(lines.map(stripAnsi)).toEqual(["  searched · mu agent"]);
+  });
+
   test("the spinner and interrupt hint appear only while running", () => {
     const { app } = harness();
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("esc to interrupt");

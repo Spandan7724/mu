@@ -6,11 +6,15 @@ import type { AssistantStream } from "../stream.ts";
 import type {
   AiMessage,
   Credential,
+  HostedWebSearchToolSpec,
   LlmContext,
   ModelInfo,
   Provider,
   ProviderModelDiscoveryOptions,
   StreamOpts,
+  WebSearchAction,
+  WebSearchCitation,
+  WebSearchContent,
 } from "../types.ts";
 import {
   apiPath,
@@ -212,12 +216,19 @@ function convertInput(messages: AiMessage[]): Json[] {
           } catch {
             // Unparseable signature: drop the reasoning item.
           }
-        } else {
+        } else if (block.type === "toolCall") {
           items.push({
             type: "function_call",
             call_id: block.id,
             name: block.name,
             arguments: JSON.stringify(block.arguments ?? {}),
+          });
+        } else {
+          items.push({
+            type: "web_search_call",
+            id: block.id,
+            ...(block.status ? { status: block.status } : {}),
+            ...(block.action ? { action: webSearchActionToWire(block.action) } : {}),
           });
         }
       }
@@ -238,6 +249,110 @@ function convertInput(messages: AiMessage[]): Json[] {
   return items;
 }
 
+function webSearchActionToWire(action: WebSearchAction): Json {
+  if (action.type === "openPage") {
+    return { type: "open_page", ...(action.url ? { url: action.url } : {}) };
+  }
+  if (action.type === "findInPage") {
+    return {
+      type: "find_in_page",
+      ...(action.url ? { url: action.url } : {}),
+      ...(action.pattern ? { pattern: action.pattern } : {}),
+    };
+  }
+  if (action.type === "search") {
+    return {
+      type: "search",
+      ...(action.query ? { query: action.query } : {}),
+      ...(action.queries ? { queries: action.queries } : {}),
+    };
+  }
+  return { type: "other" };
+}
+
+function webSearchActionFromWire(value: unknown): WebSearchAction | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const action = value as Json;
+  if (action.type === "search") {
+    return {
+      type: "search",
+      ...(typeof action.query === "string" ? { query: action.query } : {}),
+      ...(Array.isArray(action.queries) && action.queries.every((item) => typeof item === "string")
+        ? { queries: action.queries as string[] }
+        : {}),
+    };
+  }
+  if (action.type === "open_page") {
+    return {
+      type: "openPage",
+      ...(typeof action.url === "string" ? { url: action.url } : {}),
+    };
+  }
+  if (action.type === "find_in_page") {
+    return {
+      type: "findInPage",
+      ...(typeof action.url === "string" ? { url: action.url } : {}),
+      ...(typeof action.pattern === "string" ? { pattern: action.pattern } : {}),
+    };
+  }
+  return { type: "other" };
+}
+
+function webSearchFromWire(item: Json, fallbackId = "web_search"): WebSearchContent {
+  const action = webSearchActionFromWire(item.action);
+  return {
+    type: "webSearch",
+    id: typeof item.id === "string" ? item.id : fallbackId,
+    ...(typeof item.status === "string" ? { status: item.status } : {}),
+    ...(action ? { action } : {}),
+  };
+}
+
+function citationsFromMessageItem(item: Json): WebSearchCitation[] {
+  if (!Array.isArray(item.content)) return [];
+  const citations: WebSearchCitation[] = [];
+  for (const content of item.content) {
+    if (typeof content !== "object" || content === null || Array.isArray(content)) continue;
+    const annotations = (content as Json).annotations;
+    if (!Array.isArray(annotations)) continue;
+    for (const value of annotations) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+      const annotation = value as Json;
+      if (annotation.type !== "url_citation" || typeof annotation.url !== "string") continue;
+      citations.push({
+        url: annotation.url,
+        ...(typeof annotation.title === "string" ? { title: annotation.title } : {}),
+        ...(typeof annotation.start_index === "number"
+          ? { startIndex: annotation.start_index }
+          : {}),
+        ...(typeof annotation.end_index === "number" ? { endIndex: annotation.end_index } : {}),
+      });
+    }
+  }
+  return citations;
+}
+
+function hostedWebSearchToWire(tool: HostedWebSearchToolSpec): Json {
+  return {
+    type: "web_search",
+    external_web_access: tool.externalWebAccess,
+    ...(tool.indexedWebAccess !== undefined ? { indexed_web_access: tool.indexedWebAccess } : {}),
+    ...(tool.filters ? { filters: { allowed_domains: tool.filters.allowedDomains } } : {}),
+    ...(tool.userLocation
+      ? {
+          user_location: {
+            type: tool.userLocation.type,
+            ...(tool.userLocation.country ? { country: tool.userLocation.country } : {}),
+            ...(tool.userLocation.region ? { region: tool.userLocation.region } : {}),
+            ...(tool.userLocation.city ? { city: tool.userLocation.city } : {}),
+            ...(tool.userLocation.timezone ? { timezone: tool.userLocation.timezone } : {}),
+          },
+        }
+      : {}),
+    ...(tool.searchContextSize ? { search_context_size: tool.searchContextSize } : {}),
+  };
+}
+
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
   const isCodex = model.provider === "openai-codex";
   const body: Json = {
@@ -252,15 +367,15 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
   } else if (isCodex) {
     body.instructions = "You are a helpful assistant.";
   }
-  if (ctx.tools && ctx.tools.length > 0) {
-    body.tools = ctx.tools.map((tool) => ({
-      type: "function",
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.inputSchema,
-      strict: isCodex ? null : false,
-    }));
-  }
+  const tools: Json[] = (ctx.tools ?? []).map((tool) => ({
+    type: "function",
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema,
+    strict: isCodex ? null : false,
+  }));
+  tools.push(...(ctx.hostedTools ?? []).map(hostedWebSearchToWire));
+  if (tools.length > 0) body.tools = tools;
   if (isCodex) {
     body.text = { verbosity: "low" };
     body.include = ["reasoning.encrypted_content"];
@@ -279,7 +394,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
 
 interface ItemState {
   contentIndex: number;
-  kind: "text" | "reasoning" | "function_call";
+  kind: "text" | "reasoning" | "function_call" | "web_search";
   partialJson: string;
 }
 
@@ -339,6 +454,16 @@ export function streamOpenAI(
             arguments: {},
           });
           stream.push({ type: "toolcall_start", contentIndex, partial: output });
+        } else if (kind === "web_search_call") {
+          items.set(outputIndex, { contentIndex, kind: "web_search", partialJson: "" });
+          const webSearch = webSearchFromWire(item, `web_search_${outputIndex}`);
+          output.content.push(webSearch);
+          stream.push({
+            type: "websearch_start",
+            contentIndex,
+            webSearch,
+            partial: output,
+          });
         }
       } else if (type === "response.output_text.delta") {
         const state = items.get(event.output_index as number);
@@ -383,6 +508,8 @@ export function streamOpenAI(
         const item = event.item as Json;
         const block = output.content[state.contentIndex];
         if (block?.type === "text") {
+          const citations = citationsFromMessageItem(item);
+          if (citations.length > 0) block.citations = citations;
           stream.push({
             type: "text_end",
             contentIndex: state.contentIndex,
@@ -409,6 +536,15 @@ export function streamOpenAI(
             type: "toolcall_end",
             contentIndex: state.contentIndex,
             toolCall: block,
+            partial: output,
+          });
+        } else if (block?.type === "webSearch") {
+          const completed = webSearchFromWire(item, block.id);
+          output.content[state.contentIndex] = completed;
+          stream.push({
+            type: "websearch_end",
+            contentIndex: state.contentIndex,
+            webSearch: completed,
             partial: output,
           });
         }
@@ -444,9 +580,14 @@ export function streamOpenAI(
   });
 }
 
-export const openai: Provider = { id: "openai", stream: streamOpenAI };
+export const openai: Provider = {
+  id: "openai",
+  capabilities: { hostedWebSearch: true },
+  stream: streamOpenAI,
+};
 export const openaiCodex: Provider = {
   id: "openai-codex",
+  capabilities: { hostedWebSearch: true },
   stream: streamOpenAI,
   discoverModels: discoverOpenAICodexModels,
 };

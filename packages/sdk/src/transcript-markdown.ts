@@ -66,6 +66,16 @@ function renderAssistant(message: AssistantMessage): string {
         "</details>",
       ].join("\n");
     }
+    if (block.type === "webSearch") {
+      const action = block.action;
+      const detail =
+        action?.type === "search"
+          ? (action.query ?? action.queries?.join(", "))
+          : action?.type === "openPage" || action?.type === "findInPage"
+            ? action.url
+            : undefined;
+      return `> Web search${detail ? `: ${detail}` : ""}`;
+    }
     return [
       "<details>",
       `<summary>Tool call: <code>${escapeHtml(block.name)}</code></summary>`,
