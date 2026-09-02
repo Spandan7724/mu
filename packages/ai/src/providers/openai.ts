@@ -333,24 +333,7 @@ function citationsFromMessageItem(item: Json): WebSearchCitation[] {
 }
 
 function hostedWebSearchToWire(tool: HostedWebSearchToolSpec): Json {
-  return {
-    type: "web_search",
-    external_web_access: tool.externalWebAccess,
-    ...(tool.indexedWebAccess !== undefined ? { indexed_web_access: tool.indexedWebAccess } : {}),
-    ...(tool.filters ? { filters: { allowed_domains: tool.filters.allowedDomains } } : {}),
-    ...(tool.userLocation
-      ? {
-          user_location: {
-            type: tool.userLocation.type,
-            ...(tool.userLocation.country ? { country: tool.userLocation.country } : {}),
-            ...(tool.userLocation.region ? { region: tool.userLocation.region } : {}),
-            ...(tool.userLocation.city ? { city: tool.userLocation.city } : {}),
-            ...(tool.userLocation.timezone ? { timezone: tool.userLocation.timezone } : {}),
-          },
-        }
-      : {}),
-    ...(tool.searchContextSize ? { search_context_size: tool.searchContextSize } : {}),
-  };
+  return { type: tool.type, external_web_access: true };
 }
 
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {

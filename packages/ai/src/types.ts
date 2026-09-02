@@ -106,33 +106,8 @@ export interface ToolSpec {
   inputSchema: Record<string, unknown>; // JSON Schema
 }
 
-export type WebSearchMode = "disabled" | "cached" | "indexed" | "live";
-
-export interface WebSearchConfig {
-  mode: WebSearchMode;
-  allowedDomains?: string[];
-  userLocation?: {
-    country?: string;
-    region?: string;
-    city?: string;
-    timezone?: string;
-  };
-  searchContextSize?: "low" | "medium" | "high";
-}
-
 export interface HostedWebSearchToolSpec {
   type: "web_search";
-  externalWebAccess: boolean;
-  indexedWebAccess?: boolean;
-  filters?: { allowedDomains: string[] };
-  userLocation?: {
-    type: "approximate";
-    country?: string;
-    region?: string;
-    city?: string;
-    timezone?: string;
-  };
-  searchContextSize?: "low" | "medium" | "high";
 }
 
 export type HostedToolSpec = HostedWebSearchToolSpec;

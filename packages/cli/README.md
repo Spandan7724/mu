@@ -50,9 +50,8 @@ providers authenticated through `/login`; `openai-codex/*` rows use the ChatGPT 
 `openai/*` rows use a saved API key. Both OpenAI routes default to GPT-5.6 Sol. See the
 project repository for configuration, SDK, and development documentation.
 
-OpenAI API-key and ChatGPT/Codex models support provider-hosted web search through
-`--web-search cached`, `indexed`, or `live`; SDK callers set
-`webSearch: { mode: "live" }`. It is disabled by default.
+OpenAI API-key and ChatGPT/Codex models automatically receive provider-hosted web search.
+Ask Mu to search normally; no flag or separate configuration is required.
 
 Local `llama-server` models are available under `llama-cpp/<alias>` without a login. Mu
 uses `http://127.0.0.1:8000` by default and discovers the alias exposed by `/v1/models`;

@@ -58,7 +58,6 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
       profile: z.string().min(1).max(512),
       model: z.string().min(1).max(512).optional(),
       permissionMode: z.string().min(1).max(128).optional(),
-      webSearch: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
       noInstructions: z.boolean().optional(),
       environment: z
         .record(z.string(), z.string().max(100_000))

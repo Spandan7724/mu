@@ -37,7 +37,6 @@ export const managedSessionRecordSchema = z
     workingCwd: z.string().min(1).max(8_192),
     profile: z.string().min(1).max(512),
     model: z.string().max(512).optional(),
-    webSearch: z.enum(["disabled", "cached", "indexed", "live"]).optional(),
     state: managedSessionStateSchema,
     summary: z.string().max(MAX_AGENT_VIEW_SUMMARY_CHARS),
     createdAt: z.number().int().nonnegative(),
@@ -240,7 +239,6 @@ export function createManagedSessionRecord(input: {
   cwd: string;
   profile: string;
   model?: string;
-  webSearch?: "disabled" | "cached" | "indexed" | "live";
   now?: number;
 }): ManagedSessionRecord {
   const now = input.now ?? Date.now();
@@ -254,7 +252,6 @@ export function createManagedSessionRecord(input: {
     workingCwd: input.cwd,
     profile: input.profile,
     ...(input.model ? { model: input.model } : {}),
-    ...(input.webSearch ? { webSearch: input.webSearch } : {}),
     state: "starting",
     summary: displaySummary(prompt),
     createdAt: now,

@@ -131,7 +131,6 @@ export class AgentViewClient {
     profile: string;
     model?: string;
     permissionMode?: string;
-    webSearch?: "disabled" | "cached" | "indexed" | "live";
     noInstructions?: boolean;
     environment?: Record<string, string>;
   }): Promise<void> {
@@ -143,7 +142,6 @@ export class AgentViewClient {
       profile: options.profile,
       ...(options.model ? { model: options.model } : {}),
       ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
-      ...(options.webSearch ? { webSearch: options.webSearch } : {}),
       ...(options.noInstructions ? { noInstructions: true } : {}),
       ...(options.environment ? { environment: options.environment } : {}),
     });

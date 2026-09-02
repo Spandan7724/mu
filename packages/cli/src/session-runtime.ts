@@ -12,7 +12,6 @@ import {
   registryWithCoreCommands,
   subagentsExtension,
   toCommand,
-  type WebSearchMode,
 } from "mu";
 import { withStoredCredentials } from "./auth.ts";
 import { resolveCliModel } from "./config.ts";
@@ -30,7 +29,6 @@ export interface SessionRuntimeOptions {
   profile?: string | undefined;
   model?: string | undefined;
   permissionMode?: string | undefined;
-  webSearch?: WebSearchMode | undefined;
   allowAll?: boolean | undefined;
   noInstructions?: boolean | undefined;
   resumeSessionId?: string | undefined;
@@ -97,7 +95,6 @@ export async function createCliSessionRuntime(
     throw new Error("--permission-mode requires a profile with permission modes");
   }
 
-  if (options.webSearch) resolved = { ...resolved, webSearch: { mode: options.webSearch } };
   resolved = withStoredCredentials(resolved);
   const loaded = useBuiltIns
     ? await loadBuiltInExtensions(options.cwd, resolved.extensions)

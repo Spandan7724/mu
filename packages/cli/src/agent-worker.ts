@@ -61,7 +61,6 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
     profile: args.profile,
     model: args.model,
     permissionMode: args.permissionMode,
-    webSearch: args.webSearch,
     allowAll: args.allowAll,
     noInstructions: args.noInstructions,
     sessionId: args.workerSessionId,

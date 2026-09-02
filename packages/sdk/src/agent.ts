@@ -12,7 +12,6 @@ import {
   type ThinkingLevel,
   thinkingLevelForModel,
   type Usage,
-  type WebSearchConfig,
   zeroUsage,
 } from "@mu/ai";
 import {
@@ -74,7 +73,6 @@ export interface AgentOptions {
   provider?: Provider;
   systemPrompt?: string | PromptSection[];
   tools?: AnyTool[];
-  webSearch?: WebSearchConfig;
   permissions?: PermissionRule[];
   // Library default is DENY: an unattended process must never hang on a prompt.
   onPermission?: (request: PermissionRequest) => Promise<"allow" | "deny">;
@@ -341,7 +339,6 @@ export class Agent {
         { text: options.systemPrompt },
       ],
       tools: options.tools,
-      ...(this.options.webSearch ? { webSearch: this.options.webSearch } : {}),
       permissions: options.permissions ?? this.permissions,
       onPermission: (request) => this.resolveChildPermission(request),
       ...(hasChildBudget ? { budget: childBudget } : {}),
@@ -1495,10 +1492,7 @@ export class Agent {
     ];
     const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
-    const webSearch = resolveWebSearchBackend(runProvider, this.options.webSearch);
-    if (webSearch.kind === "unavailable") {
-      throw new Error(`Web search is not available for provider ${webSearch.provider}`);
-    }
+    const webSearch = resolveWebSearchBackend(runProvider);
     if (opts?.allowedTools) {
       const available = new Set(tools.map((tool) => tool.name));
       if (webSearch.kind === "hosted") available.add("web_search");

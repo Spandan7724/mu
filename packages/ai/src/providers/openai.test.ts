@@ -211,16 +211,7 @@ describe("streamOpenAI", () => {
     const replay = replayFetch(cassette);
     const searchContext: LlmContext = {
       ...ctx,
-      hostedTools: [
-        {
-          type: "web_search",
-          externalWebAccess: true,
-          indexedWebAccess: true,
-          filters: { allowedDomains: ["example.com"] },
-          userLocation: { type: "approximate", country: "US", city: "Seattle" },
-          searchContextSize: "high",
-        },
-      ],
+      hostedTools: [{ type: "web_search" }],
     };
     const events: ProviderStreamEvent[] = [];
     const stream = streamOpenAI(model, searchContext, {
@@ -256,10 +247,6 @@ describe("streamOpenAI", () => {
     expect(body.tools.at(-1)).toEqual({
       type: "web_search",
       external_web_access: true,
-      indexed_web_access: true,
-      filters: { allowed_domains: ["example.com"] },
-      user_location: { type: "approximate", country: "US", city: "Seattle" },
-      search_context_size: "high",
     });
 
     const historyReplay = replayFetch(textCassette);
@@ -433,7 +420,7 @@ describe("streamOpenAI", () => {
       { ...model, provider: "openai-codex" },
       {
         ...ctx,
-        hostedTools: [{ type: "web_search", externalWebAccess: false }],
+        hostedTools: [{ type: "web_search" }],
       },
       {
         getCredentials: async () => ({ type: "oauth", accessToken: "tok", accountId: "acc" }),
@@ -464,7 +451,7 @@ describe("streamOpenAI", () => {
       parallel_tool_calls: true,
     });
     expect(body.tools[0].strict).toBeNull();
-    expect(body.tools[1]).toEqual({ type: "web_search", external_web_access: false });
+    expect(body.tools[1]).toEqual({ type: "web_search", external_web_access: true });
   });
 
   test("clamps Codex request correlation ids to the backend limit", async () => {

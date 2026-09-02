@@ -86,11 +86,9 @@ mu -p "fix the failing test"   # one-shot
 mu --rpc                       # NDJSON events out, ops in
 ```
 
-OpenAI API-key and ChatGPT/Codex models can opt into provider-hosted web search with
-`--web-search cached`, `indexed`, or `live`. SDK callers use
-`new Agent({ webSearch: { mode: "live" } })`. Search remains disabled by default, and
-other providers are rejected until a standalone search backend is configured in a future
-release.
+OpenAI API-key and ChatGPT/Codex models automatically receive the provider-hosted web-search
+tool. Ask Mu to search normally; no flag or separate configuration is required. Other
+providers continue without web search until a standalone backend is added in a future release.
 
 In an interactive session, `/rename [name]` names the current conversation for the
 `/resume` menu. Select an old conversation there and press Delete twice to remove it.
