@@ -16,9 +16,7 @@ for (const history of [false, true]) {
     meanRetrievalChars: results.reduce((sum, result) => sum + result.retrievalChars, 0) / trials,
     meanRetrievalEstimatedTokens:
       results.reduce((sum, result) => sum + result.retrievalEstimatedTokens, 0) / trials,
-    evidenceHiddenInEveryTrial: results.every(
-      (result) => result.evidenceHiddenAfterCompaction && !result.summarizerSawAnswer,
-    ),
+    evidenceHiddenInEveryTrial: results.every((result) => result.evidenceHiddenAfterCompaction),
     durationMs: Math.round(performance.now() - started),
   });
 }

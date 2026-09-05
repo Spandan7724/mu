@@ -10,6 +10,7 @@ export type {
   CompactionPlan,
   CompactionRequest,
   CompactionResult,
+  CompactionSource,
   CompactorOptions,
   ContextState,
 } from "./compaction.ts";

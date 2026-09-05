@@ -4,7 +4,7 @@ import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
 
 // A model with a tiny window so the threshold is reachable in a test.
-const smallModel = { ...fakeModel, contextWindow: 400 };
+const smallModel = { ...fakeModel, contextWindow: 4_000 };
 
 function longPrompt(): string {
   return "context filler. ".repeat(120); // ~500 tokens by the estimator
@@ -17,7 +17,7 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "answer" }] },
     ]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
 
     const stream = agent.stream(longPrompt());
     for await (const event of stream) events.push(event);
@@ -43,7 +43,12 @@ describe("auto compaction", () => {
   test("can be disabled", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "answer" }] }]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.1,
+      autoCompact: false,
+    });
 
     const stream = agent.stream(longPrompt());
     for await (const event of stream) events.push(event);
@@ -57,7 +62,7 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "SUMMARY: the user wanted X." }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
     await agent.run(longPrompt());
 
     // requests[0] is the compaction call; requests[1] is the real turn.
@@ -73,7 +78,7 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "" }], errorMessage: "summarizer unavailable" },
       { content: [{ type: "text", text: "answer anyway" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
     const result = await agent.run(longPrompt());
 
     expect(result.reason).toBe("done");
@@ -88,6 +93,7 @@ describe("auto compaction", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.1,
       carryoverExtractor: () => ({ modifiedFiles: ["src/client.ts"] }),
     });
     await agent.run(longPrompt());
@@ -113,6 +119,7 @@ describe("auto compaction", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.1,
       tools: [
         {
           name: "noop",
@@ -162,7 +169,12 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }] },
       { content: [{ type: "text", text: "manual summary" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.1,
+      autoCompact: false,
+    });
     await agent.run(longPrompt());
     const events: AgentEvent[] = [];
     agent.subscribe((event) => {
@@ -193,7 +205,12 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }] },
       { content: [{ type: "text", text: "" }], errorMessage: "summarizer unavailable" },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.1,
+      autoCompact: false,
+    });
     await agent.run(longPrompt());
     const before = agent.session.toJsonl();
 
@@ -209,6 +226,7 @@ describe("/compact on demand", () => {
     const resumed = new Agent({
       provider: new FakeProvider([]),
       model: smallModel,
+      compactThreshold: 0.1,
       session: agent.sessionStore,
     });
     resumed.resume(persisted as SessionTree);
@@ -237,7 +255,13 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "valid summary" }] },
     ]);
     const store = new FailManualSaveStore();
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false, session: store });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.1,
+      autoCompact: false,
+      session: store,
+    });
     await agent.run(longPrompt());
     const before = agent.session.toJsonl();
     store.failNextSave();
@@ -256,7 +280,12 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }], delayMs: 10 },
       { content: [{ type: "text", text: "queued summary" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.1,
+      autoCompact: false,
+    });
     const running = agent.run(longPrompt());
 
     const queued = await agent.compactNow("preserve queue state");
@@ -275,7 +304,12 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "downshift summary" }] },
       { content: [{ type: "text", text: "second answer" }] },
     ]);
-    const agent = new Agent({ provider, model: fakeModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      autoCompact: false,
+      compactThreshold: 0.1,
+    });
     await agent.run(longPrompt());
     agent.setModel({ ...smallModel, id: "fake-small" });
 
@@ -323,7 +357,7 @@ describe("context accounting", () => {
       },
     ]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
     const stream = agent.stream(longPrompt());
     for await (const event of stream) events.push(event);
     const result = await stream.result();
@@ -353,6 +387,7 @@ describe("context accounting", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.1,
       budget: { maxCostUsd: 0.1 },
     });
     const result = await agent.run(longPrompt());
@@ -369,7 +404,7 @@ describe("resume after compaction", () => {
       { content: [{ type: "text", text: "the summary" }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
     await agent.run(longPrompt());
 
     const entries = agent.session.all();
@@ -385,7 +420,7 @@ describe("resume after compaction", () => {
       { content: [{ type: "text", text: "persisted summary" }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({ provider, model: smallModel, compactThreshold: 0.1 });
     await agent.run(longPrompt());
 
     // Round-trip the session exactly as a resume would.
@@ -444,7 +479,7 @@ describe("resume after compaction", () => {
 });
 
 describe("layer 1 — microcompaction", () => {
-  test("stale tool output is tombstoned before an LLM summary is attempted", async () => {
+  test("duplicate tool output is tombstoned while its newest observation remains visible", async () => {
     const bulky = "x".repeat(1200);
     // Enough tool-calling turns that older results fall outside the keep-recent
     // window — a short transcript is deliberately left alone.
@@ -485,7 +520,7 @@ describe("layer 1 — microcompaction", () => {
         (m) =>
           m.role === "toolResult" &&
           m.content[0]?.type === "text" &&
-          m.content[0].text.includes("re-run the tool"),
+          m.content[0].text.includes("duplicate output cleared"),
       );
     expect(tombstoned).toBe(true);
     expect(agent.session.all().some((entry) => entry.type === "microcompaction")).toBe(true);

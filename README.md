@@ -161,6 +161,13 @@ read before editing. Hidden thinking and image payloads are excluded. These tool
 enabled by the CLI and `createAgent`; set `history: false` to disable them in the SDK, or
 `history: true` to enable them on a low-level `new Agent()`.
 
+Compaction uses the latest request and recent conversation to select relevant historical
+evidence. It reads original active-branch messages, processes large inputs in bounded
+chunks, and requests a handoff covering current constraints, decisions, evidence, and next
+steps. Automatic text eviction clears duplicates while leaving unique observations for
+summarization. Large histories can require several summarizer calls; their usage is counted
+and configured budgets are checked between calls.
+
 ### Interactive controls
 
 The TUI keeps a typed transcript in the terminal's primary buffer and renders Markdown,

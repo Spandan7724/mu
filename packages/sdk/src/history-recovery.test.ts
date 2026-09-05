@@ -9,7 +9,7 @@ describe("evidence recovery through the real loop", () => {
   test("compaction makes a non-reproducible observation unavailable without retrieval", async () => {
     const result = await historyScenario(false);
     expect(result.evidenceHiddenAfterCompaction).toBe(true);
-    expect(result.summarizerSawAnswer).toBe(false);
+    expect(result.summarizerSawAnswer).toBe(true);
     expect(result.recovered).toBe(false);
     expect(result.sourceReruns).toBe(1);
   });
@@ -19,7 +19,7 @@ describe("evidence recovery through the real loop", () => {
     try {
       const result = await historyScenario(true, new FileSessionStore({ root }));
       expect(result.evidenceHiddenAfterCompaction).toBe(true);
-      expect(result.summarizerSawAnswer).toBe(false);
+      expect(result.summarizerSawAnswer).toBe(true);
       expect(result.recovered).toBe(true);
       expect(result.sourceReruns).toBe(0);
       expect(result.recoveryModelCalls).toBe(3);

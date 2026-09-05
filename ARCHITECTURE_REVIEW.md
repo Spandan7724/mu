@@ -1,5 +1,9 @@
 # Mu: recoverable working context
 
+The original investigation and retrieval implementation below describe the first stage.
+The subsequent [task-aware compaction implementation](#task-aware-compaction) addresses
+preservation before retrieval is needed and supersedes the older eviction/input policies.
+
 ## Conclusion
 
 Mu's largest architectural ceiling for sustained coding work is that **durable evidence
@@ -151,3 +155,70 @@ The reversal condition for this prioritization is workload evidence that sustain
 rarely lose relevant context, or that failures are dominated by model reasoning while all
 necessary evidence remains visible. In that case better inference/prompting or targeted
 execution fixes should take precedence over more memory machinery.
+
+## Task-aware compaction
+
+Following the review, compaction now tries to keep relevant evidence directly in the
+model's working context. Retrieval remains available for omissions the model notices.
+
+Implementation:
+
+- `Agent.compactionSource` walks original message entries on the active branch up to the
+  retained-tail anchor. This bypasses old microcompaction replacements and full-summary
+  boundaries, so a task change can reconsider evidence absent from the previous handoff.
+- `compact` supplies a bounded recent-context reference and the latest user request to
+  every summarizer call. The reference guides selection but remains in the live tail;
+  it is not material to recap. The prompt asks for active goals, applicable constraints
+  and corrections, task state, decisions with reasons, exact supporting excerpts with
+  source IDs, and unresolved questions/next steps. Later corrections supersede old state.
+- Text serialization no longer clips individual tool outputs or arguments. Original
+  sources are processed sequentially within an estimated request budget, with entry IDs,
+  offsets and preferred line boundaries. Each chunk updates the previous handoff.
+  A prior handoff too large for a smaller destination model is itself chunked as source.
+- Overflow shrinks the current chunk, with at most three consecutive attempts. The
+  source cursor advances only after success, so retries never discard remaining text.
+  Empty, truncated, over-budget or failed handoffs are rejected. Usage from every paid
+  call is accumulated; budget checks and cancellation stop further calls. A partial
+  multi-chunk handoff is not installed on failure.
+- Automatic text microcompaction in the SDK now removes only exact duplicate bodies,
+  pointing to the later result retaining that text. Unique observations remain available
+  until summarization. Explicit full compaction no longer runs text eviction first.
+  Oversized tool turns are summarized rather than retained beyond the recent-tail budget.
+
+The structured handoff is a Markdown output contract in the model prompt. Mu validates
+completion, nonempty text and size; it cannot mechanically validate semantic relevance,
+every correction, or every quoted claim. The task-specific summarizer still matters.
+Image payloads are not summarized, and this compaction source path processes top-level
+message content; completed subagents' detailed traces remain accessible through history
+retrieval. Nothing can recover text that a tool truncated before recording it.
+
+Run `bun scripts/compaction-retention-benchmark.ts` for the new controlled comparison.
+Both modes use the same deterministic evidence-selection policy and 1,200-token handoff /
+1,600-token tail budgets on an 8,000-token model fixture. The baseline reproduces the
+old input policy: working prefix only, clipped tool results, no retained-tail reference.
+The scenario starts from an old evicted observation, changes the active investigation
+and retry constraint after the first handoff, compacts three times, resumes, and attempts
+an evidence-dependent verification action. History tools are disabled in both modes.
+
+| Measurement (24 generated instances) | Old input policy | Task-aware compaction |
+|---|---:|---:|
+| Correct next action | 0/24 | 24/24 |
+| History lookups | 0 | 0 |
+| Mean retained context, estimated tokens | 1,536 | 1,549 |
+| Summarizer calls across three compactions | 3 | 12 |
+
+These are generated instances of one controlled scenario, not independent coding tasks
+or a real-provider accuracy estimate. The policy's inputs, not the expected answer,
+determine its selected evidence and action. Separate tests verify complete source
+coverage within estimated request limits, recent-context guidance, source provenance,
+overflow continuation, cancellation, duplicate-only eviction, branch scoping, and
+rollback/usage persistence when later chunks fail or exceed the budget.
+
+Validation: `bun run ci` passed **1,228 tests**, TypeScript, Biome and kernel purity.
+The benchmark and updated provenance assertion also passed their focused checks.
+
+The main tradeoff is paid summarization work: this first implementation revisits the
+original prefix on every full compaction. Per-request input/output bounds do not make
+total processing independent of journal size. A future cached evidence index could
+reduce that cost, but would need its own relevance/invalidation evaluation. Configured
+budgets are enforced between requests; with no budget, a large journal can be expensive.

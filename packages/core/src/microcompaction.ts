@@ -15,6 +15,7 @@ export interface MicrocompactionOptions {
   targetTokens?: number;
   // Optional recovery instruction for the original text. Images remain explicitly omitted.
   recoverText?: (message: AgentMessage) => string | undefined;
+  textPolicy?: "all" | "duplicates";
 }
 
 export interface MicrocompactionResult {
@@ -67,6 +68,20 @@ export function microcompact(
   }
 
   // Pass 2: whole tool results, oldest first.
+  const latest = new Map<string, number>();
+  const fingerprint = (message: AgentMessage) =>
+    JSON.stringify([message.role === "toolResult" ? message.toolName : "", message.content]);
+  if (options.textPolicy === "duplicates") {
+    result.forEach((message, index) => {
+      if (
+        message.role === "toolResult" &&
+        !message.evicted &&
+        !message.isError &&
+        message.content.every((block) => block.type === "text")
+      )
+        latest.set(fingerprint(message), index);
+    });
+  }
   for (let i = 0; i < cutoff; i++) {
     const message = result[i];
     if (!message || message.role !== "toolResult" || message.evicted) continue;
@@ -75,12 +90,20 @@ export function microcompact(
     // An error result is small and tells the model what not to retry — keeping
     // it is cheap and prevents repeating a failed call.
     if (message.isError) continue;
+    const duplicate =
+      options.textPolicy === "duplicates" ? latest.get(fingerprint(message)) : undefined;
+    if (options.textPolicy === "duplicates" && (duplicate === undefined || duplicate <= i))
+      continue;
 
     const text = message.content
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("");
-    const tombstone = options.recoverText?.(messages[i] as AgentMessage) ?? TOMBSTONE;
+    const duplicateMessage = duplicate === undefined ? undefined : result[duplicate];
+    const tombstone =
+      duplicateMessage?.role === "toolResult"
+        ? `[duplicate output cleared — identical text retained in tool result ${duplicateMessage.toolCallId}]`
+        : (options.recoverText?.(messages[i] as AgentMessage) ?? TOMBSTONE);
     if (text.length <= tombstone.length) continue; // never expand a small result
 
     result[i] = {
