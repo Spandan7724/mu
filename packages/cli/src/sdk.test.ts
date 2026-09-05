@@ -12,7 +12,11 @@ describe("public SDK factory", () => {
     const agent = await createAgent({ provider, model: fakeModel });
 
     expect(agent).toBeInstanceOf(Agent);
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual([
+      "task",
+      "history_search",
+      "history_read",
+    ]);
     expect((await agent.run("hi")).text).toBe("hello");
   });
 
@@ -67,6 +71,7 @@ describe("public SDK factory", () => {
       provider: new FakeProvider([]),
       model: fakeModel,
       tools: [customTask],
+      history: false,
     });
 
     expect(agent.tools.find((candidate) => candidate.name === "task")).toBe(customTask);
@@ -87,6 +92,10 @@ describe("public SDK factory", () => {
       model: fakeModel,
     });
 
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual([
+      "task",
+      "history_search",
+      "history_read",
+    ]);
   });
 });

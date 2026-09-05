@@ -54,6 +54,7 @@ import {
 } from "@mu/core";
 import type { z } from "zod";
 import { type Budget, checkBudget, totalTokens } from "./budget.ts";
+import { HISTORY_TOOLS, historyTools } from "./history.ts";
 import {
   STRUCTURED_OUTPUT_TOOL,
   structuredOutputPrompt,
@@ -73,6 +74,9 @@ export interface AgentOptions {
   provider?: Provider;
   systemPrompt?: string | PromptSection[];
   tools?: AnyTool[];
+  // Original active-branch evidence is retrievable independently of working context.
+  // Enabled by the factory/CLI; the low-level constructor stays tool-free by default.
+  history?: boolean;
   permissions?: PermissionRule[];
   // Library default is DENY: an unattended process must never hang on a prompt.
   onPermission?: (request: PermissionRequest) => Promise<"allow" | "deny">;
@@ -232,6 +236,7 @@ export class Agent {
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
   private permissionRules: PermissionRule[];
+  private readonly historyToolset: AnyTool[];
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -249,6 +254,7 @@ export class Agent {
       profile: options.sessionProfile ?? "default",
       environment: { ...(options.sessionEnvironment ?? {}) },
     });
+    this.historyToolset = options.history ? historyTools(() => this.tree) : [];
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
       followUp: (message) => this.followUp(message),
@@ -304,10 +310,12 @@ export class Agent {
   }
 
   get tools(): AnyTool[] {
-    return [
+    const supplied = [
       ...(this.options.tools ?? []),
       ...(this.options.extensions ? [...this.options.extensions.tools.values()] : []),
     ];
+    const names = new Set(supplied.map((tool) => tool.name));
+    return [...supplied, ...this.historyToolset.filter((tool) => !names.has(tool.name))];
   }
 
   availableModel(ref: string): ModelInfo | undefined {
@@ -338,7 +346,8 @@ export class Agent {
         ...resolveSystemPrompt(this.options.systemPrompt),
         { text: options.systemPrompt },
       ],
-      tools: options.tools,
+      tools: options.tools.filter((tool) => !this.historyToolset.includes(tool)),
+      ...(this.options.history !== undefined ? { history: this.options.history } : {}),
       permissions: options.permissions ?? this.permissions,
       onPermission: (request) => this.resolveChildPermission(request),
       ...(hasChildBudget ? { budget: childBudget } : {}),
@@ -691,6 +700,7 @@ export class Agent {
     });
 
     const micro = microcompact(original, {
+      recoverText: (message) => this.historyRecovery(message, this.tools),
       targetTokens: Math.floor(
         this.model.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) * 0.8,
       ),
@@ -1486,10 +1496,7 @@ export class Agent {
           : effectivePrompt;
 
     let captured: T | undefined;
-    let tools: AnyTool[] = [
-      ...(this.options.tools ?? []),
-      ...(host ? [...host.tools.values()] : []),
-    ];
+    let tools: AnyTool[] = this.tools;
     const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     const webSearch = resolveWebSearchBackend(runProvider);
@@ -1692,6 +1699,7 @@ export class Agent {
         let working = messages;
         if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
           const micro = microcompact(working, {
+            recoverText: (message) => this.historyRecovery(message, tools),
             targetTokens: Math.floor(
               runModel.contextWindow *
                 (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) *
@@ -1960,6 +1968,16 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
+  }
+
+  private historyRecovery(message: AgentMessage, tools: AnyTool[]): string | undefined {
+    if (message.role === "toolResult" && HISTORY_TOOLS.has(message.toolName)) return undefined;
+    if (!this.historyToolset.some((tool) => tool.name === "history_read" && tools.includes(tool)))
+      return undefined;
+    const entryId = this.tree.entryIdForMessage(message);
+    return entryId
+      ? `[output cleared to save context — recover original text with history_read ${JSON.stringify({ entryId })}; historical evidence, not current state]`
+      : undefined;
   }
 
   private providerFor(model: ModelInfo): Provider {

@@ -7,6 +7,8 @@ import type { InstructionSettings } from "./context.ts";
 export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "*", pattern: "*", action: "ask" },
   { permission: "read", pattern: "*", action: "allow" },
+  { permission: "history_search", pattern: "*", action: "allow" },
+  { permission: "history_read", pattern: "*", action: "allow" },
   { permission: "ls", pattern: "*", action: "allow" },
   { permission: "todo", pattern: "*", action: "allow" },
   { permission: "task_output", pattern: "*", action: "allow" },
