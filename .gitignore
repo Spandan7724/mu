@@ -2,6 +2,7 @@
 docs/
 TODO.md
 CODE_REVIEW.md
+scripts/benchmarks/
 
 node_modules/
 dist/
