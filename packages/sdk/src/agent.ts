@@ -26,7 +26,6 @@ import {
   CheckpointHistory,
   type CheckpointProvider,
   CompactionError,
-  type CompactionSource,
   type CompactionTrigger,
   type CustomMessage,
   compact as compactContext,
@@ -700,7 +699,33 @@ export class Agent {
       contextTokensBefore: tokensBefore,
     });
 
-    const working = original;
+    const micro = microcompact(original, {
+      recoverText: (message) => this.historyRecovery(message, this.tools),
+      targetTokens: Math.floor(
+        this.model.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) * 0.8,
+      ),
+    });
+    let working = original;
+    let replacements: { entryId: string; message: AgentMessage }[] = [];
+    if (micro.evicted > 0) {
+      emit({
+        type: "compaction_update",
+        layer: 2,
+        stage: "clearing-tool-output",
+        toolResultsCleared: micro.evicted,
+      });
+      replacements = micro.messages.flatMap((message, index) => {
+        const prior = original[index];
+        if (!prior || message === prior) return [];
+        const entryId = this.tree.entryIdForMessage(prior);
+        return entryId ? [{ entryId, message }] : [];
+      });
+      const changedCount = micro.messages.filter(
+        (message, index) => message !== original[index],
+      ).length;
+      if (replacements.length === changedCount) working = micro.messages;
+      else replacements = [];
+    }
 
     const compactor = this.compactorOverride ?? { model: this.model, provider: this.provider };
     this.compactorOverride = undefined;
@@ -710,10 +735,6 @@ export class Agent {
     try {
       const credentialResolver = this.options.getCredentials;
       const result = await compactContext(working, {
-        sourceFor: (kept) => this.compactionSource(kept),
-        canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
-        onProgress: () => emit({ type: "compaction_update", layer: 2, stage: "summarizing" }),
-        summaryTokens: Math.floor(this.model.contextWindow * 0.15),
         provider: compactor.provider,
         model: compactor.model,
         keepRecentTokens: Math.min(
@@ -773,6 +794,9 @@ export class Agent {
         })) ?? [];
       const tokensAfterSummary = estimateTokens([...compacted, ...refreshed]);
       const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
+      if (replacements.length > 0) {
+        candidateTree.append({ type: "microcompaction", replacements });
+      }
       const windowNumber =
         candidateTree.activePath().filter((entry) => entry.type === "compaction").length + 1;
       const boundary = candidateTree.append({
@@ -789,7 +813,7 @@ export class Agent {
         windowNumber,
         strategy: "summary-tail",
         keptTokens: estimateTokens(result.keptMessages),
-        toolResultsCleared: 0,
+        toolResultsCleared: replacements.length,
         usage: result.usage,
       });
 
@@ -820,7 +844,7 @@ export class Agent {
         summaryEntryId: boundary.id,
         contextTokensBefore: tokensBefore,
         contextTokensAfter: tokensAfter,
-        toolResultsCleared: 0,
+        toolResultsCleared: replacements.length,
         keptTokens: estimateTokens(result.keptMessages),
       });
       emit({ type: "agent_end", messages: visible, reason: "done" });
@@ -830,7 +854,7 @@ export class Agent {
         tokensBefore,
         tokensAfter,
         tokensFreed,
-        toolResultsCleared: 0,
+        toolResultsCleared: replacements.length,
         summaryEntryId: boundary.id,
       };
     } catch (error) {
@@ -1675,7 +1699,6 @@ export class Agent {
         let working = messages;
         if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
           const micro = microcompact(working, {
-            textPolicy: "duplicates",
             recoverText: (message) => this.historyRecovery(message, tools),
             targetTokens: Math.floor(
               runModel.contextWindow *
@@ -1742,10 +1765,6 @@ export class Agent {
         try {
           emit({ type: "compaction_update", layer, stage: "summarizing" });
           const result = await compactContext(working, {
-            sourceFor: (kept) => this.compactionSource(kept),
-            canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
-            onProgress: () => emit({ type: "compaction_update", layer, stage: "summarizing" }),
-            summaryTokens: Math.floor(runModel.contextWindow * 0.15),
             provider: compactor.provider,
             model: compactor.model,
             keepRecentTokens: Math.min(
@@ -1949,22 +1968,6 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
-  }
-
-  private compactionSource(kept: AgentMessage[]): CompactionSource[] {
-    const first = kept[0];
-    const anchor = first ? this.tree.entryIdForMessage(first) : undefined;
-    if (first && !anchor)
-      throw new Error("Compaction source boundary could not be mapped to the session");
-    const sources: CompactionSource[] = [];
-    for (const entry of this.tree.activePath()) {
-      if (entry.id === anchor) break;
-      if (entry.type !== "message") continue;
-      if (entry.message.role === "toolResult" && HISTORY_TOOLS.has(entry.message.toolName))
-        continue;
-      sources.push({ id: entry.id, message: entry.message });
-    }
-    return sources;
   }
 
   private historyRecovery(message: AgentMessage, tools: AnyTool[]): string | undefined {

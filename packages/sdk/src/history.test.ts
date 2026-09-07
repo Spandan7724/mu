@@ -300,7 +300,7 @@ describe("recoverable session history", () => {
     await expect(pending).rejects.toThrow();
   });
 
-  test("automatic eviction keeps unique evidence and respects tool allowlists", async () => {
+  test("automatic eviction installs durable original references and respects tool allowlists", async () => {
     for (const allowHistory of [true, false]) {
       const provider = new FakeProvider([{ content: [{ type: "text", text: "done" }] }]);
       const owner = new Agent({
@@ -312,12 +312,10 @@ describe("recoverable session history", () => {
       for (let i = 0; i < 6; i++) owner.session.appendMessage(userMessage(`recent ${i}`));
       await owner.run("continue", allowHistory ? undefined : { allowedTools: [] });
       const evicted = owner.session.messagesAt()[0];
-      expect(evicted?.role === "toolResult" && evicted.evicted).toBeUndefined();
-      expect(JSON.stringify(evicted)).toContain("original evidence");
-      expect(
-        provider.requests[0]?.tools?.some((tool) => tool.name === "history_read") ?? false,
-      ).toBe(allowHistory);
+      expect(evicted?.role === "toolResult" && evicted.evicted).toBe(true);
+      expect(JSON.stringify(evicted).includes("history_read")).toBe(allowHistory);
       if (allowHistory) {
+        expect(JSON.stringify(evicted)).toContain(entry.id);
         expect((await read(owner, { entryId: entry.id })).text).toContain("original evidence");
       }
       const saved = await owner.sessionStore.load(owner.sessionId);
