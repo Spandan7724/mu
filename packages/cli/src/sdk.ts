@@ -35,7 +35,7 @@ export async function createAgent(options: CreateAgentOptions = {}): Promise<Age
     ? await optionsFromProfile(resolvedProfile, modelRefFor(agentOptions), agentOptions)
     : agentOptions;
   const extensions = resolved.extensions ?? new ExtensionHost();
-  const agent = new Agent({ history: true, ...resolved, extensions });
+  const agent = new Agent({ ...resolved, extensions });
   const restrictiveMode = resolvedProfile?.permissionModes?.find(
     (mode) => mode.tone === "restrictive",
   );

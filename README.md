@@ -153,14 +153,6 @@ trees, so forks, undo, and compaction add entries rather than rewriting history.
 - `/btw [question]` opens an ephemeral read-only side conversation using the current
   context as reference. It is not saved or merged back into the main session.
 
-The agent can use `history_search` and `history_read` to recover original textual evidence
-after compaction, including recorded observations from completed subagents. Search returns
-literal matches with source references; reads return bounded pages. Retrieval covers only
-the active conversation branch, and historical file contents do not replace a fresh file
-read before editing. Hidden thinking and image payloads are excluded. These tools are
-enabled by the CLI and `createAgent`; set `history: false` to disable them in the SDK, or
-`history: true` to enable them on a low-level `new Agent()`.
-
 ### Interactive controls
 
 The TUI keeps a typed transcript in the terminal's primary buffer and renders Markdown,

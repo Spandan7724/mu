@@ -106,7 +106,6 @@ export async function createCliSessionRuntime(
     { request: PermissionRequest; resolve: (outcome: "allow" | "deny") => void }
   >();
   const agent = new Agent({
-    history: true,
     ...resolved,
     ...(model ? { model } : {}),
     extensions: loaded.host,
@@ -174,7 +173,7 @@ export async function createCliSessionRuntime(
     profile,
     extensions: loaded.host,
     commands,
-    agentOptions: { history: true, ...resolved, extensions: loaded.host },
+    agentOptions: { ...resolved, extensions: loaded.host },
     basePermissions,
     get permissionMode() {
       return activePermissionMode;

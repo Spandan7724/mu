@@ -13,8 +13,6 @@ export interface MicrocompactionOptions {
   keepRecent?: number;
   // Stop once the transcript is under this many tokens.
   targetTokens?: number;
-  // Optional recovery instruction for the original text. Images remain explicitly omitted.
-  recoverText?: (message: AgentMessage) => string | undefined;
 }
 
 export interface MicrocompactionResult {
@@ -80,12 +78,11 @@ export function microcompact(
       .filter((block) => block.type === "text")
       .map((block) => block.text)
       .join("");
-    const tombstone = options.recoverText?.(messages[i] as AgentMessage) ?? TOMBSTONE;
-    if (text.length <= tombstone.length) continue; // never expand a small result
+    if (text.length < TOMBSTONE.length) continue; // already smaller than the marker
 
     result[i] = {
       ...message,
-      content: [{ type: "text", text: tombstone }],
+      content: [{ type: "text", text: TOMBSTONE }],
       evicted: true,
     };
     evicted++;

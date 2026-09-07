@@ -56,8 +56,6 @@ The CLI loads the coding profile by default. It includes:
 - read-before-write checks and diff previews for approvals;
 - shadow-git workspace checkpoints with `/undo`, `/redo`, `/fork`, and `/diff`;
 - durable sessions, automatic context compaction, and Markdown transcript export;
-- bounded `history_search` / `history_read` access to original active-branch evidence
-  after compaction, including recorded observations from completed subagents;
 - managed `task` delegation and coding-specific `search` and `counsel` subagents.
 
 The default permission mode allows inspection and asks before file changes or commands.
