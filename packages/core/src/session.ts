@@ -27,6 +27,7 @@ export type SessionEntry =
       summary: string;
       carryover?: unknown;
       firstKeptEntryId: string | null;
+      preservedEntryIds?: string[];
       timestamp?: number;
       trigger?: "manual" | "threshold" | "overflow" | "model-change";
       contextTokensBefore?: number;
@@ -199,6 +200,10 @@ function validMessage(value: unknown): boolean {
     return (
       string(value.customType) &&
       optional(value.display, (candidate) => typeof candidate === "boolean") &&
+      optional(
+        value.retention,
+        (candidate) => record(candidate) && nonEmptyString(candidate.key),
+      ) &&
       value.content.every((block) => validContent(block, ["text", "image"]))
     );
   }
@@ -256,6 +261,10 @@ function assertSessionEntry(value: unknown): asserts value is SessionEntry {
       if (
         !string(value.summary) ||
         !(value.firstKeptEntryId === null || string(value.firstKeptEntryId)) ||
+        !optional(
+          value.preservedEntryIds,
+          (candidate) => Array.isArray(candidate) && candidate.every(nonEmptyString),
+        ) ||
         !optional(value.timestamp, finite) ||
         !optional(value.contextTokensBefore, finite) ||
         !optional(value.contextTokensAfter, finite) ||
@@ -506,11 +515,24 @@ export class SessionTree {
         continue;
       }
       if (entry.type === "compaction") {
+        const preserved = (entry.preservedEntryIds ?? []).map((id) =>
+          visible.find((item) => item.entryId === id),
+        );
+        if (
+          preserved.some(
+            (item) => !item || (item.message.role !== "user" && item.message.role !== "custom"),
+          )
+        )
+          continue;
+        const retained = preserved.filter(
+          (item): item is (typeof visible)[number] => item !== undefined,
+        );
         if (entry.firstKeptEntryId === null) {
           visible = [
             {
               message: compactionSummaryMessage(entry.summary, entry.carryover, entry.timestamp),
             },
+            ...retained,
           ];
           continue;
         }
@@ -522,6 +544,7 @@ export class SessionTree {
           {
             message: compactionSummaryMessage(entry.summary, entry.carryover, entry.timestamp),
           },
+          ...retained.filter((item) => !visible.slice(keptIndex).includes(item)),
           ...visible.slice(keptIndex),
         ];
       }

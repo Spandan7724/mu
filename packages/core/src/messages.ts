@@ -32,6 +32,8 @@ export interface CustomMessage {
   customType: string; // "system-reminder" | "compaction-summary" | "task-notification" | ...
   content: (TextContent | ImageContent)[];
   display?: boolean; // whether a UI shows it
+  // Keep the latest snapshot with this key verbatim across compaction.
+  retention?: { key: string };
   timestamp: number;
 }
 

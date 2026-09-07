@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { type AgentEvent, MemorySessionStore, SessionTree } from "@mu/core";
+import { type AgentEvent, MemorySessionStore, SessionTree, userMessage } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
 
 // A model with a tiny window so the threshold is reachable in a test.
-const smallModel = { ...fakeModel, contextWindow: 400 };
+const smallModel = { ...fakeModel, contextWindow: 4_000 };
 
 function longPrompt(): string {
-  return "context filler. ".repeat(120); // ~500 tokens by the estimator
+  return "context filler. ".repeat(400); // ~1,800 tokens by the estimator
 }
 
 describe("auto compaction", () => {
@@ -17,9 +17,14 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "answer" }] },
     ]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
 
-    const stream = agent.stream(longPrompt());
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     await stream.result();
 
@@ -43,9 +48,15 @@ describe("auto compaction", () => {
   test("can be disabled", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "answer" }] }]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+      autoCompact: false,
+    });
 
-    const stream = agent.stream(longPrompt());
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     await stream.result();
 
@@ -57,8 +68,13 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "SUMMARY: the user wanted X." }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    await agent.run("continue");
 
     // requests[0] is the compaction call; requests[1] is the real turn.
     const realTurn = provider.requests[1];
@@ -73,8 +89,13 @@ describe("auto compaction", () => {
       { content: [{ type: "text", text: "" }], errorMessage: "summarizer unavailable" },
       { content: [{ type: "text", text: "answer anyway" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
-    const result = await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    const result = await agent.run("continue");
 
     expect(result.reason).toBe("done");
     expect(result.text).toBe("answer anyway");
@@ -88,9 +109,11 @@ describe("auto compaction", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
       carryoverExtractor: () => ({ modifiedFiles: ["src/client.ts"] }),
     });
-    await agent.run(longPrompt());
+    await agent.run("continue");
 
     const realTurn = provider.requests[1];
     const joined = (realTurn?.messages ?? [])
@@ -113,6 +136,8 @@ describe("auto compaction", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
       tools: [
         {
           name: "noop",
@@ -123,7 +148,7 @@ describe("auto compaction", () => {
       ],
     });
 
-    const stream = agent.stream(longPrompt());
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     await stream.result();
 
@@ -162,8 +187,14 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }] },
       { content: [{ type: "text", text: "manual summary" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+      autoCompact: false,
+    });
+    await agent.run("continue");
     const events: AgentEvent[] = [];
     agent.subscribe((event) => {
       events.push(event);
@@ -193,8 +224,14 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }] },
       { content: [{ type: "text", text: "" }], errorMessage: "summarizer unavailable" },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+      autoCompact: false,
+    });
+    await agent.run("continue");
     const before = agent.session.toJsonl();
 
     const result = await agent.compactNow();
@@ -202,13 +239,15 @@ describe("/compact on demand", () => {
     expect(result.status).toBe("failed");
     expect(agent.session.toJsonl()).toStartWith(before);
     expect(agent.session.activePath().at(-1)?.type).toBe("compaction-attempt");
-    expect(agent.session.messagesAt()).toHaveLength(2);
+    expect(agent.session.messagesAt()).toHaveLength(3);
     expect(result.message).toContain("Original conversation preserved");
 
     const persisted = await agent.sessionStore.load(agent.sessionId);
     const resumed = new Agent({
       provider: new FakeProvider([]),
       model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
       session: agent.sessionStore,
     });
     resumed.resume(persisted as SessionTree);
@@ -237,8 +276,15 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "valid summary" }] },
     ]);
     const store = new FailManualSaveStore();
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false, session: store });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+      autoCompact: false,
+      session: store,
+    });
+    await agent.run("continue");
     const before = agent.session.toJsonl();
     store.failNextSave();
 
@@ -256,8 +302,14 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "first answer" }], delayMs: 10 },
       { content: [{ type: "text", text: "queued summary" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel, autoCompact: false });
-    const running = agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+      autoCompact: false,
+    });
+    const running = agent.run("continue");
 
     const queued = await agent.compactNow("preserve queue state");
     expect(queued.status).toBe("queued");
@@ -275,8 +327,13 @@ describe("/compact on demand", () => {
       { content: [{ type: "text", text: "downshift summary" }] },
       { content: [{ type: "text", text: "second answer" }] },
     ]);
-    const agent = new Agent({ provider, model: fakeModel, autoCompact: false });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      autoCompact: false,
+      initialMessages: [userMessage(longPrompt().repeat(2))],
+    });
+    await agent.run("continue");
     agent.setModel({ ...smallModel, id: "fake-small" });
 
     await agent.run("continue");
@@ -323,8 +380,13 @@ describe("context accounting", () => {
       },
     ]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: smallModel });
-    const stream = agent.stream(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     const result = await stream.result();
 
@@ -353,9 +415,11 @@ describe("context accounting", () => {
     const agent = new Agent({
       provider,
       model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
       budget: { maxCostUsd: 0.1 },
     });
-    const result = await agent.run(longPrompt());
+    const result = await agent.run("continue");
 
     expect(result.reason).toBe("maxCostUsd");
     expect(provider.callCount).toBe(1);
@@ -369,8 +433,13 @@ describe("resume after compaction", () => {
       { content: [{ type: "text", text: "the summary" }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    await agent.run("continue");
 
     const entries = agent.session.all();
     const compaction = entries.find((entry) => entry.type === "compaction");
@@ -385,8 +454,13 @@ describe("resume after compaction", () => {
       { content: [{ type: "text", text: "persisted summary" }] },
       { content: [{ type: "text", text: "answer" }] },
     ]);
-    const agent = new Agent({ provider, model: smallModel });
-    await agent.run(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: smallModel,
+      compactThreshold: 0.4,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    await agent.run("continue");
 
     // Round-trip the session exactly as a resume would.
     const reloaded = SessionTree.fromJsonl(agent.session.toJsonl());
@@ -444,7 +518,7 @@ describe("resume after compaction", () => {
 });
 
 describe("layer 1 — microcompaction", () => {
-  test("stale tool output is tombstoned before an LLM summary is attempted", async () => {
+  test("duplicate tool output is cleared while one full copy remains", async () => {
     const bulky = "x".repeat(1200);
     // Enough tool-calling turns that older results fall outside the keep-recent
     // window — a short transcript is deliberately left alone.
@@ -478,14 +552,14 @@ describe("layer 1 — microcompaction", () => {
       .map((e) => (e.type === "compaction_start" ? e.layer : 0));
     expect(layers).toContain(1);
 
-    // The eviction left a re-runnable tombstone rather than deleting history.
+    // The eviction retains one visible copy and records replacements for resume.
     const tombstoned = agent.session
       .messagesAt()
       .some(
         (m) =>
           m.role === "toolResult" &&
           m.content[0]?.type === "text" &&
-          m.content[0].text.includes("re-run the tool"),
+          m.content[0].text.includes("identical text retained"),
       );
     expect(tombstoned).toBe(true);
     expect(agent.session.all().some((entry) => entry.type === "microcompaction")).toBe(true);
@@ -572,7 +646,7 @@ describe("layer 3 — reactive recovery", () => {
       ],
     });
     const events: AgentEvent[] = [];
-    const stream = agent.stream(longPrompt());
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     const result = await stream.result();
 
@@ -604,8 +678,13 @@ describe("layer 3 — reactive recovery", () => {
       { content: [{ type: "text", text: "answer" }] },
     ]);
     const events: AgentEvent[] = [];
-    const agent = new Agent({ provider, model: fakeModel, autoCompact: false });
-    const stream = agent.stream(longPrompt());
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      autoCompact: false,
+      initialMessages: [userMessage(longPrompt())],
+    });
+    const stream = agent.stream("continue");
     for await (const event of stream) events.push(event);
     await stream.result();
 

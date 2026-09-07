@@ -229,7 +229,10 @@ function snapshotMessage(snapshot: InstructionSnapshot, replacing: boolean): Age
             return `Contents of ${renderSourcePath(source, snapshot.projectRoot)} (${qualifier}):\n\n${source.content.trim()}`;
           })
           .join("\n\n");
-  return customMessage(`${SNAPSHOT_TYPE_PREFIX}${snapshot.signature}`, `${preamble}\n\n${body}`);
+  return {
+    ...customMessage(`${SNAPSHOT_TYPE_PREFIX}${snapshot.signature}`, `${preamble}\n\n${body}`),
+    retention: { key: "project-instructions" },
+  };
 }
 
 function stripFrontmatter(raw: string): { content: string; patterns?: string[] } {
@@ -987,5 +990,8 @@ export async function codingEnvironment(root: string): Promise<Record<string, st
 
 export function environmentMessage(env: Record<string, string>): AgentMessage {
   const lines = Object.entries(env).map(([key, value]) => `${key}: ${value}`);
-  return customMessage("environment", `Session environment:\n${lines.join("\n")}`);
+  return {
+    ...customMessage("environment", `Session environment:\n${lines.join("\n")}`),
+    retention: { key: "environment" },
+  };
 }

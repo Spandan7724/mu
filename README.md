@@ -148,10 +148,26 @@ trees, so forks, undo, and compaction add entries rather than rewriting history.
 - `/new` starts a clean conversation without deleting the previous one.
 - `/export [path.md]` writes the complete active branch, including turns older than a
   compaction boundary.
-- `/compact [focus]` compacts immediately. Mu also compacts automatically near 85% of the
-  active model's context window and retries once after a context-overflow error.
+- `/compact [focus]` compacts immediately. Mu also compacts automatically before the active
+  model's context fills, reserving response space, and retries once after a context-overflow error.
 - `/btw [question]` opens an ephemeral read-only side conversation using the current
   context as reference. It is not saved or merged back into the main session.
+
+Compaction builds a bounded, incremental handoff from retiring conversation text, guided by
+recent work. It preserves active constraints, decisions, outcomes and decisive evidence. The
+latest user request and current project instructions stay verbatim; large recent tool results
+can be condensed while keeping their call/result pairs. Original session messages remain in
+the journal. No history-retrieval tools are required.
+
+Cheap cleanup removes exact duplicate tool text and superseded instruction snapshots.
+Transient tool images expire after three subsequent model responses by default; image
+pressure can expire already-observed images sooner. User reference images are pinned by
+default, and `evictable: false` pins a tool image. SDK callers can configure
+`imageRetentionTurns` and `imageBudgetTokens`; custom injected snapshots can use
+`retention: { key: "instructions" }` to preserve the latest version verbatim.
+If protected content cannot fit, compaction fails without installing an incomplete handoff.
+Summarization remains lossy; the journal preserves older evidence but automatic recall for a
+new task is outside this policy.
 
 ### Interactive controls
 

@@ -178,15 +178,15 @@ describe("compact", () => {
     expect(messages[plan.keepFromIndex]?.role).toBe("assistant");
   });
 
-  test("bounds tool results only in the summarizer representation", () => {
+  test("preserves complete tool results for summarization", () => {
     const huge = toolResult("x".repeat(5_000));
     const serialized = serializeCompactionMessages([huge]);
-    expect(serialized).toContain("characters omitted");
-    expect(serialized.length).toBeLessThan(2_200);
+    expect(serialized).toContain("x".repeat(5_000));
+    expect(serialized).not.toContain("characters omitted");
     expect(huge.content[0]?.type === "text" && huge.content[0].text.length).toBe(5_000);
   });
 
-  test("retries a context-overflowing compactor with less oldest input", async () => {
+  test("retries a smaller chunk and processes the remaining evidence", async () => {
     const provider = new FakeProvider([
       {
         content: [],
@@ -194,9 +194,10 @@ describe("compact", () => {
         errorMessage: "maximum context length exceeded",
       },
       { content: [{ type: "text", text: "bounded summary" }] },
+      { content: [{ type: "text", text: "final summary" }] },
     ]);
     await compact(longHistory(), { provider, model: fakeModel, keepRecentTokens: 3 });
-    expect(provider.callCount).toBe(2);
+    expect(provider.callCount).toBe(3);
     const first = JSON.stringify(provider.requests[0]);
     const second = JSON.stringify(provider.requests[1]);
     expect(second.length).toBeLessThan(first.length);

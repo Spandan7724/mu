@@ -33,6 +33,7 @@ import {
   DEFAULT_KEEP_RECENT_TOKENS,
   type EventSink,
   type ExtensionHost,
+  estimateTextTokens,
   estimateTokens,
   evaluate,
   isContextTooLongResult,
@@ -102,6 +103,10 @@ export interface AgentOptions {
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
   autoCompact?: boolean;
   compactThreshold?: number;
+  // Transient images expire after three subsequent model responses by default.
+  imageRetentionTurns?: number;
+  // Estimated image allowance; defaults to 10% of the model window.
+  imageBudgetTokens?: number;
   // Snapshot/restore backing for /undo and /redo (profiles supply it).
   checkpointProvider?: CheckpointProvider;
   // Session-owned resources supplied by a profile (background processes,
@@ -339,6 +344,12 @@ export class Agent {
         { text: options.systemPrompt },
       ],
       tools: options.tools,
+      ...(this.options.imageRetentionTurns !== undefined
+        ? { imageRetentionTurns: this.options.imageRetentionTurns }
+        : {}),
+      ...(this.options.imageBudgetTokens !== undefined
+        ? { imageBudgetTokens: this.options.imageBudgetTokens }
+        : {}),
       permissions: options.permissions ?? this.permissions,
       onPermission: (request) => this.resolveChildPermission(request),
       ...(hasChildBudget ? { budget: childBudget } : {}),
@@ -691,6 +702,9 @@ export class Agent {
     });
 
     const micro = microcompact(original, {
+      imageRetentionTurns: this.options.imageRetentionTurns ?? 3,
+      imageBudgetTokens:
+        this.options.imageBudgetTokens ?? Math.floor(this.model.contextWindow * 0.1),
       targetTokens: Math.floor(
         this.model.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) * 0.8,
       ),
@@ -727,6 +741,8 @@ export class Agent {
       const result = await compactContext(working, {
         provider: compactor.provider,
         model: compactor.model,
+        contextTokens: this.compactionContextTokens(this.model),
+        canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
         keepRecentTokens: Math.min(
           DEFAULT_KEEP_RECENT_TOKENS,
           Math.max(2, Math.floor(this.model.contextWindow * 0.2)),
@@ -767,11 +783,29 @@ export class Agent {
       }
 
       emit({ type: "compaction_update", layer: 2, stage: "installing" });
+      for (const replacement of result.replacements ?? []) {
+        const index = working.indexOf(replacement.original);
+        const originalMessage = index < 0 ? replacement.original : original[index];
+        const entryId = originalMessage ? this.tree.entryIdForMessage(originalMessage) : undefined;
+        if (!entryId) throw new Error("Compaction observation could not be mapped to the session");
+        replacements.push({ entryId, message: replacement.message });
+      }
+      const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
+        const index = working.indexOf(message);
+        const entryId = this.tree.entryIdForMessage(
+          index < 0 ? message : (original[index] ?? message),
+        );
+        if (!entryId) throw new Error("Protected context could not be mapped to the session");
+        return entryId;
+      });
       const compacted = applyCompaction(result);
       const firstKept = result.keptMessages[0];
       let firstKeptEntryId: string | null = null;
       if (firstKept) {
-        const workingIndex = working.indexOf(firstKept);
+        const source =
+          result.replacements?.find((replacement) => replacement.message === firstKept)?.original ??
+          firstKept;
+        const workingIndex = working.indexOf(source);
         const originalMessage = workingIndex === -1 ? firstKept : original[workingIndex];
         const mapped = originalMessage ? this.tree.entryIdForMessage(originalMessage) : undefined;
         if (!mapped) throw new Error("Compaction tail could not be mapped to the session");
@@ -794,6 +828,7 @@ export class Agent {
         summary: result.summary,
         ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
         firstKeptEntryId,
+        preservedEntryIds,
         ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
         trigger: "manual",
         contextTokensBefore: tokensBefore,
@@ -1542,13 +1577,23 @@ export class Agent {
 
     let budgetHalt: HaltReason | undefined;
 
-    const currentContextState = (messages: AgentMessage[]) =>
-      contextState(
+    const requestOverhead =
+      estimateTextTokens(JSON.stringify(systemPrompt)) +
+      estimateTextTokens(
+        JSON.stringify(
+          tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+        ),
+      );
+    const currentContextState = (messages: AgentMessage[]) => {
+      const state = contextState(
         runModel,
         messages,
         runContextUsage?.usage,
         runContextUsage?.estimatedTokensAtUsage,
       );
+      const tokens = Math.max(state.tokens, estimateTokens(messages) + requestOverhead);
+      return { ...state, tokens, percent: state.limit > 0 ? tokens / state.limit : 0 };
+    };
 
     const recordUsage = (
       usage: Usage,
@@ -1681,17 +1726,33 @@ export class Agent {
         };
       },
       prepareContext: async (messages) => {
+        const prepared = (next: AgentMessage[], stop = false) => {
+          if (config.streamOpts) {
+            config.streamOpts.maxTokens = Math.max(
+              1,
+              Math.min(
+                runModel.maxOutput,
+                Math.floor(runModel.contextWindow * 0.95 - currentContextState(next).tokens),
+              ),
+            );
+          }
+          return { messages: next, stop };
+        };
         const state = currentContextState(messages);
         this.lastContextPercent = state.percent;
         this.lastContextTokens = state.tokens;
 
         const auto = this.options.autoCompact !== false;
 
-        // Layer 1 first: evicting stale tool output is free, and often enough
-        // to stay under the threshold without an LLM round trip.
+        // Cheap cleanup preserves unique evidence for the handoff. Image expiry
+        // runs even below the text-pressure threshold.
         let working = messages;
-        if (auto && state.percent >= MICROCOMPACT_THRESHOLD && !this.compactRequested) {
+        if (auto && !this.compactRequested) {
           const micro = microcompact(working, {
+            imagesOnly: state.percent < MICROCOMPACT_THRESHOLD,
+            imageRetentionTurns: this.options.imageRetentionTurns ?? 3,
+            imageBudgetTokens:
+              this.options.imageBudgetTokens ?? Math.floor(runModel.contextWindow * 0.1),
             targetTokens: Math.floor(
               runModel.contextWindow *
                 (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) *
@@ -1729,8 +1790,17 @@ export class Agent {
         const after = currentContextState(working);
         const due =
           this.compactRequested ||
-          (auto && shouldCompact(after, this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD));
-        if (!due) return { messages: working };
+          (auto &&
+            shouldCompact(
+              after,
+              Math.min(
+                this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD,
+                1 -
+                  Math.min(runModel.maxOutput, runModel.contextWindow * 0.2) /
+                    runModel.contextWindow,
+              ),
+            ));
+        if (!due) return prepared(working);
 
         const trigger: CompactionTrigger = this.reactiveRecoveryPending
           ? "overflow"
@@ -1759,6 +1829,8 @@ export class Agent {
           const result = await compactContext(working, {
             provider: compactor.provider,
             model: compactor.model,
+            contextTokens: this.compactionContextTokens(runModel, tools, requestOverhead),
+            canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
             keepRecentTokens: Math.min(
               DEFAULT_KEEP_RECENT_TOKENS,
               Math.max(2, Math.floor(runModel.contextWindow * 0.2)),
@@ -1780,7 +1852,7 @@ export class Agent {
             signal: this.controller.signal,
           });
           compactionUsage = result.usage;
-          const compacted = applyCompaction(result);
+          let compacted = applyCompaction(result);
           let summaryEntryId: string | undefined;
 
           // Record the boundary only when its exact tail can be anchored to
@@ -1789,18 +1861,36 @@ export class Agent {
             const firstKept = result.keptMessages[0];
             let firstKeptEntryId: string | null = null;
             if (firstKept) {
-              const mapped = this.tree.entryIdForMessage(firstKept);
+              const source =
+                result.replacements?.find((replacement) => replacement.message === firstKept)
+                  ?.original ?? firstKept;
+              const mapped = this.tree.entryIdForMessage(source);
               if (!mapped) {
                 throw new Error("Compaction tail could not be mapped to the session");
               }
               firstKeptEntryId = mapped;
             }
+            const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
+              const id = this.tree.entryIdForMessage(message);
+              if (!id) throw new Error("Protected context could not be mapped to the session");
+              return id;
+            });
+            const replacements = (result.replacements ?? []).map(({ original, message }) => {
+              const entryId = this.tree.entryIdForMessage(original);
+              if (!entryId)
+                throw new Error("Compaction observation could not be mapped to the session");
+              return { entryId, message };
+            });
+            const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
+            if (replacements.length)
+              candidateTree.append({ type: "microcompaction", replacements });
             const summaryMessage = compacted[0];
-            const boundary = this.tree.append({
+            const boundary = candidateTree.append({
               type: "compaction",
               summary: result.summary,
               ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
               firstKeptEntryId,
+              preservedEntryIds,
               ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
               trigger,
               contextTokensBefore: after.tokens,
@@ -1813,6 +1903,8 @@ export class Agent {
               keptTokens: estimateTokens(result.keptMessages),
               usage: result.usage,
             });
+            this.tree = candidateTree;
+            compacted = candidateTree.messagesAt();
             summaryEntryId = boundary.id;
           }
 
@@ -1832,7 +1924,7 @@ export class Agent {
             ...(summaryEntryId ? { summaryEntryId } : {}),
           });
           this.reactiveRecoveryPending = false;
-          return { messages: compacted, stop: budgetHalt !== undefined };
+          return prepared(compacted, budgetHalt !== undefined);
         } catch (error) {
           const failedUsage =
             compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
@@ -1862,7 +1954,7 @@ export class Agent {
               error instanceof Error ? error.message : "Compaction failed for an unknown reason",
           });
           this.reactiveRecoveryPending = false;
-          return { messages: working, stop: budgetHalt !== undefined };
+          return prepared(working, budgetHalt !== undefined);
         }
       },
       ...(host
@@ -1960,6 +2052,23 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
+  }
+
+  private compactionContextTokens(
+    model: ModelInfo,
+    tools = this.tools,
+    requestOverhead?: number,
+  ): number {
+    const overhead =
+      requestOverhead ??
+      estimateTextTokens(JSON.stringify(resolveSystemPrompt(this.options.systemPrompt))) +
+        estimateTextTokens(
+          JSON.stringify(
+            tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          ),
+        );
+    const response = Math.min(model.maxOutput, Math.floor(model.contextWindow * 0.2));
+    return Math.max(0, Math.floor(model.contextWindow * 0.7) - overhead - response);
   }
 
   private providerFor(model: ModelInfo): Provider {

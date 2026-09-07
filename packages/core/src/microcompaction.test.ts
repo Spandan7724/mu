@@ -29,7 +29,7 @@ function imageResult(): AgentMessage {
 }
 
 describe("microcompaction", () => {
-  test("evicts old tool results and leaves a re-runnable tombstone", () => {
+  test("clears exact duplicates while retaining their newest text", () => {
     const messages: AgentMessage[] = [
       ...Array.from({ length: 10 }, () => toolResult("a lot of file content ".repeat(20))),
       userMessage("recent"),
@@ -42,9 +42,8 @@ describe("microcompaction", () => {
     expect(first?.role === "toolResult" && first.evicted).toBe(true);
     expect(
       first?.role === "toolResult" && first.content[0]?.type === "text" && first.content[0].text,
-    ).toBe(TOMBSTONE);
-    // The tombstone tells the model how to recover.
-    expect(TOMBSTONE).toContain("re-run the tool");
+    ).toContain("identical text retained");
+    expect(result.messages[9]).toBe(messages[9]);
   });
 
   test("images are evicted before text", () => {
