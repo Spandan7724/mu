@@ -83,16 +83,27 @@ describe("Recall history access", () => {
     expect(alternate.matches).toEqual([
       expect.objectContaining({ entryId: abandoned.id, branch: "alternate" }),
     ]);
-    const read = await call(tools, "history_read", { sessionId: "current", entryId: abandoned.id });
+    const read = await call(tools, "history_read", {
+      sessionId: "current",
+      entryId: abandoned.id,
+      includePath: true,
+    });
     expect(read).toContain("E42");
     expect(read).toContain(`session:current#${abandoned.id}`);
     expect(read).toContain('"branch":"alternate"');
+    expect(JSON.parse(read).path).toEqual([
+      expect.objectContaining({ entryId: root.id, branch: "active" }),
+      expect.objectContaining({ entryId: abandoned.id, branch: "alternate" }),
+    ]);
+    expect(JSON.parse(read).nextPathOffset).toBeNull();
     expect(await call(tools, "history_read", { sessionId: "current", entryId: root.id })).toContain(
       `"reference":"session:current#${abandoned.id}","type":"message","branch":"alternate"`,
     );
     const listing = await call(tools, "history_sessions", {});
     expect(listing).toContain('"alternateEntryCount":1');
+    expect(listing).toContain('"alternateHeadCount":1');
     expect(listing).toContain(`"alternateHeads":[{"entryId":"${abandoned.id}"`);
+    expect(listing).toContain('"alternateHeadsOmitted":0');
     expect(await call(tools, "history_search", { query: "added after snapshot" })).toContain(
       '"matches":[]',
     );
@@ -191,6 +202,97 @@ describe("Recall history access", () => {
     expect(first.alternateMatches).toBe(0);
     expect(first.nextOffset).toBe(2);
     expect(first.coverage).toContain("partial");
+  });
+
+  test("deduplicates repeated evidence, reports scan coverage, and keeps pagination stable", async () => {
+    const store = new MemorySessionStore();
+    const current = session("current");
+    const firstSession = session("first");
+    const firstEntry = firstSession.appendMessage(userMessage("same retained finding"));
+    const secondSession = session("second");
+    const secondEntry = secondSession.appendMessage(userMessage("same retained finding"));
+    secondSession.appendMessage(userMessage("another retained finding"));
+    await store.save("first", firstSession);
+    await store.save("second", secondSession);
+    const tools = recallTools(current, store, { directory: "project-a" });
+    const resultSchema = z.object({
+      matches: z.array(
+        z.object({
+          entryId: z.string(),
+          occurrenceCount: z.number(),
+          duplicateReferences: z.array(z.object({ reference: z.string() })),
+        }),
+      ),
+      cursor: z.string(),
+      totalMatches: z.number(),
+      uniqueMatches: z.number(),
+      duplicateMatches: z.number(),
+      candidateSessions: z.number(),
+      scannedSessions: z.number(),
+      excludedSessions: z.number(),
+      scannedEntries: z.number(),
+      activeEntriesScanned: z.number(),
+      alternateEntriesScanned: z.number(),
+      excludedPriorRecall: z.number(),
+      nextOffset: z.number().nullable(),
+    });
+    const first = resultSchema.parse(
+      JSON.parse(await call(tools, "history_search", { query: "retained finding", limit: 1 })),
+    );
+    expect(first).toEqual(
+      expect.objectContaining({
+        totalMatches: 3,
+        uniqueMatches: 2,
+        duplicateMatches: 1,
+        candidateSessions: 3,
+        scannedSessions: 3,
+        excludedSessions: 0,
+        scannedEntries: 3,
+        activeEntriesScanned: 3,
+        alternateEntriesScanned: 0,
+        excludedPriorRecall: 0,
+        nextOffset: 1,
+      }),
+    );
+    expect(first.matches[0]).toEqual(
+      expect.objectContaining({
+        entryId: firstEntry.id,
+        occurrenceCount: 2,
+        duplicateReferences: [
+          expect.objectContaining({ reference: `session:second#${secondEntry.id}` }),
+        ],
+      }),
+    );
+
+    secondSession.appendMessage({
+      role: "toolResult",
+      toolName: "read",
+      toolCallId: "new",
+      timestamp: Date.now(),
+      isError: false,
+      content: [{ type: "text", text: "new higher-ranked retained finding" }],
+    });
+    await store.save("second", secondSession);
+    const stable = resultSchema.parse(
+      JSON.parse(
+        await call(tools, "history_search", {
+          query: "retained finding",
+          cursor: first.cursor,
+          offset: 1,
+          limit: 1,
+        }),
+      ),
+    );
+    expect(stable.cursor).toBe(first.cursor);
+    expect(stable.totalMatches).toBe(3);
+    expect(stable.matches[0]?.occurrenceCount).toBe(1);
+    expect(stable.nextOffset).toBeNull();
+    await expect(
+      call(tools, "history_search", {
+        query: "different search",
+        cursor: first.cursor,
+      }),
+    ).rejects.toThrow("different search options");
   });
 
   test("matches grammatical phrase variants and omits derivative Recall results by default", async () => {
