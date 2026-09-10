@@ -142,6 +142,28 @@ export function formatInstructionsOutput(message: string): string[] {
   return ["", `  ${message}`, ""];
 }
 
+const SUBAGENT_NAME_STYLES: Record<string, Style> = {
+  task: { task: true },
+  search: { toolRead: true },
+  counsel: { counsel: true },
+  recall: { toolRead: true },
+};
+
+export function formatSubagentsOutput(message: string, depth: ColorDepth): string[] {
+  return [
+    ...message
+      .trimEnd()
+      .split("\n")
+      .map((line) => {
+        if (line.length === 0) return "";
+        const match = /^ {2}(task|search|counsel|recall)(?= \(| —)/.exec(line);
+        if (!match?.[1]) return `  ${line}`;
+        return `  ${line.replace(match[1], styleText(match[1], SUBAGENT_NAME_STYLES[match[1]] ?? {}, depth))}`;
+      }),
+    "",
+  ];
+}
+
 const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
   restrictive: { link: true },
   permissive: { permissive: true },
@@ -1281,7 +1303,9 @@ export async function runInteractive(
       commitLines(
         parsed?.name === "instructions"
           ? formatInstructionsOutput(result.message)
-          : [`  ${result.message}`],
+          : parsed?.name === "subagents"
+            ? formatSubagentsOutput(result.message, depth)
+            : [`  ${result.message}`],
         source,
       );
     }

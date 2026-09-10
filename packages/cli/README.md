@@ -86,6 +86,7 @@ user's repository.
 | `/export [path.md]` | Export the complete active branch |
 | `/btw [question]` | Open an ephemeral read-only side conversation |
 | `/instructions [reload]`, `/reload` | Inspect or reload repository instructions |
+| `/subagents` | List subagents, their roles, and how to invoke them |
 | `/cost` | Show session token and cost totals |
 | `/keybindings` | Show Mu-specific keyboard controls |
 

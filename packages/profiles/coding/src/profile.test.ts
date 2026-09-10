@@ -61,6 +61,30 @@ describe("codingProfile", () => {
     ]);
   });
 
+  test("explains the general and specialized subagents", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const command = profile.commands?.find((candidate) => candidate.name === "subagents");
+    const result = await command?.run({
+      args: "",
+      inject: () => {},
+      print: () => {},
+      getModel: () => "test/model",
+      setModel: () => {},
+    });
+
+    expect(result && "message" in result ? result.message : "").toBe(
+      [
+        "Subagents — ask mu in plain language:",
+        "",
+        "  task (general) — Independent implementation or checks. Say “Delegate X.”",
+        "  search — Read-only code investigation. Say “Use Search to trace X.”",
+        "  counsel — Second opinion on hard decisions. Say “Ask Counsel about X.”",
+        "  recall — Past sessions, not current files. Must say “Ask Recall about X.”",
+        "",
+      ].join("\n"),
+    );
+  });
+
   test("read-only tools are marked concurrency-safe, mutating ones are not", async () => {
     const profile = await codingProfile({ root: await scratch() });
     const byName = new Map(profile.toolset.map((t) => [t.name, t]));

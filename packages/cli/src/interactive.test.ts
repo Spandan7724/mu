@@ -15,6 +15,7 @@ import {
   formatInstructionsOutput,
   formatPermissionMode,
   formatResumeHint,
+  formatSubagentsOutput,
   formatTerminalTitle,
   initializeInteractiveSession,
   modelPickerDescription,
@@ -42,6 +43,34 @@ test("instructions output has one blank row above and below", () => {
   expect(formatInstructionsOutput("instructions · 1 file\n  project AGENTS.md")).toEqual([
     "",
     "  instructions · 1 file\n  project AGENTS.md",
+    "",
+  ]);
+});
+
+test("subagent output colors each name and leaves one blank row below", () => {
+  const message = [
+    "Subagents — ask mu in plain language:",
+    "",
+    "  task (general) — worker",
+    "  search — investigator",
+    "  counsel — advisor",
+    "  recall — historian",
+    "",
+  ].join("\n");
+  const colored = formatSubagentsOutput(message, "truecolor");
+
+  expect(colored[2]).toContain("\u001b[38;2;86;182;232mtask\u001b[0m");
+  expect(colored[3]).toContain("\u001b[38;2;129;140;248msearch\u001b[0m");
+  expect(colored[4]).toContain("\u001b[38;2;230;195;132mcounsel\u001b[0m");
+  expect(colored[5]).toContain("\u001b[38;2;129;140;248mrecall\u001b[0m");
+  expect(colored.at(-1)).toBe("");
+  expect(colored.map(stripAnsi)).toEqual([
+    "  Subagents — ask mu in plain language:",
+    "",
+    "    task (general) — worker",
+    "    search — investigator",
+    "    counsel — advisor",
+    "    recall — historian",
     "",
   ]);
 });

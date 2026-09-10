@@ -56,6 +56,16 @@ export interface CodingProfile extends Profile {
   instructions: InstructionLoader;
 }
 
+const SUBAGENTS_HELP = [
+  "Subagents — ask mu in plain language:",
+  "",
+  "  task (general) — Independent implementation or checks. Say “Delegate X.”",
+  "  search — Read-only code investigation. Say “Use Search to trace X.”",
+  "  counsel — Second opinion on hard decisions. Say “Ask Counsel about X.”",
+  "  recall — Past sessions, not current files. Must say “Ask Recall about X.”",
+  "",
+].join("\n");
+
 async function userInstructionSettings(
   home: string,
   onWarning: (message: string) => void,
@@ -224,6 +234,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
             message: instructionLoader.formatStatus("instructions reloaded"),
           };
         },
+      },
+      {
+        name: "subagents",
+        description: "List subagents and when to use them",
+        run: () => ({ handled: true, message: SUBAGENTS_HELP }),
       },
     ],
     // What compaction must not lose: which files this session touched.

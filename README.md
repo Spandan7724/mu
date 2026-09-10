@@ -130,6 +130,7 @@ The default profile provides:
 - durable JSONL session trees, transcript export, and context compaction;
 - managed `task` delegation plus coding-specific `search`, `counsel`, and `recall` subagents.
 
+Run `/subagents` for a brief description of each subagent and an example of how to invoke it.
 Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate
 retained sessions and branches from this project. Recall reads recorded history, not the
 workspace, and returns session/entry citations. It uses Search's same-provider model
