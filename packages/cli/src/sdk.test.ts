@@ -44,7 +44,7 @@ describe("public SDK factory", () => {
     });
 
     expect(agent.tools.map((candidate) => candidate.name)).toEqual(
-      expect.arrayContaining(["read", "bash", "task", "search", "counsel"]),
+      expect.arrayContaining(["read", "bash", "task", "search", "counsel", "recall"]),
     );
     const result = await agent.run("Read note.txt");
     const toolResult = result.messages.find((message) => message.role === "toolResult");
@@ -73,7 +73,7 @@ describe("public SDK factory", () => {
     expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
   });
 
-  test("keeps search and counsel exclusive to the coding profile", async () => {
+  test("keeps search, counsel and recall exclusive to the coding profile", async () => {
     const profile: Profile = {
       name: "research",
       toolset: [],

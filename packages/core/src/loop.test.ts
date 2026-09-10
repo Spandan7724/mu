@@ -57,6 +57,48 @@ describe("agent loop", () => {
     expect(events.filter((e) => e.type === "turn_start").length).toBe(2);
   });
 
+  test("a direct tool response becomes the exact final assistant message", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "toolCall", id: "c1", name: "echo", arguments: { text: "one" } }],
+      },
+      { content: [{ type: "text", text: "must not run" }] },
+    ]);
+    const { events, emit } = collector();
+    const result = await runLoop(
+      [userMessage("hi")],
+      ctx([
+        echoTool({
+          execute: async () => ({
+            content: [{ type: "text", text: "model-facing envelope" }],
+            directResponse: "exact answer `session:one#entry`",
+          }),
+        }),
+      ]),
+      baseConfig(provider),
+      emit,
+    );
+
+    expect(provider.callCount).toBe(1);
+    expect(result.reason).toBe("done");
+    expect(result.messages.at(-1)).toEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: [{ type: "text", text: "exact answer `session:one#entry`" }],
+        stopReason: "end",
+      }),
+    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "message_end" &&
+          event.message.role === "assistant" &&
+          event.message.content[0]?.type === "text" &&
+          event.message.content[0].text === "exact answer `session:one#entry`",
+      ),
+    ).toBe(true);
+  });
+
   test("awaits asynchronous progress sinks before tool completion", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "chatty", arguments: {} }] },

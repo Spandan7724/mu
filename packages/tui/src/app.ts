@@ -403,7 +403,7 @@ type TranscriptItem =
       expanded: boolean;
     };
 
-const SUBAGENT_TOOL_NAMES = new Set(["task", "search", "counsel"]);
+const SUBAGENT_TOOL_NAMES = new Set(["task", "search", "recall", "counsel"]);
 
 function isSubagentTool(item: TranscriptItem | undefined): boolean {
   return item?.kind === "tool" && SUBAGENT_TOOL_NAMES.has(item.info.toolName);

@@ -98,6 +98,93 @@ const result: ToolResultMessage = {
 };
 
 describe("subagent transcript rendering", () => {
+  test("renders compact, live, and expanded Recall rows with history traces", () => {
+    const renderer = subagentRenderers.recall;
+    if (!renderer) throw new Error("missing recall renderer");
+    const recallResult = {
+      ...result,
+      toolCallId: "recall-1",
+      toolName: "recall",
+      details: {
+        ...(result.details as object),
+        kind: "recall",
+        description: "Find the prior parser decision",
+        messages: [
+          {
+            ...((result.details as { messages: unknown[] }).messages[0] as object),
+            content: [
+              {
+                type: "toolCall",
+                id: "history-search-1",
+                name: "history_search",
+                arguments: { query: "parser ownership" },
+              },
+              {
+                type: "toolCall",
+                id: "history-read-1",
+                name: "history_read",
+                arguments: { sessionId: "prior-session", entryId: "entry-42" },
+              },
+            ],
+          },
+          {
+            role: "toolResult",
+            toolCallId: "history-search-1",
+            toolName: "history_search",
+            content: [{ type: "text", text: "entry-42" }],
+            isError: false,
+            timestamp: 2,
+          },
+          {
+            role: "toolResult",
+            toolCallId: "history-read-1",
+            toolName: "history_read",
+            content: [{ type: "text", text: "The parser owns normalization." }],
+            isError: false,
+            timestamp: 3,
+          },
+        ],
+      },
+    } as ToolResultMessage;
+    const compact = renderer(
+      {
+        toolName: "recall",
+        args: { query: "Find the prior parser decision" },
+        result: recallResult,
+      },
+      { width: 100, depth: "none" },
+      rendererRegistry(),
+    ).map(stripAnsi);
+    const live = renderer(
+      {
+        toolName: "recall",
+        args: { query: "Find the prior parser decision" },
+        running: true,
+        elapsedMs: 12_000,
+      },
+      { width: 100, depth: "none", spinnerFrame: 1 },
+    ).map(stripAnsi);
+    const expanded = renderer(
+      {
+        toolName: "recall",
+        args: { query: "Find the prior parser decision" },
+        result: recallResult,
+        expanded: true,
+      },
+      { width: 100, depth: "none" },
+      rendererRegistry(),
+    ).map(stripAnsi);
+
+    expect(compact[0]).toContain("recalled history Find the prior parser");
+    expect(compact[0]).toContain("✓");
+    expect(live[0]).toContain("⠙ recalling history Find the prior parser decision · 12s");
+    expect(expanded[0]).toContain("recalled history");
+    expect(expanded).toContain("    activity · 2 actions");
+    expect(expanded).toContain("      │ history_search parser ownership · entry-42");
+    expect(expanded).toContain("      │ history_read · The parser owns normalization.");
+    expect(expanded).toContain("    result");
+  });
+
   test("shows the full prompt, grouped activity, and an indented Markdown result", () => {
     const renderer = subagentRenderers.search;
     if (!renderer) throw new Error("missing search renderer");
@@ -364,13 +451,18 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("      │ inspected widget · ✓ 9ms");
   });
 
-  test("malformed nested delegation details cannot recursively render subagents", () => {
+  test.each([
+    "task",
+    "search",
+    "counsel",
+    "recall",
+  ])("malformed nested %s details cannot recursively render subagents", (kind) => {
     const registry = rendererRegistry();
     const nestedResult: ToolResultMessage = {
       ...result,
       toolCallId: "nested-task",
-      toolName: "task",
-      details: { ...(result.details as object), kind: "task" },
+      toolName: kind,
+      details: { ...(result.details as object), kind },
     };
     const malformed: ToolResultMessage = {
       ...result,
@@ -383,8 +475,8 @@ describe("subagent transcript rendering", () => {
               {
                 type: "toolCall",
                 id: "nested-task",
-                name: "task",
-                arguments: { prompt: "recurse" },
+                name: kind,
+                arguments: { query: "recurse through history" },
               },
             ],
             model: "fake/fake-1",
@@ -416,6 +508,6 @@ describe("subagent transcript rendering", () => {
       .join("\n");
     expect(expanded).toContain("searched codebase");
     expect(expanded).not.toContain("activity · 1 action");
-    expect(expanded).not.toContain("delegated");
+    expect(expanded).not.toContain("recalled history");
   });
 });

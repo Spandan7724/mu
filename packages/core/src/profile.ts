@@ -43,6 +43,9 @@ export interface ProfileSubagents {
   inspectionTools: string[];
   searchPrompt?: string;
   counselPrompt?: string;
+  // Exact header environment fields identifying the history scope. Without
+  // these, recall is limited to the invoking session.
+  recallScope?: Record<string, string>;
 }
 
 // A profile bundles everything that makes the kernel behave as a particular

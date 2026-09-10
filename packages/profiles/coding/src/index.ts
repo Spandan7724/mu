@@ -186,6 +186,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       inspectionTools: ["read", "ls", "bash"],
       searchPrompt: CODING_SEARCH_PROMPT,
       counselPrompt: CODING_COUNSEL_PROMPT,
+      recallScope: { directory: root },
     },
     refreshContext: (messages, context) =>
       instructionLoader.refreshedMessages(messages, context.sessionId),

@@ -23,6 +23,7 @@ import { wrapLine, wrapText } from "./wrap.ts";
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
 export const EXPANDED_OUTPUT_LINES = 200;
+const SUBAGENT_KINDS: ReadonlySet<string> = new Set(["task", "search", "recall", "counsel"]);
 
 export interface ToolRenderInfo {
   toolName: string;
@@ -437,7 +438,7 @@ function subagentDetails(info: ToolRenderInfo): SubagentDetails | undefined {
   const candidate = details as Partial<SubagentDetails>;
   if (
     candidate.type !== "subagent" ||
-    !["task", "search", "counsel"].includes(candidate.kind ?? "") ||
+    !SUBAGENT_KINDS.has(candidate.kind ?? "") ||
     typeof candidate.description !== "string" ||
     typeof candidate.model !== "string" ||
     typeof candidate.thinkingLevel !== "string" ||
@@ -464,7 +465,7 @@ function progressUpdate(details: unknown): SubagentProgressUpdate | undefined {
   const candidate = details as Partial<SubagentProgressUpdate>;
   if (
     candidate.type !== "subagent-progress" ||
-    !["task", "search", "counsel"].includes(candidate.kind ?? "") ||
+    !SUBAGENT_KINDS.has(candidate.kind ?? "") ||
     typeof candidate.description !== "string" ||
     typeof candidate.model !== "string" ||
     typeof candidate.thinkingLevel !== "string" ||
@@ -540,6 +541,7 @@ const SUBAGENT_ACTIONS: Record<
 > = {
   task: { running: "delegating", completed: "delegated", tone: "task" },
   search: { running: "searching codebase", completed: "searched codebase", tone: "read" },
+  recall: { running: "recalling history", completed: "recalled history", tone: "read" },
   counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "counsel" },
 };
 
@@ -570,7 +572,7 @@ function subagentToolCalls(messages: AgentMessage[], running: boolean): Subagent
       // Managed children never receive delegation tools. Persisted details that
       // claim otherwise are malformed and must not recursively invoke these
       // renderers through an untrusted nested result.
-      if (["task", "search", "counsel"].includes(block.name)) return [];
+      if (SUBAGENT_KINDS.has(block.name)) return [];
       const result = results.get(block.id);
       return [
         {
@@ -803,6 +805,7 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
 export const subagentRenderers: Record<string, ToolRendererFn> = {
   task: makeSubagentRenderer("task"),
   search: makeSubagentRenderer("search"),
+  recall: makeSubagentRenderer("recall"),
   counsel: makeSubagentRenderer("counsel"),
 };
 

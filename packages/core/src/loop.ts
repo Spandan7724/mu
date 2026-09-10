@@ -214,6 +214,7 @@ export async function runLoop(
 
       const calls = toolCallsOf(message);
       const toolResults: ToolResultMessage[] = [];
+      let directResponse: string | undefined;
       hasMoreToolCalls = false;
 
       if (calls.length > 0) {
@@ -224,6 +225,7 @@ export async function runLoop(
             ? await failTruncatedCalls(calls, emit)
             : await executeCalls(calls, message, currentContext, currentConfig, emit, abort);
         toolResults.push(...batch.results);
+        directResponse = batch.directResponse;
         pending.push(...batch.steering);
         hasMoreToolCalls = !batch.terminate;
         for (const result of batch.results) {
@@ -231,7 +233,29 @@ export async function runLoop(
           newMessages.push(result);
         }
 
-        const nudge = detectDoomLoop(calls, recentCalls);
+        if (batch.directResponse !== undefined) {
+          const direct: AssistantMessage = {
+            role: "assistant",
+            content: [{ type: "text", text: batch.directResponse }],
+            model: `${currentConfig.model.provider}/${currentConfig.model.id}`,
+            usage: {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              costUsd: 0,
+            },
+            stopReason: "end",
+            timestamp: Date.now(),
+          };
+          currentContext.messages.push(direct);
+          newMessages.push(direct);
+          await emit({ type: "message_start", message: direct });
+          await emit({ type: "message_end", message: direct });
+          hasMoreToolCalls = false;
+        }
+
+        const nudge = directResponse === undefined ? detectDoomLoop(calls, recentCalls) : undefined;
         if (nudge) {
           currentContext.messages.push(nudge);
           newMessages.push(nudge);
@@ -263,6 +287,8 @@ export async function runLoop(
       }
 
       if (await currentConfig.shouldStopAfterTurn?.(turn)) return finish("done");
+
+      if (directResponse !== undefined) return finish("done");
 
       pending.push(...((await currentConfig.getSteeringMessages?.()) ?? []));
     }
@@ -398,6 +424,7 @@ async function streamAssistant(
 interface ToolBatch {
   results: ToolResultMessage[];
   terminate: boolean;
+  directResponse?: string;
   steering: AgentMessage[];
 }
 
@@ -585,6 +612,7 @@ async function executeCalls(
 ): Promise<ToolBatch> {
   const results: ToolResultMessage[] = [];
   const terminateFlags: boolean[] = [];
+  let directResponse: string | undefined;
   let steering: AgentMessage[] = [];
 
   const runOne = async (call: ToolCallContent): Promise<ToolResultMessage> => {
@@ -600,6 +628,7 @@ async function executeCalls(
         ? { result: preparation.result, isError: true }
         : await runPrepared(preparation.prepared, assistantMessage, context, config, emit, signal);
     terminateFlags.push(outcome.result.terminate === true);
+    directResponse ??= outcome.result.directResponse;
     return resultMessage(call, outcome.result, outcome.isError);
   };
 
@@ -646,6 +675,7 @@ async function executeCalls(
   return {
     results,
     terminate: terminateFlags.length > 0 && terminateFlags.every(Boolean),
+    ...(directResponse !== undefined ? { directResponse } : {}),
     steering,
   };
 }

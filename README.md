@@ -128,7 +128,15 @@ The default profile provides:
   Git repository;
 - `/undo`, `/redo`, `/fork`, and `/diff` over the session and its workspace changes;
 - durable JSONL session trees, transcript export, and context compaction;
-- managed `task` delegation plus coding-specific `search` and `counsel` subagents.
+- managed `task` delegation plus coding-specific `search`, `counsel`, and `recall` subagents.
+
+Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate
+retained sessions and branches from this project. Recall reads recorded history, not the
+workspace, and returns session/entry citations. It uses Search's same-provider model
+routing, with the current model as fallback. Its explicit-only invocation policy is an
+instruction to the parent model, not a separate classifier or authorization gate.
+Other projects and separate clones/worktrees are not automatically included. SDK agents
+can recall only history available in their configured session store (in-memory by default).
 
 Read-only operations are allowed by default. File changes and commands are checked by the
 coding profile's permission rules. `/permissions` changes the mode for the current process;

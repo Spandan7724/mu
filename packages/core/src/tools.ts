@@ -6,6 +6,8 @@ export interface ToolResult {
   details?: unknown; // renderer/session-visible only
   usage?: Usage; // provider usage incurred by work performed inside this tool
   isError?: boolean;
+  // Emit this exact text as the final assistant response without another model call.
+  directResponse?: string;
   // When every call in a batch returns terminate, the loop stops after it.
   terminate?: boolean;
 }

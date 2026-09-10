@@ -169,6 +169,9 @@ export interface ChildAgentOptions {
   tools: AnyTool[];
   permissions?: PermissionRule[];
   budget?: Budget;
+  // History-only children must not run profile context loaders or inherit
+  // instructions that direct them to external resources.
+  inheritContext?: boolean;
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -340,7 +343,7 @@ export class Agent {
       model,
       provider: this.providerFor(model),
       systemPrompt: [
-        ...resolveSystemPrompt(this.options.systemPrompt),
+        ...(options.inheritContext === false ? [] : resolveSystemPrompt(this.options.systemPrompt)),
         { text: options.systemPrompt },
       ],
       tools: options.tools,
@@ -361,7 +364,9 @@ export class Agent {
       thinkingLevel: options.thinkingLevel ?? this.currentThinking,
       ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
       ...(this.options.getCredentials ? { getCredentials: this.options.getCredentials } : {}),
-      ...(this.options.refreshContext ? { refreshContext: this.options.refreshContext } : {}),
+      ...(options.inheritContext !== false && this.options.refreshContext
+        ? { refreshContext: this.options.refreshContext }
+        : {}),
     });
   }
 
