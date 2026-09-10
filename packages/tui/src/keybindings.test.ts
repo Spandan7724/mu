@@ -5,7 +5,7 @@ describe("KEYBINDING_GROUPS", () => {
   test("every binding documented in app.ts's key handling is present", () => {
     const all = KEYBINDING_GROUPS.flatMap((group) => group.bindings.map((b) => b.keys));
     // Global, always-on shortcuts.
-    for (const key of ["ctrl+c", "ctrl+o", "ctrl+t", "ctrl+j"]) {
+    for (const key of ["ctrl+c", "ctrl+o", "ctrl+t", "alt+t", "ctrl+j"]) {
       expect(all).toContain(key);
     }
     // The two universal newline paths, and the protocol-dependent one.

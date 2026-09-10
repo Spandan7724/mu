@@ -13,3 +13,4 @@ packages/ripgrep-*/UNLICENSE
 CLAUDE.md
 .claude/
 examples/previews/
+scripts/palette-preview.ts

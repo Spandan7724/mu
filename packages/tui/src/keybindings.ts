@@ -24,6 +24,7 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
         keys: "ctrl+t",
         description: "cycle the model's thinking effort, if it supports more than one level",
       },
+      { keys: "alt+t", description: "collapse all expanded tool activity" },
       {
         keys: "shift+tab",
         description: "cycle permission modes",

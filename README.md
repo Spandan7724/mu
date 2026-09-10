@@ -187,6 +187,7 @@ diffs, tool activity, approvals, and live background output. Notable controls ar
 |---|---|
 | `Ctrl+O` | Review the transcript and expand tool activity |
 | `Ctrl+T` | Cycle the active model's reasoning level |
+| `Alt+T` | Collapse all expanded tool activity |
 | `Shift+Tab` | Cycle permission modes |
 | `Enter` during a run | Steer before the next model request |
 | `Tab` during a run | Queue a follow-up turn |

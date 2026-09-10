@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CODING_PERMISSION_MODES } from "@mu/profile-coding";
-import { App, RendererRegistry, stripAnsi, wrapText } from "@mu/tui";
+import { App, RendererRegistry, stripAnsi, styleText, wrapText } from "@mu/tui";
 import {
   Agent,
   defaultModelId,
@@ -59,10 +59,12 @@ test("subagent output colors each name and leaves one blank row below", () => {
   ].join("\n");
   const colored = formatSubagentsOutput(message, "truecolor");
 
-  expect(colored[2]).toContain("\u001b[38;2;86;182;232mtask\u001b[0m");
-  expect(colored[3]).toContain("\u001b[38;2;129;140;248msearch\u001b[0m");
-  expect(colored[4]).toContain("\u001b[38;2;230;195;132mcounsel\u001b[0m");
-  expect(colored[5]).toContain("\u001b[38;2;129;140;248mrecall\u001b[0m");
+  // Asserted through styleText so this checks the role each name takes, not the
+  // hue the palette currently gives that role.
+  expect(colored[2]).toContain(styleText("task", { task: true }, "truecolor"));
+  expect(colored[3]).toContain(styleText("search", { toolRead: true }, "truecolor"));
+  expect(colored[4]).toContain(styleText("counsel", { counsel: true }, "truecolor"));
+  expect(colored[5]).toContain(styleText("recall", { toolRead: true }, "truecolor"));
   expect(colored.at(-1)).toBe("");
   expect(colored.map(stripAnsi)).toEqual([
     "  Subagents — ask mu in plain language:",

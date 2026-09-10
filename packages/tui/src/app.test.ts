@@ -2351,6 +2351,13 @@ describe("tool output toggle", () => {
     expect(expanded).toContain("ran bun test");
     expect(expanded).toContain("│ line 6");
 
+    feed(app, `${ESC}t`);
+    expect(app.currentMode).toBe("activity");
+    expect(app.areToolOutputsExpanded).toBe(false);
+    expect(commands).toEqual([]);
+
+    press(app, "right");
+    expect(app.areToolOutputsExpanded).toBe(true);
     feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
     expect(app.areToolOutputsExpanded).toBe(true);

@@ -91,8 +91,9 @@ user's repository.
 | `/keybindings` | Show Mu-specific keyboard controls |
 
 During a run, Enter steers the current turn and Tab queues a follow-up. `Ctrl+O` opens
-transcript review, `Shift+Tab` cycles permission modes, and a leading `!` runs a command
-directly without a model call. Direct shell commands are still recorded as session context.
+transcript review, `Alt+T` collapses expanded tool activity, `Shift+Tab` cycles permission
+modes, and a leading `!` runs a command directly without a model call. Direct shell commands
+are still recorded as session context.
 
 ## Providers
 

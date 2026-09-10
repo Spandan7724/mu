@@ -25,35 +25,37 @@ export function detectColorDepth(
 const ESC = "\u001b[";
 export const RESET = "\u001b[0m";
 
-// mu's accent: periwinkle blue at truecolor, bright blue below it.
-const ACCENT_RGB = [95, 135, 255] as const;
-const ACCENT_256 = 69;
+// mu's accent: mint green at truecolor, bright green below it.
+const ACCENT_RGB = [61, 255, 166] as const;
+const ACCENT_256 = 85;
 // Headings are mu's own colour rather than a hue of their own: a heading in mu's
 // prose is mu speaking, and with eleven roles placed there is no slot left on the
 // wheel that clears its neighbours. Aliased rather than copied so the two cannot
 // drift apart silently.
 const HEADING_RGB = ACCENT_RGB;
 const HEADING_256 = ACCENT_256;
-const LINK_RGB = [96, 165, 250] as const;
-const LINK_256 = 75;
+const LINK_RGB = [59, 130, 246] as const;
+const LINK_256 = 69;
 const CODE_RGB = [212, 212, 212] as const;
 const CODE_256 = 188;
 const CODE_ACCENT_RGB = [205, 214, 244] as const;
 const CODE_ACCENT_256 = 189;
 const RESUME_HINT_RGB = [102, 102, 102] as const;
 const RESUME_HINT_256 = 241;
-const PERMISSIVE_RGB = [74, 222, 128] as const;
-const PERMISSIVE_256 = 114;
+// Green is the accent's own hue now, so permissive borrows the cool end of the
+// ramp rather than competing with mu's identity for the same signal.
+const PERMISSIVE_RGB = [20, 184, 166] as const;
+const PERMISSIVE_256 = 37;
 // Action classes. A tool cell's verb is the one word that says what happened, so
 // it carries the hue and the rest of the row stays quiet.
-const TOOL_READ_RGB = [129, 140, 248] as const;
-const TOOL_READ_256 = 105;
+const TOOL_READ_RGB = [52, 175, 210] as const;
+const TOOL_READ_256 = 74;
 const TOOL_MUTATE_RGB = [230, 161, 92] as const;
 const TOOL_MUTATE_256 = 173;
-const TOOL_EXEC_RGB = [177, 185, 249] as const;
-const TOOL_EXEC_256 = 147;
-const TASK_RGB = [86, 182, 232] as const;
-const TASK_256 = 74;
+const TOOL_EXEC_RGB = [59, 130, 246] as const;
+const TOOL_EXEC_256 = 69;
+const TASK_RGB = [20, 184, 166] as const;
+const TASK_256 = 37;
 // Counsel is deliberation rather than inspection or mutation. Warm amber keeps
 // it visually separate from mu's identity and the cool tool-action hues.
 const COUNSEL_RGB = [230, 195, 132] as const;
@@ -124,7 +126,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${ACCENT_RGB[0]};${ACCENT_RGB[1]};${ACCENT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${ACCENT_256}`);
-    else codes.push("94");
+    else codes.push("92");
   }
   if (style.green) codes.push("32");
   if (style.red) codes.push("31");
@@ -132,7 +134,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
-    else codes.push("94");
+    else codes.push("92");
   }
   if (style.link) {
     if (depth === "truecolor") codes.push(`38;2;${LINK_RGB[0]};${LINK_RGB[1]};${LINK_RGB[2]}`);
@@ -158,13 +160,13 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${PERMISSIVE_RGB[0]};${PERMISSIVE_RGB[1]};${PERMISSIVE_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${PERMISSIVE_256}`);
-    else codes.push("32");
+    else codes.push("36");
   }
   if (style.toolRead) {
     if (depth === "truecolor")
       codes.push(`38;2;${TOOL_READ_RGB[0]};${TOOL_READ_RGB[1]};${TOOL_READ_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TOOL_READ_256}`);
-    else codes.push("94");
+    else codes.push("96");
   }
   if (style.toolMutate) {
     if (depth === "truecolor")
@@ -181,7 +183,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
   if (style.task) {
     if (depth === "truecolor") codes.push(`38;2;${TASK_RGB[0]};${TASK_RGB[1]};${TASK_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${TASK_256}`);
-    else codes.push("96");
+    else codes.push("36");
   }
   if (style.counsel) {
     if (depth === "truecolor")

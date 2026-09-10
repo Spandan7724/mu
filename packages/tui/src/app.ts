@@ -2357,6 +2357,11 @@ export class App {
       return;
     }
 
+    if (key.alt && !key.ctrl && key.name === "t") {
+      this.handleLocalCommand(`/${COLLAPSE_COMMAND.label}`);
+      return;
+    }
+
     // Shift+Tab cycles permission modes. The mode list itself is
     // profile-owned (the surface decides what "next" means), so this is a
     // bare signal — unlike Ctrl+T, App holds no permission-mode state.
