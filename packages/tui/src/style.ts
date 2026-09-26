@@ -25,9 +25,9 @@ export function detectColorDepth(
 const ESC = "\u001b[";
 export const RESET = "\u001b[0m";
 
-// mu's accent: mint green at truecolor, bright green below it.
-const ACCENT_RGB = [61, 255, 166] as const;
-const ACCENT_256 = 85;
+// mu's accent: seafoam at truecolor, bright cyan below it.
+const ACCENT_RGB = [45, 212, 191] as const;
+const ACCENT_256 = 43;
 // Headings are mu's own colour rather than a hue of their own: a heading in mu's
 // prose is mu speaking, and with eleven roles placed there is no slot left on the
 // wheel that clears its neighbours. Aliased rather than copied so the two cannot
@@ -42,8 +42,7 @@ const CODE_ACCENT_RGB = [205, 214, 244] as const;
 const CODE_ACCENT_256 = 189;
 const RESUME_HINT_RGB = [102, 102, 102] as const;
 const RESUME_HINT_256 = 241;
-// Green is the accent's own hue now, so permissive borrows the cool end of the
-// ramp rather than competing with mu's identity for the same signal.
+// Permissive stays off green, which reads as success rather than a mode.
 const PERMISSIVE_RGB = [20, 184, 166] as const;
 const PERMISSIVE_256 = 37;
 // Action classes. A tool cell's verb is the one word that says what happened, so
@@ -126,7 +125,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${ACCENT_RGB[0]};${ACCENT_RGB[1]};${ACCENT_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${ACCENT_256}`);
-    else codes.push("92");
+    else codes.push("96");
   }
   if (style.green) codes.push("32");
   if (style.red) codes.push("31");
@@ -134,7 +133,7 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
-    else codes.push("92");
+    else codes.push("96");
   }
   if (style.link) {
     if (depth === "truecolor") codes.push(`38;2;${LINK_RGB[0]};${LINK_RGB[1]};${LINK_RGB[2]}`);
