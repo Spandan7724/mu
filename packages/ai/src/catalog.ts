@@ -121,7 +121,6 @@ export interface ModelDiscoveryOptions {
   url?: string;
   signal?: AbortSignal;
   getCredentials?: (provider: string) => Promise<Credential | undefined>;
-  clientVersion?: string;
   providers?: Iterable<Provider>;
   onWarning?: (warning: string) => void;
 }
@@ -349,7 +348,6 @@ async function discoverModelSources(options: ModelDiscoveryOptions): Promise<Dis
           ...(options.fetch ? { fetch: options.fetch as typeof fetch } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
           ...(getCredentials ? { getCredentials: () => getCredentials(provider.id) } : {}),
-          ...(options.clientVersion ? { clientVersion: options.clientVersion } : {}),
           currentModels,
         })
         .then((discovered) => {

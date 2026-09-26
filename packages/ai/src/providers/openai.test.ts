@@ -9,9 +9,15 @@ import type {
   ProviderModelDiscoveryOptions,
   ProviderStreamEvent,
 } from "../types.ts";
-import { discoverOpenAICodexModels, streamOpenAI } from "./openai.ts";
+import {
+  CODEX_CLIENT_VERSION_FLOOR,
+  codexClientVersion,
+  discoverOpenAICodexModels,
+  streamOpenAI,
+} from "./openai.ts";
 
 const model = findModel("openai/gpt-5.1") as ModelInfo;
+const CODEX_RELEASE_URL = "https://registry.npmjs.org/@openai/codex/latest";
 
 const ctx: LlmContext = {
   systemPrompt: [{ text: "You are mu." }],
@@ -30,7 +36,6 @@ describe("discoverOpenAICodexModels", () => {
     let requestUrl = "";
     let requestHeaders = new Headers();
     const discovered = await discoverOpenAICodexModels({
-      clientVersion: "1.2.3",
       currentModels: [
         {
           provider: "openai-codex",
@@ -48,6 +53,7 @@ describe("discoverOpenAICodexModels", () => {
         accountId: "account",
       }),
       fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        if (String(input) === CODEX_RELEASE_URL) return Response.json({ version: "9.8.7" });
         requestUrl = String(input);
         requestHeaders = new Headers(init?.headers);
         return Response.json({
@@ -92,7 +98,7 @@ describe("discoverOpenAICodexModels", () => {
       }) as unknown as typeof fetch,
     });
 
-    expect(requestUrl).toBe("https://chatgpt.com/backend-api/codex/models?client_version=1.2.3");
+    expect(requestUrl).toBe("https://chatgpt.com/backend-api/codex/models?client_version=9.8.7");
     expect(requestHeaders.get("authorization")).toBe("Bearer access");
     expect(requestHeaders.get("chatgpt-account-id")).toBe("account");
     expect(requestHeaders.get("originator")).toBe("mu");
@@ -129,7 +135,7 @@ describe("discoverOpenAICodexModels", () => {
     expect(fetched).toBe(false);
   });
 
-  test("skips an empty account catalog so bundled Codex models remain available", async () => {
+  test("reports an empty account catalog instead of silently keeping bundled models", async () => {
     const options: ProviderModelDiscoveryOptions = {
       currentModels: [],
       getCredentials: async () => ({
@@ -137,10 +143,44 @@ describe("discoverOpenAICodexModels", () => {
         accessToken: "access",
         accountId: "account",
       }),
-      fetch: (async () => Response.json({ models: [] })) as unknown as typeof fetch,
+      fetch: (async (input: Parameters<typeof fetch>[0]) =>
+        String(input) === CODEX_RELEASE_URL
+          ? new Response("", { status: 503 })
+          : Response.json({ models: [] })) as unknown as typeof fetch,
     };
 
-    expect(await discoverOpenAICodexModels(options)).toBeUndefined();
+    await expect(discoverOpenAICodexModels(options)).rejects.toThrow(
+      `no models for Codex client ${CODEX_CLIENT_VERSION_FLOOR}`,
+    );
+  });
+});
+
+describe("codexClientVersion", () => {
+  const released = (body: unknown, status = 200) =>
+    (async () =>
+      status === 200
+        ? Response.json(body)
+        : new Response("", { status })) as unknown as typeof fetch;
+
+  test("reports the latest published Codex release, never below the verified floor", async () => {
+    expect(await codexClientVersion({ fetch: released({ version: "99.1.2" }) })).toBe("99.1.2");
+    expect(await codexClientVersion({ fetch: released({ version: "99.1.2-alpha.3" }) })).toBe(
+      "99.1.2",
+    );
+    expect(await codexClientVersion({ fetch: released({ version: "0.1.0" }) })).toBe(
+      CODEX_CLIENT_VERSION_FLOOR,
+    );
+  });
+
+  test("falls back to the floor when the release lookup is unavailable or malformed", async () => {
+    expect(await codexClientVersion({ fetch: released({}, 503) })).toBe(CODEX_CLIENT_VERSION_FLOOR);
+    expect(await codexClientVersion({ fetch: released({ version: "next" }) })).toBe(
+      CODEX_CLIENT_VERSION_FLOOR,
+    );
+    const offline = (async () => {
+      throw new TypeError("network down");
+    }) as unknown as typeof fetch;
+    expect(await codexClientVersion({ fetch: offline })).toBe(CODEX_CLIENT_VERSION_FLOOR);
   });
 });
 

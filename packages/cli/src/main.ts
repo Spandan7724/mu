@@ -75,10 +75,7 @@ async function main(): Promise<number> {
     args.mode === "agents" ||
     args.mode === "agents-worker"
   ) {
-    modelCatalog = await initializeModelCatalog({
-      getCredentials: createCredentialResolver(),
-      clientVersion: VERSION,
-    });
+    modelCatalog = await initializeModelCatalog({ getCredentials: createCredentialResolver() });
     const configured = args.model ?? (await loadUserConfig()).model;
     const needsConfiguredModel =
       typeof configured === "string" && configured.length > 0 && !findModel(configured);

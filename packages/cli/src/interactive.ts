@@ -1342,6 +1342,11 @@ export async function runInteractive(
   if (runtime.warnings.length > 0) {
     commitLines(runtime.warnings.map((warning) => `  ${warning}`));
   }
+  void modelCatalog?.ensureFresh().then((refresh) => {
+    if (exiting || !refresh.ok || !refresh.warnings?.length) return;
+    commitLines(refresh.warnings.map((warning) => `  model discovery warning · ${warning}`));
+    paint();
+  });
   const stopResize = terminal.onResize(() => {
     app.setSize(terminal.columns, terminal.rows);
     agent.resize(terminal.columns, terminal.rows);

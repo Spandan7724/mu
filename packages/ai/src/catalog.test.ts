@@ -334,7 +334,7 @@ describe("catalog refresh merges rather than replaces", () => {
     expect(warnings).toEqual(["models.dev is offline"]);
   });
 
-  test("an empty Codex account catalog restores bundled plan models", async () => {
+  test("an empty Codex account catalog keeps bundled plan models and is reported", async () => {
     const warnings: string[] = [];
     await refreshModels({
       providers: [openaiCodex],
@@ -362,7 +362,9 @@ describe("catalog refresh merges rather than replaces", () => {
 
     expect(findModel("openai-codex/gpt-5.6-sol")).toBeDefined();
     expect(findModel("openai-codex/gpt-5.6-terra")).toBeDefined();
-    expect(warnings).toEqual([]);
+    expect(warnings).toEqual([
+      "Could not discover ChatGPT models: catalog returned no models for Codex client 0.157.1",
+    ]);
   });
 
   test("empty provider discovery preserves every coding-plan fallback", async () => {

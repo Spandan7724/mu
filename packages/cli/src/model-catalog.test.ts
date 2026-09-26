@@ -186,19 +186,17 @@ describe("model catalog cache", () => {
     expect(calls).toBe(2);
   });
 
-  test("passes credentials and client version to discovery and reports partial warnings", async () => {
+  test("passes credentials to discovery and reports partial warnings", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-model-catalog-options-"));
     const credential = { type: "apiKey" as const, apiKey: "secret" };
     let resolvedProvider = "";
     const catalog = new ModelCatalog({
       cacheFile: join(root, "models.json"),
-      clientVersion: "1.2.3",
       getCredentials: async (provider) => {
         resolvedProvider = provider;
         return credential;
       },
       refresh: async (options) => {
-        expect(options?.clientVersion).toBe("1.2.3");
         expect(await options?.getCredentials?.("future-provider")).toEqual(credential);
         options?.onWarning?.("secondary catalog unavailable");
         return [model("gpt-discovered")];

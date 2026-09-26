@@ -184,7 +184,6 @@ export interface ProviderModelDiscoveryOptions {
   fetch?: typeof fetch;
   signal?: AbortSignal;
   getCredentials?: CredentialResolver;
-  clientVersion?: string;
   currentModels: readonly ModelInfo[];
 }
 

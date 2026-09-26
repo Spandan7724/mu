@@ -25,6 +25,12 @@ import {
 import { driveStream, postSse, updateCost } from "./shared.ts";
 
 const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+// ChatGPT gates each plan model on a minimum Codex CLI release, so discovery must
+// report a Codex version, never mu's own. The floor is the last release verified
+// against mu; the latest published release lifts it as OpenAI raises the gates.
+export const CODEX_CLIENT_VERSION_FLOOR = "0.157.1";
+const CODEX_RELEASE_URL = "https://registry.npmjs.org/@openai/codex/latest";
+const CODEX_RELEASE_TIMEOUT_MS = 5_000;
 const MAX_OPENAI_CACHE_KEY_LENGTH = 64;
 const DEFAULT_CODEX_MAX_OUTPUT = 128_000;
 const ZERO_PRICING = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -109,6 +115,40 @@ function codexModelInfo(
   };
 }
 
+function releaseVersion(value: unknown): number[] | undefined {
+  const match = typeof value === "string" ? /^(\d+)\.(\d+)\.(\d+)/.exec(value) : null;
+  return match ? match.slice(1).map(Number) : undefined;
+}
+
+function newerRelease(left: number[], right: number[]): boolean {
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
+}
+
+export async function codexClientVersion(
+  options: Pick<ProviderModelDiscoveryOptions, "fetch" | "signal">,
+): Promise<string> {
+  const floor = releaseVersion(CODEX_CLIENT_VERSION_FLOOR) ?? [];
+  try {
+    const timeout = AbortSignal.timeout(CODEX_RELEASE_TIMEOUT_MS);
+    const response = await (options.fetch ?? fetch)(CODEX_RELEASE_URL, {
+      headers: { accept: "application/json" },
+      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
+    });
+    if (!response.ok) return CODEX_CLIENT_VERSION_FLOOR;
+    const payload: unknown = await response.json();
+    const latest = releaseVersion(
+      typeof payload === "object" && payload !== null ? (payload as Json).version : undefined,
+    );
+    return latest && newerRelease(latest, floor) ? latest.join(".") : CODEX_CLIENT_VERSION_FLOOR;
+  } catch {
+    return CODEX_CLIENT_VERSION_FLOOR;
+  }
+}
+
 export async function discoverOpenAICodexModels(
   options: ProviderModelDiscoveryOptions,
 ): Promise<ModelInfo[] | undefined> {
@@ -116,7 +156,8 @@ export async function discoverOpenAICodexModels(
   if (!credential || credential.type !== "oauth" || !credential.accountId) return undefined;
 
   const url = new URL(`${CODEX_BASE_URL}/models`);
-  url.searchParams.set("client_version", options.clientVersion ?? "0.0.0");
+  const clientVersion = await codexClientVersion(options);
+  url.searchParams.set("client_version", clientVersion);
   const response = await (options.fetch ?? fetch)(url, {
     headers: {
       accept: "application/json",
@@ -134,7 +175,11 @@ export async function discoverOpenAICodexModels(
     throw new Error("Could not discover ChatGPT models: invalid catalog response");
   }
   const catalogModels = (payload as { models: unknown[] }).models;
-  if (catalogModels.length === 0) return undefined;
+  if (catalogModels.length === 0) {
+    throw new Error(
+      `Could not discover ChatGPT models: catalog returned no models for Codex client ${clientVersion}`,
+    );
+  }
   const discovered = catalogModels
     .map((model) => codexModelInfo(model, options.currentModels))
     .filter((model): model is ModelInfo & { priority: number } => model !== undefined)

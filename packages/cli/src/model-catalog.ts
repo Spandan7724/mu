@@ -59,7 +59,6 @@ export interface ModelCatalogOptions {
   refresh?: RefreshModels;
   register?: (models: ModelInfo[]) => void;
   getCredentials?: (provider: string) => Promise<Credential | undefined>;
-  clientVersion?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -185,7 +184,6 @@ export class ModelCatalog {
   private readonly getCredentials:
     | ((provider: string) => Promise<Credential | undefined>)
     | undefined;
-  private readonly clientVersion: string | undefined;
   private inFlight: Promise<ModelCatalogRefreshResult> | undefined;
   private refreshController: AbortController | undefined;
   private lastResult: ModelCatalogRefreshResult | undefined;
@@ -199,7 +197,6 @@ export class ModelCatalog {
     this.refreshModels = options.refresh ?? refreshModels;
     this.registerModels = options.register ?? registerModels;
     this.getCredentials = options.getCredentials;
-    this.clientVersion = options.clientVersion;
   }
 
   get isRefreshing(): boolean {
@@ -267,7 +264,6 @@ export class ModelCatalog {
         const models = await this.refreshModels({
           signal: AbortSignal.any([stopSignal, AbortSignal.timeout(this.timeoutMs)]),
           ...(this.getCredentials ? { getCredentials: this.getCredentials } : {}),
-          ...(this.clientVersion ? { clientVersion: this.clientVersion } : {}),
           onWarning: (warning) => warnings.push(warning),
         });
         this.registerModels(models);
