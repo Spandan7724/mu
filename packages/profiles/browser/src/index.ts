@@ -15,6 +15,7 @@ import {
 } from "./config.ts";
 import { visionEnabled } from "./page/screenshot.ts";
 import { navigateTool } from "./tools/navigate.ts";
+import { findTool, readPageTool, screenshotTool, snapshotTool } from "./tools/observe.ts";
 import { tabsTool } from "./tools/tabs.ts";
 
 export interface BrowserProfile extends Profile {
@@ -78,7 +79,14 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     config,
     vision: () => visionEnabled(config.vision, activeModel),
   };
-  const toolset: AnyTool[] = [navigateTool(deps), tabsTool(deps)] as AnyTool[];
+  const toolset: AnyTool[] = [
+    navigateTool(deps),
+    tabsTool(deps),
+    snapshotTool(deps),
+    screenshotTool(deps),
+    readPageTool(deps),
+    findTool(deps),
+  ] as AnyTool[];
   const runtime: ProfileRuntime = {
     attach: () => {},
     stop: () => browser.stop(),

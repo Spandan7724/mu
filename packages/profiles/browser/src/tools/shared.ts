@@ -6,6 +6,7 @@ import type { Tab } from "../browser/tabs.ts";
 import { isCdpError } from "../cdp/connection.ts";
 import type { ResolvedBrowserOptions } from "../config.ts";
 import { observe } from "../page/observe.ts";
+import { StaleRefError } from "../page/resolve.ts";
 
 export interface BrowserToolDeps {
   browser: BrowserManager;
@@ -31,6 +32,7 @@ export interface PageActionOptions {
   // Page-changing actions attach a screenshot when vision is on.
   screenshot?: boolean;
   scope?: "viewport" | "full";
+  subtreeRef?: string;
 }
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
@@ -57,19 +59,41 @@ export async function pageAction(
       if (result.tab) tab = result.tab;
     } catch (error) {
       if (signal.aborted) throw error;
-      result = {
-        ok: false,
-        kind: isCdpError(error, "timeout") ? "timeout" : "error",
-        summary: error instanceof Error ? error.message : String(error),
-      };
+      result =
+        error instanceof StaleRefError
+          ? {
+              ok: false,
+              kind: "stale-ref",
+              summary: `${error.message}; use a ref from the page state below`,
+            }
+          : {
+              ok: false,
+              kind: isCdpError(error, "timeout") ? "timeout" : "error",
+              summary: error instanceof Error ? error.message : String(error),
+            };
       tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(signal));
     }
   }
   const notices = deps.browser.drainNotices();
-  const observation = await observe(deps.browser, tab, stopwatch, signal, {
+  const observeOptions = {
     screenshot: options.screenshot !== false && deps.vision(),
     ...(options.scope ? { scope: options.scope } : {}),
-  });
+  };
+  let observation: Awaited<ReturnType<typeof observe>>;
+  try {
+    observation = await observe(deps.browser, tab, stopwatch, signal, {
+      ...observeOptions,
+      ...(options.subtreeRef ? { subtreeRef: options.subtreeRef } : {}),
+    });
+  } catch (error) {
+    if (!(error instanceof StaleRefError)) throw error;
+    result = {
+      ok: false,
+      kind: "stale-ref",
+      summary: `${error.message}; use a ref from the page state below`,
+    };
+    observation = await observe(deps.browser, tab, stopwatch, signal, observeOptions);
+  }
   const outcome: ActionOutcome = {
     ok: result.ok !== false,
     summary: result.summary,

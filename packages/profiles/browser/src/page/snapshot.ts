@@ -58,6 +58,8 @@ export interface CaptureOptions {
 }
 
 const OBJECT_GROUP = "mu-capture";
+// Set by the capture script where an interactive child sits inside a text block.
+const INLINE_MARK = String.fromCharCode(1);
 const MASK = "••••";
 
 const KINDS: Record<RawNode["k"], NodeKind> = {
@@ -201,7 +203,8 @@ function buildNode(
 ): PageNode {
   const role = roleFor(raw, ax);
   const axName = ax && !ax.ignored ? String(ax.name?.value ?? "").trim() : "";
-  const name = raw.k === "t" ? (raw.t ?? "") : axName || raw.t || "";
+  const text = raw.t ?? "";
+  const name = raw.k === "t" ? text.replaceAll(INLINE_MARK, " ") : axName || text;
   const states = axStates(ax && !ax.ignored ? ax : undefined);
   if (raw.lvl) states.level = raw.lvl;
   const node: PageNode = {
@@ -227,6 +230,9 @@ function buildNode(
     if (raw.optCount !== undefined) node.optionCount = raw.optCount;
   }
   if (raw.cur) node.cursorOnly = true;
+  if (raw.k === "t" && text.includes(INLINE_MARK)) {
+    node.segments = text.split(INLINE_MARK).map((part) => part.replace(/\s+/g, " "));
+  }
   return node;
 }
 

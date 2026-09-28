@@ -30,6 +30,8 @@ export interface PageNode {
   editable?: "text" | "rich" | "secret" | "otp";
   // Full length of text this node's name was truncated from, when it was.
   textLength?: number;
+  // Text split where interactive children sit inline (text blocks only).
+  segments?: string[];
   options?: string[];
   optionCount?: number;
   cursorOnly?: boolean;

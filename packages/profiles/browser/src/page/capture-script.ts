@@ -49,6 +49,9 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     node.raw = (node.raw || "") + text;
   }
 
+  // Marks where an interactive child sits inside its text block's text.
+  var MARK = "\u0001";
+
   function walk(el, parent, sink, parentPointer) {
     var tag = el.tagName.toLowerCase();
     if (tag === "script" || tag === "style" || tag === "noscript" || tag === "template") return;
@@ -131,7 +134,10 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       }
       if ((tag === "dialog" && el.open && el.matches(":modal")) || el.getAttribute("aria-modal") === "true") modal = nodes.length;
       index = nodes.push(node) - 1;
-      if (kind === "i") childSink = -2;
+      if (kind === "i") {
+        childSink = -2;
+        if (sink >= 0) appendText(sink, MARK);
+      }
       if (kind === "t") {
         childSink = index;
         if (tag === "img") node.raw = el.getAttribute("alt");

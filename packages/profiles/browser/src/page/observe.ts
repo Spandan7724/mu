@@ -1,8 +1,9 @@
 import type { Stopwatch } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
 import type { JsDialog, Tab } from "../browser/tabs.ts";
-import type { PageModel } from "./model.ts";
+import type { PageModel, PageNode } from "./model.ts";
 import { mergeSeen, renderSnapshot } from "./render.ts";
+import { StaleRefError } from "./resolve.ts";
 import { captureScreenshot, type Screenshot, screenshotHeader } from "./screenshot.ts";
 import { type CaptureOptions, capturePage } from "./snapshot.ts";
 
@@ -20,6 +21,17 @@ export interface ObserveOptions {
   scope?: "viewport" | "full";
   budgetTokens?: number;
   screenshot?: boolean;
+  // Render only this node's subtree (full scope within it).
+  subtreeRef?: string;
+}
+
+function findByRef(node: PageNode, ref: string): PageNode | undefined {
+  if (node.ref === ref) return node;
+  for (const child of node.children) {
+    const found = findByRef(child, ref);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 export function estimateTokens(text: string): number {
@@ -91,8 +103,23 @@ export async function observe(
         tokens: estimateTokens(text),
       };
     }
-    const capture: CaptureOptions = { scope: options.scope ?? "viewport", signal };
-    const model = await capturePage(tab, capture);
+    const capture: CaptureOptions = {
+      scope: options.subtreeRef ? "full" : (options.scope ?? "viewport"),
+      signal,
+    };
+    let model = await capturePage(tab, capture);
+    if (options.subtreeRef) {
+      const subtree = findByRef(model.root, options.subtreeRef);
+      if (!subtree) {
+        throw new StaleRefError(options.subtreeRef, "is not on the page any more");
+      }
+      model = {
+        ...model,
+        root: { ...model.root, children: [subtree] },
+        offscreen: { above: 0, below: 0 },
+      };
+      delete model.modal;
+    }
     const previous =
       tab.previous && tab.previous.documentId === model.documentId ? tab.previous : undefined;
     const rendered = renderSnapshot(model, {
