@@ -3,6 +3,7 @@ import type { BrowserManager } from "../browser/manager.ts";
 import type { JsDialog, Tab } from "../browser/tabs.ts";
 import type { PageModel } from "./model.ts";
 import { mergeSeen, renderSnapshot } from "./render.ts";
+import { captureScreenshot, type Screenshot, screenshotHeader } from "./screenshot.ts";
 import { type CaptureOptions, capturePage } from "./snapshot.ts";
 
 export interface Observation {
@@ -12,11 +13,13 @@ export interface Observation {
   fingerprint: string;
   tokens: number;
   model?: PageModel;
+  screenshot?: Screenshot;
 }
 
 export interface ObserveOptions {
   scope?: "viewport" | "full";
   budgetTokens?: number;
+  screenshot?: boolean;
 }
 
 export function estimateTokens(text: string): number {
@@ -69,7 +72,13 @@ export async function observe(
   signal?: AbortSignal,
   options: ObserveOptions = {},
 ): Promise<Observation> {
-  return stopwatch.time("snapshotMs", async () => {
+  const shot =
+    options.screenshot && !tab.dialog
+      ? stopwatch.time("screenshotMs", () => captureScreenshot(tab, { signal }))
+      : undefined;
+  // Keep a rejected screenshot from surfacing as an unhandled rejection before it is awaited.
+  shot?.catch(() => {});
+  const observation = await stopwatch.time("snapshotMs", async (): Promise<Observation> => {
     const tabs = { count: manager.tabs().length, active: tab.tabId };
     // A pending JS dialog blocks the renderer; only browser-side facts are available.
     if (tab.dialog) {
@@ -116,4 +125,13 @@ export async function observe(
       model,
     };
   });
+  if (!shot) return observation;
+  const screenshot = await shot.catch(() => undefined);
+  if (!screenshot) return observation;
+  const [first, ...rest] = observation.text.split("\n<page_content");
+  return {
+    ...observation,
+    text: `${first}\n${screenshotHeader(screenshot)}\n<page_content${rest.join("\n<page_content")}`,
+    screenshot,
+  };
 }

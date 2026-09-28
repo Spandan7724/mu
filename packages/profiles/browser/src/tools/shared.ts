@@ -10,6 +10,8 @@ import { observe } from "../page/observe.ts";
 export interface BrowserToolDeps {
   browser: BrowserManager;
   config: ResolvedBrowserOptions;
+  // Whether observations carry a screenshot for the active model.
+  vision: () => boolean;
 }
 
 export const OBSERVATION_KEY = "browser:observation";
@@ -26,6 +28,9 @@ export interface ActResult {
 export interface PageActionOptions {
   // Interactions cannot proceed while a JS dialog blocks the page.
   blockedByDialog?: boolean;
+  // Page-changing actions attach a screenshot when vision is on.
+  screenshot?: boolean;
+  scope?: "viewport" | "full";
 }
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
@@ -61,7 +66,10 @@ export async function pageAction(
     }
   }
   const notices = deps.browser.drainNotices();
-  const observation = await observe(deps.browser, tab, stopwatch, signal);
+  const observation = await observe(deps.browser, tab, stopwatch, signal, {
+    screenshot: options.screenshot !== false && deps.vision(),
+    ...(options.scope ? { scope: options.scope } : {}),
+  });
   const outcome: ActionOutcome = {
     ok: result.ok !== false,
     summary: result.summary,
@@ -83,7 +91,18 @@ export async function pageAction(
     observation.text,
   ].join("\n");
   return {
-    content: [{ type: "text", text }],
+    content: [
+      { type: "text", text },
+      ...(observation.screenshot
+        ? [
+            {
+              type: "image" as const,
+              mimeType: observation.screenshot.mimeType,
+              data: observation.screenshot.data,
+            },
+          ]
+        : []),
+    ],
     details: outcome,
     ...(outcome.ok ? {} : { isError: true }),
     retention: {

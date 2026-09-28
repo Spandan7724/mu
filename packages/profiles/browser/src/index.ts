@@ -13,6 +13,7 @@ import {
   type ResolvedBrowserOptions,
   resolveBrowserOptions,
 } from "./config.ts";
+import { visionEnabled } from "./page/screenshot.ts";
 import { navigateTool } from "./tools/navigate.ts";
 import { tabsTool } from "./tools/tabs.ts";
 
@@ -71,7 +72,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     keepOpen: config.keepOpen,
     launcher: config.launcher,
   });
-  const deps = { browser, config };
+  let activeModel: string | undefined;
+  const deps = {
+    browser,
+    config,
+    vision: () => visionEnabled(config.vision, activeModel),
+  };
   const toolset: AnyTool[] = [navigateTool(deps), tabsTool(deps)] as AnyTool[];
   const runtime: ProfileRuntime = {
     attach: () => {},
@@ -87,7 +93,16 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   return {
     name: "browser",
     toolset,
-    promptFor: browserPrompt,
+    promptFor: (modelRef) => {
+      activeModel = modelRef;
+      return browserPrompt(modelRef);
+    },
+    // The model can change mid-session; the latest assistant turn names it.
+    refreshContext: (messages) => {
+      const last = messages.findLast((message) => message.role === "assistant");
+      if (last?.role === "assistant" && last.model) activeModel = last.model;
+      return [];
+    },
     permissionDefaults: [],
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
