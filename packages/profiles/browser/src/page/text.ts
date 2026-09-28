@@ -26,9 +26,7 @@ function inline(node: PageNode, pageUrl: string): string {
       const child = index < segments.length - 1 ? interactive[index] : undefined;
       if (child) parts.push(inline(child, pageUrl));
     });
-    parts.push(
-      ...interactive.slice(segments.length - 1).map((child) => inline(child, pageUrl)),
-    );
+    parts.push(...interactive.slice(segments.length - 1).map((child) => inline(child, pageUrl)));
     parts.push(...rest.map((child) => inline(child, pageUrl)));
     return parts.filter(Boolean).join(" ");
   }

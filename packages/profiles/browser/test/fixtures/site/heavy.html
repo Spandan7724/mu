@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Heavy table</title><style>body{font-family:sans-serif} td{padding:2px 6px}</style></head>
+<body>
+<h1>Orders</h1>
+<table id="t"><thead><tr><th>Item</th><th>Note</th><th>Action</th><th>Menu</th></tr></thead><tbody></tbody></table>
+<script>
+const rows = [];
+for (let i = 0; i < 1500; i++) {
+  rows.push('<tr><td><a href="/x' + i + '">Item ' + i + '</a></td><td>Some text ' + i + ' lorem ipsum dolor</td><td><button>Act ' + i + '</button></td><td><div style="cursor:pointer" onclick="1">more ' + i + '</div></td></tr>');
+}
+document.querySelector('#t tbody').innerHTML = rows.join('');
+</script>
+</body></html>
