@@ -214,6 +214,11 @@ function validMessage(value: unknown): boolean {
       typeof value.isError === "boolean" &&
       optional(value.usage, validUsage) &&
       optional(value.evicted, (candidate) => typeof candidate === "boolean") &&
+      optional(
+        value.retention,
+        (candidate) =>
+          record(candidate) && nonEmptyString(candidate.key) && string(candidate.summary),
+      ) &&
       value.content.every((block) => validContent(block, ["text", "image"]))
     );
   }

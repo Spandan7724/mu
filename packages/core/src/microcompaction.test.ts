@@ -132,6 +132,59 @@ describe("microcompaction", () => {
   });
 });
 
+describe("tool-result retention", () => {
+  function observation(key: string, text: string, image = false): AgentMessage {
+    return toolResult(text, {
+      content: [
+        { type: "text", text },
+        ...(image ? [{ type: "image" as const, mimeType: "image/jpeg", data: "x".repeat(200) }] : []),
+      ],
+      retention: { key, summary: `summary of ${text}` },
+    } as Partial<AgentMessage>);
+  }
+
+  test("keeps only the newest result per key verbatim, even inside the recent window", () => {
+    const messages: AgentMessage[] = [
+      observation("state", "first", true),
+      toolResult("unrelated"),
+      observation("state", "second", true),
+      observation("other", "independent"),
+      observation("state", "third", true),
+    ];
+    const result = microcompact(messages, { keepRecent: 10, imagesOnly: true });
+
+    expect(result.messages[0]).toMatchObject({
+      content: [{ type: "text", text: "summary of first" }],
+    });
+    expect(result.messages[0]).not.toHaveProperty("retention");
+    expect(result.messages[2]).toMatchObject({
+      content: [{ type: "text", text: "summary of second" }],
+    });
+    expect(result.messages[1]).toBe(messages[1]);
+    expect(result.messages[3]).toBe(messages[3]);
+    expect(result.messages[4]).toBe(messages[4]);
+    expect(result.evicted).toBe(2);
+  });
+
+  test("superseded results keep their error flag and details", () => {
+    const failed = { ...observation("state", "failed"), isError: true, details: { ms: 3 } };
+    const result = microcompact([failed as AgentMessage, observation("state", "next")]);
+
+    expect(result.messages[0]).toMatchObject({ isError: true, details: { ms: 3 } });
+    expect(result.messages[0]?.content).toEqual([{ type: "text", text: "summary of failed" }]);
+  });
+
+  test("a second pass over already-superseded results changes nothing", () => {
+    const first = microcompact([observation("state", "a"), observation("state", "b")]);
+    const second = microcompact(first.messages);
+
+    expect(second.evicted).toBe(0);
+    second.messages.forEach((message, index) => {
+      expect(message).toBe(first.messages[index] as AgentMessage);
+    });
+  });
+});
+
 describe("reactive recovery", () => {
   test("recognizes a typed context-too-long error", () => {
     expect(isContextTooLongError(new AiError("context_too_long", "prompt is too long"))).toBe(true);

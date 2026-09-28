@@ -10,6 +10,9 @@ export interface ToolResult {
   directResponse?: string;
   // When every call in a batch returns terminate, the loop stops after it.
   terminate?: boolean;
+  // Only the newest result carrying a key stays verbatim. Older results with the
+  // same key are replaced by `summary` during microcompaction.
+  retention?: { key: string; summary: string };
 }
 
 export interface Tool<Args = Record<string, unknown>> {

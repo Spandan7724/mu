@@ -88,6 +88,8 @@ export interface ToolResultMessage {
   usage?: Usage; // model usage incurred inside the tool (for example, a subagent)
   isError: boolean;
   evicted?: boolean; // microcompaction replaced content with tombstone
+  // Only the newest result with this key stays verbatim; older ones become `summary`.
+  retention?: { key: string; summary: string };
   timestamp: number;
 }
 

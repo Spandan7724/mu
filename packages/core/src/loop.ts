@@ -440,6 +440,7 @@ function resultMessage(
     content: result.content ?? [],
     ...(result.details !== undefined ? { details: result.details } : {}),
     ...(result.usage !== undefined ? { usage: result.usage } : {}),
+    ...(result.retention !== undefined ? { retention: result.retention } : {}),
     isError,
     timestamp: Date.now(),
   };

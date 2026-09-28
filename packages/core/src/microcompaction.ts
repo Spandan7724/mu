@@ -46,13 +46,30 @@ export function microcompact(
 
   const underTarget = () => target !== undefined && estimateTokens(result) <= target;
 
+  const newestResult = new Map<string, number>();
+  result.forEach((message, index) => {
+    if (message.role === "toolResult" && message.retention)
+      newestResult.set(message.retention.key, index);
+  });
+  result.forEach((message, index) => {
+    if (
+      message.role !== "toolResult" ||
+      !message.retention ||
+      newestResult.get(message.retention.key) === index
+    )
+      return;
+    const { retention, ...rest } = message;
+    result[index] = { ...rest, content: [{ type: "text", text: retention.summary }] };
+    evicted++;
+  });
+
   const ages = new Array<number>(messages.length);
   let turns = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     ages[i] = turns;
     if (messages[i]?.role === "assistant") turns++;
   }
-  let imageTokens = messages.reduce(
+  let imageTokens = result.reduce(
     (total, message) =>
       total +
       message.content.filter((block) => block.type === "image").length * Math.ceil(1500 / 3.5),
