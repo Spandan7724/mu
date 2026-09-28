@@ -137,7 +137,9 @@ describe("tool-result retention", () => {
     return toolResult(text, {
       content: [
         { type: "text", text },
-        ...(image ? [{ type: "image" as const, mimeType: "image/jpeg", data: "x".repeat(200) }] : []),
+        ...(image
+          ? [{ type: "image" as const, mimeType: "image/jpeg", data: "x".repeat(200) }]
+          : []),
       ],
       retention: { key, summary: `summary of ${text}` },
     } as Partial<AgentMessage>);
