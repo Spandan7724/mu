@@ -10,5 +10,8 @@
     "@mu/core": "workspace:*",
     "mu": "workspace:*",
     "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "devtools-protocol": "0.0.1704951"
   }
 }
