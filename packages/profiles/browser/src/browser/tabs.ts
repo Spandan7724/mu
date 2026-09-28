@@ -39,6 +39,7 @@ export class Tab {
     tabId: string,
     openedByAgent: boolean,
     signal?: AbortSignal,
+    emulateViewport?: { width: number; height: number },
   ): Promise<Tab> {
     const session = await attachToTarget(connection, target.targetId, { signal });
     const frames = new FrameRegistry(connection, session);
@@ -76,6 +77,15 @@ export class Tab {
       await Promise.all([
         frames.start(signal),
         session.send("Inspector.enable", undefined, { signal, timeoutMs: 5_000 }),
+        ...(emulateViewport
+          ? [
+              session.send(
+                "Emulation.setDeviceMetricsOverride",
+                { ...emulateViewport, deviceScaleFactor: 0, mobile: false },
+                { signal, timeoutMs: 5_000 },
+              ),
+            ]
+          : []),
       ]);
     } catch (error) {
       tab.dispose();

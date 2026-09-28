@@ -241,7 +241,15 @@ export class BrowserManager {
     const page = this.pages.get(targetId);
     if (!page) throw new Error(`No such tab (${targetId})`);
     const connection = await this.ensureConnected(signal);
-    const promise = Tab.attach(connection, page, page.tabId, page.openedByAgent, signal)
+    // Headed windows keep the user's size; headless pages get the configured viewport.
+    const promise = Tab.attach(
+      connection,
+      page,
+      page.tabId,
+      page.openedByAgent,
+      signal,
+      this.options.headless ? this.options.viewport : undefined,
+    )
       .then((tab) => {
         this.attached.set(targetId, tab);
         return tab;
@@ -323,8 +331,15 @@ export class BrowserManager {
     const connection = await this.ensureConnected(signal);
     const page = this.targetFor(tabId);
     await connection.send("Target.closeTarget", { targetId: page.targetId }, { signal });
-    if (this.activeTargetId === page.targetId) this.activeTargetId = undefined;
+    const wasActive = this.activeTargetId === page.targetId;
+    if (wasActive) this.activeTargetId = undefined;
     this.forgetTarget(page.targetId);
+    if (wasActive) {
+      const remaining = [...this.pages.values()].sort(
+        (a, b) => Number(b.openedByAgent) - Number(a.openedByAgent) || b.createdAt - a.createdAt,
+      );
+      this.activeTargetId = remaining[0]?.targetId;
+    }
     this.notices = this.notices.filter((notice) => notice !== "The active tab was closed.");
   }
 

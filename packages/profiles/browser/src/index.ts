@@ -13,6 +13,8 @@ import {
   type ResolvedBrowserOptions,
   resolveBrowserOptions,
 } from "./config.ts";
+import { navigateTool } from "./tools/navigate.ts";
+import { tabsTool } from "./tools/tabs.ts";
 
 export interface BrowserProfile extends Profile {
   browser: BrowserManager;
@@ -69,7 +71,8 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     keepOpen: config.keepOpen,
     launcher: config.launcher,
   });
-  const toolset: AnyTool[] = [];
+  const deps = { browser, config };
+  const toolset: AnyTool[] = [navigateTool(deps), tabsTool(deps)] as AnyTool[];
   const runtime: ProfileRuntime = {
     attach: () => {},
     stop: () => browser.stop(),
