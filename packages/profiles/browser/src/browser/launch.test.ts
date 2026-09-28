@@ -152,4 +152,30 @@ describeWithBrowser("managed browser in real headless Chrome", () => {
       kind: "target-closed",
     });
   });
+
+  test("a headed request replaces a headless browser left on the profile", async () => {
+    const other = await launchTestBrowser();
+    let launched = false;
+    await expect(
+      connectManaged({
+        userDataDir: other.userDataDir,
+        headless: false,
+        viewport: { width: 1280, height: 800 },
+        launcher: {
+          discover: async () => ({
+            path: "/fake",
+            channel: "chrome",
+            product: "Google Chrome",
+            version: "1",
+          }),
+          launch: async () => {
+            launched = true;
+            throw new Error("stop here");
+          },
+        },
+      }),
+    ).rejects.toThrow("stop here");
+    expect(launched).toBe(true);
+    await other.close();
+  });
 });

@@ -106,6 +106,14 @@ export function profileLocked(userDataDir: string): boolean {
   }
 }
 
+async function waitForUnlock(userDataDir: string, signal?: AbortSignal): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (profileLocked(userDataDir) && Date.now() < deadline) {
+    if (signal?.aborted) throw new CdpError("aborted", "connect", "aborted");
+    await Bun.sleep(50);
+  }
+}
+
 export interface ManagedConnectOptions {
   userDataDir: string;
   headless: boolean;
@@ -128,7 +136,17 @@ export async function connectManaged(options: ManagedConnectOptions): Promise<Co
   const existing = readDevToolsActivePort(options.userDataDir);
   if (existing && (await endpointAlive(existing, { signal: options.signal }))) {
     const connection = await connectCdp(existing, { signal: options.signal });
-    return { connection, endpoint: { wsUrl: existing, launched: false } };
+    const { userAgent } = await connection.send("Browser.getVersion", undefined, {
+      signal: options.signal,
+    });
+    if (options.headless || !userAgent.includes("Headless")) {
+      return { connection, endpoint: { wsUrl: existing, launched: false } };
+    }
+    // A headless run left this profile's browser running; a visible window was asked for.
+    await connection.send("Browser.close", undefined, { timeoutMs: 2_000 }).catch(() => {});
+    await Promise.race([connection.closed, Bun.sleep(3_000)]);
+    await connection.close();
+    await waitForUnlock(options.userDataDir, options.signal);
   }
   if (profileLocked(options.userDataDir)) {
     throw new Error(
