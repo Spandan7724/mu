@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Inner</title><style>body{font-family:sans-serif;margin:8px}</style></head>
+<body>
+<h2 id="h">Newsletter</h2>
+<label>Email <input name="email" type="email"></label>
+<button onclick="document.getElementById('h').textContent='Subscribed ' + document.querySelector('input').value">Subscribe</button>
+<script>document.getElementById('h').textContent += ' (' + new URLSearchParams(location.search).get('who') + ')';</script>
+</body></html>

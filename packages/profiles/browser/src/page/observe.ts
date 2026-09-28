@@ -1,6 +1,9 @@
 import type { Stopwatch } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
 import type { JsDialog, Tab } from "../browser/tabs.ts";
+import type { PageModel } from "./model.ts";
+import { mergeSeen, renderSnapshot } from "./render.ts";
+import { type CaptureOptions, capturePage } from "./snapshot.ts";
 
 export interface Observation {
   text: string;
@@ -8,6 +11,12 @@ export interface Observation {
   title: string;
   fingerprint: string;
   tokens: number;
+  model?: PageModel;
+}
+
+export interface ObserveOptions {
+  scope?: "viewport" | "full";
+  budgetTokens?: number;
 }
 
 export function estimateTokens(text: string): number {
@@ -24,46 +33,17 @@ function describeDialog(dialog: JsDialog | undefined): string {
   return `${dialog.type} ${JSON.stringify(message)} — handle it with the dialog tool before anything else`;
 }
 
-interface PageFacts {
+interface HeaderFacts {
   title: string;
   url: string;
   scrollY?: number;
   pageHeight?: number;
   viewport?: { width: number; height: number };
-}
-
-async function pageFacts(tab: Tab, signal?: AbortSignal): Promise<PageFacts> {
-  // A pending JS dialog blocks the renderer, so only browser-side facts are available.
-  if (tab.dialog) return { title: tab.title, url: tab.url };
-  const options = { signal, timeoutMs: 3_000 };
-  const [metrics, evaluated] = await Promise.all([
-    tab.session.send("Page.getLayoutMetrics", undefined, options),
-    tab.session.send(
-      "Runtime.evaluate",
-      {
-        expression: "[document.title, location.href, innerWidth, innerHeight]",
-        returnByValue: true,
-      },
-      options,
-    ),
-  ]);
-  const [title, url, width, height] = (evaluated.result.value as
-    | [string, string, number, number]
-    | undefined) ?? [tab.title, tab.url, 0, 0];
-  return {
-    title,
-    url,
-    scrollY: Math.round(metrics.cssVisualViewport.pageY),
-    pageHeight: Math.round(metrics.cssContentSize.height),
-    viewport: {
-      width: width || Math.round(metrics.cssVisualViewport.clientWidth),
-      height: height || Math.round(metrics.cssVisualViewport.clientHeight),
-    },
-  };
+  newDocument?: boolean;
 }
 
 export function renderHeader(
-  facts: PageFacts,
+  facts: HeaderFacts,
   tabs: { count: number; active: string },
   dialog: JsDialog | undefined,
 ): string {
@@ -76,7 +56,7 @@ export function renderHeader(
   ].filter(Boolean);
   return [
     `[page] ${facts.title || "(untitled)"}`,
-    `url: ${facts.url}`,
+    `url: ${facts.url}${facts.newDocument ? " (new page: refs from earlier observations no longer apply)" : ""}`,
     layout.join(" · "),
     `dialog: ${describeDialog(dialog)}`,
   ].join("\n");
@@ -87,22 +67,53 @@ export async function observe(
   tab: Tab,
   stopwatch: Stopwatch,
   signal?: AbortSignal,
+  options: ObserveOptions = {},
 ): Promise<Observation> {
   return stopwatch.time("snapshotMs", async () => {
-    const facts = await pageFacts(tab, signal);
-    tab.url = facts.url;
-    tab.title = facts.title;
-    const text = renderHeader(
-      facts,
-      { count: manager.tabs().length, active: tab.tabId },
+    const tabs = { count: manager.tabs().length, active: tab.tabId };
+    // A pending JS dialog blocks the renderer; only browser-side facts are available.
+    if (tab.dialog) {
+      const text = `${renderHeader({ title: tab.title, url: tab.url }, tabs, tab.dialog)}\n<page_content untrusted="true">\n(the page is blocked until the dialog is handled)\n</page_content>`;
+      return {
+        text,
+        url: tab.url,
+        title: tab.title,
+        fingerprint: fingerprintOf(tab.url, text),
+        tokens: estimateTokens(text),
+      };
+    }
+    const capture: CaptureOptions = { scope: options.scope ?? "viewport", signal };
+    const model = await capturePage(tab, capture);
+    const previous =
+      tab.previous && tab.previous.documentId === model.documentId ? tab.previous : undefined;
+    const rendered = renderSnapshot(model, {
+      scope: capture.scope,
+      ...(options.budgetTokens !== undefined ? { budgetTokens: options.budgetTokens } : {}),
+      previous,
+    });
+    tab.previous = { documentId: model.documentId, ...mergeSeen(previous, rendered) };
+    tab.url = model.url;
+    tab.title = model.title;
+    const header = renderHeader(
+      {
+        title: model.title,
+        url: model.url,
+        scrollY: model.viewport.scrollY,
+        pageHeight: model.viewport.pageHeight,
+        viewport: { width: model.viewport.width, height: model.viewport.height },
+        newDocument: model.newDocument,
+      },
+      tabs,
       tab.dialog,
     );
+    const text = `${header}\n${rendered.text}`;
     return {
       text,
-      url: facts.url,
-      title: facts.title,
-      fingerprint: fingerprintOf(facts.url, text),
+      url: model.url,
+      title: model.title,
+      fingerprint: fingerprintOf(model.url, rendered.text),
       tokens: estimateTokens(text),
+      model,
     };
   });
 }

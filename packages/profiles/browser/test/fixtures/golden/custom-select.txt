@@ -1,0 +1,8 @@
+<page_content untrusted="true">
+- heading "Pick a size" [level=1]
+- clickable "Select size ▾" [ref=e1]
+- paragraph: Selected:
+  - status: none
+- clickable "Settings" [ref=e2]
+- focusable "Keyboard focusable card" [ref=e3]
+</page_content>

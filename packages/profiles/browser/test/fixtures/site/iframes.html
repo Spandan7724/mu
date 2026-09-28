@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Frames</title>
+<style>body{font-family:sans-serif;margin:20px} iframe{width:400px;height:160px;border:1px solid #999;display:block;margin:8px 0}</style></head>
+<body>
+<h1>Embedded forms</h1>
+<button>Top button</button>
+<iframe title="Same origin form" src="/iframe-inner?who=same"></iframe>
+<iframe title="Cross origin form" src="{{CROSS_ORIGIN}}/iframe-inner?who=cross"></iframe>
+</body></html>

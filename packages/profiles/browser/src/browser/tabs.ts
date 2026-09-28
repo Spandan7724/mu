@@ -1,5 +1,6 @@
 import type { CdpConnection } from "../cdp/connection.ts";
 import { attachToTarget, type CdpSession } from "../cdp/session.ts";
+import { RefTable } from "../page/refs.ts";
 import { FrameRegistry } from "./frames.ts";
 
 export interface TabInfo {
@@ -21,6 +22,9 @@ export interface JsDialog {
 export class Tab {
   dialog: JsDialog | undefined;
   crashed = false;
+  readonly refs = new RefTable();
+  // What the previous observation showed, for `*` change markers.
+  previous: { documentId: string; refs: Set<string>; texts: Set<string> } | undefined;
   private readonly offs: (() => void)[] = [];
 
   private constructor(

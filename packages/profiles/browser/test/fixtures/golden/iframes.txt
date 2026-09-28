@@ -1,0 +1,12 @@
+<page_content untrusted="true">
+- heading "Embedded forms" [level=1]
+- button "Top button" [ref=e1]
+- iframe "Same origin form"
+  - heading "Newsletter (same)" [level=2]
+  - textbox "Email" [ref=f1e1]
+  - button "Subscribe" [ref=f1e2]
+- iframe "Cross origin form"
+  - heading "Newsletter (cross)" [level=2]
+  - textbox "Email" [ref=f2e1]
+  - button "Subscribe" [ref=f2e2]
+</page_content>

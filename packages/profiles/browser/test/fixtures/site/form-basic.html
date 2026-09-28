@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Contact form</title>
+<style>body{font-family:sans-serif;margin:20px} label{display:block;margin:8px 0}</style></head>
+<body>
+<header><nav aria-label="Main"><a href="/">Home</a> <a href="/pricing">Pricing</a></nav></header>
+<main>
+<h1>Contact us</h1>
+<p>Fill in the form and we will get back to you within two business days.</p>
+<form action="/echo" method="post">
+  <label>Full name <input name="name" type="text" required></label>
+  <label>Email <input name="email" type="email" placeholder="you@example.com"></label>
+  <label>Age <input name="age" type="number" min="0"></label>
+  <label for="password">Password</label><input id="password" name="password" type="password" value="hunter2">
+  <label>Message <textarea name="message" rows="3"></textarea></label>
+  <label><input type="checkbox" name="newsletter" checked> Subscribe to newsletter</label>
+  <fieldset><legend>Plan</legend>
+    <label><input type="radio" name="plan" value="free" checked> Free</label>
+    <label><input type="radio" name="plan" value="pro"> Pro</label>
+  </fieldset>
+  <label>Country
+    <select name="country"><option value="">Choose…</option><option value="de">Germany</option><option value="fr">France</option><option value="in">India</option></select>
+  </label>
+  <button type="submit">Send message</button>
+  <button type="button" disabled>Save draft</button>
+</form>
+</main>
+</body></html>

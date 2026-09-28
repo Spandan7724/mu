@@ -73,7 +73,8 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
     const outcome = result.details as ActionOutcome;
     expect(result.isError).toBeUndefined();
     expect(text(result)).toStartWith(`navigated to ${base}/a\n`);
-    expect(text(result)).toContain(`[page] Page a\nurl: ${base}/a\n`);
+    expect(text(result)).toContain(`[page] Page a\nurl: ${base}/a (new page`);
+    expect(text(result)).toContain('<page_content untrusted="true">\n- heading "a" [level=1]\n');
     expect(text(result)).toMatch(
       /tabs: 1 \(active: t\d+\) · scroll: 0\/\d+ px · viewport 1280x800/,
     );
@@ -90,8 +91,8 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
 
   test("back, forward, reload and same-document navigation", async () => {
     await run("navigate", { url: `${base}/b` });
-    expect(text(await run("navigate", { url: "back" }))).toContain(`url: ${base}/a\n`);
-    expect(text(await run("navigate", { url: "forward" }))).toContain(`url: ${base}/b\n`);
+    expect(text(await run("navigate", { url: "back" }))).toContain(`url: ${base}/a (new page`);
+    expect(text(await run("navigate", { url: "forward" }))).toContain(`url: ${base}/b (new page`);
     const reloaded = await run("navigate", { url: "reload" });
     expect(text(reloaded)).toStartWith("reloaded the page");
     const fragment = await run("navigate", { url: `${base}/b#section` });

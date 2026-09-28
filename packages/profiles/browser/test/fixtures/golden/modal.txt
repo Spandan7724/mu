@@ -1,0 +1,9 @@
+<page_content untrusted="true">
+- heading "Account" [level=1]
+- button "Delete account…" [ref=e1]
+- paragraph: Signed in as alex@example.com.
+- button "Hidden behind banner" [ref=e2]
+- region "Cookie consent"
+  - button "Accept all" [ref=e3]
+  - button "Reject" [ref=e4]
+</page_content>

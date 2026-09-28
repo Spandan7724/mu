@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Modal and banner</title>
+<style>
+body{font-family:sans-serif;margin:20px}
+#banner{position:fixed;left:0;right:0;bottom:0;height:140px;background:#222;color:#fff;padding:16px;z-index:10}
+#below{position:fixed;left:20px;bottom:40px;z-index:1}
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;z-index:20}
+.backdrop.open{display:block}
+[role=dialog]{background:#fff;margin:80px auto;width:320px;padding:16px}
+</style></head>
+<body>
+<h1>Account</h1>
+<button id="open">Delete account…</button>
+<p>Signed in as alex@example.com.</p>
+<button id="below" onclick="document.body.dataset.clicked='below'">Hidden behind banner</button>
+<div id="banner" role="region" aria-label="Cookie consent">
+  We use cookies to improve your experience.
+  <button onclick="document.getElementById('banner').remove()">Accept all</button>
+  <button onclick="document.getElementById('banner').remove()">Reject</button>
+</div>
+<div class="backdrop" id="backdrop">
+  <div role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+    <h2 id="dlg-title">Delete account?</h2>
+    <p>This cannot be undone.</p>
+    <button onclick="document.getElementById('backdrop').classList.remove('open')">Cancel</button>
+    <button onclick="document.body.dataset.deleted='yes'">Delete</button>
+  </div>
+</div>
+<script>
+document.getElementById('open').addEventListener('click', () => document.getElementById('backdrop').classList.add('open'));
+</script>
+</body></html>

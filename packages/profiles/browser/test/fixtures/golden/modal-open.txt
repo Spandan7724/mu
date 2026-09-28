@@ -1,0 +1,8 @@
+<page_content untrusted="true">
+(modal dialog open; the page behind it is inert)
+*- dialog "Delete account?" [ref=e5]
+  *- paragraph: This cannot be undone.
+  *- button "Cancel" [ref=e6]
+  *- button "Delete" [ref=e7]
+(page behind the dialog: 4 interactive elements, not usable until the dialog closes)
+</page_content>

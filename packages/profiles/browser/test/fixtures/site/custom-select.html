@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Custom select</title>
+<style>
+body{font-family:sans-serif;margin:20px}
+.select{width:220px;border:1px solid #888;padding:6px;cursor:pointer;user-select:none}
+.menu{display:none;border:1px solid #888;width:220px}
+.menu.open{display:block}
+.item{padding:6px;cursor:pointer}
+.item:hover{background:#eef}
+.icon-btn{display:inline-block;width:24px;height:24px;background:#ccc;cursor:pointer}
+</style></head>
+<body>
+<h1>Pick a size</h1>
+<div class="select" id="size" onclick="document.querySelector('.menu').classList.toggle('open')"><span id="size-label">Select size</span> ▾</div>
+<div class="menu">
+  <div class="item" data-v="S">Small</div>
+  <div class="item" data-v="M">Medium</div>
+  <div class="item" data-v="L">Large</div>
+</div>
+<p>Selected: <output id="chosen">none</output></p>
+<div class="icon-btn" title="Settings"></div>
+<div tabindex="0" id="card">Keyboard focusable card</div>
+<script>
+for (const item of document.querySelectorAll('.item')) {
+  item.addEventListener('click', () => {
+    document.getElementById('size-label').textContent = item.textContent;
+    document.getElementById('chosen').textContent = item.dataset.v;
+    document.querySelector('.menu').classList.remove('open');
+  });
+}
+</script>
+</body></html>

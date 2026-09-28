@@ -1,0 +1,8 @@
+<page_content untrusted="true">
+- heading "Web components" [level=1]
+- searchbox "Search docs" [ref=e1]
+- button "Go" [ref=e2]
+- text: Alex Kim
+- button "Follow" [ref=e3]
+- link "Profile" [ref=e4] → /profile
+</page_content>

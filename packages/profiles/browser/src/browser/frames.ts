@@ -6,6 +6,7 @@ export interface FrameInfo {
   frameId: string;
   parentId?: string | undefined;
   url: string;
+  loaderId?: string | undefined;
   // Session that owns the frame's document: the tab's own session, or an OOPIF child session.
   session: CdpSession;
 }
@@ -18,6 +19,7 @@ export class FrameRegistry {
   private readonly frames = new Map<string, FrameInfo>();
   private readonly children = new Map<string, CdpSession>();
   private readonly offs: (() => void)[] = [];
+  private readonly worlds = new Map<string, Promise<number>>();
 
   constructor(
     private readonly connection: CdpConnection,
@@ -45,10 +47,37 @@ export class FrameRegistry {
     await this.watchSession(this.root, signal);
   }
 
+  // One isolated world per frame document, so page scripts cannot tamper with capture.
+  isolatedWorld(frameId: string, signal?: AbortSignal): Promise<number> {
+    const frame = this.frames.get(frameId);
+    if (!frame) return Promise.reject(new Error(`unknown frame ${frameId}`));
+    const key = `${frameId}:${frame.loaderId ?? ""}`;
+    let world = this.worlds.get(key);
+    if (!world) {
+      world = frame.session
+        .send(
+          "Page.createIsolatedWorld",
+          { frameId, worldName: "mu", grantUniveralAccess: false },
+          { signal, timeoutMs: 5_000 },
+        )
+        .then((result) => result.executionContextId);
+      world.catch(() => this.worlds.delete(key));
+      this.worlds.set(key, world);
+    }
+    return world;
+  }
+
+  forgetWorlds(frameId?: string): void {
+    for (const key of [...this.worlds.keys()]) {
+      if (!frameId || key.startsWith(`${frameId}:`)) this.worlds.delete(key);
+    }
+  }
+
   dispose(): void {
     for (const off of this.offs.splice(0)) off();
     this.frames.clear();
     this.children.clear();
+    this.worlds.clear();
   }
 
   private record(tree: Protocol.Page.FrameTree, session: CdpSession, parentId?: string): void {
@@ -56,6 +85,7 @@ export class FrameRegistry {
       frameId: tree.frame.id,
       parentId: parentId ?? tree.frame.parentId,
       url: tree.frame.url + (tree.frame.urlFragment ?? ""),
+      loaderId: tree.frame.loaderId,
       session,
     });
     for (const child of tree.childFrames ?? []) this.record(child, session, tree.frame.id);
@@ -79,10 +109,16 @@ export class FrameRegistry {
       }),
       session.on("Page.frameNavigated", (event) => {
         const existing = this.frames.get(event.frame.id);
+        this.forgetWorlds(event.frame.id);
+        // A new document replaces every subframe of the old one.
+        for (const frame of this.list()) {
+          if (frame.parentId === event.frame.id) this.removeFrame(frame.frameId);
+        }
         this.frames.set(event.frame.id, {
           frameId: event.frame.id,
           parentId: event.frame.parentId ?? existing?.parentId ?? oopifParent,
           url: event.frame.url + (event.frame.urlFragment ?? ""),
+          loaderId: event.frame.loaderId,
           session,
         });
       }),
@@ -93,6 +129,10 @@ export class FrameRegistry {
       session.on("Page.frameDetached", (event) => {
         // A "swap" moves the frame into an OOPIF session that re-registers it.
         if (event.reason === "remove") this.removeFrame(event.frameId);
+      }),
+      session.on("Runtime.executionContextsCleared", () => {
+        for (const frame of this.list())
+          if (frame.session === session) this.forgetWorlds(frame.frameId);
       }),
       session.on("Target.attachedToTarget", (event) => {
         void this.adoptChild(event);
