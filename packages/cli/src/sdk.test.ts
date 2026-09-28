@@ -56,6 +56,20 @@ describe("public SDK factory", () => {
     await agent.shutdown();
   });
 
+  test("loads the built-in browser profile explicitly", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const agent = await createAgent({
+      profile: "browser",
+      profileOptions: { browserProfile: "sdk-test" },
+      provider,
+      model: fakeModel,
+    });
+
+    expect(agent.session.header?.profile).toBe("browser");
+    expect((await agent.run("hi")).text).toBe("ok");
+    await agent.shutdown();
+  });
+
   test("does not replace a caller's tool with a managed subagent tool", async () => {
     const customTask = {
       name: "task",

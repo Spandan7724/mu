@@ -6,6 +6,7 @@
     { "path": "packages/sdk" },
     { "path": "packages/tui" },
     { "path": "packages/profiles/coding" },
+    { "path": "packages/profiles/browser" },
     { "path": "packages/cli" }
   ]
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_VERSION, SessionTree } from "@mu/core";
 import { codingProfile } from "@mu/profile-coding";
-import { sessionStoreForProfile } from "./profiles.ts";
+import { resolveProfile, sessionStoreForProfile } from "./profiles.ts";
 
 describe("profile session persistence", () => {
   test("file-backed stores use the profile scope across process instances", async () => {
@@ -25,5 +25,13 @@ describe("profile session persistence", () => {
     const second = await sessionStoreForProfile(await codingProfile({ root }), sessionRoot);
     expect(await second.list()).toEqual(["saved-session"]);
     expect((await second.load("saved-session"))?.header?.id).toBe("saved-session");
+  });
+});
+
+describe("built-in profiles", () => {
+  test("resolves the browser profile with a per-browser-profile session scope", async () => {
+    const profile = await resolveProfile("browser", { browserProfile: "work" });
+    expect(profile.name).toBe("browser");
+    expect(await profile.scope?.()).toBe("browser-work");
   });
 });

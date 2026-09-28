@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { browserProfile } from "@mu/profile-browser";
 import { codingProfile } from "@mu/profile-coding";
 import { FileSessionStore, loadProfile, type Profile } from "mu";
 
@@ -8,6 +9,7 @@ import { FileSessionStore, loadProfile, type Profile } from "mu";
 // `bun build --compile` binary, where it fails with "cannot find module".
 const BUILT_IN: Record<string, (options: Record<string, unknown>) => Promise<Profile>> = {
   coding: (options) => codingProfile(options as Parameters<typeof codingProfile>[0]),
+  browser: (options) => browserProfile(options as Parameters<typeof browserProfile>[0]),
 };
 
 // Anything not shipped with mu is a module specifier the user supplies, loaded

@@ -25,6 +25,7 @@
       },
       "devDependencies": {
         "@mu/core": "workspace:*",
+        "@mu/profile-browser": "workspace:*",
         "@mu/profile-coding": "workspace:*",
         "@mu/tui": "workspace:*",
         "mu": "workspace:*",
@@ -40,6 +41,16 @@
       "version": "0.0.1",
       "dependencies": {
         "@mu/ai": "workspace:*",
+      },
+    },
+    "packages/profiles/browser": {
+      "name": "@mu/profile-browser",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mu/ai": "workspace:*",
+        "@mu/core": "workspace:*",
+        "mu": "workspace:*",
+        "zod": "4.4.3",
       },
     },
     "packages/profiles/coding": {
@@ -118,6 +129,8 @@
     "@mu/ai": ["@mu/ai@workspace:packages/ai"],
 
     "@mu/core": ["@mu/core@workspace:packages/core"],
+
+    "@mu/profile-browser": ["@mu/profile-browser@workspace:packages/profiles/browser"],
 
     "@mu/profile-coding": ["@mu/profile-coding@workspace:packages/profiles/coding"],
 

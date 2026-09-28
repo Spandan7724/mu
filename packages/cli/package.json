@@ -64,6 +64,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
+    "@mu/profile-browser": "workspace:*",
     "@mu/profile-coding": "workspace:*",
     "@mu/tui": "workspace:*",
     "mu": "workspace:*",
