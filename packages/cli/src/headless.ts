@@ -1,5 +1,6 @@
 import type { AgentOptions, HaltReason } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { browserFlags } from "./profiles.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
@@ -38,6 +39,7 @@ export async function runHeadless(
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
+      browser: browserFlags(args),
       resumeSessionId: args.resumeSessionId,
       maxTurns: args.maxTurns,
       maxCostUsd: args.maxCostUsd,

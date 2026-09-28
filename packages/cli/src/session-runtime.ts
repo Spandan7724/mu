@@ -18,6 +18,7 @@ import { resolveCliModel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import {
+  type BrowserFlags,
   DEFAULT_PROFILE,
   profileOptionsFromArgs,
   resolveProfile,
@@ -31,6 +32,7 @@ export interface SessionRuntimeOptions {
   permissionMode?: string | undefined;
   allowAll?: boolean | undefined;
   noInstructions?: boolean | undefined;
+  browser?: BrowserFlags | undefined;
   resumeSessionId?: string | undefined;
   sessionId?: string | undefined;
   maxTurns?: number | undefined;
@@ -67,9 +69,13 @@ export async function createCliSessionRuntime(
   let profile: Profile | undefined;
   let resolved = overrides;
   if (useBuiltIns) {
+    const profileName = options.profile ?? DEFAULT_PROFILE;
     profile = await resolveProfile(
-      options.profile ?? DEFAULT_PROFILE,
-      profileOptionsFromArgs(options.noInstructions ? { noInstructions: true } : {}),
+      profileName,
+      profileOptionsFromArgs(
+        { noInstructions: options.noInstructions === true, browser: options.browser },
+        profileName,
+      ),
     );
     for (const diagnostic of profile.diagnostics ?? [])
       options.onDiagnostic?.(`instruction warning: ${diagnostic}`);

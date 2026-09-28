@@ -7,6 +7,7 @@ import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-vi
 import { runAgentWorker } from "./agent-worker.ts";
 import { runAgentView } from "./agents-app.ts";
 import { HELP_TEXT, parseArgs } from "./args.ts";
+import { runBrowserLogin } from "./browser-command.ts";
 import { loadUserConfig } from "./config.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
@@ -15,6 +16,7 @@ import {
   type ModelCatalog,
   modelCatalogDiagnostics,
 } from "./model-catalog.ts";
+import { browserFlags } from "./profiles.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 import { runSelfUninstall, runSelfUpdate } from "./self-update.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -126,6 +128,8 @@ async function main(): Promise<number> {
         );
       case "headless":
         return runHeadless(args, {}, io);
+      case "browser-login":
+        return runBrowserLogin(args, io);
       case "agents":
         return runAgentView(args);
       case "agents-stop": {
@@ -162,6 +166,7 @@ async function main(): Promise<number> {
           permissionMode: args.permissionMode,
           allowAll: args.allowAll,
           noInstructions: args.noInstructions,
+          browser: browserFlags(args),
           resumeSessionId: args.resumeSessionId,
           maxTurns: args.maxTurns,
           maxCostUsd: args.maxCostUsd,

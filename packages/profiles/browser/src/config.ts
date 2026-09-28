@@ -6,20 +6,20 @@ import type { BrowserLauncher } from "./browser/connect.ts";
 import type { Size } from "./browser/launch.ts";
 
 export interface BrowserProfileOptions {
-  browserProfile?: string;
-  connect?: "managed" | "cdp";
-  cdpUrl?: string;
-  executable?: string;
-  channel?: "chrome" | "chromium" | "brave" | "edge";
-  headless?: boolean;
-  vision?: "auto" | "on" | "off";
-  viewport?: Size;
-  keepOpen?: boolean;
-  downloadsDir?: string;
-  allowedHosts?: string[];
-  blockedHosts?: string[];
-  home?: string;
-  launcher?: BrowserLauncher;
+  browserProfile?: string | undefined;
+  connect?: "managed" | "cdp" | undefined;
+  cdpUrl?: string | undefined;
+  executable?: string | undefined;
+  channel?: "chrome" | "chromium" | "brave" | "edge" | undefined;
+  headless?: boolean | undefined;
+  vision?: "auto" | "on" | "off" | undefined;
+  viewport?: Size | undefined;
+  keepOpen?: boolean | undefined;
+  downloadsDir?: string | undefined;
+  allowedHosts?: string[] | undefined;
+  blockedHosts?: string[] | undefined;
+  home?: string | undefined;
+  launcher?: BrowserLauncher | undefined;
 }
 
 export interface ResolvedBrowserOptions {

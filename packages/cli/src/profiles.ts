@@ -34,9 +34,25 @@ export async function resolveProfile(
 
 export const DEFAULT_PROFILE = "coding";
 
-export function profileOptionsFromArgs(args: {
-  noInstructions?: boolean;
-}): Record<string, unknown> {
+export interface BrowserFlags {
+  browserProfile?: string | undefined;
+  cdpUrl?: string | undefined;
+  headless?: boolean | undefined;
+}
+
+export function browserFlags(args: BrowserFlags): BrowserFlags {
+  return {
+    ...(args.browserProfile ? { browserProfile: args.browserProfile } : {}),
+    ...(args.cdpUrl ? { cdpUrl: args.cdpUrl } : {}),
+    ...(args.headless ? { headless: true } : {}),
+  };
+}
+
+export function profileOptionsFromArgs(
+  args: { noInstructions?: boolean; browser?: BrowserFlags | undefined },
+  profile = DEFAULT_PROFILE,
+): Record<string, unknown> {
+  if (profile === "browser") return { ...browserFlags(args.browser ?? {}) };
   return args.noInstructions ? { instructions: { enabled: false } } : {};
 }
 

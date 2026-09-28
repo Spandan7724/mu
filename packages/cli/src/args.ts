@@ -10,7 +10,8 @@ export interface ParsedArgs {
     | "help"
     | "version"
     | "self-update"
-    | "self-uninstall";
+    | "self-uninstall"
+    | "browser-login";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -22,6 +23,10 @@ export interface ParsedArgs {
   allowAll: boolean;
   noInstructions: boolean;
   purgeData: boolean;
+  browserProfile?: string | undefined;
+  cdpUrl?: string | undefined;
+  headless?: boolean | undefined;
+  loginUrl?: string | undefined;
   workerSessionId?: string | undefined;
   workerOwnershipToken?: string | undefined;
   errors: string[];
@@ -85,6 +90,33 @@ export function parseArgs(argv: string[]): ParsedArgs {
         } else {
           parsed.mode = "agents";
         }
+        break;
+      case "browser":
+        if (i !== 0) {
+          parsed.errors.push('"browser" must come first: mu browser [login] [options]');
+          break;
+        }
+        parsed.profile = "browser";
+        if (argv[i + 1] === "login") {
+          i++;
+          parsed.mode = "browser-login";
+          const next = argv[i + 1];
+          if (next !== undefined && !next.startsWith("-")) {
+            parsed.loginUrl = next;
+            i++;
+          }
+        }
+        break;
+      case "--browser-profile":
+        parsed.browserProfile = argv[++i];
+        if (!parsed.browserProfile) parsed.errors.push("--browser-profile requires a name");
+        break;
+      case "--cdp":
+        parsed.cdpUrl = argv[++i];
+        if (!parsed.cdpUrl) parsed.errors.push("--cdp requires an endpoint URL");
+        break;
+      case "--headless":
+        parsed.headless = true;
         break;
       case "__agents-supervisor":
         parsed.mode = "agents-supervisor";
@@ -158,6 +190,8 @@ Usage:
   mu --resume <session>    resume an interactive session
   mu -p "<prompt>"         run one prompt and print the result
   mu --rpc                 newline-delimited JSON: events out, ops in
+  mu browser               start the interactive app with the browser profile
+  mu browser login [url]   open the managed browser to sign in to sites once
   mu agents                manage several ordinary sessions
   mu agents stop           stop the managed-session supervisor
   mu self update           update a global npm, Bun, or GitHub-release install
@@ -175,6 +209,10 @@ Options:
                            default | accept-edits | plan-readonly | yolo
       --allow-all          alias for --permission-mode yolo
       --no-instructions    disable global and project instruction loading
+      --browser-profile <name>
+                           managed browser profile (default: default)
+      --cdp <url>          drive an existing browser's CDP endpoint instead
+      --headless           run the managed browser without a window
       --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)
   -h, --help               show this help
   -v, --version            show the version

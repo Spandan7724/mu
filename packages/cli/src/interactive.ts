@@ -62,6 +62,7 @@ import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
 import { createRendererRegistry } from "./presentation.ts";
+import { browserFlags } from "./profiles.ts";
 import {
   normalizeSessionTitle,
   resumePickerItems,
@@ -275,6 +276,7 @@ export async function runInteractive(
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
+      browser: browserFlags(args),
       resumeSessionId: args.resumeSessionId,
       agentOptions: options,
       permissions: "forward",
