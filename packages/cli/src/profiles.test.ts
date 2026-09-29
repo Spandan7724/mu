@@ -35,3 +35,33 @@ describe("built-in profiles", () => {
     expect(await profile.scope?.()).toBe("browser-work");
   });
 });
+
+describe("session scopes", () => {
+  test("browser sessions are stored and listed separately from coding sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-scope-workspace-"));
+    const sessionRoot = await mkdtemp(join(tmpdir(), "mu-scope-store-"));
+    const coding = await sessionStoreForProfile(await codingProfile({ root }), sessionRoot);
+    const browser = await sessionStoreForProfile(
+      await resolveProfile("browser", { home: root, browserProfile: "work" }),
+      sessionRoot,
+    );
+    const tree = (id: string, profile: string) =>
+      new SessionTree({
+        type: "session",
+        version: SESSION_VERSION,
+        id,
+        createdAt: "2026-09-29T00:00:00.000Z",
+        profile,
+        environment: {},
+      });
+    await coding.save("coding-1", tree("coding-1", "coding"));
+    await browser.save("browser-1", tree("browser-1", "browser"));
+    expect(await coding.list()).toEqual(["coding-1"]);
+    expect(await browser.list()).toEqual(["browser-1"]);
+    const other = await sessionStoreForProfile(
+      await resolveProfile("browser", { home: root, browserProfile: "personal" }),
+      sessionRoot,
+    );
+    expect(await other.list()).toEqual([]);
+  });
+});
