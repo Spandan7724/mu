@@ -3,6 +3,7 @@ import { tool } from "mu";
 import { z } from "zod";
 import { hostOf } from "../actions/navigate.ts";
 import { Stopwatch } from "../actions/types.ts";
+import { INJECTION_NOTE, looksLikeInjection } from "../page/injection.ts";
 import { renderHeader } from "../page/observe.ts";
 import { describeNode } from "../page/render.ts";
 import { resolveRef } from "../page/resolve.ts";
@@ -171,6 +172,7 @@ export function readPageTool(deps: BrowserToolDeps) {
       const summary = `read_page ${model.title ? `"${model.title}" ` : ""}${query ? `query "${query}" ` : ""}chars ${page.start}–${page.end} of ${page.total}`;
       const text = [
         summary,
+        ...(looksLikeInjection(body) ? [INJECTION_NOTE] : []),
         `[page] ${model.title}\nurl: ${model.url}\nreading: ${scope}`,
         `<page_content untrusted="true">\n${body.replace(/<(\/?)page_content/gi, "‹$1page_content")}\n</page_content>${more}`,
       ].join("\n");

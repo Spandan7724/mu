@@ -6,6 +6,7 @@ import type { BrowserManager } from "../browser/manager.ts";
 import type { Tab } from "../browser/tabs.ts";
 import { isCdpError } from "../cdp/connection.ts";
 import type { ResolvedBrowserOptions } from "../config.ts";
+import { INJECTION_NOTE, looksLikeInjection } from "../page/injection.ts";
 import { observe } from "../page/observe.ts";
 import { StaleRefError } from "../page/resolve.ts";
 
@@ -129,9 +130,11 @@ export async function pageAction(
       ...(result.path ? { path: result.path } : {}),
     },
   };
+  const content = observation.text.slice(observation.text.indexOf("<page_content"));
   const text = [
     outcome.summary,
     ...(nudge ? [nudge] : []),
+    ...(looksLikeInjection(content) ? [INJECTION_NOTE] : []),
     ...notices.map((notice) => `note: ${notice}`),
     ...(result.extra ? [result.extra] : []),
     "",
