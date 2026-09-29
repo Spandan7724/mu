@@ -422,6 +422,8 @@ export interface RunMetrics {
   costUsd: number;
   asks: string[];
   askDetails?: string[];
+  // The agent's final answer, to tell a wrong result from a run that stopped early.
+  answer?: string;
   error?: string;
 }
 
@@ -526,6 +528,7 @@ export async function runTask(
       outputTokens: result.usage.outputTokens,
       costUsd: result.usage.costUsd ?? 0,
       asks: asks.map((ask) => ask.permission),
+      answer: result.text.slice(0, 600),
       askDetails: asks.map(
         (ask) =>
           `${ask.permission}: ${ask.preview?.kind === "text" ? ask.preview.lines.join(" | ") : ask.description}`,
