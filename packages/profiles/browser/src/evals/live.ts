@@ -486,7 +486,14 @@ export async function runTask(
             { text: result.text, asks, messages: result.messages, profile },
             options.ctx,
           )
-        : { pass: false, note: `run ended: ${result.reason}` };
+        : {
+            pass: false,
+            note: `run ended: ${result.reason}${
+              assistants.at(-1)?.errorMessage
+                ? ` (${assistants.at(-1)?.errorMessage?.slice(0, 160)})`
+                : ""
+            }`,
+          };
     return {
       ...base,
       pass: judgement.pass,
