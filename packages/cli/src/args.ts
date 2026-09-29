@@ -11,7 +11,9 @@ export interface ParsedArgs {
     | "version"
     | "self-update"
     | "self-uninstall"
-    | "browser-login";
+    | "browser-login"
+    | "browser-status"
+    | "browser-close";
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
@@ -97,7 +99,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
           break;
         }
         parsed.profile = "browser";
-        if (argv[i + 1] === "login") {
+        if (argv[i + 1] === "status" || argv[i + 1] === "close") {
+          parsed.mode = argv[++i] === "status" ? "browser-status" : "browser-close";
+        } else if (argv[i + 1] === "login") {
           i++;
           parsed.mode = "browser-login";
           const next = argv[i + 1];
@@ -192,6 +196,8 @@ Usage:
   mu --rpc                 newline-delimited JSON: events out, ops in
   mu browser               start the interactive app with the browser profile
   mu browser login [url]   open the managed browser to sign in to sites once
+  mu browser status        show the browser binary, profile and whether it is running
+  mu browser close         close the managed browser left open by earlier runs
   mu agents                manage several ordinary sessions
   mu agents stop           stop the managed-session supervisor
   mu self update           update a global npm, Bun, or GitHub-release install

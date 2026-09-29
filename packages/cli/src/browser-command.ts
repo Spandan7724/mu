@@ -1,4 +1,9 @@
-import { type BrowserProfile, browserProfile } from "@mu/profile-browser";
+import {
+  type BrowserProfile,
+  browserProfile,
+  closeManaged,
+  managedState,
+} from "@mu/profile-browser";
 import type { ParsedArgs } from "./args.ts";
 import { EXIT } from "./headless.ts";
 import { browserFlags } from "./profiles.ts";
@@ -79,5 +84,47 @@ export async function runBrowserLogin(
   io.stdout(
     "The browser stays open with your sign-ins saved; mu will reuse it. Run `mu browser` to start.\n",
   );
+  return 0;
+}
+
+export async function runBrowserStatus(
+  args: ParsedArgs,
+  io: Io,
+  deps: { home?: string } = {},
+): Promise<number> {
+  const profile = await browserProfile({ ...browserFlags(args), ...deps });
+  const env = (await profile.environment?.()) ?? {};
+  const config = profile.config;
+  const lines = [`browser profile: ${config.browserProfile}`];
+  if (config.connect === "cdp") {
+    lines.push(`connection: cdp ${config.cdpUrl}`);
+  } else {
+    const state = await managedState(config.userDataDir);
+    lines.push(
+      `browser: ${env.browser ?? "unknown"}`,
+      ...(env.executable ? [`executable: ${env.executable}`] : []),
+      `profile dir: ${config.userDataDir}`,
+      `running: ${state.running ? `yes (${state.endpoint})` : state.locked ? "open without remote debugging — close that window" : "no"}`,
+    );
+  }
+  lines.push(`downloads: ${config.downloadsDir}`);
+  io.stdout(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+export async function runBrowserClose(
+  args: ParsedArgs,
+  io: Io,
+  deps: { home?: string } = {},
+): Promise<number> {
+  if (args.cdpUrl) {
+    io.stderr(
+      "mu: browser close only closes the managed browser; it will not close a --cdp browser\n",
+    );
+    return EXIT.usage;
+  }
+  const profile = await browserProfile({ ...browserFlags(args), ...deps });
+  const closed = await closeManaged(profile.config.userDataDir);
+  io.stdout(closed ? "Closed the managed browser.\n" : "The managed browser is not running.\n");
   return 0;
 }

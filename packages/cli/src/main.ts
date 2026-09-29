@@ -7,7 +7,7 @@ import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-vi
 import { runAgentWorker } from "./agent-worker.ts";
 import { runAgentView } from "./agents-app.ts";
 import { HELP_TEXT, parseArgs } from "./args.ts";
-import { runBrowserLogin } from "./browser-command.ts";
+import { runBrowserClose, runBrowserLogin, runBrowserStatus } from "./browser-command.ts";
 import { loadUserConfig } from "./config.ts";
 import { EXIT, runHeadless } from "./headless.ts";
 import { runInteractive } from "./interactive.ts";
@@ -130,6 +130,10 @@ async function main(): Promise<number> {
         return runHeadless(args, {}, io);
       case "browser-login":
         return runBrowserLogin(args, io);
+      case "browser-status":
+        return runBrowserStatus(args, io);
+      case "browser-close":
+        return runBrowserClose(args, io);
       case "agents":
         return runAgentView(args);
       case "agents-stop": {

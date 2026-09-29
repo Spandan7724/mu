@@ -179,3 +179,30 @@ export async function connectToEndpoint(
   const connection = await connectCdp(wsUrl, options);
   return { connection, endpoint: { wsUrl, launched: false } };
 }
+
+export interface ManagedState {
+  running: boolean;
+  endpoint?: string;
+  locked: boolean;
+}
+
+// Inspects the managed profile without launching anything.
+export async function managedState(userDataDir: string): Promise<ManagedState> {
+  const endpoint = readDevToolsActivePort(userDataDir);
+  const running = endpoint ? await endpointAlive(endpoint) : false;
+  return {
+    running,
+    ...(running && endpoint ? { endpoint } : {}),
+    locked: !running && profileLocked(userDataDir),
+  };
+}
+
+export async function closeManaged(userDataDir: string): Promise<boolean> {
+  const state = await managedState(userDataDir);
+  if (!state.endpoint) return false;
+  const connection = await connectCdp(state.endpoint, { timeoutMs: 3_000 });
+  await connection.send("Browser.close", undefined, { timeoutMs: 3_000 }).catch(() => {});
+  await Promise.race([connection.closed, Bun.sleep(3_000)]);
+  await connection.close();
+  return true;
+}

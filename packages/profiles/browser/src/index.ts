@@ -19,6 +19,7 @@ import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
 import { BrowserState, type CommitLedger, type NotesStore } from "./agent/state.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
+import { browserCommands } from "./commands.ts";
 import {
   type BrowserProfileOptions,
   type ResolvedBrowserOptions,
@@ -200,6 +201,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,
+    commands: browserCommands(browser, state.ledger),
     // What compaction must not lose: where the browser is, the plan, collected data, and
     // every consequential action already performed.
     carryoverExtractor: () => {
@@ -237,4 +239,5 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
 
 export type { BrowserProfileOptions, ResolvedBrowserOptions };
 export { BrowserManager };
+export { closeManaged, managedState } from "./browser/connect.ts";
 export default browserProfile;
