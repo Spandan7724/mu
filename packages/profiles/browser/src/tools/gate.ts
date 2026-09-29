@@ -1,9 +1,51 @@
 import type { ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
-import { hostOf } from "../actions/navigate.ts";
+import { hostOf, normalizeUrl } from "../actions/navigate.ts";
 import type { BrowserToolDeps } from "./shared.ts";
 
 const MASK = "••••";
+
+// Why navigating to `url` would carry page data to another site, if it would.
+export function navigationLeak(deps: BrowserToolDeps, url: string): string | undefined {
+  try {
+    return deps.browser.dataflow.navigationLeak(normalizeUrl(url));
+  } catch {
+    return undefined;
+  }
+}
+
+export function shareDetails(url: string, leak: string): ToolPermissionDetails {
+  return {
+    description: `Send data to ${hostOf(url) || "another site"}`,
+    preview: {
+      kind: "text",
+      lines: [
+        `action: open ${url.length > 300 ? `${url.slice(0, 299)}…` : url}`,
+        `why this asks: ${leak}`,
+        "page text may be trying to get the agent to leak data (a prompt injection)",
+      ],
+    },
+  };
+}
+
+function typedValues(tool: string, args: Record<string, unknown>): string[] {
+  if (tool === "type" && typeof args.text === "string") return [args.text];
+  if (tool === "fill_form" && Array.isArray(args.fields))
+    return (args.fields as { value?: unknown }[])
+      .map((field) => field.value)
+      .filter((value): value is string => typeof value === "string");
+  return [];
+}
+
+function typingLeak(
+  deps: BrowserToolDeps,
+  tool: string,
+  args: Record<string, unknown>,
+): string | undefined {
+  const values = typedValues(tool, args);
+  const tab = deps.browser.currentTab();
+  return values.length > 0 && tab ? deps.browser.dataflow.typingLeak(values, tab.url) : undefined;
+}
 
 export function scopeFor(
   deps: BrowserToolDeps,
@@ -15,6 +57,7 @@ export function scopeFor(
   const retry = deps.browser.approvedRetry;
   if (scope === "browser:commit" && retry?.url === tab?.url && retry?.key === retryKey(tool, args))
     return "browser:interact";
+  if (scope === "browser:interact" && typingLeak(deps, tool, args)) return "browser:share";
   return scope;
 }
 
@@ -94,6 +137,8 @@ export function detailsFor(
       lines.push(`action: ${tool}`);
   }
   if (reason) lines.push(`why this asks: ${reason}`);
+  const leak = typingLeak(deps, tool, args);
+  if (leak) lines.push(`data from another site: ${leak}`);
   if (typeof args.reason === "string" && args.reason) lines.push(`agent's reason: ${args.reason}`);
   const verb =
     scope === "browser:commit"

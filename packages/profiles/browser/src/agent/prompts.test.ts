@@ -12,7 +12,7 @@ test("the prompt is static and covers the loop, refs, commits, untrusted content
     "Lines starting with * are new",
     "fill_form",
     "commit: true",
-    '<page_content untrusted="true">',
+    'marked untrusted="true"',
     "prompt injection",
     "Login walls, two-factor codes, CAPTCHAs",
     "change it",

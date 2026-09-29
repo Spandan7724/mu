@@ -6,6 +6,7 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
+import { hostOf } from "./actions/navigate.ts";
 import { checkpointTool } from "./agent/checkpoint.ts";
 import { recordingCommits } from "./agent/ledger.ts";
 import { notesTool } from "./agent/notes.ts";
@@ -76,6 +77,30 @@ export function environmentMessage(env: Record<string, string>): AgentMessage {
   return {
     ...customMessage("environment", `Browser session environment:\n${lines.join("\n")}`),
     retention: { key: "environment" },
+  };
+}
+
+const PAGE_CONTENT = /<page_content untrusted="true">([\s\S]*?)<\/page_content>/g;
+
+// Records which site each piece of page text the model sees came from, and the
+// links it saw, so cross-site data flows can be recognised.
+function observingDataFlow(tool: AnyTool, browser: BrowserManager): AnyTool {
+  return {
+    ...tool,
+    execute: async (...args) => {
+      const result = await tool.execute(...args);
+      const tab = browser.currentTab();
+      if (!tab) return result;
+      for (const link of tab.links) browser.dataflow.link(link);
+      tab.links.clear();
+      const host = hostOf(tab.url);
+      for (const block of result.content) {
+        if (block.type !== "text") continue;
+        for (const match of block.text.matchAll(PAGE_CONTENT))
+          browser.dataflow.observe(host, match[1] ?? "");
+      }
+      return result;
+    },
   };
 }
 
@@ -164,10 +189,14 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       command: config.codingCommand,
       workspace: config.workspace,
       model: () => activeModel,
+      pageText: (text) => browser.dataflow.leak(text, "")?.from,
     }),
   ] as AnyTool[];
   const toolset = rawTools.map((candidate) =>
-    redacting(recordingCommits(candidate, browser, state), browser.secrets),
+    observingDataFlow(
+      redacting(recordingCommits(candidate, browser, state), browser.secrets),
+      browser,
+    ),
   );
   const runtime: ProfileRuntime = {
     attach: () => {},
@@ -188,6 +217,16 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       return browserPrompt(modelRef);
     },
     refreshContext: (messages, context) => {
+      browser.dataflow.userSaid(
+        messages
+          .filter((message) => message.role === "user")
+          .map((message) =>
+            typeof message.content === "string"
+              ? message.content
+              : message.content.map((block) => (block.type === "text" ? block.text : "")).join(""),
+          )
+          .join("\n"),
+      );
       // The model can change mid-session; the latest assistant turn names it.
       const last = messages.findLast((message) => message.role === "assistant");
       if (last?.role === "assistant" && last.model) activeModel = last.model;

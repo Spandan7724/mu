@@ -52,6 +52,9 @@ describe("browser permission modes", () => {
     );
     expect(check(rules, "click", "browser:commit")).toBe("allow");
     expect(check(rules, "evaluate", "browser:script")).toBe("allow");
+    expect(check(rules, "navigate", "browser:share", "collect.example")).toBe("ask");
+    expect(check(rules, "delegate", "browser:delegate", "read")).toBe("allow");
+    expect(check(rules, "delegate", "browser:delegate", "full")).toBe("ask");
     expect(check(rules, "navigate", "browser:navigate", "www.evil.test")).toBe("deny");
     const allowList = (
       await rulesFor("default", { allowedHosts: ["*.example.com", "example.com"] })

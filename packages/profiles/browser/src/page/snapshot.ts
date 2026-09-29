@@ -489,6 +489,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
       node.ref = tab.refs.refFor(node.frameId, node.backendNodeId);
       const name = node.name.length > 60 ? `${node.name.slice(0, 59)}…` : node.name;
       tab.refs.setLabel(node.ref, name ? `${node.role} ${JSON.stringify(name)}` : node.role);
+      if (node.url) tab.links.add(node.url);
       tab.refs.setMeta(node.ref, {
         role: node.role,
         name: node.name,

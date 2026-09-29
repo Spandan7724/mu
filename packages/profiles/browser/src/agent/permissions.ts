@@ -12,6 +12,7 @@ export const SCOPES = {
   upload: "browser:upload",
   script: "browser:script",
   delegate: "browser:delegate",
+  share: "browser:share",
 } as const;
 
 const rule = (
@@ -34,6 +35,7 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule(SCOPES.upload, "ask"),
   rule(SCOPES.script, "ask"),
   rule(SCOPES.delegate, "ask"),
+  rule(SCOPES.share, "ask"),
   rule("notes", "allow"),
   rule("checkpoint", "allow"),
   rule("todo", "allow"),
@@ -49,7 +51,14 @@ export function hostRules(allowedHosts: string[], blockedHosts: string[]): Permi
 }
 
 export function browserPermissionModes(hosts: PermissionRule[] = []): PermissionMode[] {
-  const gated = [SCOPES.commit, SCOPES.secret, SCOPES.upload, SCOPES.script, SCOPES.delegate];
+  const gated = [
+    SCOPES.commit,
+    SCOPES.secret,
+    SCOPES.upload,
+    SCOPES.script,
+    SCOPES.delegate,
+    SCOPES.share,
+  ];
   return [
     {
       id: "default",
@@ -84,9 +93,16 @@ export function browserPermissionModes(hosts: PermissionRule[] = []): Permission
     {
       id: "autonomous",
       label: "autonomous",
-      description: "Allow everything, including sending, buying and deleting, without asking.",
+      description:
+        "Allow everything, including sending, buying and deleting, without asking; still ask before page data goes to another site or the coding agent gets full access.",
       tone: "unrestricted",
-      rules: [rule("*", "allow"), ...hosts],
+      // The two paths a prompt injection uses to get data or commands out.
+      rules: [
+        rule("*", "allow"),
+        rule(SCOPES.share, "ask"),
+        rule(SCOPES.delegate, "ask", "full"),
+        ...hosts,
+      ],
     },
   ];
 }

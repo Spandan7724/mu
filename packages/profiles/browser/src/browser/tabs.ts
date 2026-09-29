@@ -24,6 +24,8 @@ export class Tab {
   dialog: JsDialog | undefined;
   crashed = false;
   readonly refs = new RefTable();
+  // Link targets captured since the last tool result drained them.
+  readonly links = new Set<string>();
   readonly network = new NetworkTracker();
   // What the previous observation showed, for `*` change markers.
   previous: { documentId: string; refs: Set<string>; texts: Set<string> } | undefined;

@@ -1,6 +1,7 @@
 import { tool } from "mu";
 import { z } from "zod";
 import { goHistory, hostOf, navigateTo, normalizeUrl, reload } from "../actions/navigate.ts";
+import { navigationLeak, shareDetails } from "./gate.ts";
 import { type BrowserToolDeps, pageAction } from "./shared.ts";
 
 const HISTORY = ["back", "forward", "reload"] as const;
@@ -15,7 +16,16 @@ export function navigateTool(deps: BrowserToolDeps) {
       newTab: z.boolean().optional().describe("Open in a new tab and make it active"),
     }),
     executionMode: "sequential",
-    permissionScope: () => "browser:navigate",
+    permissionScope: ({ url }) =>
+      !(HISTORY as readonly string[]).includes(url) && navigationLeak(deps, url)
+        ? "browser:share"
+        : "browser:navigate",
+    permissionDetails: ({ url }) => {
+      const leak = (HISTORY as readonly string[]).includes(url)
+        ? undefined
+        : navigationLeak(deps, url);
+      return leak ? shareDetails(safeNormalize(url), leak) : undefined;
+    },
     permissionPattern: ({ url }) =>
       (HISTORY as readonly string[]).includes(url)
         ? hostOf(deps.browser.tabs().find((tab) => tab.active)?.url ?? "")

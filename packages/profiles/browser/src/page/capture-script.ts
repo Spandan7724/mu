@@ -51,6 +51,9 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
 
   // Marks where an interactive child sits inside its text block's text.
   var MARK = "\u0001";
+  var TRANSPARENT = /^transparent$|^rgba\([^)]*,\s*0(\.0+)?\)$/;
+  // Inside an opacity: 0 element nothing is visible, whatever the child's own style.
+  var concealedDepth = 0;
 
   function walk(el, parent, sink, parentPointer) {
     var tag = el.tagName.toLowerCase();
@@ -60,6 +63,11 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     if (style.display === "none") return;
     var visible = style.visibility !== "hidden" && style.visibility !== "collapse" &&
       (style.opacity !== "0" || tag === "input");
+    // Text a person cannot see (transparent, microscopic, under an invisible
+    // ancestor, pushed off the page) is where instructions aimed at agents hide.
+    // Only text is dropped: invisible native controls still work.
+    var hidesText = !visible || concealedDepth > 0 || parseFloat(style.fontSize) < 2 ||
+      (TRANSPARENT.test(style.color) && style.webkitBackgroundClip !== "text" && style.backgroundClip !== "text");
     var role = (el.getAttribute("role") || "").toLowerCase().split(" ")[0];
     var pointer = style.cursor === "pointer";
     var editable = editableKind(el, tag);
@@ -89,12 +97,14 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     var inline = style.display === "inline" || style.display === "contents";
     // Inline, non-semantic elements inside a text block contribute their text to it.
     if (!kind && sink >= 0 && inline) {
-      walkChildren(el.shadowRoot || el, parent, sink, pointer);
+      if (!hidesText) walkChildren(el.shadowRoot || el, parent, sink, pointer);
       return;
     }
     if (!kind && hasOwnText(el)) kind = "t";
     var rect = el.getBoundingClientRect();
     var zeroSize = rect.width === 0 || rect.height === 0;
+    if (kind === "t" && (hidesText || rect.right + window.scrollX <= 0 || rect.bottom + window.scrollY <= 0 ||
+        (rect.width <= 1 && rect.height <= 1))) kind = "";
     var index = parent, childSink = -1;
     if (kind && visible && !(kind === "i" && zeroSize && tag !== "input")) {
       var node = {
@@ -156,18 +166,21 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
         childSink = -2;
         if (sink >= 0) appendText(sink, MARK);
       }
-      if (kind === "c" && hasOwnText(el)) childSink = index;
+      if (kind === "c" && hasOwnText(el) && !hidesText) childSink = index;
       if (kind === "t") {
         childSink = index;
         if (tag === "img") node.raw = el.getAttribute("alt");
       }
-    } else if (!kind && sink >= 0 && visible) {
+    } else if (!kind && sink >= 0 && !hidesText) {
       childSink = sink;
     } else if (sink === -2) {
       childSink = -2;
     }
     if (kind === "f" || (kind === "i" && editable)) return;
+    var hidesChildren = style.opacity === "0";
+    if (hidesChildren) concealedDepth++;
     walkChildren(el.shadowRoot || el, index, childSink, pointer);
+    if (hidesChildren) concealedDepth--;
   }
 
   function walkChildren(root, parent, sink, pointer) {

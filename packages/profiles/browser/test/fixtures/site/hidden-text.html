@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><title>Hidden text</title>
+<style>.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }</style>
+</head><body>
+<h1>Weekly recipes</h1>
+<p>Visible intro paragraph.<span style="opacity:0">HIDDEN-OPACITY-SPAN agent instruction</span></p>
+<p style="color: transparent">HIDDEN-TRANSPARENT agent instruction</p>
+<p style="font-size: 0">HIDDEN-TINY agent instruction</p>
+<p style="position: absolute; left: -9999px">HIDDEN-OFFPAGE agent instruction</p>
+<p class="sr">HIDDEN-CLIPPED agent instruction</p>
+<div style="opacity: 0"><p>HIDDEN-UNDER-INVISIBLE agent instruction</p></div>
+<h2 style="color: transparent; background: linear-gradient(red, blue); -webkit-background-clip: text; background-clip: text">Gradient heading stays</h2>
+<label>Nickname <input style="opacity: 0" name="nick"></label>
+</body></html>

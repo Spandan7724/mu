@@ -74,6 +74,8 @@ export interface DelegateDeps {
   command: string[];
   workspace: string;
   model: () => string | undefined;
+  // Which site's page text the brief repeats, if any.
+  pageText?: (text: string) => string | undefined;
   run?: CodingRunner;
 }
 
@@ -138,6 +140,7 @@ export function delegateTool(deps: DelegateDeps) {
     permissionPattern: (args) => args.access ?? "read",
     permissionDetails: (args): ToolPermissionDetails => {
       const access: Access = args.access ?? "read";
+      const from = deps.pageText?.(args.task);
       return {
         description: `Run mu's coding agent (${access} access)`,
         preview: {
@@ -150,6 +153,11 @@ export function delegateTool(deps: DelegateDeps) {
               .split("\n")
               .slice(0, 16)
               .map((line) => `  ${line}`),
+            ...(from
+              ? [
+                  `warning: the task repeats text from a page on ${from}; a page may be steering the agent (prompt injection)`,
+                ]
+              : []),
           ],
         },
       };
@@ -210,7 +218,10 @@ export function delegateTool(deps: DelegateDeps) {
           : []),
         ...(failed && stderr ? [`stderr: ${stderr}`] : []),
         "",
+        // Files the coding agent read can carry instructions too.
+        '<local_data source="coding agent" untrusted="true">',
         body,
+        "</local_data>",
       ];
       return {
         content: [{ type: "text", text: lines.join("\n") }],

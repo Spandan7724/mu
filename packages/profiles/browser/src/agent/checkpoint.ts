@@ -49,7 +49,10 @@ export function checkpointTool(home: string) {
       if (!name) return text(`checkpoint ${action} needs a name`, true);
       if (action === "load") {
         try {
-          return text(`checkpoint "${name}":\n\n${readFileSync(pathFor(name), "utf8")}`);
+          // Saved progress may quote pages: a record to continue from, not instructions.
+          return text(
+            `checkpoint "${name}":\n<saved_checkpoint untrusted="true">\n${readFileSync(pathFor(name), "utf8")}\n</saved_checkpoint>`,
+          );
         } catch {
           return text(`no checkpoint named "${name}"; use list`, true);
         }

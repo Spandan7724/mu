@@ -2,6 +2,7 @@ import { tool } from "mu";
 import { z } from "zod";
 import { navigateTo, normalizeUrl } from "../actions/navigate.ts";
 import type { TabInfo } from "../browser/tabs.ts";
+import { navigationLeak, shareDetails } from "./gate.ts";
 import { type BrowserToolDeps, pageAction } from "./shared.ts";
 
 export function formatTabs(tabs: TabInfo[]): string {
@@ -26,7 +27,16 @@ export function tabsTool(deps: BrowserToolDeps) {
     }),
     executionMode: "sequential",
     changesState: ({ action }) => action !== "list",
-    permissionScope: ({ action }) => (action === "list" ? "browser:observe" : "browser:navigate"),
+    permissionScope: ({ action, url }) =>
+      action === "list"
+        ? "browser:observe"
+        : action === "open" && url && navigationLeak(deps, url)
+          ? "browser:share"
+          : "browser:navigate",
+    permissionDetails: ({ action, url }) => {
+      const leak = action === "open" && url ? navigationLeak(deps, url) : undefined;
+      return leak && url ? shareDetails(url, leak) : undefined;
+    },
     permissionPattern: ({ action, url, tabId }) => {
       if (action === "open" && url) {
         try {

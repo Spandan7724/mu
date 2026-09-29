@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DataFlowGuard } from "../agent/dataflow.ts";
 import { type CdpConnection, CdpError, isCdpError } from "../cdp/connection.ts";
 import type { Protocol } from "../cdp/types.ts";
 import { SecretRegistry } from "../page/secrets.ts";
@@ -78,6 +79,7 @@ export class BrowserManager {
   private abort = new AbortController();
   readonly downloads: DownloadTracker;
   readonly secrets = new SecretRegistry();
+  readonly dataflow = new DataFlowGuard();
   // Tab switches in a row with no other browser action in between.
   switchStreak = 0;
   // An approved consequential action that was blocked before any input reached the page.

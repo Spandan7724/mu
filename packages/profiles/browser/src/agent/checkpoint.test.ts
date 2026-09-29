@@ -29,7 +29,9 @@ test("checkpoints are saved to disk, listed newest first and loaded by a later s
   expect((await run({ action: "list" })).text).toMatch(
     /- job-applications \(saved \d{4}-\d\d-\d\d \d\d:\d\d\): # Jobs/,
   );
-  expect((await run({ action: "load", name: "job-applications" })).text).toContain("- [ ] Globex");
+  const loaded = (await run({ action: "load", name: "job-applications" })).text;
+  expect(loaded).toContain("- [ ] Globex");
+  expect(loaded).toMatch(/<saved_checkpoint untrusted="true">\n# Jobs[\s\S]*<\/saved_checkpoint>$/);
   const missing = await run({ action: "load", name: "nope" });
   expect(missing.result.isError).toBe(true);
   expect((await run({ action: "save", name: "x" })).result.isError).toBe(true);
