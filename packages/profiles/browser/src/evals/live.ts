@@ -73,9 +73,10 @@ export const TASKS: EvalTask[] = [
       const numbers = [...text.matchAll(/\d{3}[,.\s ]?\d{3}/g)].map((match) =>
         match[0].replace(/\D/g, ""),
       );
-      const grounded = numbers.find(
-        (number) => number.length === 6 && html.replace(/\D/g, " ").includes(number),
+      const onPage = new Set(
+        [...html.matchAll(/\d{1,3}(?:[,\s ]\d{3})+/g)].map((match) => match[0].replace(/\D/g, "")),
       );
+      const grounded = numbers.find((number) => number.length === 6 && onPage.has(number));
       return grounded
         ? { pass: true, note: `answered ${grounded}` }
         : { pass: false, note: `no population figure from the page in: ${text.slice(0, 120)}` };
@@ -361,7 +362,7 @@ export async function runTask(
     provider,
     model: options.modelRef,
     getCredentials: options.getCredentials,
-    maxTurns: options.maxTurns ?? 40,
+    budget: { maxTurns: options.maxTurns ?? 40 },
     onPermission: async (request: PermissionRequest) => {
       asks.push(request);
       return task.approve?.(request) ?? "allow";

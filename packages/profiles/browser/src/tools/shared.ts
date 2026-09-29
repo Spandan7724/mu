@@ -30,6 +30,7 @@ export interface PageActionOptions {
   subtreeRef?: string;
   // Interactions compare the page before and after to report "no visible change".
   detectChange?: boolean;
+  tabSwitch?: boolean;
 }
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
@@ -41,6 +42,8 @@ export async function pageAction(
   options: PageActionOptions = {},
 ): Promise<ToolResult> {
   const signal = deps.browser.actionSignal(toolSignal);
+  const switching = options.tabSwitch === true;
+  if (!switching) deps.browser.switchStreak = 0;
   const stopwatch = new Stopwatch();
   let tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(signal));
   let result: ActResult;

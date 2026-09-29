@@ -49,4 +49,20 @@ describeWithBrowser("loop detection", () => {
     expect(opened).not.toContain("has not changed");
     expect(await run("snapshot", {})).not.toContain("has not changed");
   });
+
+  test("repeated tab switching without acting gets a nudge", async () => {
+    await run("navigate", { url: site.url("form-basic") });
+    await run("tabs", { action: "open", url: site.url("long") });
+    expect(await run("tabs", { action: "switch", tabId: "t1" })).not.toContain(
+      "tab switches in a row",
+    );
+    await run("tabs", { action: "switch", tabId: "t2" });
+    expect(await run("tabs", { action: "switch", tabId: "t1" })).toContain(
+      "3 tab switches in a row",
+    );
+    await run("snapshot", {});
+    expect(await run("tabs", { action: "switch", tabId: "t2" })).not.toContain(
+      "tab switches in a row",
+    );
+  });
 });

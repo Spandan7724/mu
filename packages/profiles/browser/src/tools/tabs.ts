@@ -68,7 +68,16 @@ export function tabsTool(deps: BrowserToolDeps) {
             const switched = await stopwatch.time("cdpMs", () =>
               deps.browser.switchTab(tabId, actionSignal),
             );
-            return { summary: `switched to tab ${switched.tabId}`, tab: switched };
+            const streak = ++deps.browser.switchStreak;
+            return {
+              summary: `switched to tab ${switched.tabId}`,
+              tab: switched,
+              ...(streak >= 3
+                ? {
+                    extra: `note: that is ${streak} tab switches in a row. Pages you switch away from are collapsed, so switching back does not keep them in view — record the values you need with notes (or state them in your reply) and then continue.`,
+                  }
+                : {}),
+            };
           }
           await stopwatch.time("cdpMs", () => deps.browser.closeTab(tabId, actionSignal));
           const next = await stopwatch.time("cdpMs", () => deps.browser.activeTab(actionSignal));
@@ -78,7 +87,7 @@ export function tabsTool(deps: BrowserToolDeps) {
             extra: formatTabs(deps.browser.tabs()),
           };
         },
-        { blockedByDialog: action !== "list" },
+        { blockedByDialog: action !== "list", tabSwitch: action === "switch" },
       ),
   });
 }

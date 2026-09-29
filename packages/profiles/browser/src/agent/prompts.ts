@@ -49,6 +49,7 @@ Recovery:
 Long tasks:
 - For tasks with more than three steps, keep a todo list and update it as you go.
 - Save collected data (names, prices, IDs, links, partial results) with notes as soon as you find it: older page states are collapsed to one-line summaries, but notes and the todo list stay available.
+- Only the current page is shown in full. Before switching tabs or navigating away, put what you need from this page into notes (or your reply); switching back only to re-read it wastes turns.
 
 Finishing:
 - Before answering, re-read the user's request and check every requirement against what the page actually showed: counts, filters, formats, and that submissions really went through (a confirmation message, the item in Sent, the updated page).

@@ -74,6 +74,8 @@ export class BrowserManager {
   private abort = new AbortController();
   readonly downloads: DownloadTracker;
   readonly secrets = new SecretRegistry();
+  // Tab switches in a row with no other browser action in between.
+  switchStreak = 0;
 
   constructor(readonly options: BrowserManagerOptions) {
     const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
