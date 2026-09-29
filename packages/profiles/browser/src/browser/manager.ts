@@ -55,6 +55,8 @@ interface PageTarget {
   createdAt: number;
 }
 
+const MAX_LIVE_TABS = 3;
+
 const BLANK_URLS = new Set(["about:blank", "chrome://newtab/", "chrome://new-tab-page/", ""]);
 
 // Owns the one browser connection of a session: lazy connect, tab tracking,
@@ -76,6 +78,8 @@ export class BrowserManager {
   readonly secrets = new SecretRegistry();
   // Tab switches in a row with no other browser action in between.
   switchStreak = 0;
+  // Which tab owns each live-observation slot, least recently observed first.
+  private slots: { slot: number; tabId: string }[] = [];
 
   constructor(readonly options: BrowserManagerOptions) {
     const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
@@ -210,7 +214,36 @@ export class BrowserManager {
     }
   }
 
+  // Only MAX_LIVE_TABS tabs keep a full observation in context: a tab reuses its own
+  // slot, else a free one, else the least recently observed tab's (whose old
+  // observation then collapses, since it shares the retention key).
+  observationSlot(tabId: string): number {
+    const index = this.slots.findIndex((entry) => entry.tabId === tabId);
+    const closed = this.slots.findIndex((entry) => entry.tabId.startsWith("closed:"));
+    let slot: number;
+    if (index >= 0 || closed >= 0) {
+      const at = index >= 0 ? index : closed;
+      slot = (this.slots[at] as { slot: number }).slot;
+      this.slots.splice(at, 1);
+    } else if (this.slots.length < MAX_LIVE_TABS) {
+      const used = new Set(this.slots.map((entry) => entry.slot));
+      slot = [...Array(MAX_LIVE_TABS).keys()].find((candidate) => !used.has(candidate)) ?? 0;
+    } else {
+      slot = (this.slots.shift() as { slot: number }).slot;
+    }
+    this.slots.push({ slot, tabId });
+    return slot;
+  }
+
   private forgetTarget(targetId: string): void {
+    const closedTab = this.pages.get(targetId)?.tabId;
+    // A closed tab's slot goes to the front, so the next new tab reuses it and its
+    // last observation collapses.
+    const freed = this.slots.findIndex((entry) => entry.tabId === closedTab);
+    if (freed >= 0) {
+      const [entry] = this.slots.splice(freed, 1);
+      if (entry) this.slots.unshift({ ...entry, tabId: `closed:${closedTab}` });
+    }
     this.pages.delete(targetId);
     this.attached.get(targetId)?.dispose();
     this.attached.delete(targetId);

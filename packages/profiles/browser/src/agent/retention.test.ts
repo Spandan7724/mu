@@ -122,3 +122,57 @@ describeWithBrowser("per-tab retention", () => {
     await agent.shutdown();
   });
 });
+
+describeWithBrowser("live-tab cap", () => {
+  const home = tempUserDataDir();
+  let site: FixtureSite;
+  let profile: BrowserProfile;
+  beforeAll(async () => {
+    site = startFixtureSite();
+    profile = await browserProfile({
+      home,
+      headless: true,
+      keepOpen: false,
+      vision: "off",
+      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+    });
+  });
+  afterAll(async () => {
+    await profile.browser.shutdown({ close: true });
+    site.stop();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("only the three most recently observed tabs stay in full; a closed tab's slot is reused", async () => {
+    const provider = new FakeProvider([
+      call("c1", "navigate", { url: site.url("form-basic") }),
+      call("c2", "tabs", { action: "open", url: site.url("long") }),
+      call("c3", "tabs", { action: "open", url: site.url("shadow") }),
+      call("c4", "tabs", { action: "open", url: site.url("modal") }),
+      call("c5", "tabs", { action: "close", tabId: "t4" }),
+      call("c6", "tabs", { action: "open", url: site.url("custom-select") }),
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+    );
+    await agent.run("read many pages");
+    const live = (request: number) =>
+      (provider.requests[request]?.messages ?? [])
+        .filter(
+          (message) =>
+            message.role === "toolResult" &&
+            message.content.some(
+              (block) => block.type === "text" && block.text.includes("<page_content"),
+            ),
+        )
+        .map((message) => (message.role === "toolResult" ? message.toolCallId : ""));
+    // After four tabs: the first tab's page collapsed, the latest three remain.
+    expect(live(4)).toEqual(["c2", "c3", "c4"]);
+    // Closing t4 re-observes the tab it lands on; the next new tab takes t4's slot.
+    expect(live(6)).not.toContain("c4");
+    expect(live(6).length).toBeLessThanOrEqual(3);
+    expect(live(6)).toContain("c6");
+    await agent.shutdown();
+  });
+});

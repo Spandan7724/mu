@@ -60,7 +60,7 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(viewport).not.toContain('"Article 80"');
     const full = await run("snapshot", { scope: "full" });
     expect(text(full)).toContain('"Article 80"');
-    expect(full.retention?.key).toMatch(/^browser:observation:t\d+$/);
+    expect(full.retention?.key).toMatch(/^browser:observation:\d$/);
     await run("navigate", { url: site.url("form-basic") });
     const subtree = text(await run("snapshot", { ref: "e13" }));
     expect(subtree).toContain('- combobox "Country" [ref=e13]');
