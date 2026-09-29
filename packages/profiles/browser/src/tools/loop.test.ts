@@ -60,6 +60,9 @@ describeWithBrowser("loop detection", () => {
     expect(await run("tabs", { action: "switch", tabId: "t1" })).toContain(
       "3 tab switches in a row",
     );
+    const refused = await run("tabs", { action: "switch", tabId: "t2" });
+    expect(refused).toContain("did not switch to t2");
+    expect(refused).toContain("What you have recorded so far");
     await run("snapshot", {});
     expect(await run("tabs", { action: "switch", tabId: "t2" })).not.toContain(
       "tab switches in a row",

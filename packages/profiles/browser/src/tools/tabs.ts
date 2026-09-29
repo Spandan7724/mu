@@ -64,6 +64,15 @@ export function tabsTool(deps: BrowserToolDeps) {
             };
           }
           if (!tabId) return { ok: false, kind: "error", summary: `tabs ${action} needs a tabId` };
+          if (action === "switch" && deps.browser.switchStreak >= 3) {
+            deps.browser.switchStreak++;
+            return {
+              ok: false,
+              kind: "no-change",
+              summary: `did not switch to ${tabId}: you have switched tabs ${deps.browser.switchStreak - 1} times in a row without doing anything else`,
+              extra: `Pages you leave are collapsed, so switching back and forth cannot show both at once. What you have recorded so far:\n${deps.notes?.() ?? "(no notes)"}\nIf that is enough, answer now; otherwise record what you need from this page with notes before moving on.`,
+            };
+          }
           if (action === "switch") {
             const switched = await stopwatch.time("cdpMs", () =>
               deps.browser.switchTab(tabId, actionSignal),

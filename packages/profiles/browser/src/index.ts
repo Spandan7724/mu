@@ -16,7 +16,7 @@ import {
   rememberAllow,
 } from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
-import { BrowserState, type CommitLedger, type NotesStore } from "./agent/state.ts";
+import { BrowserState, type CommitLedger, formatNotes, type NotesStore } from "./agent/state.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
 import { browserCommands } from "./commands.ts";
@@ -122,15 +122,16 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     downloadsDir: config.downloadsDir,
   });
   let activeModel: string | undefined;
+  const state = new BrowserState();
   const deps = {
     browser,
     config,
     vision: () => visionEnabled(config.vision, activeModel),
+    notes: () => formatNotes(state.notes.entries()),
   };
   const interaction = interactionTools(deps);
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const todos = new TodoStore();
-  const state = new BrowserState();
   const rawTools: AnyTool[] = [
     navigateTool(deps),
     interaction.click,

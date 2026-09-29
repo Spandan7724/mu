@@ -15,6 +15,8 @@ export interface BrowserToolDeps {
   config: ResolvedBrowserOptions;
   // Whether observations carry a screenshot for the active model.
   vision: () => boolean;
+  // The agent's notes, shown when it loops between tabs.
+  notes?: () => string;
 }
 
 export const OBSERVATION_KEY = "browser:observation";
