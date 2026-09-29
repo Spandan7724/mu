@@ -28,8 +28,16 @@ export function describeWithBrowser(name: string, body: () => void): void {
   describe.skip(`${name} (skipped: no Chrome-family browser found)`, body);
 }
 
+const created: string[] = [];
+process.on("exit", () => {
+  for (const dir of created) rmSync(dir, { recursive: true, force: true });
+});
+
+// Removed when the process exits, whether or not the test cleaned up.
 export function tempUserDataDir(): string {
-  return mkdtempSync(join(tmpdir(), "mu-browser-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "mu-browser-test-"));
+  created.push(dir);
+  return dir;
 }
 
 export interface TestBrowser {
