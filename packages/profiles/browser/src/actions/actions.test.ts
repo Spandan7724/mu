@@ -46,6 +46,7 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
       keepOpen: false,
       vision: "off",
       downloadsDir: join(home, "downloads"),
+      workspace: home,
       ...(testBrowserPath ? { executable: testBrowserPath } : {}),
     });
   });
@@ -228,13 +229,13 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     writeFileSync(file, "resume");
     await open("upload-download");
     const direct = await run("upload", { ref: refIn(page, "button", "Resume"), paths: [file] });
-    expect(direct.text).toStartWith("attached cv.txt");
+    expect(direct.text).toStartWith("attached cv.txt (plain text, 1 KB)");
     expect(direct.text).toContain("resume: cv.txt");
     const chooser = await run("upload", {
       ref: refIn(page, "button", "Upload photo…"),
       paths: [file],
     });
-    expect(chooser.text).toStartWith("chose cv.txt in the file chooser");
+    expect(chooser.text).toStartWith("chose cv.txt (plain text, 1 KB) in the file chooser");
     expect(chooser.text).toContain("photo: cv.txt");
     const markdown = join(home, "cv.md");
     writeFileSync(markdown, "# resume");
@@ -246,6 +247,20 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(rejected.text).toContain('dialog: alert "Please choose a file type from pdf or txt."');
     expect(rejected.outcome.details.timings.totalMs).toBeLessThan(5_000);
     await run("dialog", { action: "accept" });
+    const cvField = refIn(page, "button", "CV (PDF or Word)");
+    const refusedMd = await run("upload", { ref: cvField, paths: [markdown] });
+    expect(refusedMd.result.isError).toBe(true);
+    expect(refusedMd.text).toStartWith(
+      "did not upload cv.md: the field accepts .pdf, .docx; this is Markdown text (.md)",
+    );
+    writeFileSync(join(home, "cv.pdf"), "%PDF-1.4\n");
+    const relative = await run("upload", { ref: cvField, paths: ["cv.pdf"] });
+    expect(relative.text).toStartWith("attached cv.pdf (PDF, 1 KB)");
+    const elsewhere = tempUserDataDir();
+    writeFileSync(join(elsewhere, "taxes.pdf"), "%PDF-1.4\n");
+    const outside = await run("upload", { ref: cvField, paths: [join(elsewhere, "taxes.pdf")] });
+    expect(outside.text).toContain("only files in");
+    rmSync(elsewhere, { recursive: true, force: true });
     const missing = await run("upload", {
       ref: refIn(page, "button", "Resume"),
       paths: ["/nope.txt"],

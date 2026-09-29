@@ -1,5 +1,5 @@
-import { isAbsolute, resolve } from "node:path";
 import type { ToolPermissionDetails, ToolResult } from "@mu/core";
+import { resolveInRoot } from "@mu/profile-coding";
 import { tool } from "mu";
 import { z } from "zod";
 
@@ -114,9 +114,9 @@ function parseEvents(stdout: string): ParsedRun {
   return { answer, denied };
 }
 
+// The coding agent works in the browser agent's folder or below it, never elsewhere.
 function directoryFor(deps: DelegateDeps, directory: string | undefined): string {
-  if (!directory) return deps.workspace;
-  return isAbsolute(directory) ? directory : resolve(deps.workspace, directory);
+  return directory ? resolveInRoot(deps.workspace, directory) : deps.workspace;
 }
 
 export function delegateTool(deps: DelegateDeps) {
@@ -124,7 +124,7 @@ export function delegateTool(deps: DelegateDeps) {
   return tool({
     name: "delegate",
     description:
-      "Hand a self-contained task on the user's computer to mu's coding agent, which works on local files and commands but has no browser: read a resume or other PDF, extract fields from documents, write or update files (a reusable profile, a results table), convert data. It does not see this conversation or any page, so the brief must contain every fact, absolute path and the exact output format you need. Returns its final answer. Use the lowest access that works.",
+      "Hand heavier file work in your folder to mu's coding agent, which runs commands but has no browser: converting formats, spreadsheets, bulk edits. For plain reading and writing use read, write and edit yourself. It does not see this conversation or any page, so the brief must contain every fact, path and the exact output format you need. Returns its final answer. Use the lowest access that works.",
     inputSchema: z.object({
       task: z.string().min(1).describe("Complete brief: goal, absolute paths, output format"),
       access: z
@@ -146,7 +146,7 @@ export function delegateTool(deps: DelegateDeps) {
         preview: {
           kind: "text",
           lines: [
-            `directory: ${directoryFor(deps, args.directory)}`,
+            `directory: ${args.directory ?? deps.workspace}`,
             `access: ${access} — ${ACCESS[access].means}`,
             "task:",
             ...args.task
@@ -164,7 +164,20 @@ export function delegateTool(deps: DelegateDeps) {
     },
     execute: async (args, { signal, update }): Promise<ToolResult> => {
       const access: Access = args.access ?? "read";
-      const cwd = directoryFor(deps, args.directory);
+      let cwd: string;
+      try {
+        cwd = directoryFor(deps, args.directory);
+      } catch {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `The coding agent can only work in ${deps.workspace} or a folder inside it.`,
+            },
+          ],
+          isError: true,
+        };
+      }
       const model = deps.model();
       const argv = [
         ...deps.command,

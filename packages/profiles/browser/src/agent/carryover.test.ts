@@ -15,14 +15,14 @@ test("compaction mid-task keeps URL/tabs, todo, notes and the ledger", async () 
   ]);
   const options = await optionsFromProfile(profile, "fake/fake-1", {
     provider,
-    model: { ...fakeModel, contextWindow: 16_000 },
+    model: { ...fakeModel, contextWindow: 32_000 },
     compactThreshold: 0.4,
   });
   const agent = new Agent({
     ...options,
     initialMessages: [
       ...(options.initialMessages ?? []),
-      userMessage("context filler. ".repeat(400)),
+      userMessage("context filler. ".repeat(2000)),
     ],
   });
   await profile.refreshContext?.([], { sessionId: agent.sessionId });

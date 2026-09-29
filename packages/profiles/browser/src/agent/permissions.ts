@@ -39,6 +39,9 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule("notes", "allow"),
   rule("checkpoint", "allow"),
   rule("todo", "allow"),
+  // Files in the agent's own folder: reading is free, changing them asks.
+  rule("ls", "allow"),
+  rule("read", "allow"),
 ];
 
 // allowedHosts/blockedHosts hold in every mode, so they close every mode's rule list.
@@ -87,22 +90,17 @@ export function browserPermissionModes(hosts: PermissionRule[] = []): Permission
       rules: [
         rule(SCOPES.interact, "deny"),
         ...gated.map((scope) => rule(scope, "deny")),
+        rule("write", "deny"),
+        rule("edit", "deny"),
         ...hosts,
       ],
     },
     {
       id: "autonomous",
       label: "autonomous",
-      description:
-        "Allow everything, including sending, buying and deleting, without asking; still ask before page data goes to another site or the coding agent gets full access.",
+      description: "Allow everything, including sending, buying and deleting, without asking.",
       tone: "unrestricted",
-      // The two paths a prompt injection uses to get data or commands out.
-      rules: [
-        rule("*", "allow"),
-        rule(SCOPES.share, "ask"),
-        rule(SCOPES.delegate, "ask", "full"),
-        ...hosts,
-      ],
+      rules: [rule("*", "allow"), ...hosts],
     },
   ];
 }

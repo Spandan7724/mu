@@ -30,6 +30,10 @@ describe("browser permission modes", () => {
     expect(check(rules, "evaluate", "browser:script")).toBe("ask");
     expect(evaluate(rules, "notes", "*")).toBe("allow");
     expect(evaluate(rules, "todo", "*")).toBe("allow");
+    expect(evaluate(rules, "read", "about-me.md")).toBe("allow");
+    expect(evaluate(rules, "ls", ".")).toBe("allow");
+    expect(evaluate(rules, "write", "about-me.md")).toBe("ask");
+    expect(evaluate(rules, "edit", "about-me.md")).toBe("ask");
     expect(evaluate(rules, "some_mcp_tool", "*")).toBe("ask");
   });
 
@@ -43,6 +47,8 @@ describe("browser permission modes", () => {
     expect(check(readOnly, "click", "browser:interact")).toBe("deny");
     expect(check(readOnly, "click", "browser:commit")).toBe("deny");
     expect(check(readOnly, "read_page", "browser:observe")).toBe("allow");
+    expect(evaluate(readOnly, "read", "about-me.md")).toBe("allow");
+    expect(evaluate(readOnly, "write", "about-me.md")).toBe("deny");
   });
 
   test("autonomous allows everything but host rules still hold in every mode", async () => {
@@ -52,9 +58,9 @@ describe("browser permission modes", () => {
     );
     expect(check(rules, "click", "browser:commit")).toBe("allow");
     expect(check(rules, "evaluate", "browser:script")).toBe("allow");
-    expect(check(rules, "navigate", "browser:share", "collect.example")).toBe("ask");
-    expect(check(rules, "delegate", "browser:delegate", "read")).toBe("allow");
-    expect(check(rules, "delegate", "browser:delegate", "full")).toBe("ask");
+    expect(check(rules, "navigate", "browser:share", "collect.example")).toBe("allow");
+    expect(check(rules, "delegate", "browser:delegate", "full")).toBe("allow");
+    expect(check(rules, "write", "write")).toBe("allow");
     expect(check(rules, "navigate", "browser:navigate", "www.evil.test")).toBe("deny");
     const allowList = (
       await rulesFor("default", { allowedHosts: ["*.example.com", "example.com"] })

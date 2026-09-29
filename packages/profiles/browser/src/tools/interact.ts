@@ -7,7 +7,7 @@ import {
   dragBetween,
   hoverRef,
 } from "../actions/click.ts";
-import { handleDialog, uploadFiles } from "../actions/files.ts";
+import { handleDialog, uploadFiles, uploadRoots } from "../actions/files.ts";
 import { fillForm, pressKeys, selectOptions, typeText } from "../actions/input.ts";
 import { hostOf } from "../actions/navigate.ts";
 import { evaluateScript, MAX_WAIT_SECONDS, waitFor } from "../actions/page.ts";
@@ -248,7 +248,7 @@ export function interactionTools(deps: BrowserToolDeps) {
   const upload = tool({
     name: "upload",
     description:
-      "Attach local files to a file input, or to the file chooser opened by clicking an upload button (ref).",
+      "Attach local files from your folder to a file input, or to the file chooser opened by clicking an upload button (ref). Files the field's accept list rules out are refused before upload.",
     inputSchema: z.object({ ref, paths: z.array(z.string().min(1)).min(1) }),
     ...common,
     permissionScope: () => "browser:upload",
@@ -258,7 +258,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       pageAction(
         deps,
         signal,
-        act(deps, (ctx) => uploadFiles(ctx, args.ref, args.paths)),
+        act(deps, (ctx) => uploadFiles(ctx, args.ref, args.paths, uploadRoots(deps.config))),
       ),
   });
 

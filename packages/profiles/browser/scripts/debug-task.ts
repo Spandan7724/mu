@@ -25,6 +25,8 @@ const profile = await browserProfile({
     : { home: tempUserDataDir(), headless: true, keepOpen: false }),
   ...(testBrowserPath ? { executable: testBrowserPath } : {}),
   ...(existsSync(builtMu) ? { codingCommand: [builtMu] } : {}),
+  // MU_WORKSPACE: the folder the agent's file tools and uploads are confined to.
+  ...(process.env.MU_WORKSPACE ? { workspace: process.env.MU_WORKSPACE } : {}),
 });
 const agent = new Agent(
   await optionsFromProfile(profile, modelRef, {

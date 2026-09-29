@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AnyTool, PermissionRequest, ToolResult } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
@@ -116,22 +116,28 @@ describeWithBrowser("prompt-injection guards", () => {
   });
 });
 
-test("uploads never take credentials, keys or private config, even when approved", () => {
+test("uploads come only from the agent's folder or downloads, never credentials or keys", () => {
   const dir = tempUserDataDir();
+  const workspace = join(dir, "work");
+  const downloads = join(dir, ".mu", "browser", "downloads");
   const files = {
-    key: join(dir, ".ssh", "id_ed25519"),
-    env: join(dir, "project", ".env.local"),
-    pem: join(dir, "certs", "server.pem"),
-    state: join(dir, ".mu", "config.json"),
-    download: join(dir, ".mu", "browser", "downloads", "form.pdf"),
-    resume: join(dir, "Documents", "resume.pdf"),
+    key: join(workspace, ".ssh", "id_ed25519"),
+    env: join(workspace, "project", ".env.local"),
+    pem: join(workspace, "certs", "server.pem"),
+    download: join(downloads, "form.pdf"),
+    resume: join(workspace, "Documents", "resume.pdf"),
+    outside: join(dir, "elsewhere", "taxes.pdf"),
   };
   for (const path of Object.values(files)) {
     mkdirSync(join(path, ".."), { recursive: true });
     writeFileSync(path, "x");
   }
-  for (const path of [files.key, files.env, files.pem, files.state])
-    expect(() => resolveUploadPaths([path])).toThrow(/Refusing to upload/);
-  expect(resolveUploadPaths([files.resume, files.download])).toHaveLength(2);
+  symlinkSync(files.outside, join(workspace, "linked.pdf"));
+  const roots = [workspace, downloads];
+  for (const path of [files.key, files.env, files.pem])
+    expect(() => resolveUploadPaths([path], roots)).toThrow(/Refusing to upload/);
+  expect(() => resolveUploadPaths([files.outside], roots)).toThrow(/only files in/);
+  expect(() => resolveUploadPaths(["linked.pdf"], roots)).toThrow(/only files in/);
+  expect(resolveUploadPaths(["Documents/resume.pdf", files.download], roots)).toHaveLength(2);
   rmSync(dir, { recursive: true, force: true });
 });

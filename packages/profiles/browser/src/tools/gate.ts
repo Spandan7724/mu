@@ -1,5 +1,6 @@
 import type { ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
+import { describeFile } from "../actions/filetype.ts";
 import { hostOf, normalizeUrl } from "../actions/navigate.ts";
 import { submissionSummary } from "../actions/submission.ts";
 import type { BrowserToolDeps } from "./shared.ts";
@@ -120,11 +121,19 @@ export async function detailsFor(
       if (typeof args.submitRef === "string") lines.push(`  then click ${label(args.submitRef)}`);
       break;
     }
-    case "upload":
-      lines.push(
-        `action: upload ${(args.paths as string[] | undefined)?.join(", ") ?? ""} to ${ref ? label(ref) : "file input"}`,
-      );
+    case "upload": {
+      lines.push(`action: upload to ${ref ? label(ref) : "file input"}`);
+      for (const path of (args.paths as string[] | undefined) ?? []) {
+        let about: string;
+        try {
+          about = describeFile(path);
+        } catch {
+          about = "not found";
+        }
+        lines.push(`  ${path} (${about})`);
+      }
       break;
+    }
     case "evaluate":
       lines.push(
         "action: run JavaScript in the page",

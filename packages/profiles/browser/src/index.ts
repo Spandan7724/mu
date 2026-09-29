@@ -30,6 +30,7 @@ import {
 import { visionEnabled } from "./page/screenshot.ts";
 import type { SecretRegistry } from "./page/secrets.ts";
 import { delegateTool } from "./tools/delegate.ts";
+import { fileTools } from "./tools/files.ts";
 import { interactionTools } from "./tools/interact.ts";
 import { navigateTool } from "./tools/navigate.ts";
 import { findTool, readPageTool, screenshotTool, snapshotTool } from "./tools/observe.ts";
@@ -185,6 +186,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     todoTool(todos),
     notesTool(state),
     checkpointTool(config.home),
+    ...fileTools(config.workspace),
     delegateTool({
       command: config.codingCommand,
       workspace: config.workspace,
