@@ -68,11 +68,6 @@ export class DataFlowGuard {
     this.user = normalize(text);
   }
 
-  saidByUser(text: string): boolean {
-    const needle = normalize(text).trim();
-    return needle.length > 0 && this.user.includes(needle);
-  }
-
   visited(host: string): boolean {
     return this.corpora.has(host);
   }
