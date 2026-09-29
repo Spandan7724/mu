@@ -6,6 +6,8 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
+import { recordingCommits } from "./agent/ledger.ts";
+import { notesTool } from "./agent/notes.ts";
 import {
   BROWSER_PERMISSION_DEFAULTS,
   browserPermissionModes,
@@ -14,6 +16,7 @@ import {
   rememberAllow,
 } from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
+import { BrowserState, type CommitLedger, type NotesStore } from "./agent/state.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
 import {
@@ -32,6 +35,8 @@ export interface BrowserProfile extends Profile {
   browser: BrowserManager;
   config: ResolvedBrowserOptions;
   todos: TodoStore;
+  notes: NotesStore;
+  ledger: CommitLedger;
 }
 
 export async function browserEnvironment(
@@ -124,6 +129,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   const interaction = interactionTools(deps);
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const todos = new TodoStore();
+  const state = new BrowserState();
   const rawTools: AnyTool[] = [
     navigateTool(deps),
     interaction.click,
@@ -146,8 +152,11 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     interaction.clickXy,
     interaction.downloads,
     todoTool(todos),
+    notesTool(state),
   ] as AnyTool[];
-  const toolset = rawTools.map((candidate) => redacting(candidate, browser.secrets));
+  const toolset = rawTools.map((candidate) =>
+    redacting(recordingCommits(candidate, browser, state), browser.secrets),
+  );
   const runtime: ProfileRuntime = {
     attach: () => {},
     stop: () => browser.stop(),
@@ -166,11 +175,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       activeModel = modelRef;
       return browserPrompt(modelRef);
     },
-    // The model can change mid-session; the latest assistant turn names it.
     refreshContext: (messages) => {
+      // The model can change mid-session; the latest assistant turn names it.
       const last = messages.findLast((message) => message.role === "assistant");
       if (last?.role === "assistant" && last.model) activeModel = last.model;
-      return [];
+      state.rebuild(messages);
+      return state.snapshotIfChanged(messages);
     },
     permissionDefaults: [
       ...BROWSER_PERMISSION_DEFAULTS,
@@ -191,6 +201,8 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     browser,
     config,
     todos,
+    notes: state.notes,
+    ledger: state.ledger,
   };
 }
 
