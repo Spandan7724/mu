@@ -25,6 +25,7 @@ describe("managed launch configuration", () => {
     expect(args).toContain("--remote-debugging-port=0");
     expect(args).toContain("--disable-backgrounding-occluded-windows");
     expect(args).toContain("--window-size=1280,800");
+    expect(args).toContain("--disable-blink-features=AutomationControlled");
     expect(args).toContain("--lang=en");
     expect(args).not.toContain("--enable-automation");
     expect(args.some((arg) => arg.startsWith("--headless"))).toBe(false);

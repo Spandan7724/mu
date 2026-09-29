@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Debugger detection</title></head>
+<body>
+<h1>Detector</h1>
+<p id="result">checking</p>
+<script>
+// The check anti-bot widgets use: with the CDP Runtime domain enabled, console
+// arguments are serialized for the debugger, which runs this getter.
+let detected = false;
+const fired = new Set();
+function probe() {
+  const bait = new Error();
+  Object.defineProperty(bait, "stack", { get() { detected = true; fired.add("error-stack"); return ""; } });
+  console.debug(bait);
+  console.log(bait);
+  const obj = {};
+  Object.defineProperty(obj, "id", { get() { detected = true; fired.add("getter"); return 1; } });
+  console.log(obj);
+
+  document.getElementById("result").textContent = detected ? "debugger detected: " + [...fired].join(",") : "clean";
+}
+probe();
+setInterval(probe, 100);
+</script>
+</body></html>

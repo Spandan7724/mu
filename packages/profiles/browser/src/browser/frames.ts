@@ -11,7 +11,10 @@ export interface FrameInfo {
   session: CdpSession;
 }
 
-const PAGE_DOMAINS = ["Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"] as const;
+// No Runtime.enable: with it on, Chrome serializes console arguments for the debugger,
+// which anti-bot checks (Cloudflare Turnstile and others) detect via getters. Evaluate
+// and callFunctionOn work without it.
+const PAGE_DOMAINS = ["Page.enable", "DOM.enable", "Network.enable"] as const;
 
 // Tracks the frame tree of one tab across its main session and every
 // out-of-process iframe session auto-attached below it.

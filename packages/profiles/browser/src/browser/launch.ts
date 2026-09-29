@@ -45,6 +45,11 @@ export function managedArgs(options: {
     "--disable-hang-monitor",
     "--disable-ipc-flooding-protection",
     "--disable-search-engine-choice-screen",
+    // Chrome sets navigator.webdriver whenever remote debugging is on; Cloudflare and
+    // other bot checks reject the page on it. --test-type hides the resulting
+    // "unsupported command-line flag" bar.
+    "--disable-blink-features=AutomationControlled",
+    "--test-type",
     `--window-size=${options.viewport.width},${options.viewport.height}`,
     ...(options.headless ? ["--headless=new"] : []),
     ...(options.args ?? []).filter((arg) => arg !== "--enable-automation"),
