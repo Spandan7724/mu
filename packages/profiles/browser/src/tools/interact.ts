@@ -15,6 +15,7 @@ import { scrollPage } from "../actions/scroll.ts";
 import type { Stopwatch } from "../actions/types.ts";
 import { formatDownloads } from "../browser/downloads.ts";
 import type { Tab } from "../browser/tabs.ts";
+import { detailsFor, scopeFor } from "./gate.ts";
 import { type ActResult, type BrowserToolDeps, pageAction } from "./shared.ts";
 
 const ref = z.string().min(1).describe("Element ref from the latest page state, e.g. e12 or f1e3");
@@ -42,6 +43,10 @@ function act(deps: BrowserToolDeps, run: (ctx: ActionContext) => Promise<ActResu
 
 export function interactionTools(deps: BrowserToolDeps) {
   const interact = () => "browser:interact";
+  const gated = (toolName: string) => ({
+    permissionScope: (args: Record<string, unknown>) => scopeFor(deps, toolName, args),
+    permissionDetails: (args: Record<string, unknown>) => detailsFor(deps, toolName, args),
+  });
   const host = () => pageHost(deps);
   const common = {
     executionMode: "sequential" as const,
@@ -61,7 +66,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("click"),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -94,7 +99,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("type"),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -128,7 +133,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("fill_form"),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -149,7 +154,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("select"),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -170,7 +175,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("press"),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -247,6 +252,7 @@ export function interactionTools(deps: BrowserToolDeps) {
     inputSchema: z.object({ ref, paths: z.array(z.string().min(1)).min(1) }),
     ...common,
     permissionScope: () => "browser:upload",
+    permissionDetails: (args) => detailsFor(deps, "upload", args),
     permissionPattern: ({ paths }) => paths.join(","),
     execute: (args, { signal }) =>
       pageAction(
@@ -301,6 +307,7 @@ export function interactionTools(deps: BrowserToolDeps) {
     inputSchema: z.object({ function: z.string().min(1), ref: z.string().optional() }),
     ...common,
     permissionScope: () => "browser:script",
+    permissionDetails: (args) => detailsFor(deps, "evaluate", args),
     execute: (args, { signal }) =>
       pageAction(
         deps,
@@ -322,7 +329,7 @@ export function interactionTools(deps: BrowserToolDeps) {
       reason,
     }),
     ...common,
-    permissionScope: interact,
+    ...gated("click_xy"),
     execute: (args, { signal }) =>
       pageAction(
         deps,

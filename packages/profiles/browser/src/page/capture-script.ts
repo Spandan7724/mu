@@ -116,6 +116,23 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
         if (editable === "rich") node.val = (el.innerText || "").replace(/\n{3,}/g, "\n\n").slice(0, 2000);
         if (tag === "a" && el.href) node.href = el.href;
         if (why) node.cur = why;
+        var form = el.form || (el.closest && el.closest("form"));
+        if (form) {
+          node.post = (form.getAttribute("method") || "get").toLowerCase() === "post" ? 1 : 0;
+          var isSubmit = (tag === "button" && (!el.getAttribute("type") || el.type === "submit")) || (tag === "input" && (el.type === "submit" || el.type === "image"));
+          if (isSubmit) node.sub = 1;
+          else {
+            var submitter = form.querySelector("button:not([type]),button[type=submit],input[type=submit]");
+            if (submitter) node.fsub = (submitter.innerText || submitter.value || submitter.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().slice(0, 60);
+          }
+        }
+        var dlg = el.closest && el.closest("dialog,[role=dialog],[role=alertdialog]");
+        if (dlg) {
+          var labelled = dlg.getAttribute("aria-labelledby");
+          var title = dlg.getAttribute("aria-label") || (labelled && document.getElementById(labelled) ? document.getElementById(labelled).innerText : "") || "";
+          if (!title) { var h = dlg.querySelector("h1,h2,h3"); if (h) title = h.innerText; }
+          node.dlg = title.replace(/\s+/g, " ").trim().slice(0, 80);
+        }
         if (tag === "select") {
           node.opts = Array.prototype.slice.call(el.options, 0, 30).map(function (o) { return o.label || o.text; });
           node.optCount = el.options.length;

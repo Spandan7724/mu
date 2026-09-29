@@ -35,6 +35,9 @@ export interface PageNode {
   options?: string[];
   optionCount?: number;
   cursorOnly?: boolean;
+  // Form and dialog context, for consequential-action classification.
+  form?: { post: boolean; submit?: boolean; submitLabel?: string };
+  dialogTitle?: string;
   children: PageNode[];
 }
 

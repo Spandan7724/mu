@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>MockShop</title>
+<style>body{font-family:sans-serif;margin:20px} .card{border:1px solid #ddd;padding:8px;margin:6px;display:inline-block;width:180px;vertical-align:top}</style></head>
+<body>
+<header><h1>MockShop</h1><input type="search" id="q" aria-label="Search products" placeholder="Search"> <button id="go">Search</button> <a href="#cart" id="cart-link">Cart (<span id="count">0</span>)</a></header>
+<aside aria-label="Filters">
+  <label>Color <select id="color"><option value="">Any</option><option>red</option><option>blue</option></select></label>
+  <label>Sort <select id="sort"><option value="relevance">Relevance</option><option value="price">Price: low to high</option></select></label>
+</aside>
+<main id="main"></main>
+<script>
+const products = [
+  { id: 1, name: 'Classic Mug', color: 'red', price: 12.5 },
+  { id: 2, name: 'Tall Mug', color: 'red', price: 9.99 },
+  { id: 3, name: 'Travel Mug', color: 'blue', price: 15 },
+  { id: 4, name: 'Espresso Cup', color: 'red', price: 7.25 },
+];
+const cart = [];
+function results() {
+  const q = document.getElementById('q').value.toLowerCase();
+  let list = products.filter((p) => (!q || p.name.toLowerCase().includes(q)) && (!document.getElementById('color').value || p.color === document.getElementById('color').value));
+  if (document.getElementById('sort').value === 'price') list = [...list].sort((a, b) => a.price - b.price);
+  const main = document.getElementById('main');
+  main.innerHTML = '<h2>Results</h2>';
+  list.forEach((p) => {
+    const card = document.createElement('div'); card.className = 'card';
+    card.innerHTML = '<h3>' + p.name + '</h3><p>' + p.color + ' · $' + p.price.toFixed(2) + '</p>';
+    const add = document.createElement('button'); add.textContent = 'Add to cart';
+    add.setAttribute('aria-label', 'Add ' + p.name + ' to cart');
+    add.addEventListener('click', () => { cart.push(p); document.getElementById('count').textContent = cart.length; });
+    card.appendChild(add); main.appendChild(card);
+  });
+}
+function checkout() {
+  const main = document.getElementById('main');
+  const total = cart.reduce((s, p) => s + p.price, 0);
+  main.innerHTML = '<h2>Your cart</h2><ul>' + cart.map((p) => '<li>' + p.name + ' $' + p.price.toFixed(2) + '</li>').join('') + '</ul><p>Total: $' + total.toFixed(2) + '</p>' +
+    '<form id="order" method="post" action="/echo"><label>Name <input name="name"></label><button type="submit">Place order</button></form>';
+}
+['go'].forEach((id) => document.getElementById(id).addEventListener('click', results));
+document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') results(); });
+document.getElementById('color').addEventListener('change', results);
+document.getElementById('sort').addEventListener('change', results);
+addEventListener('hashchange', () => { if (location.hash === '#cart') checkout(); });
+results();
+</script>
+</body></html>

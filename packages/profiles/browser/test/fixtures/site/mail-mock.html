@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Inbox - MockMail</title>
+<style>
+body{font-family:sans-serif;margin:0;display:flex}
+nav{width:180px;padding:12px;border-right:1px solid #ddd}
+main{flex:1;padding:12px}
+.row{padding:6px;border-bottom:1px solid #eee;cursor:pointer}
+.unread{font-weight:bold}
+#compose{position:fixed;right:20px;bottom:0;width:380px;background:#fff;border:1px solid #999;padding:8px;display:none}
+#compose.open{display:block}
+#compose input,#compose div[contenteditable]{display:block;width:95%;margin:4px 0}
+#compose div[contenteditable]{min-height:80px;border:1px solid #ccc}
+</style></head>
+<body>
+<nav aria-label="Folders">
+  <button id="compose-btn">Compose</button>
+  <p><a href="#inbox" id="inbox-link">Inbox</a></p>
+  <p><a href="#sent" id="sent-link">Sent</a></p>
+</nav>
+<main>
+  <input type="search" aria-label="Search mail" placeholder="Search mail">
+  <h1 id="folder">Inbox</h1>
+  <div id="list" role="list"></div>
+  <p id="status" role="status"></p>
+</main>
+<div id="compose" role="dialog" aria-label="New Message">
+  <input id="to" aria-label="To recipients" placeholder="To">
+  <input id="subject" aria-label="Subject" placeholder="Subject">
+  <div id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message Body"></div>
+  <button id="send">Send</button>
+  <button id="discard" aria-label="Discard draft">🗑</button>
+</div>
+<script>
+const inbox = [
+  { from: 'Alex Kim', subject: 'Lunch Friday?', body: 'Are we still on for lunch on Friday at noon?', unread: true },
+  { from: 'Priya Shah', subject: 'Quarterly report', body: 'The Q3 report is attached; numbers look good.', unread: true },
+  { from: 'Billing', subject: 'Your invoice', body: 'Invoice #4411 for $42.00 is due on the 5th.', unread: false },
+];
+const sent = JSON.parse(sessionStorage.getItem('sent') || '[]');
+function render() {
+  const folder = location.hash === '#sent' ? 'Sent' : 'Inbox';
+  document.getElementById('folder').textContent = folder;
+  const items = folder === 'Sent' ? sent : inbox;
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  items.forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'row' + (m.unread ? ' unread' : '');
+    row.setAttribute('role', 'listitem');
+    row.textContent = (folder === 'Sent' ? 'To: ' + m.to : m.from) + ' · ' + m.subject;
+    row.addEventListener('click', () => {
+      m.unread = false;
+      document.getElementById('list').innerHTML = '<article><h2>' + m.subject + '</h2><p>From: ' + (m.from || 'me') + '</p><p>' + m.body + '</p></article>';
+    });
+    list.appendChild(row);
+  });
+  if (!items.length) list.innerHTML = '<p>No messages.</p>';
+}
+addEventListener('hashchange', render);
+render();
+document.getElementById('compose-btn').addEventListener('click', () => document.getElementById('compose').classList.add('open'));
+document.getElementById('discard').addEventListener('click', () => document.getElementById('compose').classList.remove('open'));
+document.getElementById('send').addEventListener('click', async () => {
+  const to = document.getElementById('to').value;
+  if (!to) { document.getElementById('status').textContent = 'Please specify at least one recipient.'; return; }
+  await fetch('/api/slow?ms=150');
+  sent.push({ to, subject: document.getElementById('subject').value, body: document.getElementById('body').innerText });
+  sessionStorage.setItem('sent', JSON.stringify(sent));
+  document.getElementById('compose').classList.remove('open');
+  ['to', 'subject'].forEach((id) => document.getElementById(id).value = '');
+  document.getElementById('body').innerText = '';
+  document.getElementById('status').textContent = 'Message sent.';
+  render();
+});
+</script>
+</body></html>

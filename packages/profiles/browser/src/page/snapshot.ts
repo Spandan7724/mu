@@ -28,6 +28,10 @@ interface RawNode {
   optCount?: number;
   cx?: number;
   cy?: number;
+  post?: 0 | 1;
+  sub?: 1;
+  fsub?: string;
+  dlg?: string;
 }
 
 interface RawInfo {
@@ -238,6 +242,14 @@ function buildNode(
     if (raw.optCount !== undefined) node.optionCount = raw.optCount;
   }
   if (raw.cur) node.cursorOnly = true;
+  if (raw.post !== undefined) {
+    node.form = {
+      post: raw.post === 1,
+      ...(raw.sub ? { submit: true } : {}),
+      ...(raw.fsub ? { submitLabel: raw.fsub } : {}),
+    };
+  }
+  if (raw.dlg) node.dialogTitle = raw.dlg;
   if (raw.k === "t" && text.includes(INLINE_MARK)) {
     node.segments = text.split(INLINE_MARK).map((part) => part.replace(/\s+/g, " "));
   }
@@ -464,6 +476,13 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
       node.ref = tab.refs.refFor(node.frameId, node.backendNodeId);
       const name = node.name.length > 60 ? `${node.name.slice(0, 59)}…` : node.name;
       tab.refs.setLabel(node.ref, name ? `${node.role} ${JSON.stringify(name)}` : node.role);
+      tab.refs.setMeta(node.ref, {
+        role: node.role,
+        name: node.name,
+        ...(node.editable ? { editable: node.editable } : {}),
+        ...(node.form ? { form: node.form } : {}),
+        ...(node.dialogTitle ? { dialogTitle: node.dialogTitle } : {}),
+      });
     }
     for (const child of node.children) assign(child);
   };

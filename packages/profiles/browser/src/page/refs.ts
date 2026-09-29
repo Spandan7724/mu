@@ -1,5 +1,13 @@
 export type Ref = string;
 
+export interface RefMeta {
+  role: string;
+  name: string;
+  editable?: "text" | "rich" | "secret" | "otp";
+  form?: { post: boolean; submit?: boolean; submitLabel?: string };
+  dialogTitle?: string;
+}
+
 export interface RefTarget {
   frameId: string;
   backendNodeId: number;
@@ -12,6 +20,7 @@ export class RefTable {
   private readonly byKey = new Map<string, Ref>();
   private readonly byRef = new Map<Ref, RefTarget>();
   private readonly labels = new Map<Ref, string>();
+  private readonly metas = new Map<Ref, RefMeta>();
   private readonly frameNumbers = new Map<string, number>();
   private readonly counters = new Map<string, number>();
   private mainFrameId: string | undefined;
@@ -29,6 +38,7 @@ export class RefTable {
     this.byKey.clear();
     this.byRef.clear();
     this.labels.clear();
+    this.metas.clear();
     this.frameNumbers.clear();
     this.counters.clear();
     return reset;
@@ -60,6 +70,19 @@ export class RefTable {
   // Human-readable target for outcome lines, e.g. `button "Send"`.
   setLabel(ref: Ref, label: string): void {
     this.labels.set(ref, label);
+  }
+
+  setMeta(ref: Ref, meta: RefMeta): void {
+    this.metas.set(ref, meta);
+  }
+
+  meta(ref: Ref): RefMeta | undefined {
+    return this.metas.get(
+      ref
+        .trim()
+        .replace(/^\[?ref=/, "")
+        .replace(/\]$/, ""),
+    );
   }
 
   label(ref: Ref): string {

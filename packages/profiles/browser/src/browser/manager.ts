@@ -216,6 +216,11 @@ export class BrowserManager {
     }
   }
 
+  // The attached active tab, if any, for synchronous callers (permission classification).
+  currentTab(): Tab | undefined {
+    return this.activeTargetId ? this.attached.get(this.activeTargetId) : undefined;
+  }
+
   tabs(): TabInfo[] {
     return [...this.pages.values()].map((page) => {
       const tab = this.attached.get(page.targetId);
