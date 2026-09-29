@@ -89,6 +89,23 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(filled.text).not.toContain("columnheader: newsletter");
   });
 
+  test("a click that saves the form waits for the save and the next step, not a fixed cap", async () => {
+    await open("wizard-save");
+    const next = await run("click", { ref: refIn(page, "button", "Next") });
+    expect(next.text).toContain('heading "Step 2: My experience"');
+    expect(next.text).not.toContain("loading");
+    expect(next.outcome.details.settle).toStartWith("page changed, then settled");
+  });
+
+  test("a hover menu left open by the pointer does not block a click elsewhere", async () => {
+    await open("hover-menu");
+    await run("hover", { ref: refIn(page, "button", "Browse jobs") });
+    expect(page).toContain('link "All jobs"');
+    const clicked = await run("click", { ref: refIn(page, "button", "Save date") });
+    expect(clicked.result.isError).toBeUndefined();
+    expect(clicked.text).toContain("Pressed");
+  });
+
   test("occluded clicks report the covering element and what it contains", async () => {
     await open("modal");
     const blocked = await run("click", { ref: refIn(page, "button", "Hidden behind banner") });
@@ -219,6 +236,16 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     });
     expect(chooser.text).toStartWith("chose cv.txt in the file chooser");
     expect(chooser.text).toContain("photo: cv.txt");
+    const markdown = join(home, "cv.md");
+    writeFileSync(markdown, "# resume");
+    const rejected = await run("upload", {
+      ref: refIn(page, "button", "Resume"),
+      paths: [markdown],
+    });
+    expect(rejected.result.isError).toBeUndefined();
+    expect(rejected.text).toContain('dialog: alert "Please choose a file type from pdf or txt."');
+    expect(rejected.outcome.details.timings.totalMs).toBeLessThan(5_000);
+    await run("dialog", { action: "accept" });
     const missing = await run("upload", {
       ref: refIn(page, "button", "Resume"),
       paths: ["/nope.txt"],

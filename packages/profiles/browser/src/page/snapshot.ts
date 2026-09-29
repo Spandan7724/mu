@@ -258,6 +258,13 @@ function buildNode(
   return node;
 }
 
+// A link that leads to another page, as opposed to a script or in-page anchor.
+function isPageLink(url: string, pageUrl: string): boolean {
+  if (!/^https?:/.test(url)) return false;
+  const [target = "", hash] = url.split("#");
+  return hash === undefined || target !== pageUrl.split("#")[0];
+}
+
 export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promise<PageModel> {
   const scope = options.scope ?? "viewport";
   const { signal } = options;
@@ -488,6 +495,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
         ...(node.editable ? { editable: node.editable } : {}),
         ...(node.form ? { form: node.form } : {}),
         ...(node.dialogTitle ? { dialogTitle: node.dialogTitle } : {}),
+        ...(node.url && isPageLink(node.url, tab.url) ? { link: true } : {}),
       });
     }
     for (const child of node.children) assign(child);

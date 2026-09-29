@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
+import type { Tab } from "../browser/tabs.ts";
 import { resolveRef } from "../page/resolve.ts";
 import { watchSettle } from "../page/settle.ts";
 import { type ActionContext, type ActionResult, clickRef } from "./click.ts";
@@ -11,6 +12,28 @@ export function resolveUploadPaths(paths: string[], base = process.cwd()): strin
       throw new Error(`File not found: ${absolute}`);
     }
     return absolute;
+  });
+}
+
+// A page that rejects the file with alert() holds the call until the alert is
+// answered; the dialog is the outcome, so stop waiting when one opens.
+function unlessDialog(tab: Tab, call: Promise<unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const off = tab.session.on("Page.javascriptDialogOpening", () => {
+      off();
+      call.catch(() => {});
+      resolve();
+    });
+    call.then(
+      () => {
+        off();
+        resolve();
+      },
+      (error: unknown) => {
+        off();
+        reject(error);
+      },
+    );
   });
 }
 
@@ -39,10 +62,13 @@ export async function uploadFiles(
   if (isFileInput) {
     const watcher = watchSettle(tab, "in-page");
     try {
-      await target.session.send(
-        "DOM.setFileInputFiles",
-        { files, backendNodeId: target.backendNodeId },
-        { signal, timeoutMs: 10_000 },
+      await unlessDialog(
+        tab,
+        target.session.send(
+          "DOM.setFileInputFiles",
+          { files, backendNodeId: target.backendNodeId },
+          { signal, timeoutMs: 10_000 },
+        ),
       );
     } catch (error) {
       watcher.dispose();
@@ -71,10 +97,13 @@ export async function uploadFiles(
       };
     }
     const watcher = watchSettle(tab, "in-page");
-    await tab.session.send(
-      "DOM.setFileInputFiles",
-      { files, backendNodeId: chooser.backendNodeId },
-      { signal, timeoutMs: 10_000 },
+    await unlessDialog(
+      tab,
+      tab.session.send(
+        "DOM.setFileInputFiles",
+        { files, backendNodeId: chooser.backendNodeId },
+        { signal, timeoutMs: 10_000 },
+      ),
     );
     const settle = await watcher.settle(signal);
     return {

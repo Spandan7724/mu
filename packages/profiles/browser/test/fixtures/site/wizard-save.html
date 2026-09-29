@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><title>Apply</title></head><body>
+<h1 id="step">Step 1: My information</h1>
+<label>Given name <input name="given" value="Ada"></label>
+<button id="next">Next</button>
+<div id="status"></div>
+<script>
+  document.getElementById("next").addEventListener("click", async () => {
+    const next = document.getElementById("next");
+    next.disabled = true;
+    document.getElementById("status").setAttribute("role", "alert");
+    document.getElementById("status").textContent = "loading";
+    await fetch("/api/slow?ms=2500", { method: "POST", body: "given=Ada" });
+    document.getElementById("status").textContent = "";
+    document.getElementById("step").textContent = "Step 2: My experience";
+    next.disabled = false;
+  });
+</script>
+</body></html>

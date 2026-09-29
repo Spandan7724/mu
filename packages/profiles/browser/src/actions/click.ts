@@ -185,7 +185,7 @@ export async function clickRef(
       ? "right-clicked"
       : "clicked";
   const viewport = await viewportSize(tab, signal);
-  const point = await ctx.stopwatch.time("cdpMs", () => clickablePoint(target, viewport, signal));
+  let point = await ctx.stopwatch.time("cdpMs", () => clickablePoint(target, viewport, signal));
   if (!point) {
     // Zero-size custom controls: let the element's own click handler run.
     const { settle, newTab } = await withSettle(ctx, async () => {
@@ -206,14 +206,26 @@ export async function clickRef(
       ...newTabResult(newTab),
     };
   }
-  const hit = await ctx.stopwatch.time("cdpMs", () =>
-    hitTest(
-      target,
-      point,
-      (frameId, backendNodeId) => tab.refs.refOf(frameId, backendNodeId),
-      signal,
-    ),
-  );
+  const test = (at: Point) =>
+    ctx.stopwatch.time("cdpMs", () =>
+      hitTest(
+        target,
+        at,
+        (frameId, backendNodeId) => tab.refs.refOf(frameId, backendNodeId),
+        signal,
+      ),
+    );
+  let hit = await test(point);
+  if (!hit.ok) {
+    // Hover menus opened by where the pointer was left, and overlays still
+    // animating out, clear once the pointer moves onto the target.
+    const moveTo = await mainPoint(ctx, target, point);
+    await withSettle(ctx, async () => {
+      await mouseMove(tab.session, moveTo, signal);
+    });
+    point = (await clickablePoint(target, viewport, signal)) ?? point;
+    hit = await test(point);
+  }
   if (!hit.ok) {
     return {
       ok: false,

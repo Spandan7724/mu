@@ -21,9 +21,15 @@ export function matchesCommitLexicon(text: string | undefined): boolean {
   return COMMIT_LEXICON.test(trimmed);
 }
 
+// On a link these words lead to the page where it happens ("Apply now" opens the
+// application form); following a link that deletes or unsubscribes still acts.
+const LINK_OPENER =
+  /^\W*(apply|register|sign up|book|reserve|reply|post|publish|subscribe|donate|send|submit)\b/i;
+
 function clickTarget(meta: RefMeta | undefined): string | undefined {
   if (!meta) return undefined;
-  if (matchesCommitLexicon(meta.name)) return `"${meta.name}" reads as a consequential action`;
+  if (matchesCommitLexicon(meta.name) && !(meta.link && LINK_OPENER.test(meta.name)))
+    return `"${meta.name}" reads as a consequential action`;
   if (meta.form?.submit && meta.form.post) return "it submits a form that posts data";
   if (
     meta.dialogTitle &&

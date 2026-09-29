@@ -14,6 +14,10 @@ for (const id of ['resume', 'photo']) {
     document.getElementById('selected').textContent = id + ': ' + Array.from(e.target.files).map((f) => f.name).join(', ');
   });
 }
+document.getElementById('resume').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file && !/\.(txt|pdf)$/.test(file.name)) alert('Please choose a file type from pdf or txt.');
+});
 document.getElementById('pick').addEventListener('click', () => document.getElementById('photo').click());
 </script>
 </body></html>

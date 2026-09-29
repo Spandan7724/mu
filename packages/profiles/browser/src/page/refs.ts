@@ -6,6 +6,8 @@ export interface RefMeta {
   editable?: "text" | "rich" | "secret" | "otp";
   form?: { post: boolean; submit?: boolean; submitLabel?: string };
   dialogTitle?: string;
+  // A link to another page (http or https), not a script or in-page anchor.
+  link?: boolean;
 }
 
 export interface RefTarget {

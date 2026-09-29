@@ -19,6 +19,8 @@ const PROFILES: Record<SettleMode, Profile> = {
 };
 
 const LONG_POLL_MS = 1_500;
+// How long a save or submission the action started may take.
+const WRITE_CAP_MS = 15_000;
 
 export interface SettleResult {
   ms: number;
@@ -58,6 +60,7 @@ export interface SettleWatcher {
 
 // Start before the action so navigations and requests it triggers are seen.
 export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatcher {
+  const watchedFrom = performance.now();
   let profile = PROFILES[mode];
   let navigationStarted = mode === "navigation";
   let navigatedLoader: string | undefined;
@@ -159,6 +162,8 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
       return await new Promise<SettleResult>((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         let phase: "in-page" | "navigation" = "in-page";
+        let writeSeen = false;
+        let writesBefore = 0;
         let phaseStart = actionEnd;
         const finish = (reason: string) => {
           if (timer) clearTimeout(timer);
@@ -190,14 +195,23 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
             domQuiet = false;
             domGeneration++;
           }
-          if (now - actionEnd >= profile.capMs) {
+          const writes = tab.network.pendingWrites(watchedFrom);
+          if (writes > 0) writeSeen = true;
+          // The page renders the save's result only once it completes.
+          if (writesBefore > 0 && writes === 0 && phase === "in-page" && !navigationStarted)
+            runDomQuiet(profile.domQuietMs, WRITE_CAP_MS);
+          writesBefore = writes;
+          const capMs = writeSeen ? Math.max(profile.capMs, WRITE_CAP_MS) : profile.capMs;
+          if (now - actionEnd >= capMs) {
             return finish(
-              phase === "navigation"
-                ? `navigation still loading after ${profile.capMs} ms; observed anyway`
-                : `page still changing after ${profile.capMs} ms; observed anyway`,
+              writes > 0
+                ? `a save or submission was still in progress after ${capMs} ms; observed anyway`
+                : phase === "navigation"
+                  ? `navigation still loading after ${capMs} ms; observed anyway`
+                  : `page still changing after ${capMs} ms; observed anyway`,
             );
           }
-          const deadlines: number[] = [actionEnd + profile.capMs];
+          const deadlines: number[] = [actionEnd + capMs];
           if (phase === "navigation") {
             const loader = navigatedLoader;
             if (!loader && sameDocument) {
@@ -210,7 +224,7 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
             }
             if (!loader || !loaded.has(loader)) {
               wake = check;
-              timer = setTimeout(check, Math.max(1, actionEnd + profile.capMs - now));
+              timer = setTimeout(check, Math.max(1, actionEnd + capMs - now));
               return;
             }
             if (!navigationDomStarted) {
@@ -222,14 +236,14 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
           const networkIdleAt =
             Math.max(tab.network.lastActivity, phaseStart) + profile.networkQuietMs;
           const graceAt = actionEnd + profile.graceMs;
-          const networkQuiet = pending === 0 && now >= networkIdleAt;
+          const networkQuiet = pending === 0 && writes === 0 && now >= networkIdleAt;
           if (domQuiet && networkQuiet && now >= graceAt) {
             if (phase === "navigation") return finish("page loaded and quiet after navigation");
             return finish(
               domChanged || networkChanged ? "page changed, then settled" : "no change",
             );
           }
-          if (pending === 0) deadlines.push(networkIdleAt);
+          if (pending === 0 && writes === 0) deadlines.push(networkIdleAt);
           const expiry = tab.network.nextExpiry(LONG_POLL_MS);
           if (expiry !== undefined) deadlines.push(expiry);
           deadlines.push(graceAt);

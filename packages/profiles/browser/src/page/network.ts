@@ -14,7 +14,10 @@ interface Inflight {
   started: number;
   url: string;
   session: string;
+  write: boolean;
 }
+
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 // In-flight requests of one tab across its own and its OOPIF sessions.
 export class NetworkTracker {
@@ -35,6 +38,7 @@ export class NetworkTracker {
           started: performance.now(),
           url: event.request.url,
           session: session.sessionId,
+          write: !READ_METHODS.has(event.request.method),
         });
         this.touch();
       }),
@@ -65,6 +69,15 @@ export class NetworkTracker {
     const now = performance.now();
     let count = 0;
     for (const request of this.inflight.values()) if (now - request.started < longPollMs) count++;
+    return count;
+  }
+
+  // Writes (form saves, submissions) started at or after `since`: finite work
+  // however slow, never a long-poll.
+  pendingWrites(since: number): number {
+    let count = 0;
+    for (const request of this.inflight.values())
+      if (request.write && request.started >= since) count++;
     return count;
   }
 

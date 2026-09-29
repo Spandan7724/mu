@@ -78,6 +78,23 @@ describe("consequential-action classifier", () => {
     expect(scope("select", { ref: "e2", options: ["x"] }, metas)).toBe("browser:interact");
   });
 
+  test("links that open a form do not ask; links that act, and buttons, still do", () => {
+    const metas = {
+      e1: button("Apply Now for MASRUSR291884", { link: true }),
+      e2: button("Register", { link: true }),
+      e3: button("Unsubscribe", { link: true }),
+      e4: button("Delete account", { link: true }),
+      e5: button("Apply"),
+      e6: button("Apply now", { link: true }),
+    };
+    expect(scope("click", { ref: "e1" }, metas)).toBe("browser:interact");
+    expect(scope("click", { ref: "e2" }, metas)).toBe("browser:interact");
+    expect(scope("click", { ref: "e3" }, metas)).toBe("browser:commit");
+    expect(scope("click", { ref: "e4" }, metas)).toBe("browser:commit");
+    expect(scope("click", { ref: "e5" }, metas)).toBe("browser:commit");
+    expect(scope("click", { ref: "e6", commit: true }, metas)).toBe("browser:commit");
+  });
+
   test("Enter only submits plain fields of forms with a submit button", () => {
     const metas: Record<string, RefMeta> = {
       to: { role: "combobox", name: "To recipients", editable: "text", form: { post: true } },
