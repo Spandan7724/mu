@@ -1,7 +1,8 @@
 import {
-  type BrowserProfile,
   browserProfile,
   closeManaged,
+  discoverBrowser,
+  launchForSignIn,
   managedState,
 } from "@mu/profile-browser";
 import type { ParsedArgs } from "./args.ts";
@@ -29,12 +30,16 @@ function nextStdinLine(): Promise<void> {
 }
 
 export interface BrowserLoginDeps {
-  profile?: BrowserProfile;
+  home?: string;
+  executable?: string;
+  // Test-only extra Chrome flags (for example headless).
+  extraArgs?: string[];
   waitForEnter?: () => Promise<void>;
 }
 
-// Opens the managed profile headed so the user can sign in once; the cookies
-// persist in the profile directory for every later run.
+// Signs in through a plain Chrome window on the managed profile: Google and other
+// sign-in pages reject browsers driven over the DevTools protocol, so mu neither
+// enables debugging nor attaches here. Later runs reuse the saved cookies.
 export async function runBrowserLogin(
   args: ParsedArgs,
   io: Io,
@@ -44,45 +49,57 @@ export async function runBrowserLogin(
     io.stderr("mu: browser login signs in to a managed profile; it cannot be used with --cdp\n");
     return EXIT.usage;
   }
-  if (args.headless && !deps.profile) {
+  if (args.headless) {
     io.stderr("mu: browser login needs a visible window; drop --headless\n");
     return EXIT.usage;
   }
-  const profile =
-    deps.profile ?? (await browserProfile({ ...browserFlags(args), headless: false }));
-  const url = args.loginUrl ?? DEFAULT_LOGIN_URL;
-  try {
-    await profile.browser.openTab(url);
-  } catch (error) {
+  const profile = await browserProfile({
+    ...browserFlags(args),
+    ...(deps.home ? { home: deps.home } : {}),
+    ...(deps.executable ? { executable: deps.executable } : {}),
+  });
+  const config = profile.config;
+  const state = await managedState(config.userDataDir);
+  if (state.running) {
+    io.stdout("Closing mu's browser on this profile so it can reopen without automation…\n");
+    await closeManaged(config.userDataDir);
+  } else if (state.locked) {
     io.stderr(
-      `mu: could not open the browser: ${error instanceof Error ? error.message : error}\n`,
+      `mu: the browser profile ${config.userDataDir} is already open in a Chrome window. Close it, then run mu browser login again.\n`,
     );
+    return EXIT.usage;
+  }
+  let path: string;
+  try {
+    path = (await discoverBrowser({ executable: config.executable, channel: config.channel })).path;
+  } catch (error) {
+    io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.error;
   }
-  const status = profile.browser.status();
+  const url = args.loginUrl ?? DEFAULT_LOGIN_URL;
+  const browser = launchForSignIn({
+    path,
+    userDataDir: config.userDataDir,
+    url,
+    ...(deps.extraArgs ? { args: deps.extraArgs } : {}),
+  });
   io.stdout(
     [
-      `Opened ${status.product ?? "the browser"} ${status.version ?? ""} with browser profile "${status.profile}"`,
-      status.userDataDir ? `  ${status.userDataDir}` : "",
+      `Opened a normal Chrome window (not controlled by mu) with browser profile "${config.browserProfile}"`,
+      `  ${config.userDataDir}`,
       "",
       "Sign in to the sites you want mu to use (Gmail, calendars, shops…).",
-      "Press Enter here when you are done, or just close the browser window.",
+      "When you are done, close the browser window or press Enter here.",
       "",
-    ]
-      .filter((line, index) => index !== 1 || line)
-      .join("\n"),
+    ].join("\n"),
   );
-  const closed = profile.browser.connection?.closed.then(() => "closed" as const);
-  const entered = (deps.waitForEnter ?? nextStdinLine)().then(() => "enter" as const);
-  const outcome = await Promise.race([entered, ...(closed ? [closed] : [])]);
-  if (outcome === "closed") {
-    io.stdout("Browser closed. Your sign-ins are saved in the profile.\n");
-    await profile.browser.shutdown({ close: false });
-    return 0;
-  }
-  await profile.browser.shutdown({ close: false });
+  const outcome = await Promise.race([
+    browser.exited.then(() => "closed" as const),
+    (deps.waitForEnter ?? nextStdinLine)().then(() => "enter" as const),
+  ]);
+  if (outcome === "enter") await browser.close();
   io.stdout(
-    "The browser stays open with your sign-ins saved; mu will reuse it. Run `mu browser` to start.\n",
+    "Your sign-ins are saved in the profile. Run `mu browser` to start; mu opens this profile with its own controls from now on.\n",
   );
   return 0;
 }

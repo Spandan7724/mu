@@ -167,3 +167,48 @@ export function killBrowserProcess(pid: number | undefined): void {
     } catch {}
   }
 }
+
+export interface SignInBrowser {
+  pid: number | undefined;
+  exited: Promise<number | null>;
+  // Asks Chrome to quit cleanly (SIGTERM), so cookies are flushed to the profile.
+  close: () => Promise<void>;
+}
+
+// Sign-in pages (Google in particular) refuse browsers that are being driven over
+// the DevTools protocol, so sign-in happens in a plain browser on the same profile:
+// no debugging port, nothing attached. Later runs relaunch the profile with debugging
+// and reuse the saved cookies.
+export function launchForSignIn(options: {
+  path: string;
+  userDataDir: string;
+  url: string;
+  args?: string[] | undefined;
+}): SignInBrowser {
+  ensureProfileDir(options.userDataDir);
+  rmSync(join(options.userDataDir, "DevToolsActivePort"), { force: true });
+  const child = spawn(
+    options.path,
+    [
+      `--user-data-dir=${options.userDataDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      ...(options.args ?? []).filter((arg) => !/^--(enable-automation|remote-debugging)/.test(arg)),
+      options.url,
+    ],
+    { stdio: "ignore" },
+  );
+  const exited = new Promise<number | null>((resolve) => {
+    child.once("exit", (code) => resolve(code));
+    child.once("error", () => resolve(null));
+  });
+  return {
+    pid: child.pid,
+    exited,
+    close: async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 10_000))]);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    },
+  };
+}

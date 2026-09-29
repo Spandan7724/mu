@@ -241,4 +241,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
 export type { BrowserProfileOptions, ResolvedBrowserOptions };
 export { BrowserManager };
 export { closeManaged, managedState } from "./browser/connect.ts";
+export { discoverBrowser } from "./browser/discover.ts";
+export { launchForSignIn } from "./browser/launch.ts";
 export default browserProfile;

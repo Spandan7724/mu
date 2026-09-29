@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
-import { browserProfile } from "@mu/profile-browser";
+import { browserProfile, managedState } from "@mu/profile-browser";
 import {
   describeWithBrowser,
   tempUserDataDir,
@@ -54,7 +54,7 @@ describe("mu browser arguments", () => {
 });
 
 describeWithBrowser("mu browser login", () => {
-  test("opens the start page, waits for Enter, and leaves the browser running", async () => {
+  test("opens a plain browser without a debugging endpoint, closes it on Enter, and the profile is reused", async () => {
     const home = tempUserDataDir();
     const server = Bun.serve({
       port: 0,
@@ -62,34 +62,33 @@ describeWithBrowser("mu browser login", () => {
       fetch: () =>
         new Response("<title>Sign in</title>", { headers: { "content-type": "text/html" } }),
     });
-    const profile = await browserProfile({
-      home,
-      headless: true,
-      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
-    });
     const out: string[] = [];
     let entered!: () => void;
     const code = runBrowserLogin(
       parseArgs(["browser", "login", `http://127.0.0.1:${server.port}/`]),
       { stdout: (s) => out.push(s), stderr: (s) => out.push(s) },
       {
-        profile,
+        home,
+        ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+        extraArgs: ["--headless=new"],
         waitForEnter: () =>
           new Promise((resolve) => {
             entered = resolve;
           }),
       },
     );
-    while (!out.join("").includes("Press Enter")) await Bun.sleep(10);
-    const opened = profile.browser.tabs().find((tab) => tab.url.includes(String(server.port)));
-    expect(opened?.openedByAgent).toBe(true);
+    while (!out.join("").includes("press Enter")) await Bun.sleep(10);
+    const profile = await browserProfile({ home, headless: true, keepOpen: false });
+    await Bun.sleep(300);
+    expect((await managedState(profile.config.userDataDir)).running).toBe(false);
+    expect(out.join("")).toContain("not controlled by mu");
     entered();
     expect(await code).toBe(0);
-    expect(out.join("")).toContain("stays open");
-    const again = await browserProfile({ home, headless: true });
-    await again.browser.ensureConnected();
-    expect(again.browser.status().launched).toBe(false);
-    await again.browser.shutdown({ close: true });
+    expect(out.join("")).toContain("sign-ins are saved");
+    expect((await managedState(profile.config.userDataDir)).locked).toBe(false);
+    await profile.browser.activeTab();
+    expect(profile.browser.status()).toMatchObject({ connected: true, launched: true });
+    await profile.browser.shutdown({ close: true });
     server.stop(true);
     rmSync(home, { recursive: true, force: true });
   });
