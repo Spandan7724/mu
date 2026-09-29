@@ -61,6 +61,21 @@ describeWithBrowser("prompt-injection guards", () => {
     );
     expect(scope("navigate", { url: `${site.crossOrigin}/form-basic` })).toBe("browser:navigate");
 
+    const cross = `${site.crossOrigin}/form-basic`;
+    expect(scope("navigate", { url: `${cross}?acct=48213377` })).toBe("browser:share");
+    expect(scope("navigate", { url: `${cross}/x7k2pq9` })).toBe("browser:share");
+    expect(scope("navigate", { url: `${cross}?to=ada.private%40example.test` })).toBe(
+      "browser:share",
+    );
+    const base64 = Buffer.from(`note: ${PHRASE}`).toString("base64url");
+    expect(scope("navigate", { url: `${cross}?d=${base64}` })).toBe("browser:share");
+    const hex = Buffer.from("acct 48213377").toString("hex");
+    expect(scope("navigate", { url: `${cross}#${hex}` })).toBe("browser:share");
+    expect(scope("navigate", { url: `${cross}?page=2&sort=newest` })).toBe("browser:navigate");
+    profile.browser.dataflow.userSaid("look up account 48213377 on the partner site");
+    expect(scope("navigate", { url: `${cross}?acct=48213377` })).toBe("browser:navigate");
+    profile.browser.dataflow.userSaid("");
+
     const form = await run("navigate", { url: `${site.crossOrigin}/form-basic` });
     const name = /textbox "Full name" \[ref=(e\d+)\]/.exec(form)?.[1] as string;
     expect(scope("type", { ref: name, text: `Note: ${PHRASE}` })).toBe("browser:share");
