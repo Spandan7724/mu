@@ -7,6 +7,7 @@ export type {
   PickerRequest,
 } from "./app.ts";
 export { App, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
+export { browserRenderers } from "./browser-renderers.ts";
 export type {
   CheckpointCellOptions,
   DiffFile,

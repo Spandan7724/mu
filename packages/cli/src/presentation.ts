@@ -1,4 +1,10 @@
-import { codingRenderers, RendererRegistry, subagentRenderers, type ToolRendererFn } from "@mu/tui";
+import {
+  browserRenderers,
+  codingRenderers,
+  RendererRegistry,
+  subagentRenderers,
+  type ToolRendererFn,
+} from "@mu/tui";
 import type { Profile, ToolRenderer } from "mu";
 
 type PresentationProfile = Pick<Profile, "name" | "renderers">;
@@ -33,6 +39,7 @@ export function createRendererRegistry(
   const registry = new RendererRegistry();
   registry.registerAll(subagentRenderers);
   if (profile?.name === "coding") registry.registerAll(codingRenderers);
+  if (profile?.name === "browser") registry.registerAll(browserRenderers);
   registerDeclaredRenderers(registry, Object.entries(profile?.renderers ?? {}));
   registerDeclaredRenderers(registry, extensionRenderers);
   return registry;
