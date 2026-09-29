@@ -1,7 +1,7 @@
 // Snapshot latency on live heavy pages:
 //   bun packages/profiles/browser/scripts/bench-live-snapshot.ts [iterations] [url…]
 // Uses a temporary signed-out profile unless --browser-profile names a managed one
-// (for signed-in pages such as Gmail).
+// (for signed-in pages such as Gmail). --headed avoids sites that block headless Chrome.
 import { rmSync } from "node:fs";
 import { BrowserManager } from "../src/browser/manager.ts";
 import { resolveBrowserOptions } from "../src/config.ts";
@@ -11,6 +11,8 @@ import { tempUserDataDir, testBrowserPath } from "../src/testing/chrome.ts";
 const argv = process.argv.slice(2);
 const profileIndex = argv.indexOf("--browser-profile");
 const managed = profileIndex >= 0 ? argv.splice(profileIndex, 2)[1] : undefined;
+const headedIndex = argv.indexOf("--headed");
+const headed = headedIndex >= 0 && argv.splice(headedIndex, 1).length > 0;
 const iterations = Number(argv[0] ?? 20);
 const urls = argv.slice(1).length
   ? argv.slice(1)
@@ -23,7 +25,7 @@ const manager = new BrowserManager({
   profileName: managed ?? "bench",
   userDataDir,
   executable: testBrowserPath,
-  headless: !managed,
+  headless: !managed && !headed,
   viewport: { width: 1280, height: 800 },
   keepOpen: Boolean(managed),
 });

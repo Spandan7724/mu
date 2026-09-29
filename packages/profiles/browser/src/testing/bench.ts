@@ -9,6 +9,7 @@ export interface BenchResult {
   p95: number;
   max: number;
   tokens: number;
+  title: string;
 }
 
 function percentile(sorted: number[], p: number): number {
@@ -40,11 +41,13 @@ export async function benchSnapshots(
     await observe(manager, tab, new Stopwatch());
     const times: number[] = [];
     let tokens = 0;
+    let title = "";
     for (let i = 0; i < iterations; i++) {
       const started = performance.now();
       const observation = await observe(manager, tab, new Stopwatch());
       times.push(performance.now() - started);
       tokens = observation.tokens;
+      title = observation.title;
     }
     times.sort((a, b) => a - b);
     results.push({
@@ -53,6 +56,7 @@ export async function benchSnapshots(
       p95: percentile(times, 95),
       max: Math.round((times.at(-1) ?? 0) * 10) / 10,
       tokens,
+      title,
     });
   }
   return results;
@@ -60,9 +64,12 @@ export async function benchSnapshots(
 
 export function formatBench(results: BenchResult[]): string {
   return [
-    "| page | p50 ms | p95 ms | max ms | tokens |",
-    "|---|---|---|---|---|",
-    ...results.map((r) => `| ${r.page} | ${r.p50} | ${r.p95} | ${r.max} | ${r.tokens} |`),
+    "| page | p50 ms | p95 ms | max ms | tokens | title |",
+    "|---|---|---|---|---|---|",
+    ...results.map(
+      (r) =>
+        `| ${r.page} | ${r.p50} | ${r.p95} | ${r.max} | ${r.tokens} | ${r.title.slice(0, 40)} |`,
+    ),
   ].join("\n");
 }
 
