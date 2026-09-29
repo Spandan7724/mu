@@ -491,6 +491,86 @@ export interface FormField {
   value: string | boolean | string[];
 }
 
+function findNode(node: PageNode, ref: string): PageNode | undefined {
+  if (node.ref === ref) return node;
+  for (const child of node.children) {
+    const found = findNode(child, ref);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+// A radio group set by the label of one of its own radios, never a radio elsewhere
+// on the page with the same label (forms repeat Yes/No).
+async function chooseInGroup(
+  ctx: ActionContext,
+  ref: string,
+  wanted: string,
+): Promise<ActionResult | undefined> {
+  const model = await ctx.stopwatch.time("snapshotMs", () =>
+    capturePage(ctx.tab, { scope: "full", signal: ctx.signal }),
+  );
+  const group = findNode(model.root, ref);
+  const radios = group ? collect(group).filter((node) => node.role === "radio") : [];
+  if (radios.length === 0) return undefined;
+  const radio = pickOption(radios, wanted);
+  if (!radio?.ref)
+    return {
+      ok: false,
+      kind: "error",
+      summary: `${ctx.tab.refs.label(ref)} has no choice ${JSON.stringify(wanted)}`,
+      ...(radios.length > 0
+        ? { extra: `choices: ${radios.map((node) => JSON.stringify(node.name)).join(", ")}` }
+        : {}),
+    };
+  return clickRef(ctx, radio.ref);
+}
+
+// After typing into an autocomplete, take the suggestion that is the typed value
+// (or starts with it); anything looser keeps the typed text.
+async function takeSuggestion(
+  ctx: ActionContext,
+  ref: string,
+  typed: string,
+): Promise<string | undefined> {
+  const model = await ctx.stopwatch.time("snapshotMs", () =>
+    capturePage(ctx.tab, { scope: "full", signal: ctx.signal }),
+  );
+  const target = typed.trim().toLowerCase();
+  const options = collect(model.root).filter(
+    (node) => node.ref && node.ref !== ref && node.role === "option" && node.inViewport,
+  );
+  const match =
+    options.find((node) => node.name.trim().toLowerCase() === target) ??
+    options.find((node) => node.name.trim().toLowerCase().startsWith(target));
+  if (!match?.ref) return undefined;
+  const clicked = await clickRef(ctx, match.ref);
+  return clicked.ok === false ? undefined : match.name;
+}
+
+async function fillField(ctx: ActionContext, field: FormField): Promise<ActionResult> {
+  if (typeof field.value === "boolean") return setChecked(ctx, field.ref, field.value);
+  if (Array.isArray(field.value)) return selectOptions(ctx, field.ref, field.value);
+  const role = ctx.tab.refs.meta(field.ref)?.role;
+  if (role === "radiogroup" || role === "group") {
+    const chosen = await chooseInGroup(ctx, field.ref, field.value);
+    if (chosen) return chosen;
+  }
+  const target = await resolveRef(ctx.tab, field.ref, ctx.signal);
+  const info = await fieldInfo(target, ctx.signal);
+  if (info.tag === "select" || (info.editable === "none" && !info.checkable))
+    return selectOptions(ctx, field.ref, [field.value]);
+  if (info.checkable) return setChecked(ctx, field.ref, !/^(false|no|off|0|)$/i.test(field.value));
+  const typed = await typeText(ctx, field.ref, field.value, { settle: info.combobox });
+  if (typed.ok === false || !info.combobox) return typed;
+  const picked = await takeSuggestion(ctx, field.ref, field.value);
+  return picked
+    ? { ...typed, summary: `${typed.summary}; picked suggestion ${JSON.stringify(picked)}` }
+    : typed;
+}
+
+// Fills every field it can and reports the rest, so one call covers a whole form
+// step; the submit button is only clicked when every field went in.
 export async function fillForm(
   ctx: ActionContext,
   fields: FormField[],
@@ -500,31 +580,28 @@ export async function fillForm(
   const watcher = watchSettle(tab, "in-page");
   const done: string[] = [];
   const notes: string[] = [];
+  const failed: string[] = [];
   try {
-    for (const [index, field] of fields.entries()) {
+    for (const field of fields) {
       let result: ActionResult;
-      if (typeof field.value === "boolean") {
-        result = await setChecked(ctx, field.ref, field.value);
-      } else if (Array.isArray(field.value)) {
-        result = await selectOptions(ctx, field.ref, field.value);
-      } else {
-        const target = await resolveRef(tab, field.ref, signal);
-        const info = await fieldInfo(target, signal);
-        const choice = info.tag === "select" || (info.editable === "none" && !info.checkable);
-        result = choice
-          ? await selectOptions(ctx, field.ref, [field.value])
-          : info.checkable
-            ? await setChecked(ctx, field.ref, !/^(false|no|off|0|)$/i.test(field.value))
-            : await typeText(ctx, field.ref, field.value, { settle: info.combobox });
-      }
-      if (result.ok === false) {
-        watcher.dispose();
-        return {
-          ...result,
-          summary: `filled ${index} of ${fields.length} fields; stopped at field ${index + 1}: ${result.summary}`,
+      try {
+        result = await fillField(ctx, field);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        result = {
+          ok: false,
+          kind: "error",
+          summary: error instanceof Error ? error.message : String(error),
         };
       }
+      if (result.ok === false) {
+        failed.push(
+          `${tab.refs.label(field.ref)}: ${result.summary}${result.extra ? ` (${result.extra})` : ""}`,
+        );
+        continue;
+      }
       if (result.kind === "value-mismatch") notes.push(result.summary);
+      else if (result.summary.includes("picked suggestion")) notes.push(result.summary);
       done.push(tab.refs.label(field.ref));
     }
   } catch (error) {
@@ -532,24 +609,33 @@ export async function fillForm(
     throw error;
   }
   const settle = await ctx.stopwatch.time("settleMs", () => watcher.settle(signal));
-  let summary = `filled ${fields.length} field${fields.length === 1 ? "" : "s"} (${done.join(", ")})`;
+  const count = failed.length > 0 ? `${done.length} of ${fields.length}` : `${fields.length}`;
+  let summary = `filled ${count} field${fields.length === 1 ? "" : "s"}${done.length ? ` (${done.join(", ")})` : ""}`;
+  const extra = [
+    ...notes.map((note) => `note: ${note}`),
+    ...failed.map((failure) => `failed: ${failure}`),
+  ].join("\n");
+  if (failed.length > 0)
+    return {
+      ok: false,
+      kind: "error",
+      summary: `${summary}; ${failed.length} failed${submitRef ? ", so nothing was submitted" : ""}`,
+      extra,
+    };
   if (submitRef) {
     const submitted = await clickRef(ctx, submitRef);
     if (submitted.ok === false) {
       return { ...submitted, summary: `${summary}; then ${submitted.summary}` };
     }
     summary = `${summary}; then ${submitted.summary}`;
-    return {
-      ...submitted,
-      summary,
-      ...(notes.length > 0 ? { extra: notes.map((note) => `note: ${note}`).join("\n") } : {}),
-    };
+    return { ...submitted, summary, ...(extra ? { extra } : {}) };
   }
   return {
     summary,
     settle: `${settle.reason} (${settle.ms} ms)`,
-    ...(notes.length > 0
-      ? { kind: "value-mismatch" as const, extra: notes.map((note) => `note: ${note}`).join("\n") }
+    ...(notes.some((note) => !note.includes("picked suggestion"))
+      ? { kind: "value-mismatch" as const }
       : {}),
+    ...(extra ? { extra } : {}),
   };
 }

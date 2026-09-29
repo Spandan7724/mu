@@ -118,7 +118,7 @@ export function interactionTools(deps: BrowserToolDeps) {
   const fill = tool({
     name: "fill_form",
     description:
-      "Fill several fields in one call: text for text fields, true/false for checkboxes, radios and switches, an option label for dropdowns, or a list of labels for multi-selects. Stops at the first field that fails and says how far it got. Optionally click submitRef afterwards.",
+      "Fill a whole form step in one call: text for text fields (an autocomplete takes the suggestion that matches what you typed), true/false for checkboxes and single radios, a choice label for a radio group's ref or a dropdown, or a list of labels for multi-selects. Fills every field it can and lists the ones that failed. Optionally click submitRef afterwards, only if every field went in.",
     inputSchema: z.object({
       fields: z
         .array(

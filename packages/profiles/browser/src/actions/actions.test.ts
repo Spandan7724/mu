@@ -98,6 +98,46 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(next.outcome.details.settle).toStartWith("page changed, then settled");
   });
 
+  test("fill_form sets radio groups by label within the group, keeps going past failures, and takes exact suggestions", async () => {
+    await open("questions");
+    const before = /group "Have you worked here before\?" \[ref=(e\d+)\]/.exec(page)?.[1] as string;
+    const visa = /radiogroup "Do you need visa sponsorship\?" \[ref=(e\d+)\]/.exec(
+      page,
+    )?.[1] as string;
+    const country = refIn(page, "combobox", "Country");
+    const notes = refIn(page, "textbox", "Notes");
+    const partial = await run("fill_form", {
+      fields: [
+        { ref: notes, value: "hello" },
+        { ref: country, value: "France" },
+      ],
+      submitRef: refIn(page, "button", "Save answers"),
+    });
+    expect(partial.result.isError).toBe(true);
+    expect(partial.text).toStartWith('filled 1 of 2 fields (combobox "Country" [e');
+    expect(partial.text).toContain("1 failed, so nothing was submitted");
+    expect(partial.text).toContain('failed: textbox "Notes"');
+    expect(partial.text).not.toContain("Sent:");
+
+    const whole = await run("fill_form", {
+      fields: [
+        { ref: before, value: "No" },
+        { ref: visa, value: "Yes" },
+        { ref: country, value: "India" },
+      ],
+      submitRef: refIn(page, "button", "Save answers"),
+    });
+    expect(whole.result.isError).toBeUndefined();
+    expect(whole.text).toContain("Sent: before=no&visa=yes&country=India");
+
+    await open("combobox");
+    const city = await run("fill_form", {
+      fields: [{ ref: refIn(page, "combobox", "City"), value: "Bost" }],
+    });
+    expect(city.text).toContain('picked suggestion "Boston"');
+    expect(city.text).toContain("Chosen: Boston");
+  });
+
   test("a hover menu left open by the pointer does not block a click elsewhere", async () => {
     await open("hover-menu");
     await run("hover", { ref: refIn(page, "button", "Browse jobs") });
