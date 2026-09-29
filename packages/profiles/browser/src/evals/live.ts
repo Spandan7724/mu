@@ -68,7 +68,10 @@ export const TASKS: EvalTask[] = [
     modes: ["default"],
     prompt: () =>
       "What's the current population of Iceland according to English Wikipedia? Give the number and the year it refers to.",
-    check: async ({ text }) => {
+    check: async ({ text, messages }) => {
+      if (!toolCalls(messages).some((call) => call.name === "navigate")) {
+        return { pass: false, note: "answered without opening Wikipedia (ungrounded)" };
+      }
       const html = decode(await page("https://en.wikipedia.org/wiki/Iceland"));
       const numbers = [...text.matchAll(/\d{3}[,.\s ]?\d{3}/g)].map((match) =>
         match[0].replace(/\D/g, ""),
