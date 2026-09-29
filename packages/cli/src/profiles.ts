@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { browserProfile } from "@mu/profile-browser";
 import { codingProfile } from "@mu/profile-coding";
 import { FileSessionStore, loadProfile, type Profile } from "mu";
+import { currentExecutableCommand } from "./agent-supervisor.ts";
 
 // Profiles shipped with mu are imported statically so the bundler can see them.
 // A runtime-string import works under `bun run` but not inside a
@@ -52,7 +53,8 @@ export function profileOptionsFromArgs(
   args: { noInstructions?: boolean; browser?: BrowserFlags | undefined },
   profile = DEFAULT_PROFILE,
 ): Record<string, unknown> {
-  if (profile === "browser") return { ...browserFlags(args.browser ?? {}) };
+  if (profile === "browser")
+    return { ...browserFlags(args.browser ?? {}), codingCommand: currentExecutableCommand([]) };
   return args.noInstructions ? { instructions: { enabled: false } } : {};
 }
 

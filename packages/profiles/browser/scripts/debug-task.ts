@@ -1,5 +1,6 @@
 // Runs one live eval task and prints the tool-call trail: bun …/debug-task.ts <task>
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { getProvider } from "@mu/ai";
 import { Agent, createCredentialResolver, optionsFromProfile } from "mu";
 import { TASKS } from "../src/evals/live.ts";
@@ -15,12 +16,15 @@ const task = /^\d+$/.test(arg)
 if (!task) throw new Error("unknown task");
 const modelRef = process.argv[3] ?? "openai-codex/gpt-5.6-luna";
 const site = startFixtureSite();
+// Delegation runs the freshly built mu, not whatever is on PATH.
+const builtMu = join(import.meta.dir, "../../../../dist/mu");
 // MU_PROFILE: use that managed (signed-in) profile, headed, instead of a temporary one.
 const profile = await browserProfile({
   ...(process.env.MU_PROFILE
     ? { browserProfile: process.env.MU_PROFILE, headless: false, keepOpen: true }
     : { home: tempUserDataDir(), headless: true, keepOpen: false }),
   ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+  ...(existsSync(builtMu) ? { codingCommand: [builtMu] } : {}),
 });
 const agent = new Agent(
   await optionsFromProfile(profile, modelRef, {
@@ -58,7 +62,9 @@ agent.subscribe((event) => {
     if (event.message.errorMessage) console.log(`  ERROR ${event.message.errorMessage}`);
   }
 });
-const result = await agent.run(task.prompt({ site }));
+// Free-form prompts can name fixture pages as {site:<page>}.
+const prompt = task.prompt({ site }).replace(/\{site:([\w-]+)\}/g, (_, page) => site.url(page));
+const result = await agent.run(prompt);
 console.log(`\n${result.reason} · ${result.text.slice(0, 400)}`);
 console.log(`open tabs at the end: ${profile.browser.tabs().length}`);
 await agent.shutdown();

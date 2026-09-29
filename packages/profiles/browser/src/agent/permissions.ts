@@ -11,6 +11,7 @@ export const SCOPES = {
   secret: "browser:secret",
   upload: "browser:upload",
   script: "browser:script",
+  delegate: "browser:delegate",
 } as const;
 
 const rule = (
@@ -32,7 +33,9 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule(SCOPES.secret, "ask"),
   rule(SCOPES.upload, "ask"),
   rule(SCOPES.script, "ask"),
+  rule(SCOPES.delegate, "ask"),
   rule("notes", "allow"),
+  rule("checkpoint", "allow"),
   rule("todo", "allow"),
 ];
 
@@ -46,7 +49,7 @@ export function hostRules(allowedHosts: string[], blockedHosts: string[]): Permi
 }
 
 export function browserPermissionModes(hosts: PermissionRule[] = []): PermissionMode[] {
-  const gated = [SCOPES.commit, SCOPES.secret, SCOPES.upload, SCOPES.script];
+  const gated = [SCOPES.commit, SCOPES.secret, SCOPES.upload, SCOPES.script, SCOPES.delegate];
   return [
     {
       id: "default",

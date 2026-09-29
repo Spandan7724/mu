@@ -6,6 +6,7 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
+import { checkpointTool } from "./agent/checkpoint.ts";
 import { recordingCommits } from "./agent/ledger.ts";
 import { notesTool } from "./agent/notes.ts";
 import {
@@ -27,6 +28,7 @@ import {
 } from "./config.ts";
 import { visionEnabled } from "./page/screenshot.ts";
 import type { SecretRegistry } from "./page/secrets.ts";
+import { delegateTool } from "./tools/delegate.ts";
 import { interactionTools } from "./tools/interact.ts";
 import { navigateTool } from "./tools/navigate.ts";
 import { findTool, readPageTool, screenshotTool, snapshotTool } from "./tools/observe.ts";
@@ -51,6 +53,8 @@ export async function browserEnvironment(
       config.connect === "cdp" ? `cdp endpoint ${config.cdpUrl}` : "managed persistent profile",
     headless: String(config.headless),
     vision: config.vision,
+    workspace: config.workspace,
+    userHome: config.home,
   };
   if (config.connect === "managed") {
     try {
@@ -155,6 +159,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     interaction.downloads,
     todoTool(todos),
     notesTool(state),
+    checkpointTool(config.home),
+    delegateTool({
+      command: config.codingCommand,
+      workspace: config.workspace,
+      model: () => activeModel,
+    }),
   ] as AnyTool[];
   const toolset = rawTools.map((candidate) =>
     redacting(recordingCommits(candidate, browser, state), browser.secrets),

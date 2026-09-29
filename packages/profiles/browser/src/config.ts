@@ -20,6 +20,10 @@ export interface BrowserProfileOptions {
   blockedHosts?: string[] | undefined;
   home?: string | undefined;
   launcher?: BrowserLauncher | undefined;
+  // Directory the coding agent works in when the browser agent delegates to it.
+  workspace?: string | undefined;
+  // argv prefix that runs mu itself, for delegating to the coding agent.
+  codingCommand?: string[] | undefined;
 }
 
 export interface ResolvedBrowserOptions {
@@ -38,6 +42,8 @@ export interface ResolvedBrowserOptions {
   home: string;
   userDataDir: string;
   launcher?: BrowserLauncher;
+  workspace: string;
+  codingCommand: string[];
 }
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -58,6 +64,8 @@ export const browserConfigSchema = z
     downloadsDir: z.string().min(1).optional(),
     allowedHosts: z.array(z.string().min(1)).optional(),
     blockedHosts: z.array(z.string().min(1)).optional(),
+    workspace: z.string().min(1).optional(),
+    codingCommand: z.array(z.string().min(1)).min(1).optional(),
   })
   .strict();
 
@@ -131,5 +139,7 @@ export function resolveBrowserOptions(
     home,
     userDataDir: join(home, ".mu", "browser", "profiles", browserProfile),
     ...(options.launcher ? { launcher: options.launcher } : {}),
+    workspace: resolve(merged.workspace ?? process.cwd()),
+    codingCommand: merged.codingCommand ?? ["mu"],
   };
 }

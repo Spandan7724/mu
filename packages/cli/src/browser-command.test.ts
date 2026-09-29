@@ -6,6 +6,7 @@ import {
   tempUserDataDir,
   testBrowserPath,
 } from "@mu/profile-browser/testing/chrome.ts";
+import { currentExecutableCommand } from "./agent-supervisor.ts";
 import { parseArgs } from "./args.ts";
 import { runBrowserClose, runBrowserLogin, runBrowserStatus } from "./browser-command.ts";
 import { profileOptionsFromArgs } from "./profiles.ts";
@@ -33,6 +34,7 @@ describe("mu browser arguments", () => {
     expect(profileOptionsFromArgs({ browser: args }, "browser")).toEqual({
       cdpUrl: "http://127.0.0.1:9222",
       headless: true,
+      codingCommand: currentExecutableCommand([]),
     });
     expect(profileOptionsFromArgs({ noInstructions: true, browser: args }, "coding")).toEqual({
       instructions: { enabled: false },
