@@ -61,8 +61,11 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     if (el.getAttribute("aria-hidden") === "true" || el.hasAttribute("inert")) return;
     var style = getComputedStyle(el);
     if (style.display === "none") return;
+    // Native inputs and selects styled invisible under a custom-looking widget still
+    // take input: sites layer them exactly so the real control keeps working.
+    var nativeControl = tag === "input" || tag === "select";
     var visible = style.visibility !== "hidden" && style.visibility !== "collapse" &&
-      (style.opacity !== "0" || tag === "input");
+      (style.opacity !== "0" || nativeControl);
     // Text a person cannot see (transparent, microscopic, under an invisible
     // ancestor, pushed off the page) is where instructions aimed at agents hide.
     // Only text is dropped: invisible native controls still work.
@@ -106,7 +109,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     if (kind === "t" && (hidesText || rect.right + window.scrollX <= 0 || rect.bottom + window.scrollY <= 0 ||
         (rect.width <= 1 && rect.height <= 1))) kind = "";
     var index = parent, childSink = -1;
-    if (kind && visible && !(kind === "i" && zeroSize && tag !== "input")) {
+    if (kind && visible && !(kind === "i" && zeroSize && !nativeControl)) {
       var node = {
         p: parent, k: kind, tag: tag,
         x: Math.round(rect.left), y: Math.round(rect.top),

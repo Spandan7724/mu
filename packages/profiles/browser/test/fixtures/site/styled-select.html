@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><title>Styled select</title>
+<style>
+  .wrap { position: relative; width: 220px; }
+  .face { border: 1px solid #888; padding: 6px; }
+  .wrap select { position: absolute; inset: 0; opacity: 0; width: 100%; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style></head><body>
+<h1>Checkout</h1>
+<label for="size">Size</label>
+<div class="wrap"><div class="face" id="size-face">Choose a size</div>
+  <select id="size" onchange="document.getElementById('size-face').textContent = this.options[this.selectedIndex].text">
+    <option value="">Choose a size</option><option>Small</option><option>Large</option>
+  </select>
+</div>
+<label for="color">Colour</label>
+<select id="color" class="sr" onchange="document.getElementById('picked').textContent = 'Colour: ' + this.value"><option value="">Pick</option><option>Red</option><option>Blue</option></select>
+<p id="picked">Colour: none</p>
+</body></html>

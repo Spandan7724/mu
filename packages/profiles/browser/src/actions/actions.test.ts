@@ -138,6 +138,21 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(city.text).toContain("Chosen: Boston");
   });
 
+  test("native selects styled invisible behind a custom face are still usable", async () => {
+    await open("styled-select");
+    expect(page).toMatch(/combobox "Size" \[ref=e\d+\]/);
+    expect(page).toMatch(/combobox "Colour" \[ref=e\d+\]/);
+    const filled = await run("fill_form", {
+      fields: [
+        { ref: refIn(page, "combobox", "Size"), value: "Large" },
+        { ref: refIn(page, "combobox", "Colour"), value: "Blue" },
+      ],
+    });
+    expect(filled.result.isError).toBeUndefined();
+    expect(filled.text).toContain("Colour: Blue");
+    expect(filled.text).toMatch(/Large/);
+  });
+
   test("a hover menu left open by the pointer does not block a click elsewhere", async () => {
     await open("hover-menu");
     await run("hover", { ref: refIn(page, "button", "Browse jobs") });
