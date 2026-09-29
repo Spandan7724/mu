@@ -36,12 +36,18 @@ function clickTarget(meta: RefMeta | undefined): string | undefined {
 }
 
 // Enter in a field submits its form.
+// Enter submits a form only from a plain field of a form with a real submit button
+// (implicit submission); in comboboxes it picks a suggestion (Gmail's To field), and
+// in multi-line editors it adds a line.
+const NON_SUBMITTING_ROLES = new Set(["combobox", "listbox", "searchbox"]);
+
 function formSubmit(meta: RefMeta | undefined): string | undefined {
-  if (!meta?.form) return undefined;
-  if (meta.form.submitLabel && matchesCommitLexicon(meta.form.submitLabel)) {
+  if (!meta?.form?.submitLabel) return undefined;
+  if (NON_SUBMITTING_ROLES.has(meta.role) || meta.editable === "rich") return undefined;
+  if (matchesCommitLexicon(meta.form.submitLabel)) {
     return `Enter submits the form ("${meta.form.submitLabel}")`;
   }
-  if (meta.form.post) return "Enter submits a form that posts data";
+  if (meta.form.post) return `Enter submits a form that posts data ("${meta.form.submitLabel}")`;
   return undefined;
 }
 

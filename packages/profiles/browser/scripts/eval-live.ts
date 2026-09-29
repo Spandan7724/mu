@@ -26,6 +26,7 @@ const out =
   join(import.meta.dir, "..", "..", "..", "..", "docs", "browser-agent", "eval-results.md");
 
 const site = startFixtureSite();
+const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
 const provider = getProvider(modelRef.split("/")[0] as string);
 const getCredentials = createCredentialResolver();
 const results: RunMetrics[] = [];
@@ -56,7 +57,7 @@ try {
               ...(testBrowserPath ? { executable: testBrowserPath } : {}),
             };
         const metrics = await runTask(task, mode, run, {
-          ctx: { site, selfEmail: flag("--self") },
+          ctx: { site, selfEmail: flag("--self"), tag: `${stamp}-r${run}` },
           provider,
           modelRef,
           getCredentials,

@@ -78,6 +78,40 @@ describe("consequential-action classifier", () => {
     expect(scope("select", { ref: "e2", options: ["x"] }, metas)).toBe("browser:interact");
   });
 
+  test("Enter only submits plain fields of forms with a submit button", () => {
+    const metas: Record<string, RefMeta> = {
+      to: { role: "combobox", name: "To recipients", editable: "text", form: { post: true } },
+      toWithButton: {
+        role: "combobox",
+        name: "To",
+        editable: "text",
+        form: { post: true, submitLabel: "Send" },
+      },
+      body: {
+        role: "textbox",
+        name: "Message Body",
+        editable: "rich",
+        form: { post: true, submitLabel: "Send" },
+      },
+      noButton: { role: "textbox", name: "Subject", editable: "text", form: { post: true } },
+      login: {
+        role: "textbox",
+        name: "Email",
+        editable: "text",
+        form: { post: true, submitLabel: "Continue" },
+      },
+    };
+    expect(scope("type", { ref: "to", text: "a@b.c", submit: true }, metas)).toBe(
+      "browser:interact",
+    );
+    expect(scope("type", { ref: "toWithButton", text: "a@b.c", submit: true }, metas)).toBe(
+      "browser:interact",
+    );
+    expect(scope("press", { keys: "Enter", ref: "body" }, metas)).toBe("browser:interact");
+    expect(scope("press", { keys: "Enter", ref: "noButton" }, metas)).toBe("browser:interact");
+    expect(scope("press", { keys: "Enter", ref: "login" }, metas)).toBe("browser:commit");
+  });
+
   test("Enter submits forms; secrets are their own scope", () => {
     const metas = {
       q: {

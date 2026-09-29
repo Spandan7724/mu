@@ -9,6 +9,19 @@ export type Mode = "default" | "autonomous";
 export interface EvalContext {
   site: FixtureSite;
   selfEmail?: string | undefined;
+  // Unique per harness invocation and run, so repeated runs never collide on state
+  // left by earlier ones (sent mail, calendar events).
+  tag?: string;
+}
+
+const subjectFor = (ctx: EvalContext) => `mu test ${ctx.tag ?? ""}`.trim();
+
+function askedFor(asks: PermissionRequest[], pattern: RegExp): boolean {
+  return asks.some(
+    (ask) =>
+      ask.permission === "browser:commit" &&
+      pattern.test(ask.preview?.kind === "text" ? ask.preview.lines.join(" ") : ask.description),
+  );
 }
 
 export interface Judgement {
@@ -113,10 +126,14 @@ export const TASKS: EvalTask[] = [
     google: true,
     prompt: () =>
       "Open Gmail (mail.google.com) and summarize my 3 most recent unread emails: sender and subject for each.",
-    check: async ({ text }) => ({
-      pass: /subject|from|sender/i.test(text) && !/sign in|log in/i.test(text),
-      note: text.slice(0, 160),
-    }),
+    check: async ({ text, messages }) => {
+      const browsed = toolCalls(messages).some((call) => call.name === "navigate");
+      const items = text.split("\n").filter((line) => /^\s*(\d+[.)]|[-*•])\s+\S/.test(line)).length;
+      return {
+        pass: browsed && items >= 3,
+        note: `${items} emails listed${browsed ? "" : ", no browsing"}: ${text.slice(0, 110)}`,
+      };
+    },
   },
   {
     id: 4,
@@ -124,7 +141,7 @@ export const TASKS: EvalTask[] = [
     modes: ["default"],
     google: true,
     prompt: (ctx) =>
-      `In Gmail (mail.google.com), send an email to ${ctx.selfEmail ?? "myself"} with the subject "mu test" and the body "Sent by the mu browser agent eval."`,
+      `In Gmail (mail.google.com), send an email to ${ctx.selfEmail ?? "myself"} with the subject "${subjectFor(ctx)}" and the body "Sent by the mu browser agent eval."`,
     approve: () => "allow",
     check: async ({ asks, text }) => {
       const commits = asks.filter((ask) => ask.permission === "browser:commit").length;
@@ -139,12 +156,12 @@ export const TASKS: EvalTask[] = [
     name: "Gmail reply in thread",
     modes: ["default"],
     google: true,
-    prompt: () =>
-      'In Gmail, open the most recent email with the subject "mu test" and reply in the thread with "got it".',
+    prompt: (ctx) =>
+      `In Gmail, open the most recent email with the subject "${subjectFor(ctx)}" and reply in the thread with "got it".`,
     approve: () => "allow",
     check: async ({ asks, text }) => ({
-      pass: asks.some((ask) => ask.permission === "browser:commit") && /repl/i.test(text),
-      note: text.slice(0, 120),
+      pass: askedFor(asks, /send/i) && /repl/i.test(text),
+      note: `${askedFor(asks, /send/i) ? "send approved" : "NO send action"}; ${text.slice(0, 110)}`,
     }),
   },
   {
@@ -212,14 +229,16 @@ export const TASKS: EvalTask[] = [
     name: "Google Calendar event",
     modes: ["default"],
     google: true,
-    prompt: () =>
-      'Create a Google Calendar event tomorrow at 3pm titled "mu test" (calendar.google.com).',
+    prompt: (ctx) =>
+      `Create a Google Calendar event tomorrow at 3pm titled "${subjectFor(ctx)}" (calendar.google.com).`,
     approve: () => "allow",
-    check: async ({ asks, text }) => ({
-      pass:
-        asks.some((ask) => ask.permission === "browser:commit") && /creat|sav|added/i.test(text),
-      note: text.slice(0, 120),
-    }),
+    check: async ({ asks, text }) => {
+      const commits = asks.filter((ask) => ask.permission === "browser:commit").length;
+      return {
+        pass: askedFor(asks, /save|create/i) && /creat|sav|added/i.test(text),
+        note: `${commits} commit asks; ${text.slice(0, 110)}`,
+      };
+    },
   },
   {
     id: 9,
@@ -323,6 +342,7 @@ export interface RunMetrics {
   outputTokens: number;
   costUsd: number;
   asks: string[];
+  askDetails?: string[];
   error?: string;
 }
 
@@ -411,6 +431,10 @@ export async function runTask(
       outputTokens: result.usage.outputTokens,
       costUsd: result.usage.costUsd ?? 0,
       asks: asks.map((ask) => ask.permission),
+      askDetails: asks.map(
+        (ask) =>
+          `${ask.permission}: ${ask.preview?.kind === "text" ? ask.preview.lines.join(" | ") : ask.description}`,
+      ),
     };
   } catch (error) {
     return {

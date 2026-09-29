@@ -14,10 +14,11 @@ const task = /^\d+$/.test(arg)
 if (!task) throw new Error("unknown task");
 const modelRef = process.argv[3] ?? "openai-codex/gpt-5.6-luna";
 const site = startFixtureSite();
+// MU_PROFILE: use that managed (signed-in) profile, headed, instead of a temporary one.
 const profile = await browserProfile({
-  home: tempUserDataDir(),
-  headless: true,
-  keepOpen: false,
+  ...(process.env.MU_PROFILE
+    ? { browserProfile: process.env.MU_PROFILE, headless: false, keepOpen: true }
+    : { home: tempUserDataDir(), headless: true, keepOpen: false }),
   ...(testBrowserPath ? { executable: testBrowserPath } : {}),
 });
 const agent = new Agent(
@@ -26,7 +27,14 @@ const agent = new Agent(
     model: modelRef,
     getCredentials: createCredentialResolver(),
     budget: { maxTurns: 25 },
-    onPermission: async () => "allow",
+    // MU_APPROVE_ONLY: a regex; asks whose preview does not match are denied.
+    onPermission: async (request: import("@mu/core").PermissionRequest) => {
+      const preview = request.preview?.kind === "text" ? request.preview.lines.join(" | ") : "";
+      const only = process.env.MU_APPROVE_ONLY;
+      const answer = !only || new RegExp(only).test(preview) ? "allow" : "deny";
+      console.log(`  ASK ${request.permission} → ${answer}: ${preview.slice(0, 260)}`);
+      return answer;
+    },
   } as never),
 );
 agent.subscribe((event) => {
