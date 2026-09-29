@@ -58,7 +58,7 @@ describeWithBrowser("page snapshots in real headless Chrome", () => {
   async function snapshot(): Promise<{ model: PageModel; text: string }> {
     const model = await capturePage(tab);
     const previous = tab.previous?.documentId === model.documentId ? tab.previous : undefined;
-    const rendered = renderSnapshot(model, { previous });
+    const rendered = renderSnapshot(model, { previous, expandLandmarks: true });
     tab.previous = { documentId: model.documentId, ...mergeSeen(previous, rendered) };
     return { model, text: rendered.text };
   }

@@ -25,7 +25,17 @@ const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
 // One file per invocation: eval-results.md is the curated summary and is never overwritten.
 const out =
   flag("--out") ??
-  join(import.meta.dir, "..", "..", "..", "..", "docs", "browser-agent", "eval-runs", `${stamp}.md`);
+  join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "..",
+    "docs",
+    "browser-agent",
+    "eval-runs",
+    `${stamp}.md`,
+  );
 mkdirSync(dirname(out), { recursive: true });
 
 const site = startFixtureSite();

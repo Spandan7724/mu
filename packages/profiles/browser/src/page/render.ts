@@ -5,20 +5,33 @@ export const HARD_CAP_TOKENS = 12_000;
 const MAX_LINE_TEXT = 200;
 const MAX_VALUE = 300;
 
+export interface Seen {
+  refs: Set<string>;
+  texts: Set<string>;
+  // What each site header, footer and navigation last rendered as.
+  landmarks?: Map<string, string>;
+}
+
 export interface RenderOptions {
   scope?: "viewport" | "full" | undefined;
   budgetTokens?: number | undefined;
   // Refs and text keys shown by the previous observation of this document.
-  previous?: { refs: Set<string>; texts: Set<string> } | undefined;
+  previous?: Seen | undefined;
+  // Show every landmark in full even when it has not changed.
+  expandLandmarks?: boolean | undefined;
 }
 
 export interface RenderedSnapshot {
   text: string;
   refs: Set<string>;
   texts: Set<string>;
+  landmarks: Map<string, string>;
   pruned: number;
   lines: number;
 }
+
+// Site chrome repeated on every observation; once seen, an unchanged one is one line.
+const COLLAPSIBLE = new Set(["banner", "contentinfo", "navigation"]);
 
 interface Line {
   text: string;
@@ -78,14 +91,11 @@ function stateTags(node: PageNode): string[] {
 }
 
 // Everything shown so far in this document; `*` marks what was never shown before.
-export function mergeSeen(
-  previous: { refs: Set<string>; texts: Set<string> } | undefined,
-  rendered: { refs: Set<string>; texts: Set<string> },
-): { refs: Set<string>; texts: Set<string> } {
-  if (!previous) return { refs: new Set(rendered.refs), texts: new Set(rendered.texts) };
+export function mergeSeen(previous: Seen | undefined, rendered: Seen): Seen {
   return {
-    refs: new Set([...previous.refs, ...rendered.refs]),
-    texts: new Set([...previous.texts, ...rendered.texts]),
+    refs: new Set([...(previous?.refs ?? []), ...rendered.refs]),
+    texts: new Set([...(previous?.texts ?? []), ...rendered.texts]),
+    landmarks: new Map([...(previous?.landmarks ?? []), ...(rendered.landmarks ?? [])]),
   };
 }
 
@@ -135,12 +145,22 @@ function redundantText(node: PageNode, siblings: PageNode[], parentName: string)
   return node.role === "label" && siblings.some(matches);
 }
 
+interface Marks {
+  previous?: RenderOptions["previous"];
+  refs: Set<string>;
+  texts: Set<string>;
+  landmarks: Map<string, string>;
+  // Landmarks of each role met so far in document order, to key them.
+  landmarkCount: Map<string, number>;
+  expandLandmarks: boolean;
+}
+
 function collectLines(
   nodes: PageNode[],
   depth: number,
   pageUrl: string,
   out: Line[],
-  marks: { previous?: RenderOptions["previous"]; refs: Set<string>; texts: Set<string> },
+  marks: Marks,
   parentName = "",
 ): void {
   for (const node of nodes) {
@@ -159,23 +179,64 @@ function collectLines(
       collectLines(node.children, depth, pageUrl, out, marks, parentName);
       continue;
     }
-    let isNew = false;
-    if (node.ref) {
-      marks.refs.add(node.ref);
-      isNew = marks.previous !== undefined && !marks.previous.refs.has(node.ref);
-    } else if ((node.kind === "text" || node.kind === "container") && node.name) {
-      const key = textKey(node);
-      marks.texts.add(key);
-      isNew = marks.previous !== undefined && !marks.previous.texts.has(key);
+    if (COLLAPSIBLE.has(node.role)) {
+      const count = (marks.landmarkCount.get(node.role) ?? 0) + 1;
+      marks.landmarkCount.set(node.role, count);
+      const key = `${node.role}#${count}`;
+      // The shape is taken fully expanded, so a nested landmark collapsing does not
+      // make its parent look changed.
+      const collapsing = !marks.expandLandmarks;
+      const counts = new Map(marks.landmarkCount);
+      marks.expandLandmarks = true;
+      const full: Line[] = [];
+      emitNode(node, depth, pageUrl, full, marks);
+      marks.expandLandmarks = !collapsing;
+      const shape = Bun.hash(
+        full.map((line) => line.text.replace(/^(\s*)\*-/, "$1-")).join("\n"),
+      ).toString(36);
+      marks.landmarks.set(key, shape);
+      let lines = full;
+      if (collapsing) {
+        marks.landmarkCount.clear();
+        for (const [role, seen] of counts) marks.landmarkCount.set(role, seen);
+        lines = [];
+        emitNode(node, depth, pageUrl, lines, marks);
+      }
+      if (collapsing && marks.previous?.landmarks?.get(key) === shape) {
+        const name = node.name ? ` ${quote(clip(node.name, MAX_LINE_TEXT))}` : "";
+        const ref = node.ref ? ` [ref=${node.ref}]` : "";
+        out.push({
+          text: `${"  ".repeat(depth)}- ${node.role}${name}${ref} (unchanged, ${countInteractive(node)} interactive elements; use find, or snapshot with scope full)`,
+          depth,
+          kind: node.kind,
+          inViewport: node.inViewport,
+        });
+      } else {
+        out.push(...lines);
+      }
+      continue;
     }
-    out.push({
-      text: `${"  ".repeat(depth)}${isNew ? "*" : ""}- ${describeNode(node, pageUrl)}`,
-      depth,
-      kind: node.kind,
-      inViewport: node.inViewport,
-    });
-    collectLines(node.children, depth + 1, pageUrl, out, marks, node.name);
+    emitNode(node, depth, pageUrl, out, marks);
   }
+}
+
+function emitNode(node: PageNode, depth: number, pageUrl: string, out: Line[], marks: Marks): void {
+  let isNew = false;
+  if (node.ref) {
+    marks.refs.add(node.ref);
+    isNew = marks.previous !== undefined && !marks.previous.refs.has(node.ref);
+  } else if ((node.kind === "text" || node.kind === "container") && node.name) {
+    const key = textKey(node);
+    marks.texts.add(key);
+    isNew = marks.previous !== undefined && !marks.previous.texts.has(key);
+  }
+  out.push({
+    text: `${"  ".repeat(depth)}${isNew ? "*" : ""}- ${describeNode(node, pageUrl)}`,
+    depth,
+    kind: node.kind,
+    inViewport: node.inViewport,
+  });
+  collectLines(node.children, depth + 1, pageUrl, out, marks, node.name);
 }
 
 function tokens(lines: Line[]): number {
@@ -191,7 +252,14 @@ function countInteractive(node: PageNode): number {
 
 export function renderSnapshot(model: PageModel, options: RenderOptions = {}): RenderedSnapshot {
   const budget = Math.min(options.budgetTokens ?? DEFAULT_BUDGET_TOKENS, HARD_CAP_TOKENS);
-  const marks = { previous: options.previous, refs: new Set<string>(), texts: new Set<string>() };
+  const marks: Marks = {
+    previous: options.previous,
+    refs: new Set<string>(),
+    texts: new Set<string>(),
+    landmarks: new Map<string, string>(),
+    landmarkCount: new Map<string, number>(),
+    expandLandmarks: options.expandLandmarks === true || options.scope === "full",
+  };
   const lines: Line[] = [];
   const trailer: string[] = [];
   if (model.modal) {
@@ -265,6 +333,7 @@ export function renderSnapshot(model: PageModel, options: RenderOptions = {}): R
     text: `<page_content untrusted="true">\n${body}\n</page_content>`,
     refs: marks.refs,
     texts: marks.texts,
+    landmarks: marks.landmarks,
     pruned,
     lines: lines.length,
   };
