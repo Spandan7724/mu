@@ -2,10 +2,20 @@ import { createHash } from "node:crypto";
 import type { AnyTool, ToolResult } from "@mu/core";
 import { classify } from "../actions/classify.ts";
 import { hostOf } from "../actions/navigate.ts";
+import type { OutcomeKind } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
+import { retryKey } from "../tools/gate.ts";
 import type { BrowserState, CommitRecord } from "./state.ts";
 
 const COMMIT_TOOLS = new Set(["click", "click_xy", "type", "press", "select", "fill_form"]);
+// Failures that happen before any input is dispatched, so the approval still stands.
+const NOT_DISPATCHED = new Set<OutcomeKind>([
+  "occluded",
+  "blocked-by-dialog",
+  "not-interactable",
+  "stale-ref",
+]);
+const RETRY_WINDOW = 3;
 
 function digest(args: Record<string, unknown>): string | undefined {
   const values =
@@ -40,8 +50,22 @@ export function recordingCommits(
         url: tab?.url ?? "",
         target: typeof input.ref === "string" ? (tab?.refs.label(input.ref) ?? input.ref) : "",
       };
+      const retry = browser.approvedRetry;
+      browser.approvedRetry =
+        retry && retry.remaining > 1 ? { ...retry, remaining: retry.remaining - 1 } : undefined;
       const result: ToolResult = await tool.execute(toolCallId, args, signal, onUpdate);
-      if (scope !== "browser:commit" || result.isError) return result;
+      if (scope !== "browser:commit") return result;
+      if (result.isError) {
+        const kind = (result.details as { kind?: OutcomeKind } | undefined)?.kind;
+        if (kind && NOT_DISPATCHED.has(kind))
+          browser.approvedRetry = {
+            key: retryKey(tool.name, input),
+            url: before.url,
+            remaining: RETRY_WINDOW,
+          };
+        return result;
+      }
+      browser.approvedRetry = undefined;
       const target =
         before.target ||
         (typeof input.submitRef === "string"

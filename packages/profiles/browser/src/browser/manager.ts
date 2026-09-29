@@ -80,6 +80,8 @@ export class BrowserManager {
   readonly secrets = new SecretRegistry();
   // Tab switches in a row with no other browser action in between.
   switchStreak = 0;
+  // An approved consequential action that was blocked before any input reached the page.
+  approvedRetry: { key: string; url: string; remaining: number } | undefined;
   // Which tab owns each live-observation slot, least recently observed first.
   private slots: { slot: number; tabId: string }[] = [];
 
@@ -331,6 +333,28 @@ export class BrowserManager {
       return this.attach(blank.targetId, signal);
     }
     return this.openTab(undefined, signal);
+  }
+
+  // A background tab gets no frames, so Chrome never acks its mouse input and
+  // screenshots stall; bring the agent's tab to the front before acting.
+  async ensureForeground(tab: Tab, signal?: AbortSignal): Promise<void> {
+    // Scripts do not run while a JS dialog is open.
+    if (tab.dialog) return;
+    const contextId = await tab.frames
+      .isolatedWorld(tab.frames.mainFrameId ?? "", signal)
+      .catch(() => undefined);
+    if (contextId === undefined) return;
+    const state = await tab.session
+      .send(
+        "Runtime.evaluate",
+        { expression: "document.visibilityState", contextId, returnByValue: true },
+        { signal, timeoutMs: 3_000 },
+      )
+      .catch(() => undefined);
+    if (state?.result.value !== "hidden") return;
+    await tab.session
+      .send("Page.bringToFront", undefined, { signal, timeoutMs: 3_000 })
+      .catch(() => {});
   }
 
   private async recoverCrashed(tab: Tab, signal?: AbortSignal): Promise<void> {

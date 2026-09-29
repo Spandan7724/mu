@@ -1,4 +1,5 @@
 // Runs one live eval task and prints the tool-call trail: bun …/debug-task.ts <task>
+import { appendFileSync } from "node:fs";
 import { getProvider } from "@mu/ai";
 import { Agent, createCredentialResolver, optionsFromProfile } from "mu";
 import { TASKS } from "../src/evals/live.ts";
@@ -43,6 +44,9 @@ agent.subscribe((event) => {
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("");
     console.log(`→ ${event.result.toolName}: ${text.split("\n")[0]?.slice(0, 200)}`);
+    // MU_TRACE: a file that receives every full tool result.
+    if (process.env.MU_TRACE)
+      appendFileSync(process.env.MU_TRACE, `\n===== ${event.result.toolName}\n${text}\n`);
   }
   if (event.type === "message_end" && event.message.role === "assistant") {
     for (const block of event.message.content) {

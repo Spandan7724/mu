@@ -1,4 +1,5 @@
 import type { Tab } from "../browser/tabs.ts";
+import { isCdpError } from "../cdp/connection.ts";
 import type { CdpSession } from "../cdp/session.ts";
 import type { Protocol } from "../cdp/types.ts";
 import type { ResolvedRef } from "../page/resolve.ts";
@@ -9,6 +10,30 @@ export type Modifier = "Alt" | "Control" | "Meta" | "Shift";
 export interface Point {
   x: number;
   y: number;
+}
+
+// Chrome delivers mouse moves on the next animation frame, so a window the
+// compositor is not drawing (another workspace, minimized) never acks them.
+// A following press or release flushes the queued move, so only pure hovers
+// depend on the ack.
+const MOVE_ACK_MS = 500;
+
+async function dispatchMove(
+  session: CdpSession,
+  params: Omit<Protocol.Input.DispatchMouseEventRequest, "type">,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  try {
+    await session.send(
+      "Input.dispatchMouseEvent",
+      { type: "mouseMoved", ...params },
+      { signal, timeoutMs: MOVE_ACK_MS },
+    );
+    return true;
+  } catch (error) {
+    if (isCdpError(error, "timeout")) return false;
+    throw error;
+  }
 }
 
 export interface Occluder {
@@ -247,7 +272,7 @@ export async function mouseClick(
   const modifiers = modifierMask(options.modifiers);
   const send = { signal: options.signal, timeoutMs: 5_000 };
   const base = { x: point.x, y: point.y, modifiers };
-  await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base }, send);
+  await dispatchMove(session, base, options.signal);
   const clicks = options.clickCount ?? 1;
   for (let count = 1; count <= clicks; count++) {
     await session.send(
@@ -263,12 +288,13 @@ export async function mouseClick(
   }
 }
 
-export async function mouseMove(session: CdpSession, point: Point, signal?: AbortSignal) {
-  await session.send(
-    "Input.dispatchMouseEvent",
-    { type: "mouseMoved", x: point.x, y: point.y },
-    { signal, timeoutMs: 5_000 },
-  );
+// False when the window is not being drawn and the hover never reached the page.
+export async function mouseMove(
+  session: CdpSession,
+  point: Point,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  return dispatchMove(session, { x: point.x, y: point.y }, signal);
 }
 
 // Presses at `from`, moves in steps, releases at `to`. HTML5 drag-and-drop is
@@ -286,7 +312,7 @@ export async function mouseDrag(
     dragData = event.data;
   });
   try {
-    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...from }, send);
+    await dispatchMove(session, from, signal);
     await session.send(
       "Input.dispatchMouseEvent",
       { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 },
@@ -298,11 +324,7 @@ export async function mouseDrag(
         x: from.x + ((to.x - from.x) * step) / steps,
         y: from.y + ((to.y - from.y) * step) / steps,
       };
-      await session.send(
-        "Input.dispatchMouseEvent",
-        { type: "mouseMoved", ...point, button: "left", buttons: 1 },
-        send,
-      );
+      await dispatchMove(session, { ...point, button: "left", buttons: 1 }, signal);
       if (dragData) break;
     }
     if (dragData) {

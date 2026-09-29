@@ -89,4 +89,24 @@ describeWithBrowser("loop detection", () => {
     expect(userTab()).toBeDefined();
     await connection.send("Target.closeTarget", { targetId: userTarget });
   });
+  test("acting on a tab the user left in the background brings it to the front", async () => {
+    const page = await run("navigate", { url: site.url("custom-select") });
+    const connection = await profile.browser.ensureConnected();
+    const { targetId } = await connection.send("Target.createTarget", { url: site.url("long") });
+    const visibility = async () => {
+      const tab = await profile.browser.activeTab();
+      const { result } = await tab.session.send("Runtime.evaluate", {
+        expression: "document.visibilityState",
+        returnByValue: true,
+      });
+      return result.value;
+    };
+    await until(async () => (await visibility()) === "hidden");
+    const clicked = await run("click", {
+      ref: /clickable "Select size ▾" \[ref=(e\d+)\]/.exec(page)?.[1] as string,
+    });
+    expect(clicked).not.toContain("timed out");
+    expect(await visibility()).toBe("visible");
+    await connection.send("Target.closeTarget", { targetId });
+  });
 });

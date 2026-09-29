@@ -11,7 +11,16 @@ export function scopeFor(
   args: Record<string, unknown>,
 ): string {
   const tab = deps.browser.currentTab();
-  return classify({ tool, args, meta: (ref) => tab?.refs.meta(ref) }).scope;
+  const { scope } = classify({ tool, args, meta: (ref) => tab?.refs.meta(ref) });
+  const retry = deps.browser.approvedRetry;
+  if (scope === "browser:commit" && retry?.url === tab?.url && retry?.key === retryKey(tool, args))
+    return "browser:interact";
+  return scope;
+}
+
+export function retryKey(tool: string, args: Record<string, unknown>): string {
+  const { reason: _reason, commit: _commit, ...rest } = args;
+  return `${tool} ${JSON.stringify(rest)}`;
 }
 
 function describeValue(value: unknown, secret: boolean): string {

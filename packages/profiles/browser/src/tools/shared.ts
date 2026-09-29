@@ -49,7 +49,11 @@ export async function pageAction(
   const switching = options.tabSwitch === true;
   if (!switching) deps.browser.switchStreak = 0;
   const stopwatch = new Stopwatch();
-  let tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(signal));
+  let tab = await stopwatch.time("cdpMs", async () => {
+    const active = await deps.browser.activeTab(signal);
+    await deps.browser.ensureForeground(active, signal);
+    return active;
+  });
   let result: ActResult;
   if (options.blockedByDialog !== false && tab.dialog) {
     result = {

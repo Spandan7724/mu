@@ -300,7 +300,16 @@ export async function hoverRef(ctx: ActionContext, ref: string): Promise<ActionR
   if (!point)
     return { ok: false, kind: "not-interactable", summary: `${label} has no visible box to hover` };
   const at = await mainPoint(ctx, target, point);
-  const { settle } = await withSettle(ctx, () => mouseMove(tab.session, at, signal));
+  let delivered = true;
+  const { settle } = await withSettle(ctx, async () => {
+    delivered = await mouseMove(tab.session, at, signal);
+  });
+  if (!delivered)
+    return {
+      ok: false,
+      kind: "timeout",
+      summary: `hover over ${label} did not reach the page: the browser window is not being drawn (hidden or on another workspace); ask the user to keep it visible, or click instead`,
+    };
   return {
     summary: `hovered ${label}${settleNote(settle)}`,
     path: "mouse",
