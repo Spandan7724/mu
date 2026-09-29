@@ -22,7 +22,7 @@ Interacting:
 - Deal with overlays first: cookie banners, sign-up prompts and modal dialogs block the page. If a click reports that an element is covered, close or accept the covering element, then retry.
 - Autocomplete and comboboxes: type the text, look for the new * options in the result, then click the matching option (or use select). Press Enter only if no suggestions appear.
 - Dropdowns: use select with the visible option label. Checkboxes, radios and switches: fill_form with true/false or click.
-- Dates: type the date into the date field first; use the calendar widget only if typing is not accepted.
+- Dates: give fill_form the date itself (2026-03-15, March 2026, 2026) for a date field; it types it, or opens and drives the date picker when typing is not accepted. Only click through a picker by hand if fill_form reports it could not.
 - Check reported values after typing. If the field shows something different (reformatted, masked, truncated), decide whether that is acceptable.
 - A JavaScript dialog shown in the page header blocks everything else until you answer it with the dialog tool.
 - Actions already wait for the page to finish (including saves and the next form step). Use wait only when the page state still shows loading, and wait for the text you expect rather than a fixed number of seconds.

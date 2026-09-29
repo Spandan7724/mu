@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dates</title>
+<style>
+  body { font-family: sans-serif; margin: 20px; }
+  .picker { display: none; border: 1px solid #999; padding: 6px; margin: 4px 0; }
+  .picker.open { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(7, 32px); gap: 2px; }
+</style></head>
+<body>
+<h1>Dates</h1>
+<form onsubmit="event.preventDefault()">
+  <label>Start <input id="start" autocomplete="off"></label>
+  <div class="picker" id="start-picker">
+    <select id="start-year" aria-label="Year"></select>
+    <div role="listbox" id="start-months" aria-label="Months"></div>
+  </div>
+
+  <label>Graduation year <input id="grad" readonly></label>
+  <div class="picker" id="grad-picker">
+    <button type="button" id="grad-prev">Previous years</button>
+    <span id="grad-range"></span>
+    <button type="button" id="grad-next">Next years</button>
+    <div id="grad-years"></div>
+  </div>
+
+  <label>Date of birth <input id="dob" readonly></label>
+  <div class="picker" id="dob-picker">
+    <button type="button" id="dob-prev" aria-label="Previous month">‹</button>
+    <strong id="dob-title"></strong>
+    <button type="button" id="dob-next" aria-label="Next month">›</button>
+    <div class="grid" role="grid" id="dob-days"></div>
+  </div>
+
+  <label>Delivery date <input id="delivery" type="date"></label>
+  <label>Card expiry <input id="expiry" type="month"></label>
+</form>
+<p id="values"></p>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const show = () => { $("values").textContent = ["start","grad","dob","delivery","expiry"].map((id) => id + "=" + $(id).value).join(" "); };
+  document.querySelectorAll("input").forEach((input) => input.addEventListener("change", show));
+
+  // Month list per year: typing is rejected (cleared on blur), like many career sites.
+  for (let y = 1990; y <= 2030; y++) $("start-year").add(new Option(String(y), String(y), y === 2026, y === 2026));
+  function renderMonths() {
+    const year = Number($("start-year").value);
+    $("start-months").innerHTML = "";
+    NAMES.forEach((name, i) => {
+      const future = year > 2026 || (year === 2026 && i > 8);
+      const option = document.createElement("div");
+      option.setAttribute("role", "option");
+      option.tabIndex = 0;
+      option.textContent = (future ? "Not available " : "Choose ") + name + " " + year;
+      if (!future) option.addEventListener("click", () => { $("start").value = String(i + 1).padStart(2, "0") + "/" + year; $("start-picker").classList.remove("open"); show(); });
+      $("start-months").appendChild(option);
+    });
+  }
+  $("start").addEventListener("click", () => { renderMonths(); $("start-picker").classList.add("open"); });
+  $("start").addEventListener("blur", () => setTimeout(() => { if (!/^\d\d\/\d{4}$/.test($("start").value)) $("start").value = ""; }, 0));
+  $("start-year").addEventListener("change", renderMonths);
+
+  // Year grid, twelve at a time.
+  let first = 2017;
+  function renderYears() {
+    $("grad-range").textContent = first + " - " + (first + 11);
+    $("grad-years").innerHTML = "";
+    for (let y = first; y < first + 12; y++) {
+      const cell = document.createElement("span");
+      cell.textContent = String(y);
+      cell.style.cursor = "pointer";
+      cell.style.marginRight = "6px";
+      cell.addEventListener("click", () => { $("grad").value = String(y); $("grad-picker").classList.remove("open"); show(); });
+      $("grad-years").appendChild(cell);
+    }
+  }
+  $("grad").addEventListener("click", () => { renderYears(); $("grad-picker").classList.add("open"); });
+  $("grad-prev").addEventListener("click", () => { first -= 12; renderYears(); });
+  $("grad-next").addEventListener("click", () => { first += 12; renderYears(); });
+
+  // Day calendar with bare-number cells under a month heading.
+  let shown = { year: 2026, month: 8 };
+  function renderDays() {
+    $("dob-title").textContent = NAMES[shown.month] + " " + shown.year;
+    $("dob-days").innerHTML = "";
+    const days = new Date(shown.year, shown.month + 1, 0).getDate();
+    for (let d = 1; d <= days; d++) {
+      const cell = document.createElement("div");
+      cell.setAttribute("role", "gridcell");
+      cell.tabIndex = 0;
+      cell.textContent = String(d);
+      cell.addEventListener("click", () => { $("dob").value = shown.year + "-" + String(shown.month + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0"); $("dob-picker").classList.remove("open"); show(); });
+      $("dob-days").appendChild(cell);
+    }
+  }
+  $("dob").addEventListener("click", () => { renderDays(); $("dob-picker").classList.add("open"); });
+  $("dob-prev").addEventListener("click", () => { shown.month--; if (shown.month < 0) { shown.month = 11; shown.year--; } renderDays(); });
+  $("dob-next").addEventListener("click", () => { shown.month++; if (shown.month > 11) { shown.month = 0; shown.year++; } renderDays(); });
+</script>
+</body></html>

@@ -118,7 +118,7 @@ export function interactionTools(deps: BrowserToolDeps) {
   const fill = tool({
     name: "fill_form",
     description:
-      "Fill a whole form step in one call: text for text fields (an autocomplete takes the suggestion that matches what you typed), true/false for checkboxes and single radios, a choice label for a radio group's ref or a dropdown, or a list of labels for multi-selects. Fills every field it can and lists the ones that failed. Optionally click submitRef afterwards, only if every field went in.",
+      "Fill a whole form step in one call: text for text fields (an autocomplete takes the suggestion that matches what you typed), true/false for checkboxes and single radios, a choice label for a radio group's ref or a dropdown, a date (2026-03-15, March 2026, 2026) for a date field, whose picker it drives when typing is not accepted, or a list of labels for multi-selects. Fills every field it can and lists the ones that failed. Optionally click submitRef afterwards, only if every field went in.",
     inputSchema: z.object({
       fields: z
         .array(

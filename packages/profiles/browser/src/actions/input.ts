@@ -3,6 +3,15 @@ import { type ResolvedRef, resolveRef } from "../page/resolve.ts";
 import { type SettleResult, watchSettle } from "../page/settle.ts";
 import { capturePage } from "../page/snapshot.ts";
 import { type ActionContext, type ActionResult, clickRef, mainPoint, raceDialog } from "./click.ts";
+import {
+  type DateTarget,
+  isoFor,
+  MONTHS,
+  namesDate,
+  parseDate,
+  periodOf,
+  shownPeriod,
+} from "./dates.ts";
 import { parseKeys, pressCombo, typeKeystrokes } from "./keyboard.ts";
 import { clickablePoint, mouseClick } from "./pointer.ts";
 
@@ -548,6 +557,164 @@ async function takeSuggestion(
   return clicked.ok === false ? undefined : match.name;
 }
 
+// Labels of fields that take a date even when the page does not say so in markup.
+const DATE_FIELD =
+  /\b(date|month|year|from|to|start|end|birth|dob|since|until|expir\w*|graduat\w*)\b/i;
+const PICKER_ROLES = new Set([
+  "option",
+  "gridcell",
+  "cell",
+  "button",
+  "clickable",
+  "link",
+  "menuitem",
+  "listitem",
+]);
+const NEXT = /\b(next|forward|later)\b|^[›»>]$/i;
+const PREVIOUS = /\b(prev|previous|back|earlier)\b|^[‹«<]$/i;
+const MAX_PICKER_STEPS = 30;
+
+async function fieldValue(ctx: ActionContext, ref: string): Promise<string> {
+  const target = await resolveRef(ctx.tab, ref, ctx.signal);
+  return call<string>(
+    target,
+    "function () { return String(this.value != null ? this.value : this.innerText || ''); }",
+    [],
+    ctx.signal,
+  );
+}
+
+// Native date inputs take an ISO value; custom fields are typed into, and when the
+// typing does not stick, their picker is driven: open it, click the element that
+// names the date, else pick the year/month in its dropdowns or step toward it.
+async function setDate(
+  ctx: ActionContext,
+  ref: string,
+  value: string,
+  target: DateTarget,
+  info: FieldInfo,
+): Promise<ActionResult> {
+  const { tab, signal } = ctx;
+  const label = tab.refs.label(ref);
+  if (info.tag === "input" && (info.type === "date" || info.type === "month")) {
+    const iso = isoFor(info.type, target);
+    if (!iso)
+      return {
+        ok: false,
+        kind: "error",
+        summary: `${label} needs ${info.type === "date" ? "a day, month and year" : "a month and year"}`,
+      };
+    const element = await resolveRef(tab, ref, signal);
+    const watcher = watchSettle(tab, "in-page");
+    try {
+      await call(
+        element,
+        `function (v) {
+          var set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+          set.call(this, v);
+          this.dispatchEvent(new Event("input", { bubbles: true }));
+          this.dispatchEvent(new Event("change", { bubbles: true }));
+        }`,
+        [iso],
+        signal,
+      );
+    } catch (error) {
+      watcher.dispose();
+      throw error;
+    }
+    const settle = await ctx.stopwatch.time("settleMs", () => watcher.settle(signal));
+    return { summary: `set ${label} to ${iso}${settleNote(settle)}`, path: "js" };
+  }
+  if (!info.readOnly && info.editable === "value") {
+    const typed = await typeText(ctx, ref, value);
+    if (typed.ok !== false) {
+      // Many date fields only reject free text once focus leaves them.
+      const element = await resolveRef(tab, ref, signal);
+      const watcher = watchSettle(tab, "in-page");
+      await call(element, "function () { this.blur(); }", [], signal).catch(() => {});
+      await watcher.settle(signal);
+      if ((await fieldValue(ctx, ref)).trim()) return typed;
+    }
+  }
+  const opened = await clickRef(ctx, ref);
+  if (opened.ok === false) return opened;
+  let visible: PageNode[] = [];
+  for (let step = 0; step < MAX_PICKER_STEPS; step++) {
+    const model = await ctx.stopwatch.time("snapshotMs", () =>
+      capturePage(tab, { scope: "full", signal }),
+    );
+    visible = collect(model.root).filter((node) => node.inViewport && node.ref !== ref);
+    const shown = visible.map((node) => node.name).join(" | ");
+    const usable = visible.filter((node) => node.ref && !node.states.disabled);
+    const matches = usable.filter(
+      (node) => PICKER_ROLES.has(node.role) && namesDate(node.name, target, shown),
+    );
+    const match =
+      matches.find((node) => node.role === "option" || node.role === "gridcell") ?? matches[0];
+    if (match?.ref) {
+      const clicked = await clickRef(ctx, match.ref);
+      if (clicked.ok === false) return clicked;
+      if ((await fieldValue(ctx, ref)).trim())
+        return { summary: `picked ${JSON.stringify(match.name)} in the date picker of ${label}` };
+      continue;
+    }
+    const dropdowns = usable.filter((node) => node.options && node.options.length > 0);
+    const year = String(target.year);
+    // Only the first options are captured, so a long year list is recognised by
+    // looking like years; the selection itself searches every option.
+    const yearish = (text: string | undefined) => !!text && /^\s*(19|20|21)\d{2}\s*$/.test(text);
+    const yearDropdown = dropdowns.find(
+      (node) => (node.options?.some(yearish) || yearish(node.value)) && node.value?.trim() !== year,
+    );
+    if (yearDropdown?.ref) {
+      const chosen = await selectOptions(ctx, yearDropdown.ref, [year]);
+      if (chosen.ok === false) return chosen;
+      continue;
+    }
+    const monthName = target.month ? (MONTHS[target.month - 1] as string) : undefined;
+    const monthDropdown = monthName
+      ? dropdowns.find(
+          (node) =>
+            node.options?.some((option) =>
+              option.toLowerCase().startsWith(monthName.slice(0, 3)),
+            ) && !node.value?.toLowerCase().startsWith(monthName.slice(0, 3)),
+        )
+      : undefined;
+    if (monthDropdown?.ref && monthName) {
+      const option = monthDropdown.options?.find((candidate) =>
+        candidate.toLowerCase().startsWith(monthName.slice(0, 3)),
+      ) as string;
+      const chosen = await selectOptions(ctx, monthDropdown.ref, [option]);
+      if (chosen.ok === false) return chosen;
+      continue;
+    }
+    const period = shownPeriod(visible.map((node) => node.name));
+    const wanted = periodOf(target);
+    const forward = period === undefined ? step < 12 : period < wanted;
+    const pattern = forward ? NEXT : PREVIOUS;
+    const steppers = usable.filter(
+      (node) =>
+        (node.role === "button" || node.role === "clickable" || node.role === "link") &&
+        pattern.test(node.name),
+    );
+    const byYear = period !== undefined && Math.abs(wanted - period) >= 12;
+    const stepper = steppers.find((node) => /year/i.test(node.name) === byYear) ?? steppers[0];
+    if (!stepper?.ref) break;
+    const stepped = await clickRef(ctx, stepper.ref);
+    if (stepped.ok === false) return stepped;
+  }
+  const choices = visible
+    .filter((node) => node.ref && PICKER_ROLES.has(node.role) && node.name)
+    .slice(0, 12)
+    .map((node) => JSON.stringify(node.name));
+  return {
+    ok: false,
+    kind: "error",
+    summary: `could not set ${label} to ${JSON.stringify(value)}: the date picker did not offer it`,
+    ...(choices.length > 0 ? { extra: `picker shows: ${choices.join(", ")}` } : {}),
+  };
+}
+
 async function fillField(ctx: ActionContext, field: FormField): Promise<ActionResult> {
   if (typeof field.value === "boolean") return setChecked(ctx, field.ref, field.value);
   if (Array.isArray(field.value)) return selectOptions(ctx, field.ref, field.value);
@@ -561,6 +728,14 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<ActionRe
   if (info.tag === "select" || (info.editable === "none" && !info.checkable))
     return selectOptions(ctx, field.ref, [field.value]);
   if (info.checkable) return setChecked(ctx, field.ref, !/^(false|no|off|0|)$/i.test(field.value));
+  const date = parseDate(field.value);
+  if (
+    date &&
+    ((info.tag === "input" && (info.type === "date" || info.type === "month")) ||
+      info.readOnly ||
+      DATE_FIELD.test(ctx.tab.refs.label(field.ref)))
+  )
+    return setDate(ctx, field.ref, field.value, date, info);
   const typed = await typeText(ctx, field.ref, field.value, { settle: info.combobox });
   if (typed.ok === false || !info.combobox) return typed;
   const picked = await takeSuggestion(ctx, field.ref, field.value);

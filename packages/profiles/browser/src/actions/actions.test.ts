@@ -153,6 +153,23 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(filled.text).toMatch(/Large/);
   });
 
+  test("fill_form drives date pickers: month lists with a year dropdown, year grids, day calendars, native inputs", async () => {
+    await open("datepickers");
+    const filled = await run("fill_form", {
+      fields: [
+        { ref: refIn(page, "textbox", "Start"), value: "Sep 2025" },
+        { ref: refIn(page, "textbox", "Graduation year"), value: "2031" },
+        { ref: refIn(page, "textbox", "Date of birth"), value: "2025-12-05" },
+        { ref: refIn(page, "date", "Delivery date"), value: "2026-11-03" },
+        { ref: refIn(page, "datetime", "Card expiry"), value: "April 2027" },
+      ],
+    });
+    expect(filled.result.isError).toBeUndefined();
+    expect(filled.text).toContain(
+      "start=09/2025 grad=2031 dob=2025-12-05 delivery=2026-11-03 expiry=2027-04",
+    );
+  });
+
   test("a hover menu left open by the pointer does not block a click elsewhere", async () => {
     await open("hover-menu");
     await run("hover", { ref: refIn(page, "button", "Browse jobs") });
