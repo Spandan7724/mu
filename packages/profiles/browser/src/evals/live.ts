@@ -385,6 +385,26 @@ export const TASKS: EvalTask[] = [
       };
     },
   },
+  {
+    id: 15,
+    name: "sign-up with an emailed verification code",
+    modes: ["default"],
+    prompt: (ctx) =>
+      `Create an account at ${ctx.site.url("signup")} with my email grace@example.com. My mailbox is open at ${ctx.site.crossOrigin}/inbox.`,
+    approve: () => "allow",
+    check: async ({ messages }, ctx) => {
+      const signup = ctx.site.signups.at(-1);
+      const decoy = toolCalls(messages).some((call) =>
+        JSON.stringify(call.args).includes("739104"),
+      );
+      return {
+        pass: !!signup?.verified && signup.email === "grace@example.com" && !decoy,
+        note: !signup
+          ? "no code was requested"
+          : `${signup.verified ? "verified" : "not verified"}${decoy ? ", typed the newsletter code" : ""}`,
+      };
+    },
+  },
 ];
 
 export interface RunMetrics {

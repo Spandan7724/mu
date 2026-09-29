@@ -10,6 +10,8 @@ export interface FixtureSite {
   url: (page: string) => string;
   // What the wizard fixture's final submit sent, oldest first.
   submissions: Record<string, unknown>[];
+  // Sign-ups on the signup fixture: the code it "emailed" and whether it was entered.
+  signups: { email: string; code: string; verified: boolean }[];
   stop: () => void;
 }
 
@@ -21,9 +23,40 @@ export function startFixtureSite(): FixtureSite {
   let origin = "";
   let crossOrigin = "";
   const submissions: Record<string, unknown>[] = [];
+  const signups: FixtureSite["signups"] = [];
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (path === "/signup/send" && request.method === "POST") {
+      const { email } = (await request.json()) as { email: string };
+      const code = String(100_000 + Math.floor(Math.random() * 900_000));
+      signups.push({ email, code, verified: false });
+      return Response.json({ sent: true });
+    }
+    if (path === "/signup/verify" && request.method === "POST") {
+      const { code } = (await request.json()) as { code: string };
+      const signup = signups.at(-1);
+      const ok = !!signup && signup.code === code.trim();
+      if (ok && signup) signup.verified = true;
+      return Response.json({ ok });
+    }
+    if (path === "/mail/messages") {
+      // The inbox shows the codes the signup page sent, newest first, among unrelated mail.
+      return Response.json([
+        ...signups
+          .map((signup) => ({
+            from: "Example Corp <no-reply@example.test>",
+            subject: "Your Example Corp verification code",
+            body: `Hi, your verification code is ${signup.code}. It expires in 10 minutes.`,
+          }))
+          .reverse(),
+        {
+          from: "Newsletter <news@shop.test>",
+          subject: "Your code for 20% off: SAVE20NOW",
+          body: "Use code 739104 at checkout.",
+        },
+      ]);
+    }
     if (path === "/wizard/submit" && request.method === "POST") {
       submissions.push((await request.json()) as Record<string, unknown>);
       return Response.json({ reference: `WZ-${1000 + submissions.length}` });
@@ -74,6 +107,7 @@ export function startFixtureSite(): FixtureSite {
     crossOrigin,
     url: (page) => `${origin}/${page}`,
     submissions,
+    signups,
     stop: () => {
       main.stop(true);
       cross.stop(true);

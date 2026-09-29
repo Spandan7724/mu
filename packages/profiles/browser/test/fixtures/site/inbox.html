@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Inbox — Mail</title></head>
+<body>
+<h1>Inbox</h1>
+<ul id="list" aria-label="Messages"></ul>
+<article id="open" hidden><h2 id="subject"></h2><p id="from"></p><p id="body"></p><button type="button" id="back">Back to inbox</button></article>
+<script>
+  async function load() {
+    const messages = await (await fetch("/mail/messages")).json();
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+    messages.forEach((message) => {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = "#";
+      link.textContent = message.from.split(" <")[0] + " — " + message.subject;
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        document.getElementById("subject").textContent = message.subject;
+        document.getElementById("from").textContent = "From: " + message.from;
+        document.getElementById("body").textContent = message.body;
+        list.hidden = true;
+        document.getElementById("open").hidden = false;
+      });
+      item.appendChild(link);
+      list.appendChild(item);
+    });
+  }
+  document.getElementById("back").addEventListener("click", () => { document.getElementById("open").hidden = true; document.getElementById("list").hidden = false; load(); });
+  load();
+</script>
+</body></html>
