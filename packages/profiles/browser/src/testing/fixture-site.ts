@@ -8,6 +8,8 @@ export interface FixtureSite {
   // A different host name, so its pages are cross-site (out-of-process) inside `origin` pages.
   crossOrigin: string;
   url: (page: string) => string;
+  // What the wizard fixture's final submit sent, oldest first.
+  submissions: Record<string, unknown>[];
   stop: () => void;
 }
 
@@ -18,9 +20,14 @@ function html(body: string): Response {
 export function startFixtureSite(): FixtureSite {
   let origin = "";
   let crossOrigin = "";
+  const submissions: Record<string, unknown>[] = [];
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const path = url.pathname;
+    if (path === "/wizard/submit" && request.method === "POST") {
+      submissions.push((await request.json()) as Record<string, unknown>);
+      return Response.json({ reference: `WZ-${1000 + submissions.length}` });
+    }
     if (path === "/api/suggest") {
       const query = (url.searchParams.get("q") ?? "").toLowerCase();
       const delay = Number(url.searchParams.get("delay") ?? 150);
@@ -66,6 +73,7 @@ export function startFixtureSite(): FixtureSite {
     origin,
     crossOrigin,
     url: (page) => `${origin}/${page}`,
+    submissions,
     stop: () => {
       main.stop(true);
       cross.stop(true);

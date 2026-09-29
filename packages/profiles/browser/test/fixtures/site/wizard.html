@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Example Corp</title>
+<style>
+  body { font-family: sans-serif; margin: 0; }
+  header { display: flex; gap: 12px; padding: 10px 20px; background: #223; color: #fff; }
+  #help-panel { display: none; position: fixed; top: 44px; left: 0; right: 0; height: 320px; background: #eef; padding: 20px; }
+  #help-panel.open { display: block; }
+  main { padding: 20px; max-width: 640px; }
+  .step { display: none; } .step.active { display: block; }
+  label { display: block; margin: 12px 0; }
+  .error { color: #b00; }
+  #months { display: none; border: 1px solid #999; padding: 6px; }
+  #months.open { display: block; }
+  #cookies { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #fff; padding: 12px; }
+</style></head>
+<body>
+<header><strong>Example Corp careers</strong><button id="help" type="button">Help ▾</button></header>
+<div id="help-panel"><a href="#faq">FAQ</a> <a href="#contact">Contact recruiting</a></div>
+<main>
+  <h1 id="title">Apply: Software Engineer</h1>
+  <p id="status" role="status"></p>
+
+  <form class="step active" id="step1" novalidate>
+    <h2>Step 1 of 3: About you</h2>
+    <label>Full name * <input name="name" required></label>
+    <label>Email * <input name="email" type="email" required></label>
+    <label>Phone <input name="phone" type="tel"></label>
+    <label>How did you hear about us? *
+      <select name="heard" required>
+        <option value="">Please select</option><option>Job board</option><option>Friend</option><option>Other</option>
+      </select>
+    </label>
+    <label id="specify-row" hidden>Please specify * <input name="heardOther"></label>
+    <p class="error" id="error1" role="alert"></p>
+    <button type="submit">Next</button>
+  </form>
+
+  <form class="step" id="step2" novalidate>
+    <h2>Step 2 of 3: Details</h2>
+    <label>Start month * <input name="start" id="start" readonly placeholder="Select month"></label>
+    <div id="months" role="listbox" aria-label="Choose start month">
+      <button type="button" id="prev-year" aria-label="Previous year">‹</button>
+      <span id="year"></span>
+      <button type="button" id="next-year" aria-label="Next year">›</button>
+      <div id="month-options"></div>
+    </div>
+    <label>Resume (PDF) * <input name="resume" id="resume" type="file" accept=".pdf"></label>
+    <fieldset><legend>Are you authorized to work here? *</legend>
+      <label><input type="radio" name="authorized" value="yes"> Yes</label>
+      <label><input type="radio" name="authorized" value="no"> No</label>
+    </fieldset>
+    <p class="error" id="error2" role="alert"></p>
+    <button type="submit">Next</button>
+  </form>
+
+  <form class="step" id="step3" novalidate>
+    <h2>Step 3 of 3: Review</h2>
+    <div id="review"></div>
+    <button type="submit">Submit application</button>
+  </form>
+
+  <div class="step" id="done"><h2>Application received</h2><p id="reference"></p></div>
+</main>
+<div id="cookies" role="region" aria-label="Cookie notice">We use cookies. <button type="button" id="accept-cookies">Accept</button></div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const data = {};
+  const show = (id) => { document.querySelectorAll(".step").forEach((s) => s.classList.remove("active")); $(id).classList.add("active"); };
+  const save = () => fetch("/api/slow?ms=1200", { method: "POST", body: JSON.stringify(data) });
+  $("accept-cookies").addEventListener("click", () => $("cookies").remove());
+  $("help").addEventListener("mouseenter", () => $("help-panel").classList.add("open"));
+  $("help").addEventListener("mouseleave", () => setTimeout(() => $("help-panel").classList.remove("open"), 50));
+
+  const heard = document.querySelector("[name=heard]");
+  heard.addEventListener("change", () => { $("specify-row").hidden = heard.value !== "Other"; });
+
+  $("step1").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const missing = [];
+    if (!form.name.value.trim()) missing.push("Full name");
+    if (!form.email.value.includes("@")) missing.push("Email");
+    if (!heard.value) missing.push("How did you hear about us?");
+    if (heard.value === "Other" && !form.heardOther.value.trim()) missing.push("Please specify");
+    $("error1").textContent = missing.length ? "Please fill in: " + missing.join(", ") : "";
+    if (missing.length) return;
+    Object.assign(data, { name: form.name.value.trim(), email: form.email.value.trim(), phone: form.phone.value.trim(), heard: heard.value, heardOther: form.heardOther.value.trim() });
+    $("status").textContent = "Saving…";
+    await save();
+    $("status").textContent = "";
+    show("step2");
+  });
+
+  let year = new Date().getFullYear();
+  const names = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  function renderMonths() {
+    $("year").textContent = year;
+    $("month-options").innerHTML = "";
+    names.forEach((name, index) => {
+      const option = document.createElement("div");
+      option.setAttribute("role", "option");
+      option.tabIndex = 0;
+      option.textContent = name + " " + year;
+      option.addEventListener("click", () => {
+        $("start").value = year + "-" + String(index + 1).padStart(2, "0");
+        $("months").classList.remove("open");
+      });
+      $("month-options").appendChild(option);
+    });
+  }
+  $("start").addEventListener("click", () => { renderMonths(); $("months").classList.add("open"); });
+  $("prev-year").addEventListener("click", () => { year--; renderMonths(); });
+  $("next-year").addEventListener("click", () => { year++; renderMonths(); });
+
+  $("resume").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (file && !/\.pdf$/i.test(file.name)) { alert("Please upload your resume as a PDF."); event.target.value = ""; }
+  });
+
+  $("step2").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target;
+    const file = form.resume.files[0];
+    const authorized = form.querySelector("[name=authorized]:checked");
+    const missing = [];
+    if (!form.start.value) missing.push("Start month");
+    if (!file) missing.push("Resume");
+    if (!authorized) missing.push("Work authorization");
+    $("error2").textContent = missing.length ? "Please fill in: " + missing.join(", ") : "";
+    if (missing.length) return;
+    Object.assign(data, { start: form.start.value, resume: file.name, resumeBytes: file.size, authorized: authorized.value });
+    $("status").textContent = "Saving…";
+    await save();
+    $("status").textContent = "";
+    $("review").innerHTML = [
+      ["Name", data.name], ["Email", data.email], ["Phone", data.phone || "—"],
+      ["Heard about us", data.heard + (data.heardOther ? " (" + data.heardOther + ")" : "")],
+      ["Start month", data.start], ["Authorized to work", data.authorized], ["Resume", data.resume],
+    ].map(([k, v]) => "<p><strong>" + k + ":</strong> " + v + "</p>").join("");
+    show("step3");
+  });
+
+  $("step3").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    $("status").textContent = "Submitting…";
+    const response = await fetch("/wizard/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) });
+    const { reference } = await response.json();
+    $("status").textContent = "";
+    $("reference").textContent = "Reference " + reference;
+    show("done");
+  });
+</script>
+</body></html>

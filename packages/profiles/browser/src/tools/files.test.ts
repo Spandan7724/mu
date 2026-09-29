@@ -3,29 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnyTool, ToolResult } from "@mu/core";
+import { minimalPdf } from "../testing/pdf.ts";
 import { fileTools } from "./files.ts";
-
-// One page, one line of text: enough for pdftotext.
-function minimalPdf(line: string): string {
-  const content = `BT /F1 12 Tf 72 720 Td (${line}) Tj ET`;
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-  ];
-  let out = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((object, index) => {
-    offsets.push(out.length);
-    out += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = out.length;
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  out += offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
-  return `${out}trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-}
 
 test("file tools work inside the agent's folder only, read PDFs, and fence what they read", async () => {
   const base = mkdtempSync(join(tmpdir(), "mu-files-"));
@@ -33,7 +12,7 @@ test("file tools work inside the agent's folder only, read PDFs, and fence what 
   mkdirSync(join(root, "docs"), { recursive: true });
   writeFileSync(join(root, "docs", "about-me.md"), "Name: Ada Lovelace\n");
   writeFileSync(join(root, ".env"), "TOKEN=secret\n");
-  writeFileSync(join(root, "resume.pdf"), minimalPdf("Ada Lovelace, Analyst"));
+  writeFileSync(join(root, "resume.pdf"), minimalPdf(["Ada Lovelace, Analyst"]));
   writeFileSync(join(base, "outside.md"), "private\n");
   symlinkSync(join(base, "outside.md"), join(root, "link.md"));
   const tools = Object.fromEntries(fileTools(root).map((tool) => [tool.name, tool])) as Record<

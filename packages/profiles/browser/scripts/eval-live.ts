@@ -3,8 +3,8 @@
 //     [--google --eval-profile eval --self you@example.com] [--headed] [--out path]
 // Non-Google tasks use a temporary signed-out profile; Google tasks (3, 4, 5, 8) need
 // --google and the managed profile named by --eval-profile, signed in to a test account.
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { getProvider } from "@mu/ai";
 import { createCredentialResolver } from "mu";
 import { formatResults, type RunMetrics, runTask, TASKS } from "../src/evals/live.ts";
@@ -21,12 +21,14 @@ const runs = Number(flag("--runs") ?? 3);
 const selected = flag("--tasks")?.split(",").map(Number);
 const google = argv.includes("--google");
 const headed = argv.includes("--headed");
+const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
+// One file per invocation: eval-results.md is the curated summary and is never overwritten.
 const out =
   flag("--out") ??
-  join(import.meta.dir, "..", "..", "..", "..", "docs", "browser-agent", "eval-results.md");
+  join(import.meta.dir, "..", "..", "..", "..", "docs", "browser-agent", "eval-runs", `${stamp}.md`);
+mkdirSync(dirname(out), { recursive: true });
 
 const site = startFixtureSite();
-const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
 const provider = getProvider(modelRef.split("/")[0] as string);
 const getCredentials = createCredentialResolver();
 const results: RunMetrics[] = [];
