@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
 import type { ToolResult } from "@mu/core";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import { filterSections, paginate } from "../page/text.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
+
+setDefaultTimeout(30_000);
 
 const text = (result: ToolResult) =>
   result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
@@ -60,8 +62,8 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(text(full)).toContain('"Article 80"');
     expect(full.retention?.key).toBe("browser:observation");
     await run("navigate", { url: site.url("form-basic") });
-    const subtree = text(await run("snapshot", { ref: "e11" }));
-    expect(subtree).toContain('- combobox "Country" [ref=e11]');
+    const subtree = text(await run("snapshot", { ref: "e13" }));
+    expect(subtree).toContain('- combobox "Country" [ref=e13]');
     expect(subtree).not.toContain("Send message");
     const stale = await run("snapshot", { ref: "e999" });
     expect(stale.isError).toBe(true);
@@ -75,7 +77,7 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(body).toContain("reading: main content");
     expect(body).toContain("# Contact us");
     expect(body).toContain("Fill in the form and we will get back to you");
-    expect(body).toContain('[button "Send message" [ref=e12]]');
+    expect(body).toContain('[button "Send message" [ref=e14]]');
     expect(body).not.toContain("Pricing");
     expect(read.retention?.key).toBe("browser:read_page");
     await run("navigate", { url: site.url("long") });

@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { endpointAlive } from "./connect.ts";
 import { killBrowserProcess, readDevToolsActivePort } from "./launch.ts";
 import { BrowserManager } from "./manager.ts";
+
+setDefaultTimeout(30_000);
 
 async function until(condition: () => boolean | Promise<boolean>, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
@@ -92,12 +94,10 @@ describeWithBrowser("BrowserManager in real headless Chrome", () => {
   test("auto-attaches out-of-process iframes with their own session", async () => {
     const tab = await manager.activeTab();
     await tab.session.send("Page.navigate", { url: `http://127.0.0.1:${parent.port}/` });
-    await until(() =>
-      tab.frames.list().some((frame) => frame.url.startsWith(`http://localhost:${child.port}`)),
-    );
-    const frame = tab.frames
-      .list()
-      .find((candidate) => candidate.url.startsWith(`http://localhost:${child.port}`));
+    const isChild = (frame: { url: string; session: unknown }) =>
+      frame.url.startsWith(`http://localhost:${child.port}`) && frame.session !== tab.session;
+    await until(() => tab.frames.list().some(isChild));
+    const frame = tab.frames.list().find(isChild);
     if (!frame) throw new Error("iframe frame missing");
     expect(frame.session).not.toBe(tab.session);
     expect(frame.parentId).toBe(tab.frames.mainFrameId as string);

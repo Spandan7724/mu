@@ -11,6 +11,7 @@ export class RefTable {
   private document: string | undefined;
   private readonly byKey = new Map<string, Ref>();
   private readonly byRef = new Map<Ref, RefTarget>();
+  private readonly labels = new Map<Ref, string>();
   private readonly frameNumbers = new Map<string, number>();
   private readonly counters = new Map<string, number>();
   private mainFrameId: string | undefined;
@@ -27,6 +28,7 @@ export class RefTable {
     this.mainFrameId = mainFrameId;
     this.byKey.clear();
     this.byRef.clear();
+    this.labels.clear();
     this.frameNumbers.clear();
     this.counters.clear();
     return reset;
@@ -53,6 +55,20 @@ export class RefTable {
     this.byKey.set(key, ref);
     this.byRef.set(ref, { frameId, backendNodeId });
     return ref;
+  }
+
+  // Human-readable target for outcome lines, e.g. `button "Send"`.
+  setLabel(ref: Ref, label: string): void {
+    this.labels.set(ref, label);
+  }
+
+  label(ref: Ref): string {
+    const label = this.labels.get(ref);
+    return label ? `${label} [${ref}]` : ref;
+  }
+
+  refOf(frameId: string, backendNodeId: number): Ref | undefined {
+    return this.byKey.get(`${frameId}:${backendNodeId}`);
   }
 
   resolve(ref: Ref): RefTarget | undefined {

@@ -14,6 +14,7 @@ import {
   resolveBrowserOptions,
 } from "./config.ts";
 import { visionEnabled } from "./page/screenshot.ts";
+import { interactionTools } from "./tools/interact.ts";
 import { navigateTool } from "./tools/navigate.ts";
 import { findTool, readPageTool, screenshotTool, snapshotTool } from "./tools/observe.ts";
 import { tabsTool } from "./tools/tabs.ts";
@@ -72,6 +73,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     viewport: config.viewport,
     keepOpen: config.keepOpen,
     launcher: config.launcher,
+    downloadsDir: config.downloadsDir,
   });
   let activeModel: string | undefined;
   const deps = {
@@ -79,13 +81,28 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     config,
     vision: () => visionEnabled(config.vision, activeModel),
   };
+  const interaction = interactionTools(deps);
   const toolset: AnyTool[] = [
     navigateTool(deps),
+    interaction.click,
+    interaction.type,
+    interaction.fill,
+    interaction.select,
+    interaction.press,
+    interaction.scroll,
+    interaction.hover,
+    interaction.drag,
+    interaction.upload,
+    interaction.dialog,
     tabsTool(deps),
     snapshotTool(deps),
     screenshotTool(deps),
     readPageTool(deps),
     findTool(deps),
+    interaction.wait,
+    interaction.evaluate,
+    interaction.clickXy,
+    interaction.downloads,
   ] as AnyTool[];
   const runtime: ProfileRuntime = {
     attach: () => {},

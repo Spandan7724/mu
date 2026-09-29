@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Destination</title>
+<style>body{font-family:sans-serif;margin:20px} [role=listbox]{border:1px solid #999;width:240px;margin:0;padding:0;list-style:none} [role=option]{padding:4px;cursor:pointer} [role=option][aria-selected=true]{background:#dde}</style></head>
+<body>
+<h1>Where to?</h1>
+<label for="city">City</label>
+<input id="city" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="city-list" autocomplete="off">
+<ul id="city-list" role="listbox" hidden></ul>
+<p>Chosen: <span id="chosen">nothing</span></p>
+<script>
+const input = document.getElementById('city'), list = document.getElementById('city-list');
+let timer, active = -1;
+function render(items) {
+  list.innerHTML = '';
+  items.forEach((city, i) => {
+    const li = document.createElement('li');
+    li.role = 'option'; li.id = 'opt-' + i; li.textContent = city; li.setAttribute('aria-selected', 'false');
+    li.addEventListener('mousedown', (e) => { e.preventDefault(); choose(city); });
+    list.appendChild(li);
+  });
+  list.hidden = items.length === 0;
+  input.setAttribute('aria-expanded', String(items.length > 0));
+  active = -1;
+}
+function choose(city) { input.value = city; document.getElementById('chosen').textContent = city; render([]); }
+input.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    if (!input.value) return render([]);
+    const res = await fetch('/api/suggest?q=' + encodeURIComponent(input.value) + '&delay=150');
+    render(await res.json());
+  }, 150);
+});
+input.addEventListener('keydown', (e) => {
+  const opts = list.querySelectorAll('[role=option]');
+  if (e.key === 'ArrowDown' && opts.length) { active = Math.min(active + 1, opts.length - 1); }
+  else if (e.key === 'Enter' && active >= 0) { choose(opts[active].textContent); e.preventDefault(); return; }
+  else return;
+  opts.forEach((o, i) => o.setAttribute('aria-selected', String(i === active)));
+  input.setAttribute('aria-activedescendant', opts[active].id);
+});
+</script>
+</body></html>

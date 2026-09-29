@@ -1,21 +1,21 @@
 <page_content untrusted="true">
-- navigation "Main"
-  - link "Home" [ref=e1] → /
-  - link "Pricing" [ref=e2] → /pricing
+- navigation "Main" [ref=e1]
+  - link "Home" [ref=e2] → /
+  - link "Pricing" [ref=e3] → /pricing
 - main
   - heading "Contact us" [level=1]
   - paragraph: Fill in the form and we will get back to you within two business days.
   - form
-    - textbox "Full name" [ref=e3] [required]
-    - textbox "Email" [ref=e4]
-    - spinbutton "Age" [ref=e5]
-    - textbox "Password" [ref=e6] (password): ••••
-    - textbox "Message" [ref=e7]
-    - checkbox "Subscribe to newsletter" [ref=e8] [checked]
-    - group "Plan"
-      - radio "Free" [ref=e9] [checked]
-      - radio "Pro" [ref=e10]
-    - combobox "Country" [ref=e11] [expanded=false]: Choose… options: "Choose…", "Germany", "France", "India"
-    - button "Send message" [ref=e12]
-    - button "Save draft" [ref=e13] [disabled]
+    - textbox "Full name" [ref=e4] [required]
+    - textbox "Email" [ref=e5]
+    - spinbutton "Age" [ref=e6]
+    - textbox "Password" [ref=e7] (password): ••••
+    - textbox "Message" [ref=e8]
+    - checkbox "Subscribe to newsletter" [ref=e9] [checked]
+    - group "Plan" [ref=e10]
+      - radio "Free" [ref=e11] [checked]
+      - radio "Pro" [ref=e12]
+    - combobox "Country" [ref=e13] [expanded=false]: Choose… options: "Choose…", "Germany", "France", "India"
+    - button "Send message" [ref=e14]
+    - button "Save draft" [ref=e15] [disabled]
 </page_content>

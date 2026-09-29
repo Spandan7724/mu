@@ -1,5 +1,6 @@
 import type { CdpConnection } from "../cdp/connection.ts";
 import { attachToTarget, type CdpSession } from "../cdp/session.ts";
+import { NetworkTracker } from "../page/network.ts";
 import { RefTable } from "../page/refs.ts";
 import { FrameRegistry } from "./frames.ts";
 
@@ -23,8 +24,11 @@ export class Tab {
   dialog: JsDialog | undefined;
   crashed = false;
   readonly refs = new RefTable();
+  readonly network = new NetworkTracker();
   // What the previous observation showed, for `*` change markers.
   previous: { documentId: string; refs: Set<string>; texts: Set<string> } | undefined;
+  // Fingerprint of the latest observation, to tell whether an action changed anything visible.
+  lastFingerprint: string | undefined;
   private readonly offs: (() => void)[] = [];
 
   private constructor(
@@ -56,6 +60,7 @@ export class Tab {
       target.title,
       openedByAgent,
     );
+    frames.onSession((target) => tab.network.attach(target));
     tab.offs.push(
       session.on("Page.javascriptDialogOpening", (event) => {
         tab.dialog = {

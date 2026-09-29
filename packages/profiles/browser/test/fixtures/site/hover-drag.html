@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Menus and lists</title>
+<style>
+body{font-family:sans-serif;margin:20px}
+.menu{position:relative;display:inline-block}
+.menu .items{display:none;position:absolute;background:#fff;border:1px solid #999}
+.menu:hover .items{display:block}
+#list li{padding:8px;border:1px solid #ccc;margin:4px;width:160px;list-style:none;cursor:grab}
+#drop{margin-top:20px;width:200px;height:60px;border:2px dashed #999}
+</style></head>
+<body>
+<h1>Account menu</h1>
+<div class="menu"><button>Account ▾</button><div class="items"><a href="/profile">Profile</a><br><a href="/logout">Sign out</a></div></div>
+<h2>Priorities</h2>
+<ul id="list">
+  <li draggable="true" id="a">Alpha</li>
+  <li draggable="true" id="b">Beta</li>
+  <li draggable="true" id="c">Gamma</li>
+</ul>
+<div id="drop" role="region" aria-label="Done column">Drop here</div>
+<p>Done: <span id="done">none</span></p>
+<script>
+let dragged = null;
+document.querySelectorAll('#list li').forEach((li) => li.addEventListener('dragstart', (e) => { dragged = li.id; e.dataTransfer.setData('text/plain', li.id); }));
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', (e) => e.preventDefault());
+drop.addEventListener('drop', (e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain') || dragged; document.getElementById('done').textContent = document.getElementById(id).textContent; });
+</script>
+</body></html>

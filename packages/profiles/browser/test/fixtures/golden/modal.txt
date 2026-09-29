@@ -3,7 +3,7 @@
 - button "Delete account…" [ref=e1]
 - paragraph: Signed in as alex@example.com.
 - button "Hidden behind banner" [ref=e2]
-- region "Cookie consent"
-  - button "Accept all" [ref=e3]
-  - button "Reject" [ref=e4]
+- region "Cookie consent" [ref=e3]
+  - button "Accept all" [ref=e4]
+  - button "Reject" [ref=e5]
 </page_content>

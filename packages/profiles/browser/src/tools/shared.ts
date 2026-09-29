@@ -1,5 +1,6 @@
 import type { ToolResult } from "@mu/core";
-import type { ActionOutcome, OutcomeKind } from "../actions/types.ts";
+import type { ActionResult } from "../actions/click.ts";
+import type { ActionOutcome } from "../actions/types.ts";
 import { Stopwatch } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
 import type { Tab } from "../browser/tabs.ts";
@@ -17,14 +18,7 @@ export interface BrowserToolDeps {
 
 export const OBSERVATION_KEY = "browser:observation";
 
-export interface ActResult {
-  ok?: boolean;
-  summary: string;
-  kind?: OutcomeKind;
-  settle?: string;
-  tab?: Tab;
-  extra?: string;
-}
+export type ActResult = ActionResult;
 
 export interface PageActionOptions {
   // Interactions cannot proceed while a JS dialog blocks the page.
@@ -33,6 +27,8 @@ export interface PageActionOptions {
   screenshot?: boolean;
   scope?: "viewport" | "full";
   subtreeRef?: string;
+  // Interactions compare the page before and after to report "no visible change".
+  detectChange?: boolean;
 }
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
@@ -74,6 +70,7 @@ export async function pageAction(
       tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(signal));
     }
   }
+  const before = tab.lastFingerprint;
   const notices = deps.browser.drainNotices();
   const observeOptions = {
     screenshot: options.screenshot !== false && deps.vision(),
@@ -94,10 +91,23 @@ export async function pageAction(
     };
     observation = await observe(deps.browser, tab, stopwatch, signal, observeOptions);
   }
+  if (!options.subtreeRef && options.scope !== "full")
+    tab.lastFingerprint = observation.fingerprint;
+  if (options.detectChange && result.ok !== false && before !== undefined) {
+    const unchanged = before === observation.fingerprint;
+    if (unchanged && !result.kind) {
+      result = { ...result, kind: "no-change", summary: `${result.summary} (no visible change)` };
+    } else if (!unchanged && result.kind === "no-change") {
+      const { kind: _kind, ...rest } = result;
+      result = rest;
+    }
+  }
   const outcome: ActionOutcome = {
     ok: result.ok !== false,
     summary: result.summary,
     ...(result.kind ? { kind: result.kind } : {}),
+    ...(result.occludedBy ? { occludedBy: result.occludedBy } : {}),
+    ...(result.newTab ? { newTab: result.newTab } : {}),
     details: {
       timings: stopwatch.finish(),
       url: observation.url,
@@ -105,6 +115,7 @@ export async function pageAction(
       fingerprint: observation.fingerprint,
       snapshotTokens: observation.tokens,
       ...(result.settle ? { settle: result.settle } : {}),
+      ...(result.path ? { path: result.path } : {}),
     },
   };
   const text = [

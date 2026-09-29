@@ -163,7 +163,7 @@ function collectLines(
     if (node.ref) {
       marks.refs.add(node.ref);
       isNew = marks.previous !== undefined && !marks.previous.refs.has(node.ref);
-    } else if (node.kind === "text" && node.name) {
+    } else if ((node.kind === "text" || node.kind === "container") && node.name) {
       const key = textKey(node);
       marks.texts.add(key);
       isNew = marks.previous !== undefined && !marks.previous.texts.has(key);

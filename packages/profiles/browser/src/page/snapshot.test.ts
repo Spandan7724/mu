@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { navigateTo } from "../actions/navigate.ts";
@@ -11,6 +11,8 @@ import type { PageModel, PageNode } from "./model.ts";
 import { mergeSeen, renderSnapshot } from "./render.ts";
 import { resolveRef, StaleRefError } from "./resolve.ts";
 import { capturePage } from "./snapshot.ts";
+
+setDefaultTimeout(30_000);
 
 const GOLDEN_DIR = join(FIXTURE_DIR, "..", "golden");
 
@@ -185,7 +187,7 @@ describeWithBrowser("page snapshots in real headless Chrome", () => {
     await load("custom-select");
     const next = await snapshot();
     expect(next.model.newDocument).toBe(true);
-    await expect(resolveRef(tab, "e13")).rejects.toBeInstanceOf(StaleRefError);
+    await expect(resolveRef(tab, "e15")).rejects.toBeInstanceOf(StaleRefError);
     expect(next.text).toContain("[ref=e1]");
   });
 });

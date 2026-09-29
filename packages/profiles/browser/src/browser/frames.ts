@@ -20,6 +20,8 @@ export class FrameRegistry {
   private readonly children = new Map<string, CdpSession>();
   private readonly offs: (() => void)[] = [];
   private readonly worlds = new Map<string, Promise<number>>();
+  private readonly sessionHooks: ((session: CdpSession) => () => void)[] = [];
+  private readonly hookOffs = new Map<CdpSession, (() => void)[]>();
 
   constructor(
     private readonly connection: CdpConnection,
@@ -41,6 +43,18 @@ export class FrameRegistry {
 
   childSessions(): CdpSession[] {
     return [...this.children.values()].filter((session) => !session.detached);
+  }
+
+  // Runs for the tab session and every OOPIF session, now and as they attach.
+  onSession(hook: (session: CdpSession) => () => void): void {
+    this.sessionHooks.push(hook);
+    for (const session of [this.root, ...this.childSessions()]) this.runHook(session, hook);
+  }
+
+  private runHook(session: CdpSession, hook: (session: CdpSession) => () => void): void {
+    const offs = this.hookOffs.get(session) ?? [];
+    offs.push(hook(session));
+    this.hookOffs.set(session, offs);
   }
 
   async start(signal?: AbortSignal): Promise<void> {
@@ -75,6 +89,8 @@ export class FrameRegistry {
 
   dispose(): void {
     for (const off of this.offs.splice(0)) off();
+    for (const offs of this.hookOffs.values()) for (const off of offs) off();
+    this.hookOffs.clear();
     this.frames.clear();
     this.children.clear();
     this.worlds.clear();
@@ -141,6 +157,8 @@ export class FrameRegistry {
         const child = this.children.get(event.sessionId);
         if (!child) return;
         this.children.delete(event.sessionId);
+        for (const off of this.hookOffs.get(child) ?? []) off();
+        this.hookOffs.delete(child);
         for (const frame of this.list())
           if (frame.session === child) this.frames.delete(frame.frameId);
       }),
@@ -174,6 +192,7 @@ export class FrameRegistry {
       return;
     }
     this.children.set(event.sessionId, child);
+    for (const hook of this.sessionHooks) this.runHook(child, hook);
     // The OOPIF's root frame id is its target id; its parent lives in the parent session.
     const parentFrame = this.frames.get(event.targetInfo.targetId)?.parentId;
     const watched = this.watchSession(child, undefined, parentFrame).catch(() => {});

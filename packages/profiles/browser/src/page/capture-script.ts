@@ -68,7 +68,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     else if ((tag === "a" && el.hasAttribute("href")) || (NATIVE.test(tag) && tag !== "a" && !(tag === "input" && el.type === "hidden"))) kind = "i";
     else if (role && WIDGET_ROLES[role]) kind = "i";
     else if (editable === "rich") kind = "i";
-    else if (el.hasAttribute("onclick")) { kind = "i"; why = "c"; }
+    else if (el.hasAttribute("onclick") || el.getAttribute("draggable") === "true") { kind = "i"; why = "c"; }
     else if (pointer && !parentPointer && tag !== "label") { kind = "i"; why = "c"; }
     else {
       var tabindex = el.getAttribute("tabindex");
@@ -138,6 +138,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
         childSink = -2;
         if (sink >= 0) appendText(sink, MARK);
       }
+      if (kind === "c" && hasOwnText(el)) childSink = index;
       if (kind === "t") {
         childSink = index;
         if (tag === "img") node.raw = el.getAttribute("alt");
@@ -172,7 +173,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
   if (document.body) walkChildren(document.body, -1, -1, false);
   for (var n = 0; n < nodes.length; n++) {
     var item = nodes[n];
-    if (item.k !== "t") continue;
+    if (item.k !== "t" && !(item.k === "c" && item.raw)) continue;
     var full = (item.raw || "").trim();
     item.len = full.length;
     item.t = full.slice(0, maxText);

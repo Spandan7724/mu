@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Feed</title><style>body{font-family:sans-serif;margin:20px} .post{height:120px;border-bottom:1px solid #ddd}</style></head>
+<body>
+<h1>Feed</h1>
+<div id="feed"></div>
+<p id="status">Loading…</p>
+<script>
+let next = 1, loading = false;
+async function more() {
+  if (loading || next > 60) return;
+  loading = true;
+  await fetch('/api/slow?ms=120');
+  const feed = document.getElementById('feed');
+  for (let i = 0; i < 10; i++, next++) {
+    const div = document.createElement('div'); div.className = 'post';
+    div.innerHTML = '<a href="/post/' + next + '">Post ' + next + '</a>';
+    feed.appendChild(div);
+  }
+  document.getElementById('status').textContent = next > 60 ? 'No more posts' : 'Scroll for more';
+  loading = false;
+}
+more();
+addEventListener('scroll', () => { if (innerHeight + scrollY >= document.body.scrollHeight - 200) more(); });
+</script>
+</body></html>

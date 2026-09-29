@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Files</title><style>body{font-family:sans-serif;margin:20px}</style></head>
+<body>
+<h1>Files</h1>
+<label>Resume <input type="file" id="resume"></label>
+<button id="pick">Upload photo…</button>
+<input type="file" id="photo" hidden>
+<p>Selected: <span id="selected">none</span></p>
+<a href="/download/report.csv">Download report</a>
+<script>
+for (const id of ['resume', 'photo']) {
+  document.getElementById(id).addEventListener('change', (e) => {
+    document.getElementById('selected').textContent = id + ': ' + Array.from(e.target.files).map((f) => f.name).join(', ');
+  });
+}
+document.getElementById('pick').addEventListener('click', () => document.getElementById('photo').click());
+</script>
+</body></html>

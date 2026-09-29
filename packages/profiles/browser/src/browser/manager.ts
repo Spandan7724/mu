@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type CdpConnection, CdpError, isCdpError } from "../cdp/connection.ts";
 import type { Protocol } from "../cdp/types.ts";
 import {
@@ -6,6 +8,7 @@ import {
   connectManaged,
   connectToEndpoint,
 } from "./connect.ts";
+import { DownloadTracker } from "./downloads.ts";
 import type { Size } from "./launch.ts";
 import { Tab, type TabInfo } from "./tabs.ts";
 
@@ -21,6 +24,8 @@ export interface BrowserManagerOptions {
   args?: string[] | undefined;
   keepOpen: boolean;
   launcher?: BrowserLauncher | undefined;
+  // Downloads of this manager's lifetime land in a fresh subdirectory here.
+  downloadsDir?: string | undefined;
 }
 
 export interface BrowserStatus {
@@ -66,8 +71,14 @@ export class BrowserManager {
   private closingIntentionally = false;
   private product: { product: string; version: string; executable?: string } | undefined;
   private abort = new AbortController();
+  readonly downloads: DownloadTracker;
 
-  constructor(readonly options: BrowserManagerOptions) {}
+  constructor(readonly options: BrowserManagerOptions) {
+    const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
+    this.downloads = new DownloadTracker(
+      join(options.downloadsDir ?? join(tmpdir(), "mu-browser-downloads"), run),
+    );
+  }
 
   get isConnected(): boolean {
     return this.connected !== undefined && !this.connected.connection.isClosed;
@@ -131,6 +142,7 @@ export class BrowserManager {
         connection.send("Browser.getVersion", undefined, { signal }),
         connection.send("Target.getTargets", undefined, { signal }),
         connection.send("Target.setDiscoverTargets", { discover: true }, { signal }),
+        this.downloads.attach(connection, signal),
       ]);
       for (const info of targetInfos) this.trackTarget(info);
       const [product, number] = version.product.split("/");

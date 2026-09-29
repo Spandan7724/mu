@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Sign up</title>
+<style>body{font-family:sans-serif;margin:20px} .error{color:#b00} label{display:block;margin:8px 0}</style></head>
+<body>
+<h1>Create account</h1>
+<form id="f" novalidate>
+  <label>Email <input id="email" type="email" required aria-describedby="email-error"></label>
+  <div id="email-error" class="error" role="alert" hidden></div>
+  <label>Phone <input id="phone" type="tel" placeholder="(555) 555-5555"></label>
+  <label><input type="checkbox" id="terms"> I accept the terms</label>
+  <button id="submit" type="submit" disabled>Create account</button>
+</form>
+<p id="result"></p>
+<script>
+const email = document.getElementById('email'), phone = document.getElementById('phone');
+const terms = document.getElementById('terms'), submit = document.getElementById('submit');
+const error = document.getElementById('email-error');
+function validate() {
+  const ok = /.+@.+\..+/.test(email.value);
+  error.hidden = ok || !email.value;
+  error.textContent = ok ? '' : 'Please enter a valid email address';
+  email.setAttribute('aria-invalid', String(!ok && !!email.value));
+  submit.disabled = !(ok && terms.checked);
+}
+email.addEventListener('input', validate);
+terms.addEventListener('change', validate);
+phone.addEventListener('input', () => {
+  const d = phone.value.replace(/\D/g, '').slice(0, 10);
+  phone.value = d.length > 6 ? '(' + d.slice(0,3) + ') ' + d.slice(3,6) + '-' + d.slice(6) : d.length > 3 ? '(' + d.slice(0,3) + ') ' + d.slice(3) : d;
+});
+document.getElementById('f').addEventListener('submit', (e) => { e.preventDefault(); document.getElementById('result').textContent = 'Account created for ' + email.value; });
+</script>
+</body></html>

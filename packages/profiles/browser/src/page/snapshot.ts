@@ -79,6 +79,13 @@ const AX_ROLE_ALIASES: Record<string, string> = {
   StaticText: "text",
   textField: "textbox",
   image: "img",
+  Date: "date",
+  DateTime: "datetime",
+  InputTime: "time",
+  ColorWell: "color",
+  Canvas: "canvas",
+  Video: "video",
+  Audio: "audio",
 };
 
 const WEAK_AX_ROLES = new Set(["generic", "none", "presentation", "", "text", "paragraph"]);
@@ -204,7 +211,8 @@ function buildNode(
   const role = roleFor(raw, ax);
   const axName = ax && !ax.ignored ? String(ax.name?.value ?? "").trim() : "";
   const text = raw.t ?? "";
-  const name = raw.k === "t" ? text.replaceAll(INLINE_MARK, " ") : axName || text;
+  const plain = text.replaceAll(INLINE_MARK, " ").replace(/\s+/g, " ").trim();
+  const name = raw.k === "t" ? plain : raw.k === "c" ? axName || plain : axName || text;
   const states = axStates(ax && !ax.ignored ? ax : undefined);
   if (raw.lvl) states.level = raw.lvl;
   const node: PageNode = {
@@ -451,9 +459,11 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
   const assign = (node: PageNode) => {
     if (
       node.backendNodeId !== undefined &&
-      (node.kind === "interactive" || node.role === "dialog" || node.role === "alertdialog")
+      (node.kind === "interactive" || (node.kind === "container" && node.name !== ""))
     ) {
       node.ref = tab.refs.refFor(node.frameId, node.backendNodeId);
+      const name = node.name.length > 60 ? `${node.name.slice(0, 59)}…` : node.name;
+      tab.refs.setLabel(node.ref, name ? `${node.role} ${JSON.stringify(name)}` : node.role);
     }
     for (const child of node.children) assign(child);
   };

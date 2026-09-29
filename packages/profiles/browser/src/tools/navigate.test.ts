@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
 import type { ToolResult } from "@mu/core";
 import { normalizeUrl } from "../actions/navigate.ts";
 import type { ActionOutcome } from "../actions/types.ts";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
+
+setDefaultTimeout(30_000);
 
 describe("URL normalization", () => {
   test("bare domains get https, local hosts get http, schemes pass through", () => {
@@ -80,7 +82,7 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
     );
     expect(text(result)).toContain("dialog: none");
     expect(outcome.details.timings.totalMs).toBeGreaterThan(0);
-    expect(outcome.details.settle).toMatch(/DOMContentLoaded in \d+ ms/);
+    expect(outcome.details.settle).toMatch(/page loaded and quiet after navigation \(\d+ ms\)/);
     expect(outcome.details.url).toBe(`${base}/a`);
     expect(result.retention).toEqual({
       key: "browser:observation",

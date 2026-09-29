@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Book a date</title>
+<style>body{font-family:sans-serif;margin:20px} .cal{display:none;border:1px solid #999;padding:8px;width:260px} .cal.open{display:block} .day{display:inline-block;width:30px;text-align:center;cursor:pointer}</style></head>
+<body>
+<h1>Choose dates</h1>
+<label>Check-in <input type="date" id="checkin"></label>
+<p>Check-out: <button id="toggle" aria-haspopup="dialog">Pick a date</button> <span id="checkout">not set</span></p>
+<div class="cal" id="cal" role="dialog" aria-label="Calendar">
+  <button id="prev" aria-label="Previous month">‹</button> <strong id="month"></strong> <button id="next" aria-label="Next month">›</button>
+  <div id="days"></div>
+</div>
+<script>
+let shown = new Date(2026, 9, 1);
+const names = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function draw() {
+  document.getElementById('month').textContent = names[shown.getMonth()] + ' ' + shown.getFullYear();
+  const days = document.getElementById('days'); days.innerHTML = '';
+  const count = new Date(shown.getFullYear(), shown.getMonth() + 1, 0).getDate();
+  for (let d = 1; d <= count; d++) {
+    const el = document.createElement('span'); el.className = 'day'; el.textContent = d;
+    el.setAttribute('role', 'gridcell');
+    el.setAttribute('aria-label', names[shown.getMonth()] + ' ' + d + ', ' + shown.getFullYear());
+    el.addEventListener('click', () => { document.getElementById('checkout').textContent = el.getAttribute('aria-label'); document.getElementById('cal').classList.remove('open'); });
+    days.appendChild(el);
+  }
+}
+document.getElementById('toggle').addEventListener('click', () => { document.getElementById('cal').classList.toggle('open'); draw(); });
+document.getElementById('prev').addEventListener('click', () => { shown.setMonth(shown.getMonth() - 1); draw(); });
+document.getElementById('next').addEventListener('click', () => { shown.setMonth(shown.getMonth() + 1); draw(); });
+</script>
+</body></html>

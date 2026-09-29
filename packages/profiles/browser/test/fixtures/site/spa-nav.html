@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dashboard</title><style>body{font-family:sans-serif;margin:20px}</style></head>
+<body>
+<nav aria-label="App"><a href="#/home" data-route>Home</a> <a href="#/reports" data-route>Reports</a></nav>
+<main id="view"><h1>Home</h1><p>Welcome back.</p></main>
+<script>
+async function route() {
+  const view = document.getElementById('view');
+  if (location.hash === '#/reports') {
+    view.innerHTML = '<div role="progressbar" aria-label="Loading">Loading…</div>';
+    await fetch('/api/slow?ms=400');
+    await new Promise((r) => setTimeout(r, 100));
+    view.innerHTML = '<h1>Reports</h1><ul><li>Q1 revenue: $1.2M</li><li>Q2 revenue: $1.5M</li></ul><button>Export</button>';
+  } else {
+    view.innerHTML = '<h1>Home</h1><p>Welcome back.</p>';
+  }
+}
+addEventListener('hashchange', route);
+</script>
+</body></html>
