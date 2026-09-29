@@ -75,3 +75,50 @@ describeWithBrowser("context retention end to end", () => {
     await agent.shutdown();
   });
 });
+
+describeWithBrowser("per-tab retention", () => {
+  const home = tempUserDataDir();
+  let site: FixtureSite;
+  let profile: BrowserProfile;
+  beforeAll(async () => {
+    site = startFixtureSite();
+    profile = await browserProfile({
+      home,
+      headless: true,
+      keepOpen: false,
+      vision: "off",
+      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+    });
+  });
+  afterAll(async () => {
+    await profile.browser.shutdown({ close: true });
+    site.stop();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("each open tab keeps its latest page state; older states of a tab collapse", async () => {
+    const provider = new FakeProvider([
+      call("b1", "navigate", { url: site.url("form-basic") }),
+      call("b2", "tabs", { action: "open", url: site.url("long") }),
+      call("b3", "scroll", { direction: "down" }),
+      call("b4", "tabs", { action: "switch", tabId: "t1" }),
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+    );
+    await agent.run("compare two pages");
+    const results = (provider.requests.at(-1)?.messages ?? []).filter(
+      (message) => message.role === "toolResult",
+    );
+    const full = results
+      .filter((message) =>
+        message.content.some(
+          (block) => block.type === "text" && block.text.includes("<page_content"),
+        ),
+      )
+      .map((message) => message.toolCallId);
+    expect(full).toEqual(["b3", "b4"]);
+    await agent.shutdown();
+  });
+});

@@ -19,7 +19,8 @@ export interface BrowserToolDeps {
   notes?: () => string;
 }
 
-export const OBSERVATION_KEY = "browser:observation";
+// One live observation per tab: older states of the same tab collapse (BD4, BD17).
+export const observationKey = (tabId: string) => `browser:observation:${tabId}`;
 const LOOP_THRESHOLD = 3;
 
 export type ActResult = ActionResult;
@@ -158,7 +159,7 @@ export async function pageAction(
     details: outcome,
     ...(outcome.ok ? {} : { isError: true }),
     retention: {
-      key: OBSERVATION_KEY,
+      key: observationKey(tab.tabId),
       summary: `${outcome.summary} (page: ${JSON.stringify(observation.title)} ${observation.url})`,
     },
   };

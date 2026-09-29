@@ -85,7 +85,7 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
     expect(outcome.details.settle).toMatch(/page loaded and quiet after navigation \(\d+ ms\)/);
     expect(outcome.details.url).toBe(`${base}/a`);
     expect(result.retention).toEqual({
-      key: "browser:observation",
+      key: expect.stringMatching(/^browser:observation:t\d+$/),
       summary: `navigated to ${base}/a (page: "Page a" ${base}/a)`,
     });
     console.log(`navigate timings ${JSON.stringify(outcome.details.timings)}`);
@@ -107,7 +107,7 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
     expect(result.isError).toBe(true);
     expect(text(result)).toContain("could not load http://mu-does-not-exist.invalid/");
     expect(text(result)).toContain("ERR_NAME_NOT_RESOLVED");
-    expect(result.retention?.key).toBe("browser:observation");
+    expect(result.retention?.key).toMatch(/^browser:observation:t\d+$/);
   });
 
   test("tabs open, list, switch and close", async () => {
