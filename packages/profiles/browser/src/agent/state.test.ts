@@ -137,6 +137,8 @@ describeWithBrowser("notes and the commit ledger survive resume", () => {
       .messagesAt()
       .findLast((message) => message.role === "custom" && message.customType === STATE_TYPE);
     expect(JSON.stringify(stateMessage)).toContain("never repeat them");
+    // The first run left the browser open (keepOpen); connect so closing reaches it.
+    await second.browser.ensureConnected();
     await second.browser.shutdown({ close: true });
   });
 });
