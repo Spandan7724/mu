@@ -29,6 +29,8 @@ export class Tab {
   previous: { documentId: string; refs: Set<string>; texts: Set<string> } | undefined;
   // Fingerprint of the latest observation, to tell whether an action changed anything visible.
   lastFingerprint: string | undefined;
+  // Consecutive interactions that left the page exactly as it was.
+  unchangedStreak = 0;
   private readonly offs: (() => void)[] = [];
 
   private constructor(

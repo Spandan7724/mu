@@ -17,6 +17,7 @@ export interface BrowserToolDeps {
 }
 
 export const OBSERVATION_KEY = "browser:observation";
+const LOOP_THRESHOLD = 3;
 
 export type ActResult = ActionResult;
 
@@ -93,6 +94,13 @@ export async function pageAction(
   }
   if (!options.subtreeRef && options.scope !== "full")
     tab.lastFingerprint = observation.fingerprint;
+  let nudge: string | undefined;
+  if (options.detectChange) {
+    tab.unchangedStreak = before === observation.fingerprint ? tab.unchangedStreak + 1 : 0;
+    if (tab.unchangedStreak >= LOOP_THRESHOLD) {
+      nudge = `note: the page has not changed after ${tab.unchangedStreak} actions — try a different approach, check for an overlay, a validation error or a disabled control, or ask the user.`;
+    }
+  }
   if (options.detectChange && result.ok !== false && before !== undefined) {
     const unchanged = before === observation.fingerprint;
     if (unchanged && !result.kind) {
@@ -120,6 +128,7 @@ export async function pageAction(
   };
   const text = [
     outcome.summary,
+    ...(nudge ? [nudge] : []),
     ...notices.map((notice) => `note: ${notice}`),
     ...(result.extra ? [result.extra] : []),
     "",
