@@ -7,6 +7,7 @@ import type { Tab } from "../browser/tabs.ts";
 import { isCdpError } from "../cdp/connection.ts";
 import type { ResolvedBrowserOptions } from "../config.ts";
 import { INJECTION_NOTE, looksLikeInjection } from "../page/injection.ts";
+import type { PageModel } from "../page/model.ts";
 import { observe } from "../page/observe.ts";
 import { StaleRefError } from "../page/resolve.ts";
 
@@ -22,6 +23,36 @@ export interface BrowserToolDeps {
 // One live observation per tab, for the few most recently observed tabs (BD4, BD17).
 export const observationKey = (slot: number) => `browser:observation:${slot}`;
 const LOOP_THRESHOLD = 3;
+// Outcomes worth seeing: something failed, did nothing, or the page is new.
+const VISUAL_KINDS = new Set([
+  "navigated",
+  "new-tab",
+  "no-change",
+  "occluded",
+  "value-mismatch",
+  "timeout",
+  "error",
+  "not-interactable",
+  "stale-ref",
+]);
+const NEW_ELEMENTS = 8;
+const REFRESH_EVERY = 5;
+
+function screenshotWorthIt(
+  result: ActResult,
+  before: string | undefined,
+  detectChange: boolean,
+  model: PageModel,
+  rendered: string,
+  fingerprint: string,
+  withoutScreenshot: number,
+): boolean {
+  if (result.ok === false || (result.kind && VISUAL_KINDS.has(result.kind))) return true;
+  if (detectChange && before !== undefined && before === fingerprint) return true;
+  const fresh = rendered.split("\n").filter((line) => /^\s*\*-/.test(line)).length;
+  if (model.newDocument || (model.modal && fresh > 0) || fresh >= NEW_ELEMENTS) return true;
+  return withoutScreenshot + 1 >= REFRESH_EVERY;
+}
 
 export type ActResult = ActionResult;
 
@@ -85,7 +116,19 @@ export async function pageAction(
   const before = tab.lastFingerprint;
   const notices = deps.browser.drainNotices();
   const observeOptions = {
-    screenshot: options.screenshot !== false && deps.vision(),
+    screenshot:
+      options.screenshot === false || !deps.vision()
+        ? false
+        : (model: PageModel, rendered: string, fingerprint: string) =>
+            screenshotWorthIt(
+              result,
+              before,
+              options.detectChange === true,
+              model,
+              rendered,
+              fingerprint,
+              deps.browser.withoutScreenshot,
+            ),
     ...(options.scope ? { scope: options.scope } : {}),
   };
   let observation: Awaited<ReturnType<typeof observe>>;
@@ -105,6 +148,7 @@ export async function pageAction(
   }
   if (!options.subtreeRef && options.scope !== "full")
     tab.lastFingerprint = observation.fingerprint;
+  deps.browser.withoutScreenshot = observation.screenshot ? 0 : deps.browser.withoutScreenshot + 1;
   let nudge: string | undefined;
   if (options.detectChange) {
     tab.unchangedStreak = before === observation.fingerprint ? tab.unchangedStreak + 1 : 0;

@@ -80,6 +80,8 @@ export class BrowserManager {
   readonly downloads: DownloadTracker;
   readonly secrets = new SecretRegistry();
   readonly dataflow = new DataFlowGuard();
+  // Observations since one last carried a screenshot.
+  withoutScreenshot = 0;
   // Tab switches in a row with no other browser action in between.
   switchStreak = 0;
   // An approved consequential action that was blocked before any input reached the page.

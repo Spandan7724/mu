@@ -20,7 +20,9 @@ export interface Observation {
 export interface ObserveOptions {
   scope?: "viewport" | "full";
   budgetTokens?: number;
-  screenshot?: boolean;
+  // true: always; a function decides from what the capture showed, and the
+  // screenshot is only taken when it says so.
+  screenshot?: boolean | ((model: PageModel, rendered: string, fingerprint: string) => boolean);
   // Render only this node's subtree (full scope within it).
   subtreeRef?: string;
 }
@@ -84,8 +86,8 @@ export async function observe(
   signal?: AbortSignal,
   options: ObserveOptions = {},
 ): Promise<Observation> {
-  const shot =
-    options.screenshot && !tab.dialog
+  let shot =
+    options.screenshot === true && !tab.dialog
       ? stopwatch.time("screenshotMs", () => captureScreenshot(tab, { signal }))
       : undefined;
   // Keep a rejected screenshot from surfacing as an unhandled rejection before it is awaited.
@@ -144,11 +146,19 @@ export async function observe(
       tab.dialog,
     );
     const text = `${header}\n${rendered.text}`;
+    const fingerprint = fingerprintOf(model.url, rendered.text);
+    if (
+      typeof options.screenshot === "function" &&
+      options.screenshot(model, rendered.text, fingerprint)
+    ) {
+      shot = stopwatch.time("screenshotMs", () => captureScreenshot(tab, { signal }));
+      shot.catch(() => {});
+    }
     return {
       text,
       url: model.url,
       title: model.title,
-      fingerprint: fingerprintOf(model.url, rendered.text),
+      fingerprint,
       tokens: estimateTokens(text),
       model,
     };
