@@ -1,6 +1,7 @@
 import type { ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
 import { hostOf, normalizeUrl } from "../actions/navigate.ts";
+import { submissionSummary } from "../actions/submission.ts";
 import type { BrowserToolDeps } from "./shared.ts";
 
 const MASK = "••••";
@@ -74,11 +75,11 @@ function describeValue(value: unknown, secret: boolean): string {
 }
 
 // What the user sees when asked to approve a gated browser action.
-export function detailsFor(
+export async function detailsFor(
   deps: BrowserToolDeps,
   tool: string,
   args: Record<string, unknown>,
-): ToolPermissionDetails {
+): Promise<ToolPermissionDetails> {
   const tab = deps.browser.currentTab();
   const meta = (ref: string) => tab?.refs.meta(ref);
   const label = (ref: string) => tab?.refs.label(ref) ?? ref;
@@ -135,6 +136,16 @@ export function detailsFor(
       break;
     default:
       lines.push(`action: ${tool}`);
+  }
+  if (scope === "browser:commit" && tab) {
+    const firstField = Array.isArray(args.fields)
+      ? (args.fields as { ref?: unknown }[]).find((field) => typeof field.ref === "string")?.ref
+      : undefined;
+    const activated =
+      typeof args.submitRef === "string"
+        ? args.submitRef
+        : (ref ?? (firstField as string | undefined));
+    if (activated) lines.push(...(await submissionSummary(tab, activated)));
   }
   if (reason) lines.push(`why this asks: ${reason}`);
   const leak = typingLeak(deps, tool, args);
