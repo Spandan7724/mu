@@ -3,10 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnyTool } from "@mu/core";
+import { renderTodos, TodoStore, todoTool } from "mu";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
-import { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";
 import { truncateOutput } from "./truncate.ts";
 
 async function scratch(): Promise<string> {

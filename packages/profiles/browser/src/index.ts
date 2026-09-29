@@ -5,6 +5,7 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
+import { TodoStore, todoTool } from "mu";
 import {
   BROWSER_PERMISSION_DEFAULTS,
   browserPermissionModes,
@@ -30,6 +31,7 @@ import { tabsTool } from "./tools/tabs.ts";
 export interface BrowserProfile extends Profile {
   browser: BrowserManager;
   config: ResolvedBrowserOptions;
+  todos: TodoStore;
 }
 
 export async function browserEnvironment(
@@ -121,6 +123,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   };
   const interaction = interactionTools(deps);
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
+  const todos = new TodoStore();
   const rawTools: AnyTool[] = [
     navigateTool(deps),
     interaction.click,
@@ -142,6 +145,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     interaction.evaluate,
     interaction.clickXy,
     interaction.downloads,
+    todoTool(todos),
   ] as AnyTool[];
   const toolset = rawTools.map((candidate) => redacting(candidate, browser.secrets));
   const runtime: ProfileRuntime = {
@@ -186,6 +190,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     scope: () => `browser-${config.browserProfile}`,
     browser,
     config,
+    todos,
   };
 }
 

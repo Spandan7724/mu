@@ -158,6 +158,8 @@ export type {
   SubagentProgressUpdate,
 } from "./subagents.ts";
 export { subagentsExtension } from "./subagents.ts";
+export type { TodoItem } from "./todo.ts";
+export { renderTodos, TodoStore, todoTool } from "./todo.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";
 export { tool } from "./tool.ts";
 export type {

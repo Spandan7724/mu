@@ -10,6 +10,7 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
+import { TodoStore, todoTool } from "mu";
 import { ShadowCheckpointProvider } from "./checkpoint.ts";
 import {
   codingEnvironment,
@@ -35,7 +36,6 @@ import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
 import { shellSpawner, taskTools } from "./tools/tasks.ts";
-import { TodoStore, todoTool } from "./tools/todo.ts";
 
 export interface CodingProfileOptions {
   // Directory the session operates in. Defaults to the process's directory.
@@ -257,6 +257,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   };
 }
 
+export type { TodoItem } from "mu";
+export { renderTodos, TodoStore, todoTool } from "mu";
 export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
 export { gitConfigNullDevice, ShadowCheckpointProvider } from "./checkpoint.ts";
 export {
@@ -292,6 +294,4 @@ export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
 export { shellSpawner, taskTools } from "./tools/tasks.ts";
-export type { TodoItem } from "./tools/todo.ts";
-export { renderTodos, TodoStore, todoTool } from "./tools/todo.ts";
 export { MAX_OUTPUT_CHARS, truncateOutput, withNotice } from "./truncate.ts";

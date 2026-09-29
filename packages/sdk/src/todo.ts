@@ -1,6 +1,6 @@
 import type { ToolResult } from "@mu/core";
-import { tool } from "mu";
 import { z } from "zod";
+import { tool } from "./tool.ts";
 
 export interface TodoItem {
   content: string;
