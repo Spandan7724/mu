@@ -2,9 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AnyTool, ToolResult } from "@mu/core";
+import { type AnyTool, evaluate, type ToolResult } from "@mu/core";
+import { BROWSER_PERMISSION_DEFAULTS } from "../agent/permissions.ts";
 import { minimalPdf } from "../testing/pdf.ts";
-import { fileTools } from "./files.ts";
+import { fileTools, pathPattern } from "./files.ts";
 
 test("file tools work inside the agent's folder only, read PDFs, and fence what they read", async () => {
   const base = mkdtempSync(join(tmpdir(), "mu-files-"));
@@ -51,4 +52,22 @@ test("file tools work inside the agent's folder only, read PDFs, and fence what 
   expect((await run("write", { path: "../escape.md", content: "x" })).result.isError).toBe(true);
   expect((await run("write", { path: ".env", content: "x" })).text).toContain("Refusing to access");
   rmSync(base, { recursive: true, force: true });
+});
+
+test("progress/ is writable without asking; nothing else is, however the path is spelled", () => {
+  const root = mkdtempSync(join(tmpdir(), "mu-progress-"));
+  mkdirSync(join(root, "progress"));
+  writeFileSync(join(root, "about-me.md"), "Name: Ada\n");
+  symlinkSync(join(root, "about-me.md"), join(root, "progress", "link.md"));
+  const rules = BROWSER_PERMISSION_DEFAULTS;
+  const write = (path: string) => evaluate(rules, "write", pathPattern(root, path));
+  expect(pathPattern(root, "progress/jobs.md")).toBe("progress/jobs.md");
+  expect(write("progress/jobs.md")).toBe("allow");
+  expect(write(join(root, "progress", "new", "list.md"))).toBe("allow");
+  expect(write("about-me.md")).toBe("ask");
+  expect(write("progress/../about-me.md")).toBe("ask");
+  expect(write("progress/link.md")).toBe("ask");
+  expect(write("../elsewhere/progress/x.md")).toBe("ask");
+  expect(evaluate(rules, "edit", pathPattern(root, "progress/jobs.md"))).toBe("allow");
+  rmSync(root, { recursive: true, force: true });
 });

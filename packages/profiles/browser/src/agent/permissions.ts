@@ -37,11 +37,13 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule(SCOPES.delegate, "ask"),
   rule(SCOPES.share, "ask"),
   rule("notes", "allow"),
-  rule("checkpoint", "allow"),
   rule("todo", "allow"),
-  // Files in the agent's own folder: reading is free, changing them asks.
+  // Files in the agent's own folder: reading is free, changing them asks, except
+  // its own progress records under progress/.
   rule("ls", "allow"),
   rule("read", "allow"),
+  rule("write", "allow", "progress/*"),
+  rule("edit", "allow", "progress/*"),
 ];
 
 // allowedHosts/blockedHosts hold in every mode, so they close every mode's rule list.

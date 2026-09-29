@@ -7,7 +7,6 @@ import {
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
 import { hostOf } from "./actions/navigate.ts";
-import { checkpointTool } from "./agent/checkpoint.ts";
 import { recordingCommits } from "./agent/ledger.ts";
 import { notesTool } from "./agent/notes.ts";
 import {
@@ -185,7 +184,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     interaction.downloads,
     todoTool(todos),
     notesTool(state),
-    checkpointTool(config.home),
     ...fileTools(config.workspace),
     delegateTool({
       command: config.codingCommand,

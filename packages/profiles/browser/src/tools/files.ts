@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { AnyTool, ToolResult } from "@mu/core";
 import {
   editTool,
@@ -16,6 +17,25 @@ import { detectType } from "../actions/filetype.ts";
 const PDF_TIMEOUT_MS = 30_000;
 
 const refuse = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
+
+// The file's real location relative to the folder, so a rule like "progress/*" can
+// not be reached through "progress/../other.md" or a link out of progress/.
+export function pathPattern(root: string, path: unknown): string {
+  if (typeof path !== "string") return ".";
+  try {
+    const absolute = resolveInRoot(root, path);
+    let existing = absolute;
+    const rest: string[] = [];
+    while (!existsSync(existing)) {
+      rest.unshift(basename(existing));
+      existing = dirname(existing);
+    }
+    const real = join(realpathSync(existing), ...rest);
+    return relative(realpathSync(root), real).split(sep).join("/") || ".";
+  } catch {
+    return `outside:${path}`;
+  }
+}
 
 function blocked(root: string, path: unknown): string | undefined {
   if (typeof path !== "string") return undefined;
@@ -98,6 +118,7 @@ export function fileTools(root: string): AnyTool[] {
   const deps = { root, state: new FileState() };
   const guarded = (tool: AnyTool, fence: boolean): AnyTool => ({
     ...tool,
+    permissionPattern: (args) => pathPattern(root, (args as { path?: unknown } | undefined)?.path),
     execute: async (...call) => {
       const path = (call[1] as { path?: unknown } | undefined)?.path;
       const refusal = blocked(root, path);
