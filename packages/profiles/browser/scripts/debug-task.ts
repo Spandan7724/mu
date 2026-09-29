@@ -6,7 +6,11 @@ import { browserProfile } from "../src/index.ts";
 import { tempUserDataDir, testBrowserPath } from "../src/testing/chrome.ts";
 import { startFixtureSite } from "../src/testing/fixture-site.ts";
 
-const task = TASKS.find((candidate) => candidate.id === Number(process.argv[2]));
+// A task number from the eval matrix, or any prompt in quotes.
+const arg = process.argv[2] ?? "";
+const task = /^\d+$/.test(arg)
+  ? TASKS.find((candidate) => candidate.id === Number(arg))
+  : { prompt: () => arg };
 if (!task) throw new Error("unknown task");
 const modelRef = process.argv[3] ?? "openai-codex/gpt-5.6-luna";
 const site = startFixtureSite();
@@ -44,6 +48,7 @@ agent.subscribe((event) => {
 });
 const result = await agent.run(task.prompt({ site }));
 console.log(`\n${result.reason} · ${result.text.slice(0, 400)}`);
+console.log(`open tabs at the end: ${profile.browser.tabs().length}`);
 await agent.shutdown();
 await profile.browser.shutdown({ close: true });
 site.stop();
