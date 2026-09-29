@@ -175,11 +175,16 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       activeModel = modelRef;
       return browserPrompt(modelRef);
     },
-    refreshContext: (messages) => {
+    refreshContext: (messages, context) => {
       // The model can change mid-session; the latest assistant turn names it.
       const last = messages.findLast((message) => message.role === "assistant");
       if (last?.role === "assistant" && last.model) activeModel = last.model;
-      state.rebuild(messages);
+      // In-process state is authoritative; the transcript is read back only when a
+      // different session (a resume) starts using this profile.
+      if (state.sessionId !== context.sessionId) {
+        state.rebuild(messages);
+        state.sessionId = context.sessionId;
+      }
       return state.snapshotIfChanged(messages);
     },
     permissionDefaults: [
@@ -195,6 +200,30 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,
+    // What compaction must not lose: where the browser is, the plan, collected data, and
+    // every consequential action already performed.
+    carryoverExtractor: () => {
+      const active = browser.tabs().find((tab) => tab.active);
+      return {
+        browser: {
+          ...(active ? { url: active.url, title: active.title } : {}),
+          tabs: browser.tabs().map((tab) => ({
+            tabId: tab.tabId,
+            url: tab.url,
+            title: tab.title,
+            active: tab.active,
+          })),
+        },
+        todo: todos.all(),
+        notes: state.notes.entries(),
+        commitsAlreadyPerformed: state.ledger.records().map((record) => ({
+          at: new Date(record.at).toISOString(),
+          host: record.host,
+          action: record.action,
+          target: record.target,
+        })),
+      };
+    },
     diagnostics,
     runtime,
     scope: () => `browser-${config.browserProfile}`,

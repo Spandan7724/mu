@@ -106,6 +106,7 @@ function parseSnapshot(message: CustomMessage): Snapshot | undefined {
 export class BrowserState {
   readonly notes = new NotesStore();
   readonly ledger = new CommitLedger();
+  sessionId: string | undefined;
 
   rebuild(messages: AgentMessage[]): void {
     let notes: NoteEntry[] = [];
