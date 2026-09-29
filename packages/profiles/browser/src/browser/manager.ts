@@ -53,9 +53,11 @@ interface PageTarget {
   openerId?: string | undefined;
   openedByAgent: boolean;
   createdAt: number;
+  lastUsed: number;
 }
 
 const MAX_LIVE_TABS = 3;
+const MAX_AGENT_TABS = 4;
 
 const BLANK_URLS = new Set(["about:blank", "chrome://newtab/", "chrome://new-tab-page/", ""]);
 
@@ -205,6 +207,7 @@ export class BrowserManager {
       openerId: info.openerId ?? existing?.openerId,
       openedByAgent: existing?.openedByAgent ?? false,
       createdAt: existing?.createdAt ?? Date.now(),
+      lastUsed: existing?.lastUsed ?? Date.now(),
     };
     this.pages.set(info.targetId, page);
     const tab = this.attached.get(info.targetId);
@@ -316,6 +319,7 @@ export class BrowserManager {
   async activeTab(signal?: AbortSignal): Promise<Tab> {
     await this.ensureConnected(signal);
     if (this.activeTargetId && this.pages.has(this.activeTargetId)) {
+      this.touch(this.activeTargetId);
       const tab = await this.attach(this.activeTargetId, signal);
       if (tab.crashed) await this.recoverCrashed(tab, signal);
       return tab;
@@ -335,8 +339,32 @@ export class BrowserManager {
     await tab.session.send("Page.reload", {}, { signal }).catch(() => {});
   }
 
+  // Keeps the user's window tidy: past MAX_AGENT_TABS, the agent tab used least
+  // recently is closed (never a tab the user opened) and the agent is told.
+  private async closeStaleAgentTab(signal?: AbortSignal): Promise<void> {
+    const agentTabs = [...this.pages.values()].filter((page) => page.openedByAgent);
+    if (agentTabs.length < MAX_AGENT_TABS) return;
+    const stale = agentTabs
+      .filter((page) => page.targetId !== this.activeTargetId)
+      .sort((a, b) => a.lastUsed - b.lastUsed)[0];
+    if (!stale) return;
+    await this.connection
+      ?.send("Target.closeTarget", { targetId: stale.targetId }, { signal, timeoutMs: 3_000 })
+      .catch(() => {});
+    this.forgetTarget(stale.targetId);
+    this.notices.push(
+      `Closed tab ${stale.tabId} (${stale.url}) to keep at most ${MAX_AGENT_TABS} agent tabs open; reopen it if you still need it.`,
+    );
+  }
+
+  private touch(targetId: string): void {
+    const page = this.pages.get(targetId);
+    if (page) page.lastUsed = Date.now();
+  }
+
   async openTab(url?: string, signal?: AbortSignal): Promise<Tab> {
     const connection = await this.ensureConnected(signal);
+    await this.closeStaleAgentTab(signal);
     const { targetId } = await connection.send(
       "Target.createTarget",
       { url: url ?? "about:blank" },
@@ -355,6 +383,7 @@ export class BrowserManager {
     const page = this.pages.get(targetId);
     if (page) page.openedByAgent = true;
     this.activeTargetId = targetId;
+    this.touch(targetId);
     return this.attach(targetId, signal);
   }
 
@@ -373,6 +402,7 @@ export class BrowserManager {
     const connection = await this.ensureConnected(signal);
     const page = this.targetFor(tabId);
     this.activeTargetId = page.targetId;
+    this.touch(page.targetId);
     await connection
       .send("Target.activateTarget", { targetId: page.targetId }, { signal })
       .catch((error: unknown) => {

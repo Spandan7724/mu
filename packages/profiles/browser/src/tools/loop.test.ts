@@ -4,6 +4,7 @@ import type { ToolResult } from "@mu/core";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
+import { until } from "../testing/wait.ts";
 
 setDefaultTimeout(30_000);
 
@@ -67,5 +68,25 @@ describeWithBrowser("loop detection", () => {
     expect(await run("tabs", { action: "switch", tabId: "t2" })).not.toContain(
       "tab switches in a row",
     );
+  });
+
+  test("past four agent tabs the least recently used one is closed, never a user tab", async () => {
+    const connection = await profile.browser.ensureConnected();
+    const { targetId: userTarget } = await connection.send("Target.createTarget", {
+      url: site.url("shadow"),
+    });
+    const userTab = () =>
+      profile.browser.tabs().find((tab) => tab.url.includes("/shadow") && !tab.openedByAgent);
+    await until(() => userTab() !== undefined);
+    const pages = ["long", "modal", "custom-select", "iframes", "form-validation", "dialogs"];
+    let closedNote = "";
+    for (const page of pages) {
+      const text = await run("tabs", { action: "open", url: site.url(page) });
+      if (text.includes("to keep at most 4 agent tabs open")) closedNote = text;
+    }
+    expect(closedNote).toMatch(/note: Closed tab t\d+ \(.+\) to keep at most 4 agent tabs open/);
+    expect(profile.browser.tabs().filter((tab) => tab.openedByAgent).length).toBeLessThanOrEqual(4);
+    expect(userTab()).toBeDefined();
+    await connection.send("Target.closeTarget", { targetId: userTarget });
   });
 });
