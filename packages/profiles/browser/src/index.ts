@@ -5,6 +5,13 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
+import {
+  BROWSER_PERMISSION_DEFAULTS,
+  browserPermissionModes,
+  hostRules,
+  loadRememberedPermissions,
+  rememberAllow,
+} from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
@@ -82,6 +89,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     vision: () => visionEnabled(config.vision, activeModel),
   };
   const interaction = interactionTools(deps);
+  const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const toolset: AnyTool[] = [
     navigateTool(deps),
     interaction.click,
@@ -128,7 +136,16 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       if (last?.role === "assistant" && last.model) activeModel = last.model;
       return [];
     },
-    permissionDefaults: [],
+    permissionDefaults: [
+      ...BROWSER_PERMISSION_DEFAULTS,
+      ...loadRememberedPermissions(config.home, (message) => diagnostics.push(message)),
+      ...hosts,
+    ],
+    permissionModes: browserPermissionModes(hosts),
+    defaultPermissionMode: "default",
+    rememberPermission: (permission, pattern) => {
+      rememberAllow(config.home, permission, pattern);
+    },
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,

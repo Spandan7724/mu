@@ -206,8 +206,9 @@ Options:
       --max-turns <n>      stop after n turns
       --max-cost <usd>     stop once the run costs this much
       --permission-mode <mode>
-                           default | accept-edits | plan-readonly | yolo
-      --allow-all          alias for --permission-mode yolo
+                           coding: default | accept-edits | plan-readonly | yolo
+                           browser: default | supervised | read-only | autonomous
+      --allow-all          alias for the profile's unrestricted mode (yolo / autonomous)
       --no-instructions    disable global and project instruction loading
       --browser-profile <name>
                            managed browser profile (default: default)

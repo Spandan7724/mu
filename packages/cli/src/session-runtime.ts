@@ -89,7 +89,7 @@ export async function createCliSessionRuntime(
   let activePermissionMode: PermissionMode | undefined;
   if (profile) {
     activePermissionMode = options.allowAll
-      ? profile.permissionModes?.find((candidate) => candidate.id === "yolo")
+      ? profile.permissionModes?.find((candidate) => candidate.tone === "unrestricted")
       : permissionModeFor(profile, options.permissionMode);
     resolved = {
       ...resolved,
