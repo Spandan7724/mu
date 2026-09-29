@@ -5,7 +5,7 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
-import { browserPrompt } from "./agent/prompts.ts";
+import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
 import {
@@ -131,6 +131,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     permissionDefaults: [],
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
+    sideBoundary: () => BROWSER_SIDE_BOUNDARY,
     diagnostics,
     runtime,
     scope: () => `browser-${config.browserProfile}`,
