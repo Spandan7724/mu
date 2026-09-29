@@ -1,8 +1,10 @@
-import type { Credential, Provider } from "@mu/ai";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type Cassette, type Credential, getProvider, type Provider, replayFetch } from "@mu/ai";
 import type { PermissionRequest, PermissionRule } from "@mu/core";
 import { Agent, optionsFromProfile } from "mu";
 import type { BrowserProfile } from "../index.ts";
-import type { FixtureSite } from "./fixture-site.ts";
+import { FIXTURE_DIR, type FixtureSite } from "./fixture-site.ts";
 
 export interface Scenario {
   name: string;
@@ -85,3 +87,43 @@ export async function runScenario(
   const result = await agent.run(scenario.prompt(site));
   return { text: result.text, asks, agent };
 }
+
+interface RecordedCassette extends Cassette {
+  origin: string;
+  crossOrigin: string;
+  model: string;
+}
+
+// A provider that replays a recorded scenario, with the recording's fixture-site
+// ports rewritten to the current site's.
+export function replayProvider(
+  name: string,
+  site: FixtureSite,
+): { provider: Provider; model: string; assertExhausted: () => void } {
+  const recorded = JSON.parse(
+    readFileSync(join(FIXTURE_DIR, "..", "agent", `${name}.json`), "utf8"),
+  ) as RecordedCassette;
+  const port = (origin: string) => new URL(origin).port;
+  const handle = replayFetch({
+    interactions: recorded.interactions.map((interaction) => ({
+      ...interaction,
+      response: {
+        ...interaction.response,
+        body: interaction.response.body
+          .replaceAll(port(recorded.origin), port(site.origin))
+          .replaceAll(port(recorded.crossOrigin), port(site.crossOrigin)),
+      },
+    })),
+  });
+  return {
+    provider: withFetch(getProvider(recorded.model.split("/")[0] as string), handle.fetch),
+    model: recorded.model,
+    assertExhausted: () => handle.assertExhausted(),
+  };
+}
+
+export const replayCredentials = async (): Promise<Credential> => ({
+  type: "oauth",
+  accessToken: "replay",
+  accountId: "replay",
+});

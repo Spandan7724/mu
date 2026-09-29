@@ -1,40 +1,16 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
-import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { type Cassette, getProvider, replayFetch } from "@mu/ai";
+import { rmSync } from "node:fs";
 import { browserProfile } from "../index.ts";
-import { runScenario, SCENARIOS, withFetch } from "../testing/agent-scenarios.ts";
+import {
+  replayCredentials,
+  replayProvider,
+  runScenario,
+  SCENARIOS,
+} from "../testing/agent-scenarios.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
-import { FIXTURE_DIR, type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
+import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
 
 setDefaultTimeout(60_000);
-
-interface Recorded extends Cassette {
-  origin: string;
-  crossOrigin: string;
-  model: string;
-}
-
-// Recorded with scripts/record-agent-fixtures.ts against the live Codex-plan model;
-// replayed here with the fixture site's current ports substituted in.
-function cassette(name: string, site: FixtureSite): { recorded: Recorded; replay: Cassette } {
-  const recorded = JSON.parse(
-    readFileSync(join(FIXTURE_DIR, "..", "agent", `${name}.json`), "utf8"),
-  ) as Recorded;
-  const port = (origin: string) => new URL(origin).port;
-  const replay: Cassette = {
-    interactions: recorded.interactions.map((interaction) => ({
-      ...interaction,
-      response: {
-        ...interaction.response,
-        body: interaction.response.body
-          .replaceAll(port(recorded.origin), port(site.origin))
-          .replaceAll(port(recorded.crossOrigin), port(site.crossOrigin)),
-      },
-    })),
-  };
-  return { recorded, replay };
-}
 
 describeWithBrowser("agent behavior replayed from recorded Codex-plan sessions", () => {
   let site: FixtureSite;
@@ -54,13 +30,11 @@ describeWithBrowser("agent behavior replayed from recorded Codex-plan sessions",
       vision: "off",
       ...(testBrowserPath ? { executable: testBrowserPath } : {}),
     });
-    const { recorded, replay } = cassette(name, site);
-    const handle = replayFetch(replay);
-    const provider = withFetch(getProvider(recorded.model.split("/")[0] as string), handle.fetch);
-    const run = await runScenario(scenario, profile, site, provider, recorded.model, {
-      getCredentials: async () => ({ type: "oauth", accessToken: "replay", accountId: "replay" }),
+    const replay = replayProvider(name, site);
+    const run = await runScenario(scenario, profile, site, replay.provider, replay.model, {
+      getCredentials: replayCredentials,
     });
-    handle.assertExhausted();
+    replay.assertExhausted();
     const tab = await profile.browser.activeTab();
     const pageState = async (expression: string) =>
       (await tab.session.send("Runtime.evaluate", { expression, returnByValue: true })).result

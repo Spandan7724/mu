@@ -202,6 +202,33 @@ console.log(result.text);
 await agent.shutdown();
 ```
 
+### Browser agent
+
+`profile: "browser"` drives a real Chrome-family browser over the Chrome DevTools Protocol:
+mu's own persistent profile (`~/.mu/browser/profiles/<name>`, sign in once with
+`mu browser login`) or any endpoint via `cdpUrl`. Actions that send, buy, delete, publish
+or change account settings, typing into password fields, uploads and page scripts go
+through `onPermission`; page content is treated as untrusted data.
+
+```ts
+import { createAgent } from "@mu-agent/mu";
+
+const agent = await createAgent({
+  profile: "browser",
+  profileOptions: { browserProfile: "default", headless: false },
+  onPermission: async (request) => (request.permission === "browser:commit" ? "deny" : "allow"),
+});
+
+const result = await agent.run("Summarize my three most recent unread emails");
+console.log(result.text);
+await agent.shutdown(); // the browser window stays open unless keepOpen: false
+```
+
+Options: `browserProfile`, `connect` (`managed` | `cdp`), `cdpUrl`, `executable`,
+`channel`, `headless`, `vision` (`auto` | `on` | `off`), `viewport`, `keepOpen`,
+`downloadsDir`, `allowedHosts`, `blockedHosts`. The same keys are read from the `browser`
+section of `~/.mu/config.json`; explicit options win.
+
 ### Custom tools
 
 Tools use Zod schemas. Arguments are validated before `execute`, and the schema is

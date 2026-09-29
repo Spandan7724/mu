@@ -33,6 +33,8 @@ export interface SessionRuntimeOptions {
   allowAll?: boolean | undefined;
   noInstructions?: boolean | undefined;
   browser?: BrowserFlags | undefined;
+  // Merged over the options derived from flags (tests and embedders).
+  profileOptions?: Record<string, unknown> | undefined;
   resumeSessionId?: string | undefined;
   sessionId?: string | undefined;
   maxTurns?: number | undefined;
@@ -70,13 +72,13 @@ export async function createCliSessionRuntime(
   let resolved = overrides;
   if (useBuiltIns) {
     const profileName = options.profile ?? DEFAULT_PROFILE;
-    profile = await resolveProfile(
-      profileName,
-      profileOptionsFromArgs(
+    profile = await resolveProfile(profileName, {
+      ...profileOptionsFromArgs(
         { noInstructions: options.noInstructions === true, browser: options.browser },
         profileName,
       ),
-    );
+      ...(options.profileOptions ?? {}),
+    });
     for (const diagnostic of profile.diagnostics ?? [])
       options.onDiagnostic?.(`instruction warning: ${diagnostic}`);
     if (typeof model !== "string") throw new Error("profile loading requires a model reference");

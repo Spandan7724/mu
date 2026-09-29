@@ -25,3 +25,10 @@ const codingAgent = await createAgent({
 });
 if (!(codingAgent instanceof Agent)) throw new Error("SDK package did not create coding Agent");
 await codingAgent.shutdown();
+
+const browserAgent = await createAgent({
+  profile: "browser",
+  profileOptions: { home: process.cwd(), headless: true, keepOpen: false },
+});
+if (!(browserAgent instanceof Agent)) throw new Error("SDK package did not create browser Agent");
+await browserAgent.shutdown();

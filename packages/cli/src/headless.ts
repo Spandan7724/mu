@@ -24,6 +24,7 @@ export async function runHeadless(
   args: ParsedArgs,
   options: AgentOptions,
   io: HeadlessIo,
+  extra: { profileOptions?: Record<string, unknown> } = {},
 ): Promise<number> {
   if (!args.prompt) {
     io.stderr("mu: -p requires a prompt\n");
@@ -44,6 +45,7 @@ export async function runHeadless(
       maxTurns: args.maxTurns,
       maxCostUsd: args.maxCostUsd,
       agentOptions: options,
+      ...(extra.profileOptions ? { profileOptions: extra.profileOptions } : {}),
       permissions: "deny",
       onDiagnostic: (message) => io.stderr(`mu: ${message}\n`),
     });
@@ -65,6 +67,12 @@ export async function runHeadless(
       event.message.errorMessage
     ) {
       failure = event.message.errorMessage;
+    }
+    if (event.type === "permission_asked" && !args.json) {
+      const unrestricted = runtime.permissionModes.find((mode) => mode.tone === "unrestricted");
+      io.stderr(
+        `mu: denied ${event.request.permission} (${event.request.description}) — headless runs cannot ask for approval${unrestricted ? `; rerun with --permission-mode ${unrestricted.id} or --allow-all to permit it` : ""}\n`,
+      );
     }
     if (args.json) {
       io.stdout(`${JSON.stringify(event)}\n`);
