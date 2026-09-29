@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type CdpConnection, CdpError, isCdpError } from "../cdp/connection.ts";
 import type { Protocol } from "../cdp/types.ts";
+import { SecretRegistry } from "../page/secrets.ts";
 import {
   type BrowserLauncher,
   type ConnectedBrowser,
@@ -72,6 +73,7 @@ export class BrowserManager {
   private product: { product: string; version: string; executable?: string } | undefined;
   private abort = new AbortController();
   readonly downloads: DownloadTracker;
+  readonly secrets = new SecretRegistry();
 
   constructor(readonly options: BrowserManagerOptions) {
     const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;

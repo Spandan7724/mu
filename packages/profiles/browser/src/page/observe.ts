@@ -108,6 +108,7 @@ export async function observe(
       signal,
     };
     let model = await capturePage(tab, capture);
+    for (const secret of model.secrets) manager.secrets.add(secret);
     if (options.subtreeRef) {
       const subtree = findByRef(model.root, options.subtreeRef);
       if (!subtree) {

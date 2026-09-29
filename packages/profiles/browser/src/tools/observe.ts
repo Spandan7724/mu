@@ -157,6 +157,7 @@ export function readPageTool(deps: BrowserToolDeps) {
       const model = await stopwatch.time("snapshotMs", () =>
         capturePage(tab, { scope: "full", signal: actionSignal, maxText: 20_000 }),
       );
+      for (const secret of model.secrets) deps.browser.secrets.add(secret);
       const { markdown, scope } = pageMarkdown(model);
       const filtered = query ? filterSections(markdown, query) : markdown;
       const page = paginate(filtered, offset ?? 0);
@@ -246,6 +247,7 @@ export function findTool(deps: BrowserToolDeps) {
       const model = await stopwatch.time("snapshotMs", () =>
         capturePage(tab, { scope: "full", signal: actionSignal }),
       );
+      for (const secret of model.secrets) deps.browser.secrets.add(secret);
       const { matches, total } = findNodes(model, matcher, limit ?? 20);
       const label = regex !== undefined ? `/${regex}/i` : JSON.stringify(text);
       const lines = matches.map(

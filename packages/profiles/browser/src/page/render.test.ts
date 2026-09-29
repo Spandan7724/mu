@@ -25,6 +25,7 @@ function model(children: PageNode[], extra: Partial<PageModel> = {}): PageModel 
     offscreen: { above: 0, below: 0 },
     frames: 1,
     newDocument: false,
+    secrets: [],
     frameErrors: [],
     ...extra,
   };

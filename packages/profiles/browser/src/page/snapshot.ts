@@ -32,6 +32,8 @@ interface RawNode {
   sub?: 1;
   fsub?: string;
   dlg?: string;
+  // Current value of a password/one-time-code field: used for redaction only, never rendered.
+  sv?: string;
 }
 
 interface RawInfo {
@@ -465,6 +467,10 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
     });
   }
 
+  const secrets: string[] = [];
+  for (const capture of captures.values()) {
+    for (const raw of capture.info.nodes) if (raw.sv) secrets.push(raw.sv);
+  }
   const mainFrame = tab.frames.get(mainFrameId);
   const documentId = `${mainFrameId}:${mainFrame?.loaderId ?? ""}`;
   const newDocument = tab.refs.beginDocument(documentId, mainFrameId);
@@ -505,6 +511,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
     ...(modal ? { modal } : {}),
     offscreen: { above, below },
     frames: captures.size,
+    secrets,
     newDocument,
     frameErrors,
   };

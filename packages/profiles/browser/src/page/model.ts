@@ -51,6 +51,8 @@ export interface PageModel {
   // Interactive nodes left out of a viewport-scoped capture.
   offscreen: { above: number; below: number };
   frames: number;
+  // Values of secret fields on the page, for redaction; never rendered.
+  secrets: string[];
   // The ref table was reset because the main document changed since the last capture.
   newDocument: boolean;
   // Frames that could not be captured (for example, still loading).

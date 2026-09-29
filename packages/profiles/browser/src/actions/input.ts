@@ -159,6 +159,7 @@ export async function typeText(
       summary: `${label} is not a text field (${info.tag}${info.type ? ` type=${info.type}` : ""}); click it or use select/fill_form`,
     };
   }
+  if (info.secret) ctx.browser.secrets.add(text);
   const shown = quoteValue(text, info.secret);
   const watcher =
     options.settle === false ? undefined : watchSettle(tab, info.combobox ? "typing" : "in-page");

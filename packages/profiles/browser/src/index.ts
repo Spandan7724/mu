@@ -21,6 +21,7 @@ import {
   resolveBrowserOptions,
 } from "./config.ts";
 import { visionEnabled } from "./page/screenshot.ts";
+import type { SecretRegistry } from "./page/secrets.ts";
 import { interactionTools } from "./tools/interact.ts";
 import { navigateTool } from "./tools/navigate.ts";
 import { findTool, readPageTool, screenshotTool, snapshotTool } from "./tools/observe.ts";
@@ -66,6 +67,36 @@ export function environmentMessage(env: Record<string, string>): AgentMessage {
   };
 }
 
+// Scrubs known secret values from everything a browser tool hands back.
+function redacting(tool: AnyTool, secrets: SecretRegistry): AnyTool {
+  const { permissionDetails } = tool;
+  return {
+    ...tool,
+    execute: async (...args) => {
+      const result = await tool.execute(...args);
+      if (secrets.size === 0) return result;
+      return {
+        ...result,
+        content: result.content.map((block) =>
+          block.type === "text" ? { ...block, text: secrets.redact(block.text) } : block,
+        ),
+        ...(result.details !== undefined ? { details: secrets.redactDeep(result.details) } : {}),
+        ...(result.retention
+          ? {
+              retention: { ...result.retention, summary: secrets.redact(result.retention.summary) },
+            }
+          : {}),
+      };
+    },
+    ...(permissionDetails
+      ? {
+          permissionDetails: async (args: unknown) =>
+            secrets.redactDeep(await permissionDetails(args)),
+        }
+      : {}),
+  };
+}
+
 export async function browserProfile(options: BrowserProfileOptions = {}): Promise<BrowserProfile> {
   const diagnostics: string[] = [];
   const config = resolveBrowserOptions(options, (message) => diagnostics.push(message));
@@ -90,7 +121,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   };
   const interaction = interactionTools(deps);
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
-  const toolset: AnyTool[] = [
+  const rawTools: AnyTool[] = [
     navigateTool(deps),
     interaction.click,
     interaction.type,
@@ -112,6 +143,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     interaction.clickXy,
     interaction.downloads,
   ] as AnyTool[];
+  const toolset = rawTools.map((candidate) => redacting(candidate, browser.secrets));
   const runtime: ProfileRuntime = {
     attach: () => {},
     stop: () => browser.stop(),
