@@ -45,6 +45,7 @@ export function recordingCommits(
         tool: tool.name,
         args: input,
         meta: (ref) => tab?.refs.meta(ref),
+        page: tab ? { url: tab.url, title: tab.title } : undefined,
       });
       const before = {
         url: tab?.url ?? "",

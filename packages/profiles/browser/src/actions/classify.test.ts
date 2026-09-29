@@ -95,6 +95,32 @@ describe("consequential-action classifier", () => {
     expect(scope("click", { ref: "e6", commit: true }, metas)).toBe("browser:commit");
   });
 
+  test("prices in a button, and proceeding on checkout or payment pages, count as consequential", () => {
+    const metas = {
+      e1: button("Continue – $19.99"),
+      e2: button("Place order ₹1,299"),
+      e3: button("Continue"),
+      e4: button("Next"),
+      e5: button("Back"),
+      e6: button("Add 2 items"),
+    };
+    const at = (url: string, title = "Shop") => ({ url, title });
+    const scopeAt = (ref: string, page: { url: string; title: string }) =>
+      classify({
+        tool: "click",
+        args: { ref },
+        meta: (id) => metas[id as keyof typeof metas],
+        page,
+      }).scope;
+    expect(scopeAt("e1", at("https://shop.test/cart"))).toBe("browser:commit");
+    expect(scopeAt("e2", at("https://shop.test/cart"))).toBe("browser:commit");
+    expect(scopeAt("e3", at("https://shop.test/checkout/payment"))).toBe("browser:commit");
+    expect(scopeAt("e4", at("https://shop.test/step/3", "Billing details"))).toBe("browser:commit");
+    expect(scopeAt("e3", at("https://jobs.test/apply?step=2"))).toBe("browser:interact");
+    expect(scopeAt("e5", at("https://shop.test/checkout/payment"))).toBe("browser:interact");
+    expect(scopeAt("e6", at("https://shop.test/checkout"))).toBe("browser:interact");
+  });
+
   test("Enter only submits plain fields of forms with a submit button", () => {
     const metas: Record<string, RefMeta> = {
       to: { role: "combobox", name: "To recipients", editable: "text", form: { post: true } },

@@ -26,8 +26,29 @@ export function matchesCommitLexicon(text: string | undefined): boolean {
 const LINK_OPENER =
   /^\W*(apply|register|sign up|book|reserve|reply|post|publish|subscribe|donate|send|submit)\b/i;
 
-function clickTarget(meta: RefMeta | undefined): string | undefined {
+// A price in a button's name: pressing it spends money, whatever the verb.
+const MONEY = /[$€£¥₹]\s?\d|\d[\d,.]*\s?(usd|eur|gbp|inr|rs\.?)(\b|$)/i;
+// Generic verbs that move a flow forward; consequential where the flow pays or buys.
+const PROCEED =
+  /^\W*(continue|next|proceed|complete|finish|confirm|done|submit|go|review|place)\b/i;
+const PAYING_PAGE =
+  /checkout|payment|\bpay\b|billing|purchase|place-?order|order[-/](review|confirm)|transfer|donat/i;
+
+export interface PageContext {
+  url: string;
+  title: string;
+}
+
+function clickTarget(meta: RefMeta | undefined, page?: PageContext): string | undefined {
   if (!meta) return undefined;
+  if (MONEY.test(meta.name)) return `"${meta.name}" names an amount of money`;
+  if (
+    page &&
+    PROCEED.test(meta.name) &&
+    !SAFE_LEXICON.test(meta.name.trim()) &&
+    (PAYING_PAGE.test(page.url) || PAYING_PAGE.test(page.title))
+  )
+    return `"${meta.name}" moves a checkout or payment forward`;
   if (matchesCommitLexicon(meta.name) && !(meta.link && LINK_OPENER.test(meta.name)))
     return `"${meta.name}" reads as a consequential action`;
   if (meta.form?.submit && meta.form.post) return "it submits a form that posts data";
@@ -61,9 +82,10 @@ export interface ClassifyInput {
   tool: string;
   args: Record<string, unknown>;
   meta: (ref: string) => RefMeta | undefined;
+  page?: PageContext | undefined;
 }
 
-export function classify({ tool, args, meta }: ClassifyInput): Classification {
+export function classify({ tool, args, meta, page }: ClassifyInput): Classification {
   const declared = args.commit === true ? "declared consequential by the agent" : undefined;
   const ref = typeof args.ref === "string" ? args.ref : undefined;
   const target = ref ? meta(ref) : undefined;
@@ -72,7 +94,7 @@ export function classify({ tool, args, meta }: ClassifyInput): Classification {
 
   switch (tool) {
     case "click": {
-      return commit(declared ?? clickTarget(target)) ?? { scope: SCOPES.interact };
+      return commit(declared ?? clickTarget(target, page)) ?? { scope: SCOPES.interact };
     }
     case "click_xy":
       return commit(declared) ?? { scope: SCOPES.interact };
@@ -102,7 +124,7 @@ export function classify({ tool, args, meta }: ClassifyInput): Classification {
         .map((field) => (typeof field.ref === "string" ? meta(field.ref) : undefined))
         .find((field) => field?.editable === "secret" || field?.editable === "otp");
       const submitRef = typeof args.submitRef === "string" ? args.submitRef : undefined;
-      const submit = submitRef ? clickTarget(meta(submitRef)) : undefined;
+      const submit = submitRef ? clickTarget(meta(submitRef), page) : undefined;
       if (declared || submit)
         return { scope: SCOPES.commit, reason: declared ?? `submitting: ${submit}` };
       if (secret)

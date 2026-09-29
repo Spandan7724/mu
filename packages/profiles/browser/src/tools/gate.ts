@@ -55,7 +55,12 @@ export function scopeFor(
   args: Record<string, unknown>,
 ): string {
   const tab = deps.browser.currentTab();
-  const { scope } = classify({ tool, args, meta: (ref) => tab?.refs.meta(ref) });
+  const { scope } = classify({
+    tool,
+    args,
+    meta: (ref) => tab?.refs.meta(ref),
+    page: tab ? { url: tab.url, title: tab.title } : undefined,
+  });
   const retry = deps.browser.approvedRetry;
   if (scope === "browser:commit" && retry?.url === tab?.url && retry?.key === retryKey(tool, args))
     return "browser:interact";
@@ -84,7 +89,12 @@ export async function detailsFor(
   const tab = deps.browser.currentTab();
   const meta = (ref: string) => tab?.refs.meta(ref);
   const label = (ref: string) => tab?.refs.label(ref) ?? ref;
-  const { scope, reason } = classify({ tool, args, meta });
+  const { scope, reason } = classify({
+    tool,
+    args,
+    meta,
+    page: tab ? { url: tab.url, title: tab.title } : undefined,
+  });
   const lines: string[] = [];
   const title = tab?.title || "(untitled)";
   lines.push(`page: ${title} — ${hostOf(tab?.url ?? "")}`);
