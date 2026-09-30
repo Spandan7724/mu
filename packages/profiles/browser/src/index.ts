@@ -16,7 +16,7 @@ import {
   loadRememberedPermissions,
   rememberAllow,
 } from "./agent/permissions.ts";
-import { BROWSER_SIDE_BOUNDARY, browserPrompt } from "./agent/prompts.ts";
+import { BROWSER_SIDE_BOUNDARY, BROWSER_TASK_PROMPT, browserPrompt } from "./agent/prompts.ts";
 import { BrowserState, type CommitLedger, formatNotes, type NotesStore } from "./agent/state.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
@@ -152,52 +152,56 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   });
   let activeModel: string | undefined;
   const state = new BrowserState();
-  const deps = {
-    browser,
-    config,
-    vision: () => visionEnabled(config.vision, activeModel),
-    notes: () => formatNotes(state.notes.entries()),
-  };
-  const interaction = interactionTools(deps);
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const todos = new TodoStore();
-  const rawTools: AnyTool[] = [
-    navigateTool(deps),
-    interaction.click,
-    interaction.type,
-    interaction.fill,
-    interaction.select,
-    interaction.press,
-    interaction.scroll,
-    interaction.hover,
-    interaction.drag,
-    interaction.upload,
-    interaction.dialog,
-    tabsTool(deps),
-    snapshotTool(deps),
-    screenshotTool(deps),
-    readPageTool(deps),
-    findTool(deps),
-    interaction.wait,
-    interaction.evaluate,
-    interaction.clickXy,
-    interaction.downloads,
-    todoTool(todos),
-    notesTool(state),
-    ...fileTools(config.workspace),
-    delegateTool({
-      command: config.codingCommand,
-      workspace: config.workspace,
-      model: () => activeModel,
-      pageText: (text) => browser.dataflow.leak(text, "")?.from,
-    }),
-  ] as AnyTool[];
-  const toolset = rawTools.map((candidate) =>
-    observingDataFlow(
-      redacting(recordingCommits(candidate, browser, state), browser.secrets),
-      browser,
-    ),
-  );
+  // One agent's tools over one lane of the browser: the main agent's, or a sub-task's.
+  const toolsFor = (lane: BrowserManager, laneState: BrowserState, laneTodos: TodoStore) => {
+    const deps = {
+      browser: lane,
+      config,
+      vision: () => visionEnabled(config.vision, activeModel),
+      notes: () => formatNotes(laneState.notes.entries()),
+    };
+    const interaction = interactionTools(deps);
+    const rawTools: AnyTool[] = [
+      navigateTool(deps),
+      interaction.click,
+      interaction.type,
+      interaction.fill,
+      interaction.select,
+      interaction.press,
+      interaction.scroll,
+      interaction.hover,
+      interaction.drag,
+      interaction.upload,
+      interaction.dialog,
+      tabsTool(deps),
+      snapshotTool(deps),
+      screenshotTool(deps),
+      readPageTool(deps),
+      findTool(deps),
+      interaction.wait,
+      interaction.evaluate,
+      interaction.clickXy,
+      interaction.downloads,
+      todoTool(laneTodos),
+      notesTool(laneState),
+      ...fileTools(config.workspace),
+      delegateTool({
+        command: config.codingCommand,
+        workspace: config.workspace,
+        model: () => activeModel,
+        pageText: (text) => lane.dataflow.leak(text, "")?.from,
+      }),
+    ] as AnyTool[];
+    return rawTools.map((candidate) =>
+      observingDataFlow(
+        redacting(recordingCommits(candidate, lane, laneState), lane.secrets),
+        lane,
+      ),
+    );
+  };
+  const toolset = toolsFor(browser, state, todos);
   const runtime: ProfileRuntime = {
     attach: () => {},
     stop: () => browser.stop(),
@@ -251,6 +255,30 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,
+    // Each task subagent works in a lane of its own: its own window and tabs, notes
+    // and todo list, with the session's ledger, secrets and data-flow record.
+    subagents: {
+      inspectionTools: [],
+      taskSession: async (description, signal) => {
+        const lane = await browser.openLane(description, signal);
+        const laneState = new BrowserState(state.ledger);
+        return {
+          tools: toolsFor(lane, laneState, new TodoStore()),
+          prompt: BROWSER_TASK_PROMPT,
+          // The brief is written by the main agent, possibly from page text, so it
+          // never counts as the user's own words for the data-flow check.
+          refreshContext: async (messages) => [
+            ...(messages.some(
+              (message) => message.role === "custom" && message.customType === "environment",
+            )
+              ? []
+              : [environmentMessage({ ...(await environment()), subTask: description })]),
+            ...laneState.snapshotIfChanged(messages),
+          ],
+          close: () => lane.release(),
+        };
+      },
+    },
     commands: browserCommands(browser, state.ledger),
     // What compaction must not lose: where the browser is, the plan, collected data, and
     // every consequential action already performed.

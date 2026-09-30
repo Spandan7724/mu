@@ -105,8 +105,11 @@ function parseSnapshot(message: CustomMessage): Snapshot | undefined {
 // (kept across compaction by its retention key) plus the tool results after it.
 export class BrowserState {
   readonly notes = new NotesStore();
-  readonly ledger = new CommitLedger();
   sessionId: string | undefined;
+
+  // Parallel sub-tasks keep their own notes but share one ledger, so no agent of
+  // the session repeats a send another one made.
+  constructor(readonly ledger: CommitLedger = new CommitLedger()) {}
 
   rebuild(messages: AgentMessage[]): void {
     let notes: NoteEntry[] = [];

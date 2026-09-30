@@ -10,6 +10,8 @@ export interface TabInfo {
   title: string;
   active: boolean;
   openedByAgent: boolean;
+  // A finished sub-task left this tab open for the user.
+  leftBy?: string;
 }
 
 export interface JsDialog {

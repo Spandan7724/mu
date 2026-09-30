@@ -10,7 +10,7 @@ export function formatTabs(tabs: TabInfo[]): string {
   return tabs
     .map(
       (tab) =>
-        `${tab.active ? "*" : " "} ${tab.tabId} ${JSON.stringify(tab.title || "(untitled)")} ${tab.url}${tab.openedByAgent ? "" : " (user tab)"}`,
+        `${tab.active ? "*" : " "} ${tab.tabId} ${JSON.stringify(tab.title || "(untitled)")} ${tab.url}${tab.leftBy ? ` (left open by sub-task ${JSON.stringify(tab.leftBy)})` : tab.openedByAgent ? "" : " (user tab)"}`,
     )
     .join("\n");
 }

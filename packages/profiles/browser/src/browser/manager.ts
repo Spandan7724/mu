@@ -55,31 +55,61 @@ interface PageTarget {
   openedByAgent: boolean;
   createdAt: number;
   lastUsed: number;
+  // The lane whose agent may use this tab.
+  owner: string;
+  // A finished sub-task left this tab open for the user.
+  leftBy?: string | undefined;
 }
 
 const MAX_LIVE_TABS = 3;
 const MAX_AGENT_TABS = 4;
+// Sub-tasks with a browser lane at once; more wait for one to finish.
+export const MAX_LANES = 3;
+const MAIN = "main";
+// A lane's new tab starts on this URL, so its owner is known from its first event.
+const LANE_MARK = /^about:blank#mu-(lane-\d+)$/;
 
 const BLANK_URLS = new Set(["about:blank", "chrome://newtab/", "chrome://new-tab-page/", ""]);
 
-// Owns the one browser connection of a session: lazy connect, tab tracking,
-// the active tab the agent operates on, and recovery after disconnects.
-export class BrowserManager {
-  private connected: ConnectedBrowser | undefined;
-  private connecting: Promise<ConnectedBrowser> | undefined;
-  private readonly pages = new Map<string, PageTarget>();
-  private readonly attached = new Map<string, Tab>();
-  private readonly attaching = new Map<string, Promise<Tab>>();
-  private readonly tabIds = new Map<string, string>();
-  private nextTab = 1;
-  private activeTargetId: string | undefined;
-  private notices: string[] = [];
-  private closingIntentionally = false;
-  private product: { product: string; version: string; executable?: string } | undefined;
-  private abort = new AbortController();
+// Everything the lanes of one browser session share: the connection, every tab,
+// downloads, secrets and the cross-site data record.
+class SharedBrowser {
+  connected: ConnectedBrowser | undefined;
+  connecting: Promise<ConnectedBrowser> | undefined;
+  readonly pages = new Map<string, PageTarget>();
+  readonly attached = new Map<string, Tab>();
+  readonly attaching = new Map<string, Promise<Tab>>();
+  readonly tabIds = new Map<string, string>();
+  nextTab = 1;
+  nextLane = 1;
+  closingIntentionally = false;
+  product: { product: string; version: string; executable?: string } | undefined;
+  abort = new AbortController();
+  readonly lanes = new Set<BrowserManager>();
+  readonly waiting = new Set<() => void>();
   readonly downloads: DownloadTracker;
   readonly secrets = new SecretRegistry();
   readonly dataflow = new DataFlowGuard();
+
+  constructor(downloadsDir: string | undefined) {
+    const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
+    this.downloads = new DownloadTracker(
+      join(downloadsDir ?? join(tmpdir(), "mu-browser-downloads"), run),
+    );
+  }
+}
+
+// One agent's view of the session's browser: the tabs it owns, the active tab it
+// operates on, and its observation bookkeeping. The main agent's manager owns the
+// connection; each parallel sub-task gets a lane (openLane) whose tabs open in
+// their own windows, so every lane's active tab stays visible and receives input.
+export class BrowserManager {
+  private readonly shared: SharedBrowser;
+  readonly laneId: string;
+  // The sub-task this lane runs, shown in approvals; undefined for the main agent.
+  readonly label: string | undefined;
+  private activeTargetId: string | undefined;
+  private notices: string[] = [];
   // Observations since one last carried a screenshot.
   withoutScreenshot = 0;
   // Tab switches in a row with no other browser action in between.
@@ -89,29 +119,55 @@ export class BrowserManager {
   // Which tab owns each live-observation slot, least recently observed first.
   private slots: { slot: number; tabId: string }[] = [];
 
-  constructor(readonly options: BrowserManagerOptions) {
-    const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
-    this.downloads = new DownloadTracker(
-      join(options.downloadsDir ?? join(tmpdir(), "mu-browser-downloads"), run),
-    );
+  constructor(
+    readonly options: BrowserManagerOptions,
+    shared?: SharedBrowser,
+    lane?: { id: string; label: string },
+  ) {
+    this.shared = shared ?? new SharedBrowser(options.downloadsDir);
+    this.laneId = lane?.id ?? MAIN;
+    this.label = lane?.label;
+    this.shared.lanes.add(this);
+  }
+
+  get downloads(): DownloadTracker {
+    return this.shared.downloads;
+  }
+
+  get secrets(): SecretRegistry {
+    return this.shared.secrets;
+  }
+
+  get dataflow(): DataFlowGuard {
+    return this.shared.dataflow;
+  }
+
+  private get pages(): Map<string, PageTarget> {
+    return this.shared.pages;
+  }
+
+  private get attached(): Map<string, Tab> {
+    return this.shared.attached;
   }
 
   get isConnected(): boolean {
-    return this.connected !== undefined && !this.connected.connection.isClosed;
+    const connected = this.shared.connected;
+    return connected !== undefined && !connected.connection.isClosed;
   }
 
   get connection(): CdpConnection | undefined {
-    return this.connected?.connection;
+    return this.shared.connected?.connection;
   }
 
-  // Combines a tool's signal with the manager's stop signal.
+  // Combines a tool's signal with the session's stop signal.
   actionSignal(signal?: AbortSignal): AbortSignal {
-    return signal ? AbortSignal.any([signal, this.abort.signal]) : this.abort.signal;
+    const stop = this.shared.abort.signal;
+    return signal ? AbortSignal.any([signal, stop]) : stop;
   }
 
   stop(): void {
-    this.abort.abort();
-    this.abort = new AbortController();
+    this.shared.abort.abort();
+    this.shared.abort = new AbortController();
   }
 
   drainNotices(): string[] {
@@ -121,16 +177,18 @@ export class BrowserManager {
   }
 
   async ensureConnected(signal?: AbortSignal): Promise<CdpConnection> {
-    if (this.isConnected && this.connected) return this.connected.connection;
-    if (!this.connecting) {
-      this.connecting = this.connect(signal).finally(() => {
-        this.connecting = undefined;
+    const shared = this.shared;
+    if (this.isConnected && shared.connected) return shared.connected.connection;
+    if (!shared.connecting) {
+      shared.connecting = this.connect(signal).finally(() => {
+        shared.connecting = undefined;
       });
     }
-    return (await this.connecting).connection;
+    return (await shared.connecting).connection;
   }
 
   private async connect(signal?: AbortSignal): Promise<ConnectedBrowser> {
+    const shared = this.shared;
     const connected =
       this.options.connect === "cdp"
         ? await connectToEndpoint(this.requireCdpUrl(), { signal })
@@ -145,10 +203,10 @@ export class BrowserManager {
             signal,
           });
     const { connection } = connected;
-    this.closingIntentionally = false;
-    this.pages.clear();
-    this.attached.clear();
-    this.activeTargetId = undefined;
+    shared.closingIntentionally = false;
+    shared.pages.clear();
+    shared.attached.clear();
+    for (const lane of shared.lanes) lane.activeTargetId = undefined;
     connection.on("Target.targetCreated", (event) => this.trackTarget(event.targetInfo));
     connection.on("Target.targetInfoChanged", (event) => this.trackTarget(event.targetInfo));
     connection.on("Target.targetDestroyed", (event) => this.forgetTarget(event.targetId));
@@ -158,11 +216,11 @@ export class BrowserManager {
         connection.send("Browser.getVersion", undefined, { signal }),
         connection.send("Target.getTargets", undefined, { signal }),
         connection.send("Target.setDiscoverTargets", { discover: true }, { signal }),
-        this.downloads.attach(connection, signal),
+        shared.downloads.attach(connection, signal),
       ]);
       for (const info of targetInfos) this.trackTarget(info);
       const [product, number] = version.product.split("/");
-      this.product = {
+      shared.product = {
         product: connected.browser?.product ?? product ?? version.product,
         version: number ?? connected.browser?.version ?? "unknown",
         ...(connected.browser ? { executable: connected.browser.path } : {}),
@@ -171,7 +229,7 @@ export class BrowserManager {
       await connection.close();
       throw error;
     }
-    this.connected = connected;
+    shared.connected = connected;
     return connected;
   }
 
@@ -181,23 +239,26 @@ export class BrowserManager {
   }
 
   private onDisconnect(connection: CdpConnection, reason: string): void {
-    if (this.connected?.connection !== connection) return;
-    this.connected = undefined;
-    for (const tab of this.attached.values()) tab.dispose();
-    this.attached.clear();
-    this.activeTargetId = undefined;
-    if (!this.closingIntentionally) {
-      this.notices.push(
-        `The browser disconnected (${reason}); it was reconnected for this action. Open tabs may have changed — check the page before continuing.`,
-      );
+    const shared = this.shared;
+    if (shared.connected?.connection !== connection) return;
+    shared.connected = undefined;
+    for (const tab of shared.attached.values()) tab.dispose();
+    shared.attached.clear();
+    for (const lane of shared.lanes) {
+      lane.activeTargetId = undefined;
+      if (!shared.closingIntentionally) {
+        lane.notices.push(
+          `The browser disconnected (${reason}); it was reconnected for this action. Open tabs may have changed — check the page before continuing.`,
+        );
+      }
     }
   }
 
   private tabIdFor(targetId: string): string {
-    let tabId = this.tabIds.get(targetId);
+    let tabId = this.shared.tabIds.get(targetId);
     if (!tabId) {
-      tabId = `t${this.nextTab++}`;
-      this.tabIds.set(targetId, tabId);
+      tabId = `t${this.shared.nextTab++}`;
+      this.shared.tabIds.set(targetId, tabId);
     }
     return tabId;
   }
@@ -205,15 +266,24 @@ export class BrowserManager {
   private trackTarget(info: Protocol.Target.TargetInfo): void {
     if (info.type !== "page") return;
     const existing = this.pages.get(info.targetId);
+    const openerId = info.openerId ?? existing?.openerId;
+    // A popup belongs to the lane whose tab opened it; tabs the user opens, to the main agent.
+    const owner =
+      existing?.owner ??
+      LANE_MARK.exec(info.url)?.[1] ??
+      (openerId ? this.pages.get(openerId)?.owner : undefined) ??
+      MAIN;
     const page: PageTarget = {
       targetId: info.targetId,
       tabId: this.tabIdFor(info.targetId),
       url: info.url,
       title: info.title,
-      openerId: info.openerId ?? existing?.openerId,
+      openerId,
       openedByAgent: existing?.openedByAgent ?? false,
       createdAt: existing?.createdAt ?? Date.now(),
       lastUsed: existing?.lastUsed ?? Date.now(),
+      owner,
+      leftBy: existing?.leftBy,
     };
     this.pages.set(info.targetId, page);
     const tab = this.attached.get(info.targetId);
@@ -246,6 +316,13 @@ export class BrowserManager {
 
   private forgetTarget(targetId: string): void {
     const closedTab = this.pages.get(targetId)?.tabId;
+    for (const lane of this.shared.lanes) lane.targetGone(targetId, closedTab);
+    this.pages.delete(targetId);
+    this.attached.get(targetId)?.dispose();
+    this.attached.delete(targetId);
+  }
+
+  private targetGone(targetId: string, closedTab: string | undefined): void {
     // A closed tab's slot goes to the front, so the next new tab reuses it and its
     // last observation collapses.
     const freed = this.slots.findIndex((entry) => entry.tabId === closedTab);
@@ -253,9 +330,6 @@ export class BrowserManager {
       const [entry] = this.slots.splice(freed, 1);
       if (entry) this.slots.unshift({ ...entry, tabId: `closed:${closedTab}` });
     }
-    this.pages.delete(targetId);
-    this.attached.get(targetId)?.dispose();
-    this.attached.delete(targetId);
     if (this.activeTargetId === targetId) {
       this.activeTargetId = undefined;
       this.notices.push("The active tab was closed.");
@@ -267,17 +341,25 @@ export class BrowserManager {
     return this.activeTargetId ? this.attached.get(this.activeTargetId) : undefined;
   }
 
+  private own(page: PageTarget): boolean {
+    return page.owner === this.laneId;
+  }
+
+  private info(page: PageTarget): TabInfo {
+    const tab = this.attached.get(page.targetId);
+    return {
+      tabId: page.tabId,
+      url: tab?.url ?? page.url,
+      title: tab?.title ?? page.title,
+      active: page.targetId === this.activeTargetId,
+      openedByAgent: page.openedByAgent,
+      ...(page.leftBy ? { leftBy: page.leftBy } : {}),
+    };
+  }
+
+  // The tabs this agent may use: its own. Other lanes' tabs are invisible to it.
   tabs(): TabInfo[] {
-    return [...this.pages.values()].map((page) => {
-      const tab = this.attached.get(page.targetId);
-      return {
-        tabId: page.tabId,
-        url: tab?.url ?? page.url,
-        title: tab?.title ?? page.title,
-        active: page.targetId === this.activeTargetId,
-        openedByAgent: page.openedByAgent,
-      };
-    });
+    return [...this.pages.values()].filter((page) => this.own(page)).map((page) => this.info(page));
   }
 
   // Pages opened after `since` by one of the given tabs (popups, target=_blank).
@@ -287,19 +369,13 @@ export class BrowserManager {
         (page) =>
           page.createdAt >= since && page.openerId && openerTargetIds.includes(page.openerId),
       )
-      .map((page) => ({
-        tabId: page.tabId,
-        url: page.url,
-        title: page.title,
-        active: page.targetId === this.activeTargetId,
-        openedByAgent: page.openedByAgent,
-      }));
+      .map((page) => ({ ...this.info(page), url: page.url, title: page.title }));
   }
 
   private async attach(targetId: string, signal?: AbortSignal): Promise<Tab> {
     const existing = this.attached.get(targetId);
     if (existing && !existing.detached) return existing;
-    const pending = this.attaching.get(targetId);
+    const pending = this.shared.attaching.get(targetId);
     if (pending) return pending;
     const page = this.pages.get(targetId);
     if (!page) throw new Error(`No such tab (${targetId})`);
@@ -313,12 +389,22 @@ export class BrowserManager {
       signal,
       this.options.headless ? this.options.viewport : undefined,
     )
-      .then((tab) => {
+      .then(async (tab) => {
+        // Only one window has focus, and a sub-task's window rarely does; pages
+        // that check focus (blur validation, focus-gated widgets) must still work.
+        if (page.owner !== MAIN)
+          await tab.session
+            .send(
+              "Emulation.setFocusEmulationEnabled",
+              { enabled: true },
+              { signal, timeoutMs: 3_000 },
+            )
+            .catch(() => {});
         this.attached.set(targetId, tab);
         return tab;
       })
-      .finally(() => this.attaching.delete(targetId));
-    this.attaching.set(targetId, promise);
+      .finally(() => this.shared.attaching.delete(targetId));
+    this.shared.attaching.set(targetId, promise);
     return promise;
   }
 
@@ -330,7 +416,11 @@ export class BrowserManager {
       if (tab.crashed) await this.recoverCrashed(tab, signal);
       return tab;
     }
-    const blank = [...this.pages.values()].find((page) => BLANK_URLS.has(page.url));
+    // The main agent starts in the browser's empty tab; a sub-task in a window of its own.
+    const blank =
+      this.laneId === MAIN
+        ? [...this.pages.values()].find((page) => this.own(page) && BLANK_URLS.has(page.url))
+        : undefined;
     if (blank) {
       blank.openedByAgent = true;
       this.activeTargetId = blank.targetId;
@@ -367,10 +457,12 @@ export class BrowserManager {
     await tab.session.send("Page.reload", {}, { signal }).catch(() => {});
   }
 
-  // Keeps the user's window tidy: past MAX_AGENT_TABS, the agent tab used least
-  // recently is closed (never a tab the user opened) and the agent is told.
+  // Keeps the user's window tidy: past MAX_AGENT_TABS, this agent's tab used least
+  // recently is closed (never a tab the user opened or another lane's) and the agent is told.
   private async closeStaleAgentTab(signal?: AbortSignal): Promise<void> {
-    const agentTabs = [...this.pages.values()].filter((page) => page.openedByAgent);
+    const agentTabs = [...this.pages.values()].filter(
+      (page) => page.openedByAgent && this.own(page),
+    );
     if (agentTabs.length < MAX_AGENT_TABS) return;
     const stale = agentTabs
       .filter((page) => page.targetId !== this.activeTargetId)
@@ -393,23 +485,26 @@ export class BrowserManager {
   async openTab(url?: string, signal?: AbortSignal): Promise<Tab> {
     const connection = await this.ensureConnected(signal);
     await this.closeStaleAgentTab(signal);
-    const { targetId } = await connection.send(
-      "Target.createTarget",
-      { url: url ?? "about:blank" },
-      { signal },
-    );
+    const params =
+      this.laneId === MAIN
+        ? { url: url ?? "about:blank" }
+        : { url: url ?? `about:blank#mu-${this.laneId}`, newWindow: true };
+    const { targetId } = await connection.send("Target.createTarget", params, { signal });
     if (!this.pages.has(targetId)) {
       this.trackTarget({
         targetId,
         type: "page",
-        url: url ?? "about:blank",
+        url: params.url,
         title: "",
         attached: false,
         canAccessOpener: false,
       });
     }
     const page = this.pages.get(targetId);
-    if (page) page.openedByAgent = true;
+    if (page) {
+      page.openedByAgent = true;
+      page.owner = this.laneId;
+    }
     this.activeTargetId = targetId;
     this.touch(targetId);
     return this.attach(targetId, signal);
@@ -417,6 +512,12 @@ export class BrowserManager {
 
   private targetFor(tabId: string): PageTarget {
     const page = [...this.pages.values()].find((candidate) => candidate.tabId === tabId);
+    if (page && !this.own(page)) {
+      const lane = [...this.shared.lanes].find((candidate) => candidate.laneId === page.owner);
+      throw new Error(
+        `Tab ${tabId} belongs to ${lane?.label ? `the sub-task "${lane.label}"` : "the main agent"}; use your own tabs`,
+      );
+    }
     if (!page) {
       const known = this.tabs()
         .map((tab) => tab.tabId)
@@ -447,17 +548,74 @@ export class BrowserManager {
     if (wasActive) this.activeTargetId = undefined;
     this.forgetTarget(page.targetId);
     if (wasActive) {
-      const remaining = [...this.pages.values()].sort(
-        (a, b) => Number(b.openedByAgent) - Number(a.openedByAgent) || b.createdAt - a.createdAt,
-      );
+      const remaining = [...this.pages.values()]
+        .filter((candidate) => this.own(candidate))
+        .sort(
+          (a, b) => Number(b.openedByAgent) - Number(a.openedByAgent) || b.createdAt - a.createdAt,
+        );
       this.activeTargetId = remaining[0]?.targetId;
     }
     this.notices = this.notices.filter((notice) => notice !== "The active tab was closed.");
   }
 
+  // A lane for one parallel sub-task, once fewer than MAX_LANES are running.
+  async openLane(label: string, signal: AbortSignal): Promise<BrowserManager> {
+    const running = () => [...this.shared.lanes].filter((lane) => lane.laneId !== MAIN).length;
+    while (running() >= MAX_LANES) await this.laneFreed(signal);
+    return new BrowserManager(this.options, this.shared, {
+      id: `lane-${this.shared.nextLane++}`,
+      label,
+    });
+  }
+
+  private laneFreed(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const onAbort = () => {
+        this.shared.waiting.delete(freed);
+        reject(signal.reason ?? new Error("cancelled"));
+      };
+      const freed = () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      if (signal.aborted) return onAbort();
+      this.shared.waiting.add(freed);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  // Ends a sub-task's lane: empty tabs close; tabs it left open stay for the user,
+  // listed for the main agent as left by that sub-task.
+  async release(): Promise<void> {
+    if (this.laneId === MAIN || !this.shared.lanes.delete(this)) return;
+    const empty: string[] = [];
+    for (const page of this.pages.values()) {
+      if (!this.own(page)) continue;
+      if (LANE_MARK.test(page.url) || BLANK_URLS.has(page.url)) {
+        empty.push(page.targetId);
+        continue;
+      }
+      page.owner = MAIN;
+      page.openedByAgent = false;
+      page.leftBy = this.label;
+    }
+    await Promise.all(
+      empty.map((targetId) =>
+        this.connection
+          ?.send("Target.closeTarget", { targetId }, { timeoutMs: 3_000 })
+          .catch(() => {}),
+      ),
+    );
+    const [next] = this.shared.waiting;
+    if (next) {
+      this.shared.waiting.delete(next);
+      next();
+    }
+  }
+
   status(): BrowserStatus {
     const active = this.tabs().find((tab) => tab.active);
-    const endpoint = this.connected?.endpoint;
+    const endpoint = this.shared.connected?.endpoint;
     return {
       mode: this.options.connect,
       profile: this.options.profileName,
@@ -466,19 +624,21 @@ export class BrowserManager {
       connected: this.isConnected,
       launched: endpoint?.launched ?? false,
       ...(endpoint?.pid ? { pid: endpoint.pid } : {}),
-      ...(this.product ?? {}),
+      ...(this.shared.product ?? {}),
       headless: this.options.headless,
-      tabs: this.pages.size,
+      tabs: this.tabs().length,
       ...(active ? { activeTab: active } : {}),
     };
   }
 
   async shutdown(options: { close?: boolean } = {}): Promise<void> {
+    if (this.laneId !== MAIN) return this.release();
     this.stop();
-    const connected = this.connected;
+    const shared = this.shared;
+    const connected = shared.connected;
     if (!connected) return;
     const close = options.close ?? !this.options.keepOpen;
-    this.closingIntentionally = true;
+    shared.closingIntentionally = true;
     const { connection } = connected;
     const timeouts = { timeoutMs: 2_000 };
     if (close && this.options.connect === "managed") {
@@ -502,9 +662,9 @@ export class BrowserManager {
       );
     }
     await connection.close();
-    this.connected = undefined;
+    shared.connected = undefined;
     this.attached.clear();
-    this.activeTargetId = undefined;
+    for (const lane of shared.lanes) lane.activeTargetId = undefined;
   }
 }
 

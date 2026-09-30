@@ -96,6 +96,7 @@ export async function detailsFor(
     page: tab ? { url: tab.url, title: tab.title } : undefined,
   });
   const lines: string[] = [];
+  if (deps.browser.label) lines.push(`sub-task: ${deps.browser.label}`);
   const title = tab?.title || "(untitled)";
   lines.push(`page: ${title} — ${hostOf(tab?.url ?? "")}`);
   const ref = typeof args.ref === "string" ? args.ref : undefined;
