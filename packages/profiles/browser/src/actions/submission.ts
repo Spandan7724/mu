@@ -30,9 +30,15 @@ const SUMMARIZE = `function (maxLines) {
     if (!email) return name;
     return name && name.toLowerCase().indexOf(email.toLowerCase()) < 0 ? name + " <" + email + ">" : email;
   }
-  // Chips sit beside their input, inside the nearest container that holds no other field.
+  // Chips sit beside their recipient-style input, inside the nearest container that
+  // holds no other field. Hidden chips count: Gmail hides the whole To row, chips
+  // included, once another field has focus.
+  function recipientField(f) {
+    return f.tagName.toLowerCase() === "input" &&
+      (f.getAttribute("role") === "combobox" || f.hasAttribute("aria-autocomplete") || f.hasAttribute("list"));
+  }
   function chipsOf(f) {
-    if (f.tagName.toLowerCase() !== "input") return [];
+    if (!recipientField(f)) return [];
     var popups = ["aria-controls", "aria-owns"].map(function (a) { return document.getElementById(f.getAttribute(a) || ""); }).filter(Boolean);
     var box = f;
     for (var k = 0; k < 5 && box.parentElement; k++) {
@@ -43,7 +49,7 @@ const SUMMARIZE = `function (maxLines) {
       var found = box.querySelectorAll(CHIP);
       for (var i = 0; i < found.length; i++) {
         var c = found[i];
-        if (!visible(c) || popups.some(function (p) { return p.contains(c); })) continue;
+        if (popups.some(function (p) { return p.contains(c); })) continue;
         var outer = c.parentElement && c.parentElement.closest(CHIP);
         if (outer && box.contains(outer)) continue;
         var text = clean(chipText(c), 80);
@@ -62,7 +68,9 @@ const SUMMARIZE = `function (maxLines) {
       if (type === "file") {
         value = Array.prototype.map.call(f.files || [], function (file) { return file.name; }).join(", ");
       } else if (!visible(f)) {
-        continue;
+        // A collapsed recipient row still sends its chips and any address typed but not yet turned into one.
+        if (!recipientField(f)) continue;
+        value = clean(chipsOf(f).concat(f.value.trim() ? [f.value] : []).join(", "), 240);
       } else if (type === "checkbox" || type === "radio") {
         if (!f.checked) continue;
         value = type === "radio" ? clean((f.labels && f.labels[0] && f.labels[0].innerText) || f.value, 50) : "checked";

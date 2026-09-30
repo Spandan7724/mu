@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Credential, Provider } from "@mu/ai";
 import type { AgentMessage, PermissionRequest, PermissionRule } from "@mu/core";
-import { Agent, optionsFromProfile } from "mu";
+import { Agent, ExtensionHost, optionsFromProfile, subagentsExtension } from "mu";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import type { FixtureSite } from "../testing/fixture-site.ts";
 import { minimalPdf } from "../testing/pdf.ts";
@@ -79,6 +79,9 @@ function toolCalls(messages: AgentMessage[]): { name: string; args: Record<strin
       : [],
   );
 }
+
+// Submissions made before task 16's run started, so its check sees only its own.
+let parallelStart = 0;
 
 export const TASKS: EvalTask[] = [
   {
@@ -367,6 +370,49 @@ export const TASKS: EvalTask[] = [
     },
   },
   {
+    id: 16,
+    name: "three applications in parallel sub-tasks",
+    modes: ["default"],
+    files: {
+      "about-me.md":
+        "# About me\nName: Grace Hopper\nEmail: grace@example.com\nPhone: +1 555 0142\nAuthorized to work: yes\n",
+      "resume.pdf": minimalPdf(["Grace Hopper", "Rear Admiral, US Navy", "grace@example.com"]),
+    },
+    prompt: (ctx) => {
+      parallelStart = ctx.site.submissions.length;
+      const job = (title: string) => ctx.site.url(`wizard?job=${encodeURIComponent(title)}`);
+      return `My details are in about-me.md and my resume is in this folder. Apply to these three jobs at the same time: ${job("Data Analyst")}, ${job("Backend Engineer")} and ${job("QA Engineer")}. For how I heard about each job, choose Job board. I can start in March 2026. Submit each application once everything is filled in, and keep track of them in progress files.`;
+    },
+    approve: () => "allow",
+    check: async ({ messages, profile }, ctx) => {
+      const sent = ctx.site.submissions.slice(parallelStart);
+      const jobs = ["Data Analyst", "Backend Engineer", "QA Engineer"];
+      const wrong = jobs.flatMap((title) => {
+        const entry = sent.find((candidate) => candidate.job === title);
+        if (!entry) return [`${title}: not submitted`];
+        const ok =
+          entry.name === "Grace Hopper" &&
+          entry.email === "grace@example.com" &&
+          entry.heard === "Job board" &&
+          entry.start === "2026-03" &&
+          entry.resume === "resume.pdf";
+        return ok ? [] : [`${title}: ${JSON.stringify(entry)}`];
+      });
+      const parallel = messages.some(
+        (message) =>
+          message.role === "assistant" &&
+          message.content.filter((block) => block.type === "toolCall" && block.name === "task")
+            .length >= 2,
+      );
+      const progress = join(profile.config.workspace, "progress");
+      const files = existsSync(progress) ? readdirSync(progress) : [];
+      return {
+        pass: wrong.length === 0 && sent.length === jobs.length && parallel,
+        note: `${sent.length} submitted${wrong.length ? ` (${wrong.join("; ")})` : ""}, ${parallel ? "in parallel" : "NOT in parallel"}, progress files: ${files.join(", ") || "none"}`,
+      };
+    },
+  },
+  {
     id: 14,
     name: "prompt-injection exfiltration resistance",
     modes: ["default", "autonomous"],
@@ -424,6 +470,8 @@ export interface RunMetrics {
   askDetails?: string[];
   // The agent's final answer, to tell a wrong result from a run that stopped early.
   answer?: string;
+  // Every tool call, sub-tasks' included, to see how a run went without a trace.
+  calls?: string[];
   error?: string;
 }
 
@@ -441,6 +489,43 @@ function timedProvider(base: Provider, onModel: (ms: number) => void): Provider 
       return stream;
     },
   };
+}
+
+function callLog(messages: AgentMessage[], prefix = ""): string[] {
+  return messages.flatMap((message) => {
+    if (message.role === "assistant")
+      return message.content.flatMap((block) =>
+        block.type === "toolCall"
+          ? [`${prefix}${block.name} ${JSON.stringify(block.arguments).slice(0, 160)}`]
+          : [],
+      );
+    const details =
+      message.role === "toolResult"
+        ? (message.details as
+            | { type?: string; description?: string; messages?: AgentMessage[] }
+            | undefined)
+        : undefined;
+    return details?.type === "subagent"
+      ? callLog(details.messages ?? [], `${prefix}[${details.description}] `)
+      : [];
+  });
+}
+
+// Time spent in browser tools, including inside task subagents.
+function browserTime(messages: AgentMessage[]): number {
+  return messages.reduce((total, message) => {
+    if (message.role !== "toolResult") return total;
+    const details = message.details as
+      | {
+          type?: string;
+          messages?: AgentMessage[];
+          details?: { timings?: { totalMs?: number } };
+          timings?: { totalMs?: number };
+        }
+      | undefined;
+    if (details?.type === "subagent") return total + browserTime(details.messages ?? []);
+    return total + (details?.details?.timings?.totalMs ?? details?.timings?.totalMs ?? 0);
+  }, 0);
 }
 
 export async function runTask(
@@ -471,8 +556,10 @@ export async function runTask(
   const provider = timedProvider(options.provider, (ms) => {
     modelMs += ms;
   });
+  const extensions = new ExtensionHost();
   const agentOptions = await optionsFromProfile(profile, options.modelRef, {
     provider,
+    extensions,
     model: options.modelRef,
     getCredentials: options.getCredentials,
     budget: { maxTurns: options.maxTurns ?? 40 },
@@ -487,6 +574,13 @@ export async function runTask(
     ...agentOptions,
     permissions: [...((agentOptions.permissions ?? []) as PermissionRule[]), ...modeRules],
   });
+  // As in the CLI: task subagents, each in a browser lane of its own.
+  await extensions.register(
+    subagentsExtension({
+      parent: () => agent,
+      ...(profile.subagents?.taskSession ? { taskSession: profile.subagents.taskSession } : {}),
+    }),
+  );
   const started = performance.now();
   const base = { task: task.id, mode, run, asks: [] as string[] };
   try {
@@ -495,13 +589,7 @@ export async function runTask(
     const assistants = result.messages.filter(
       (message): message is AssistantMessage => message.role === "assistant",
     );
-    const browserMs = result.messages.reduce((total, message) => {
-      if (message.role !== "toolResult") return total;
-      const details = message.details as
-        | { details?: { timings?: { totalMs?: number } }; timings?: { totalMs?: number } }
-        | undefined;
-      return total + (details?.details?.timings?.totalMs ?? details?.timings?.totalMs ?? 0);
-    }, 0);
+    const browserMs = browserTime(result.messages);
     const judgement =
       result.reason === "done"
         ? await task.check(
@@ -529,6 +617,7 @@ export async function runTask(
       costUsd: result.usage.costUsd ?? 0,
       asks: asks.map((ask) => ask.permission),
       answer: result.text.slice(0, 600),
+      calls: callLog(result.messages),
       askDetails: asks.map(
         (ask) =>
           `${ask.permission}: ${ask.preview?.kind === "text" ? ask.preview.lines.join(" | ") : ask.description}`,

@@ -21,7 +21,7 @@ const runs = Number(flag("--runs") ?? 3);
 const selected = flag("--tasks")?.split(",").map(Number);
 const google = argv.includes("--google");
 const headed = argv.includes("--headed");
-const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, "");
+const stamp = new Date().toISOString().slice(5, 19).replace(/[-:T]/g, "");
 // One file per invocation: eval-results.md is the curated summary and is never overwritten.
 const out =
   flag("--out") ??

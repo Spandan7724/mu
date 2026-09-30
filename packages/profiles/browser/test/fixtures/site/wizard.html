@@ -9,6 +9,7 @@
   main { padding: 20px; max-width: 640px; }
   .step { display: none; } .step.active { display: block; }
   label { display: block; margin: 12px 0; }
+  label[hidden] { display: none; }
   .error { color: #b00; }
   #months { display: none; border: 1px solid #999; padding: 6px; }
   #months.open { display: block; }
@@ -65,7 +66,10 @@
 <div id="cookies" role="region" aria-label="Cookie notice">We use cookies. <button type="button" id="accept-cookies">Accept</button></div>
 <script>
   const $ = (id) => document.getElementById(id);
-  const data = {};
+  const job = new URLSearchParams(location.search).get("job") || "Software Engineer";
+  $("title").textContent = "Apply: " + job;
+  document.title = "Apply: " + job + " — Example Corp";
+  const data = { job };
   const show = (id) => { document.querySelectorAll(".step").forEach((s) => s.classList.remove("active")); $(id).classList.add("active"); };
   const save = () => fetch("/api/slow?ms=1200", { method: "POST", body: JSON.stringify(data) });
   $("accept-cookies").addEventListener("click", () => $("cookies").remove());

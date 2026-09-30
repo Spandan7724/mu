@@ -8,12 +8,17 @@ body{font-family:sans-serif;margin:12px}
 .chip{border:1px solid #999;border-radius:12px;padding:2px 8px}
 [contenteditable]{min-height:60px;border:1px solid #ccc;margin:4px 0}
 .hidden{display:none}
+.summary{display:none}
+#to-row.collapsed .summary{display:inline}
+#to-row.collapsed .field{display:none}
 </style></head>
 <body>
 <header><span class="account" email="owner@example.com">Owner account</span></header>
 <!-- Gmail's full-screen compose: no form or dialog, recipients as chips beside a combobox. -->
 <section id="compose">
-  <div class="row"><span>To</span>
+  <!-- Like Gmail, the To row collapses to a summary once another field has focus. -->
+  <div class="row" id="to-row"><span>To</span>
+    <span class="summary" email="ada@example.com">Ada Lovelace (ada@example.com), Charles Babbage</span>
     <div class="field">
       <div class="chips" role="listbox" aria-multiselectable="true" aria-label="Search Field">
         <div role="option" class="chip" data-hovercard-id="ada@example.com" data-name="Ada Lovelace">Ada Lovelace</div>
@@ -26,7 +31,7 @@ body{font-family:sans-serif;margin:12px}
   <div class="row"><span>Cc</span>
     <div class="field">
       <ul class="chips" aria-label="Cc list"><li class="chip" role="listitem">mary@example.com</li></ul>
-      <input aria-label="Cc recipients">
+      <input aria-label="Cc recipients" role="combobox" aria-autocomplete="list">
     </div>
   </div>
   <input aria-label="Subject" value="Engine notes">
@@ -50,6 +55,9 @@ body{font-family:sans-serif;margin:12px}
   </div>
 </article>
 <script>
+const toRow = document.getElementById('to-row');
+document.querySelector('[aria-label=Subject]').addEventListener('focus', () => toRow.classList.add('collapsed'));
+toRow.addEventListener('click', () => toRow.classList.remove('collapsed'));
 document.getElementById('reply-link').addEventListener('click', () => document.getElementById('reply').classList.remove('hidden'));
 </script>
 </body></html>

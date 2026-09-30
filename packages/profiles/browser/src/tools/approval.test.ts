@@ -80,6 +80,20 @@ describeWithBrowser("approvals show what a consequential action sends", () => {
     expect(text).not.toContain("owner@example.com");
   });
 
+  test("recipients still show once the To row collapses, and never land on Subject", async () => {
+    let page = await run("navigate", { url: site.url("compose-chips") });
+    page = await run("type", {
+      ref: refOf(page, "combobox", "To recipients"),
+      text: "grace@example.com",
+    });
+    page = await run("click", { ref: refOf(page, "textbox", "Subject") });
+    const lines = await preview("click", { ref: refOf(page, "button", "Send"), commit: true });
+    expect(lines).toContain(
+      "  To recipients: Ada Lovelace <ada@example.com>, Charles Babbage <charles@example.com>, grace@example.com",
+    );
+    expect(lines).toContain("  Subject: Engine notes");
+  });
+
   test("a script-driven Reply link opens the reply box without asking; its Send lists what it sends", async () => {
     let page = await run("navigate", { url: site.url("compose-chips") });
     const reply = { ref: refOf(page, "link", "Reply") };
