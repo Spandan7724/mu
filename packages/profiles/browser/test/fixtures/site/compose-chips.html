@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Compose - ChipMail</title>
+<style>
+body{font-family:sans-serif;margin:12px}
+.row{display:flex;gap:6px;align-items:center;margin:4px 0}
+.chips{display:flex;gap:4px}
+.chip{border:1px solid #999;border-radius:12px;padding:2px 8px}
+[contenteditable]{min-height:60px;border:1px solid #ccc;margin:4px 0}
+.hidden{display:none}
+</style></head>
+<body>
+<header><span class="account" email="owner@example.com">Owner account</span></header>
+<!-- Gmail's full-screen compose: no form or dialog, recipients as chips beside a combobox. -->
+<section id="compose">
+  <div class="row"><span>To</span>
+    <div class="field">
+      <div class="chips" role="listbox" aria-multiselectable="true" aria-label="Search Field">
+        <div role="option" class="chip" data-hovercard-id="ada@example.com" data-name="Ada Lovelace">Ada Lovelace</div>
+        <div role="option" class="chip" data-hovercard-id="charles@example.com" data-name="Charles Babbage">Charles Babbage</div>
+      </div>
+      <div role="presentation"><input aria-label="To recipients" role="combobox" aria-controls="to-suggest" aria-expanded="false"></div>
+      <ul id="to-suggest" role="listbox"><li role="option">suggested@example.com</li></ul>
+    </div>
+  </div>
+  <div class="row"><span>Cc</span>
+    <div class="field">
+      <ul class="chips" aria-label="Cc list"><li class="chip" role="listitem">mary@example.com</li></ul>
+      <input aria-label="Cc recipients">
+    </div>
+  </div>
+  <input aria-label="Subject" value="Engine notes">
+  <div contenteditable="true" role="textbox" aria-label="Message Body">Notes on the analytical engine.</div>
+  <div class="actions"><input class="hidden" type="text" name="draft-state"><div role="button" tabindex="0" id="send">Send</div></div>
+</section>
+<!-- An open thread: Reply is a script-driven link that opens an inline reply box. -->
+<article id="thread">
+  <h2>Lunch Friday?</h2>
+  <p>Are we still on for lunch on Friday at noon?</p>
+  <span role="link" tabindex="0" id="reply-link">Reply</span>
+  <div id="reply" class="hidden">
+    <div class="row"><span>To</span>
+      <div class="field">
+        <div class="chips" role="listbox"><div role="option" class="chip" data-hovercard-id="alex@example.com" data-name="Alex Kim">Alex Kim</div></div>
+        <div role="presentation"><input aria-label="To recipients" role="combobox"></div>
+      </div>
+    </div>
+    <div contenteditable="true" role="textbox" aria-label="Reply body">got it</div>
+    <div class="actions"><input class="hidden" type="text" name="reply-state"><div role="button" tabindex="0" id="reply-send">Send</div></div>
+  </div>
+</article>
+<script>
+document.getElementById('reply-link').addEventListener('click', () => document.getElementById('reply').classList.remove('hidden'));
+</script>
+</body></html>

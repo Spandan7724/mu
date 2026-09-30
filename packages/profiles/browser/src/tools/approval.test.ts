@@ -65,6 +65,32 @@ describeWithBrowser("approvals show what a consequential action sends", () => {
     expect(lines).toContain("  cv.pdf");
   });
 
+  test("a compose without a form lists recipient chips beside each field, not suggestions", async () => {
+    const page = await run("navigate", { url: site.url("compose-chips") });
+    const lines = await preview("click", { ref: refOf(page, "button", "Send"), commit: true });
+    expect(lines).toContain("sends:");
+    expect(lines).toContain(
+      "  To recipients: Ada Lovelace <ada@example.com>, Charles Babbage <charles@example.com>",
+    );
+    expect(lines).toContain("  Cc recipients: mary@example.com");
+    expect(lines).toContain("  Subject: Engine notes");
+    expect(lines).toContain("  Message Body: Notes on the analytical engine.");
+    const text = lines.join("\n");
+    expect(text).not.toContain("suggested@example.com");
+    expect(text).not.toContain("owner@example.com");
+  });
+
+  test("a script-driven Reply link opens the reply box without asking; its Send lists what it sends", async () => {
+    let page = await run("navigate", { url: site.url("compose-chips") });
+    const reply = { ref: refOf(page, "link", "Reply") };
+    expect(find("click").permissionScope?.(reply)).toBe("browser:interact");
+    page = await run("click", reply);
+    const sends = [...page.matchAll(/button "Send" \[ref=(e\d+)\]/g)].map((match) => match[1]);
+    const lines = await preview("click", { ref: sends.at(-1), commit: true });
+    expect(lines).toContain("  To recipients: Alex Kim <alex@example.com>");
+    expect(lines).toContain("  Reply body: got it");
+  });
+
   test("actions that are not consequential get no summary", async () => {
     const page = await run("navigate", { url: site.url("form-basic") });
     const lines = await preview("click", { ref: refOf(page, "textbox", "Full name") });

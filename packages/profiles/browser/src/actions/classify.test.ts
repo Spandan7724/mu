@@ -86,6 +86,8 @@ describe("consequential-action classifier", () => {
       e4: button("Delete account", { link: true }),
       e5: button("Apply"),
       e6: button("Apply now", { link: true }),
+      e7: button("Reply", { role: "link" }),
+      e8: button("Reply"),
     };
     expect(scope("click", { ref: "e1" }, metas)).toBe("browser:interact");
     expect(scope("click", { ref: "e2" }, metas)).toBe("browser:interact");
@@ -93,6 +95,8 @@ describe("consequential-action classifier", () => {
     expect(scope("click", { ref: "e4" }, metas)).toBe("browser:commit");
     expect(scope("click", { ref: "e5" }, metas)).toBe("browser:commit");
     expect(scope("click", { ref: "e6", commit: true }, metas)).toBe("browser:commit");
+    expect(scope("click", { ref: "e7" }, metas)).toBe("browser:interact");
+    expect(scope("click", { ref: "e8" }, metas)).toBe("browser:commit");
   });
 
   test("prices in a button, and proceeding on checkout or payment pages, count as consequential", () => {

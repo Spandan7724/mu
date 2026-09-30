@@ -22,7 +22,8 @@ export function matchesCommitLexicon(text: string | undefined): boolean {
 }
 
 // On a link these words lead to the page where it happens ("Apply now" opens the
-// application form); following a link that deletes or unsubscribes still acts.
+// application form, Gmail's script-driven "Reply" link opens the reply box);
+// following a link that deletes or unsubscribes still acts.
 const LINK_OPENER =
   /^\W*(apply|register|sign up|book|reserve|reply|post|publish|subscribe|donate|send|submit)\b/i;
 
@@ -49,7 +50,8 @@ function clickTarget(meta: RefMeta | undefined, page?: PageContext): string | un
     (PAYING_PAGE.test(page.url) || PAYING_PAGE.test(page.title))
   )
     return `"${meta.name}" moves a checkout or payment forward`;
-  if (matchesCommitLexicon(meta.name) && !(meta.link && LINK_OPENER.test(meta.name)))
+  const link = meta.link || meta.role === "link";
+  if (matchesCommitLexicon(meta.name) && !(link && LINK_OPENER.test(meta.name)))
     return `"${meta.name}" reads as a consequential action`;
   if (meta.form?.submit && meta.form.post) return "it submits a form that posts data";
   if (
