@@ -5,11 +5,13 @@ import { navigateTo } from "../actions/navigate.ts";
 import { Stopwatch } from "../actions/types.ts";
 import { BrowserManager } from "../browser/manager.ts";
 import { resolveBrowserOptions } from "../config.ts";
+import { capturePage } from "../page/snapshot.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
 import { minimalPdf } from "../testing/pdf.ts";
-import { actTool } from "../tools/act.ts";
-import { type ActInput, runAct } from "./act.ts";
+import { actFirstTools, actTool } from "../tools/act.ts";
+import { interactionTools } from "../tools/interact.ts";
+import { type ActInput, pageCandidates, runAct } from "./act.ts";
 import type { JevAnswer, JevQuestion, JevResponse, JevUsage } from "./client.ts";
 
 setDefaultTimeout(60_000);
@@ -247,6 +249,53 @@ describeWithBrowser(
       );
       expect(refused.isError).toBe(true);
       expect(JSON.stringify(refused.content)).not.toContain("hunter22");
+    });
+
+    test("with Jev on, the field tools wait until act has run on the page, except for passwords", async () => {
+      await open("form-basic");
+      const config = resolveBrowserOptions({ home, workspace, headless: true });
+      const deps = { browser, config, vision: () => false };
+      const tools = new Map(
+        actFirstTools(
+          [
+            ...Object.values(interactionTools(deps)),
+            actTool(deps, new ScriptedJev(wizardRules()) as never),
+          ],
+          deps,
+        ).map((candidate) => [candidate.name, candidate]),
+      );
+      const tab = await browser.activeTab(AbortSignal.timeout(5_000));
+      const snapshot = await capturePage(tab, {
+        scope: "full",
+        signal: AbortSignal.timeout(5_000),
+      });
+      const ref = (role: string, name: string) =>
+        pageCandidates(snapshot).fields.find(
+          (candidate) => candidate.node.role === role && candidate.node.name === name,
+        )?.ref as string;
+      const send = ref("textbox", "Full name");
+      const fill = { fields: [{ ref: send, value: "Ada" }], submitRef: "e14", commit: true };
+      expect(tools.get("fill_form")?.permissionScope?.(fill)).toBe("browser:interact");
+      const refused = await tools.get("fill_form")?.execute("f1", fill, AbortSignal.timeout(5_000));
+      expect(refused?.isError).toBe(true);
+      expect(JSON.stringify(refused?.content)).toContain("Fill fields with act first");
+      const password = await tools
+        .get("type")
+        ?.execute(
+          "t1",
+          { ref: ref("textbox", "Password"), text: "s3cret-pw" },
+          AbortSignal.timeout(10_000),
+        );
+      expect(JSON.stringify(password?.content)).not.toContain("act first");
+
+      await tools
+        .get("act")
+        ?.execute("a1", { goal: "the contact form is filled in" }, AbortSignal.timeout(20_000));
+      const typed = await tools
+        .get("type")
+        ?.execute("t2", { ref: send, text: "Ada" }, AbortSignal.timeout(10_000));
+      expect(typed?.isError).toBeFalsy();
+      expect(JSON.stringify(typed?.content)).toContain("typed");
     });
   },
 );
