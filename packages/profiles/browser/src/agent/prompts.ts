@@ -78,8 +78,15 @@ Finishing:
 
 const GPT_ADDENDUM = `Be literal and decisive with tools. Batch independent calls in one turn, keep your text between tool calls to a brief statement of intent, and do not ask for confirmation for steps that follow directly from the request — except the consequential actions described above.`;
 
-export function browserPrompt(modelRef: string): PromptSection[] {
+const ACT = `Fast steps (act):
+- For multi-step forms and click-through flows, call act with the goal and every value you already have (from the user's request and files) instead of filling and clicking step by step yourself: a fast decision model takes each step in well under a second, where each of your turns takes several.
+- Key values by what the field asks for, include answers the form is likely to ask (work authorization, how you heard about it, start date) when the user's files give them, and pass files to upload. Never pass passwords or codes.
+- act stops before consequential steps, at password or code fields, sign-in walls, errors, required fields without a value, or when unsure. Read its report and the page, then continue: click the final submit with commit: true when the request authorizes it, give missing values (another act call or fill_form), or take the step yourself. Never repeat an act call unchanged after it stopped.
+- Reading, comparing, extracting and writing text stay with you: act only enters given values and clicks toward the stated goal.`;
+
+export function browserPrompt(modelRef: string, options: { act?: boolean } = {}): PromptSection[] {
   const sections: PromptSection[] = [{ text: BASE }];
+  if (options.act) sections.push({ text: ACT });
   const ref = modelRef.toLowerCase();
   if (ref.includes("gpt") || ref.includes("openai") || ref.includes("codex")) {
     sections.push({ text: GPT_ADDENDUM });

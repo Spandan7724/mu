@@ -24,6 +24,8 @@ export interface BrowserProfileOptions {
   workspace?: string | undefined;
   // argv prefix that runs mu itself, for delegating to the coding agent.
   codingCommand?: string[] | undefined;
+  // The act tool, when a Jev key (JEV_API_KEY or TYPESAFE_API_KEY) is set.
+  jev?: "auto" | "off" | undefined;
 }
 
 export interface ResolvedBrowserOptions {
@@ -44,6 +46,7 @@ export interface ResolvedBrowserOptions {
   launcher?: BrowserLauncher;
   workspace: string;
   codingCommand: string[];
+  jev: "auto" | "off";
 }
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -66,6 +69,7 @@ export const browserConfigSchema = z
     blockedHosts: z.array(z.string().min(1)).optional(),
     workspace: z.string().min(1).optional(),
     codingCommand: z.array(z.string().min(1)).min(1).optional(),
+    jev: z.enum(["auto", "off"]).optional(),
   })
   .strict();
 
@@ -141,5 +145,6 @@ export function resolveBrowserOptions(
     ...(options.launcher ? { launcher: options.launcher } : {}),
     workspace: resolve(merged.workspace ?? process.cwd()),
     codingCommand: merged.codingCommand ?? ["mu"],
+    jev: merged.jev ?? "auto",
   };
 }

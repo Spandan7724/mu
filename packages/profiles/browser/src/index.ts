@@ -26,8 +26,10 @@ import {
   type ResolvedBrowserOptions,
   resolveBrowserOptions,
 } from "./config.ts";
+import { jevFromEnv } from "./jev/client.ts";
 import { visionEnabled } from "./page/screenshot.ts";
 import type { SecretRegistry } from "./page/secrets.ts";
+import { actTool } from "./tools/act.ts";
 import { delegateTool } from "./tools/delegate.ts";
 import { fileTools } from "./tools/files.ts";
 import { interactionTools } from "./tools/interact.ts";
@@ -154,6 +156,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   const state = new BrowserState();
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const todos = new TodoStore();
+  const jev = config.jev === "off" ? undefined : jevFromEnv();
   // One agent's tools over one lane of the browser: the main agent's, or a sub-task's.
   const toolsFor = (lane: BrowserManager, laneState: BrowserState, laneTodos: TodoStore) => {
     const deps = {
@@ -168,6 +171,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       interaction.click,
       interaction.type,
       interaction.fill,
+      ...(jev ? [actTool(deps, jev)] : []),
       interaction.select,
       interaction.press,
       interaction.scroll,
@@ -218,7 +222,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     toolset,
     promptFor: (modelRef) => {
       activeModel = modelRef;
-      return browserPrompt(modelRef);
+      return browserPrompt(modelRef, { act: jev !== undefined });
     },
     refreshContext: (messages, context) => {
       browser.dataflow.userSaid(

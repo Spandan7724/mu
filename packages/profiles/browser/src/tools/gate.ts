@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
 import { describeFile } from "../actions/filetype.ts";
@@ -36,6 +37,10 @@ function typedValues(tool: string, args: Record<string, unknown>): string[] {
     return (args.fields as { value?: unknown }[])
       .map((field) => field.value)
       .filter((value): value is string => typeof value === "string");
+  if (tool === "act" && args.values && typeof args.values === "object")
+    return Object.values(args.values).flatMap((value) =>
+      typeof value === "string" ? [value] : Array.isArray(value) ? value.map(String) : [],
+    );
   return [];
 }
 
@@ -65,6 +70,7 @@ export function scopeFor(
   if (scope === "browser:commit" && retry?.url === tab?.url && retry?.key === retryKey(tool, args))
     return "browser:interact";
   if (scope === "browser:interact" && typingLeak(deps, tool, args)) return "browser:share";
+  if (tool === "act" && args.files && Object.keys(args.files).length > 0) return "browser:upload";
   return scope;
 }
 
@@ -137,11 +143,30 @@ export async function detailsFor(
       for (const path of (args.paths as string[] | undefined) ?? []) {
         let about: string;
         try {
-          about = describeFile(path);
+          about = describeFile(resolve(deps.config.workspace, path));
         } catch {
           about = "not found";
         }
         lines.push(`  ${path} (${about})`);
+      }
+      break;
+    }
+    case "act": {
+      lines.push(
+        `action: work toward "${String(args.goal ?? "")}" (stops before consequential steps)`,
+      );
+      for (const [key, value] of Object.entries((args.values as Record<string, unknown>) ?? {}))
+        lines.push(`  ${key} = ${describeValue(value, false)}`);
+      for (const [key, paths] of Object.entries((args.files as Record<string, string[]>) ?? {})) {
+        for (const path of paths) {
+          let about: string;
+          try {
+            about = describeFile(resolve(deps.config.workspace, path));
+          } catch {
+            about = "not found";
+          }
+          lines.push(`  ${key}: upload ${path} (${about})`);
+        }
       }
       break;
     }
@@ -171,14 +196,15 @@ export async function detailsFor(
   const leak = typingLeak(deps, tool, args);
   if (leak) lines.push(`data from another site: ${leak}`);
   if (typeof args.reason === "string" && args.reason) lines.push(`agent's reason: ${args.reason}`);
+  const asked = tool === "act" ? scopeFor(deps, tool, args) : scope;
   const verb =
-    scope === "browser:commit"
+    asked === "browser:commit"
       ? "Consequential browser action"
-      : scope === "browser:secret"
+      : asked === "browser:secret"
         ? "Enter a secret"
-        : scope === "browser:upload"
+        : asked === "browser:upload"
           ? "Upload files"
-          : scope === "browser:script"
+          : asked === "browser:script"
             ? "Run a script in the page"
             : "Browser action";
   return {

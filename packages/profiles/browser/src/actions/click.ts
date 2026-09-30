@@ -34,6 +34,8 @@ export interface ActionResult {
   path?: "mouse" | "js" | "keyboard";
   occludedBy?: Occluder;
   newTab?: TabInfo;
+  // Decisions made by Jev during the action (the act tool).
+  jev?: { calls: number; ms: number; inputTokens: number };
 }
 
 interface TargetInfo {

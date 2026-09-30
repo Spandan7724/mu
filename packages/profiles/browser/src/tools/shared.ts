@@ -179,6 +179,7 @@ export async function pageAction(
       snapshotTokens: observation.tokens,
       ...(result.settle ? { settle: result.settle } : {}),
       ...(result.path ? { path: result.path } : {}),
+      ...(result.jev ? { jev: { ...result.jev, ms: Math.round(result.jev.ms) } } : {}),
     },
   };
   const content = observation.text.slice(observation.text.indexOf("<page_content"));

@@ -31,6 +31,7 @@ export interface OutcomeDetails {
   snapshotTokens: number;
   settle?: string;
   path?: "mouse" | "js" | "keyboard";
+  jev?: { calls: number; ms: number; inputTokens: number };
 }
 
 export interface ActionOutcome {
