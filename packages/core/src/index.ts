@@ -106,6 +106,7 @@ export type {
   ProfileRuntime,
   ProfileRuntimeHost,
   ProfileSubagents,
+  TaskSubagentSession,
 } from "./profile.ts";
 export type { RecoveryAttempt } from "./recovery.ts";
 export {

@@ -5,7 +5,14 @@ import {
   type ThinkingLevel,
   type Usage,
 } from "@mu/ai";
-import type { AgentMessage, AnyTool, Extension, PermissionRule, ProfileSubagents } from "@mu/core";
+import type {
+  AgentMessage,
+  AnyTool,
+  Extension,
+  PermissionRule,
+  ProfileSubagents,
+  TaskSubagentSession,
+} from "@mu/core";
 import { z } from "zod";
 import type { Agent, HaltReason } from "./agent.ts";
 import { RECALL_PROMPT, recallTools } from "./recall.ts";
@@ -39,6 +46,8 @@ export interface SubagentProgressUpdate {
 
 interface SubagentExtensionBaseOptions {
   parent: () => Agent;
+  // A profile's per-child resources for task subagents (any profile, not only coding).
+  taskSession?: ProfileSubagents["taskSession"];
   excludeTools?: readonly string[];
   searchModel?: (parent: Agent) => ModelInfo | undefined;
   counselModel?: (parent: Agent) => ModelInfo | undefined;
@@ -117,18 +126,22 @@ class SubagentManager {
   ) {
     if (signal.aborted) throw new Error("Subagent cancelled");
     let child: Agent | undefined;
+    let session: TaskSubagentSession | undefined;
     let abort: (() => void) | undefined;
     let progressTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       const parent = this.options.parent();
+      if (kind === "task" && this.options.taskSession)
+        session = await this.options.taskSession(description, signal);
       const model = this.modelFor(kind, parent);
       const thinkingLevel = this.thinkingFor(kind, parent, model);
-      const tools = this.toolsFor(kind, parent);
+      const tools = withSessionTools(this.toolsFor(kind, parent), session);
       child = parent.createChild({
         model,
         thinkingLevel,
-        systemPrompt: this.promptFor(kind),
+        systemPrompt: [this.promptFor(kind), session?.prompt?.trim()].filter(Boolean).join("\n\n"),
         tools,
+        ...(session?.refreshContext ? { refreshContext: session.refreshContext } : {}),
         ...(kind === "recall"
           ? {
               inheritContext: false,
@@ -226,6 +239,7 @@ class SubagentManager {
       if (abort) signal.removeEventListener("abort", abort);
       if (child) this.active.delete(child);
       await child?.shutdown();
+      await session?.close();
     }
   }
 
@@ -286,6 +300,16 @@ class SubagentManager {
     const base = capped.indexOf(defaultThinkingLevel(model));
     return capped[Math.min(Math.max(0, base) + 1, capped.length - 1)] ?? parent.thinking;
   }
+}
+
+function withSessionTools(tools: AnyTool[], session: TaskSubagentSession | undefined): AnyTool[] {
+  if (!session) return tools;
+  const own = new Map(session.tools.map((candidate) => [candidate.name, candidate]));
+  const names = new Set(tools.map((candidate) => candidate.name));
+  return [
+    ...tools.map((candidate) => own.get(candidate.name) ?? candidate),
+    ...session.tools.filter((candidate) => !names.has(candidate.name)),
+  ];
 }
 
 function visibleProgressMessage(message: AgentMessage): AgentMessage {

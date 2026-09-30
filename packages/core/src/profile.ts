@@ -37,7 +37,20 @@ export interface ProfileRuntime {
   shutdown?: () => void | Promise<void>;
 }
 
+// What a profile gives one task subagent: tools replacing the parent's tools of
+// the same name (tools with new names are added), prompt appended to the task
+// prompt, and a context refresh used instead of the parent's.
+export interface TaskSubagentSession {
+  tools: AnyTool[];
+  prompt?: string;
+  refreshContext?: Profile["refreshContext"];
+  close: () => void | Promise<void>;
+}
+
 export interface ProfileSubagents {
+  // Per-child resources for task subagents, for domains whose tools hold per-agent
+  // state. May wait (until `signal` aborts) for capacity.
+  taskSession?: (description: string, signal: AbortSignal) => Promise<TaskSubagentSession>;
   // Tools a read-only investigator may use. Their permission rules remain the
   // enforcement boundary; this list only limits the child's visible toolset.
   inspectionTools: string[];

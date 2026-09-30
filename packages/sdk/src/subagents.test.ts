@@ -518,6 +518,72 @@ describe("managed subagents", () => {
     expect(restored.usage.inputTokens).toBe(60);
   });
 
+  test("a profile task session replaces the child's tools, prompt and context, and is closed", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "task-1",
+            name: "task",
+            arguments: { description: "item one", prompt: "Do item one" },
+          },
+        ],
+      },
+      { content: [{ type: "toolCall", id: "w1", name: "work", arguments: {} }] },
+      { content: [{ type: "text", text: "Item one done." }] },
+      { content: [{ type: "text", text: "All done." }] },
+    ]);
+    const work = (result: string) =>
+      tool({ name: "work", description: "work", inputSchema: z.object({}), execute: () => result });
+    const extra = tool({
+      name: "extra",
+      description: "extra",
+      inputSchema: z.object({}),
+      execute: () => "extra",
+    });
+    const opened: string[] = [];
+    let closed = 0;
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [work("parent")],
+      extensions: host,
+      refreshContext: () => [customMessage("parent-state", "parent context")],
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        taskSession: async (description) => {
+          opened.push(description);
+          return {
+            tools: [work("child"), extra],
+            prompt: "Lane prompt.",
+            refreshContext: () => [customMessage("lane-state", "lane context")],
+            close: () => {
+              closed++;
+            },
+          };
+        },
+      }),
+    );
+
+    await parent.run("delegate");
+
+    const child = provider.requests[1];
+    expect(child?.tools?.map((candidate) => candidate.name)).toEqual(["work", "extra"]);
+    expect(child?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
+      "Lane prompt.",
+    );
+    const childContext = JSON.stringify(child?.messages);
+    expect(childContext).toContain("lane context");
+    expect(childContext).not.toContain("parent context");
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain('"child"');
+    expect(opened).toEqual(["item one"]);
+    expect(closed).toBe(1);
+  });
+
   test("managed children stream visible progress without exposing thinking", async () => {
     const provider = new FakeProvider([
       {

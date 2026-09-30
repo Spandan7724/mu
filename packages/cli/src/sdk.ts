@@ -54,6 +54,9 @@ export async function createAgent(options: CreateAgentOptions = {}): Promise<Age
   await extensions.register(
     subagentsExtension({
       parent: () => agent,
+      ...(resolvedProfile?.subagents?.taskSession
+        ? { taskSession: resolvedProfile.subagents.taskSession }
+        : {}),
       ...(resolvedProfile?.name === "coding" && resolvedProfile.subagents
         ? { coding: resolvedProfile.subagents }
         : {}),

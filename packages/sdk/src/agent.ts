@@ -172,6 +172,8 @@ export interface ChildAgentOptions {
   // History-only children must not run profile context loaders or inherit
   // instructions that direct them to external resources.
   inheritContext?: boolean;
+  // Replaces the inherited context refresh (a profile's per-child context).
+  refreshContext?: AgentOptions["refreshContext"];
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -364,9 +366,11 @@ export class Agent {
       thinkingLevel: options.thinkingLevel ?? this.currentThinking,
       ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
       ...(this.options.getCredentials ? { getCredentials: this.options.getCredentials } : {}),
-      ...(options.inheritContext !== false && this.options.refreshContext
-        ? { refreshContext: this.options.refreshContext }
-        : {}),
+      ...(options.refreshContext
+        ? { refreshContext: options.refreshContext }
+        : options.inheritContext !== false && this.options.refreshContext
+          ? { refreshContext: this.options.refreshContext }
+          : {}),
     });
   }
 
