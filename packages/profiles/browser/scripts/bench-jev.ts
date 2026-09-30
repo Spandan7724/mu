@@ -69,6 +69,33 @@ const scenarios: Scenario[] = [
     submissions: 0,
   },
   {
+    name: "wizard-eval13",
+    page: "wizard",
+    input: {
+      goal: "Complete the application through the final review step, filling all fields with the provided details and uploading the resume, but stop before the final submit",
+      values: {
+        "full name": "Grace Hopper",
+        email: "grace@example.com",
+        phone: "+1 555 0142",
+        "how did you hear about the job": "Other",
+        "please specify how you heard": "a friend at the meetup",
+        "start date": "March 2026",
+        "authorized to work": "yes",
+      },
+      files: { resume: ["resume.pdf"] },
+    },
+    stops: ["needs-approval", "done"],
+    check: {
+      expression: REVIEW,
+      contains: [
+        "Other (a friend at the meetup)",
+        "Start month: 2026-03",
+        "Authorized to work: yes",
+      ],
+    },
+    submissions: 0,
+  },
+  {
     name: "wizard-missing",
     page: "wizard",
     input: {
@@ -94,16 +121,11 @@ const scenarios: Scenario[] = [
         country: "France",
       },
     },
-    stops: ["needs-approval"],
+    stops: ["needs-approval", "done"],
     check: {
       expression:
         "JSON.stringify(Object.fromEntries(new FormData(document.querySelector('form')))) + ' newsletter=' + document.querySelector('[type=checkbox]').checked",
-      contains: [
-        '"email":"ada@example.com"',
-        '"plan":"pro"',
-        '"country":"France"',
-        "newsletter=false",
-      ],
+      contains: ['"email":"ada@example.com"', '"plan":"pro"', '"country":"fr"', "newsletter=false"],
     },
   },
   {

@@ -80,6 +80,7 @@ const GPT_ADDENDUM = `Be literal and decisive with tools. Batch independent call
 
 const ACT = `Fast steps (act):
 - For multi-step forms and click-through flows, call act with the goal and every value you already have (from the user's request and files) instead of filling and clicking step by step yourself: a fast decision model takes each step in well under a second, where each of your turns takes several.
+- One act call covers the whole flow across all its pages: give the final goal (for example "the review step before the final submit is showing") and the values for every page at once, not one call per page. Give answers as the form words them (Yes/No, an option label) rather than true/false, except for checkboxes.
 - Key values by what the field asks for, include answers the form is likely to ask (work authorization, how you heard about it, start date) when the user's files give them, and pass files to upload. Never pass passwords or codes.
 - act stops before consequential steps, at password or code fields, sign-in walls, errors, required fields without a value, or when unsure. Read its report and the page, then continue: click the final submit with commit: true when the request authorizes it, give missing values (another act call or fill_form), or take the step yourself. Never repeat an act call unchanged after it stopped.
 - Reading, comparing, extracting and writing text stay with you: act only enters given values and clicks toward the stated goal.`;

@@ -54,6 +54,10 @@ export const DEFAULT_MAX_STEPS = 12;
 const FIELD_MIN = 0.6;
 const CLICK_MIN = 0.6;
 const DONE_MIN = 0.8;
+const DONE_WHEN_NOTHING_NEXT = 0.4;
+// A forward answer this likely is enough when the reverse question agrees.
+const AGREED_MIN = 0.3;
+const MAX_REVERSE = 40;
 const BLOCKED_MIN = 0.7;
 const ERROR_MIN = 0.7;
 const RISKY_MIN = 0.5;
@@ -291,6 +295,24 @@ export async function runAct(
         ),
       );
     });
+    // The reverse question for each empty field: a pair both directions agree on is
+    // filled even when the forward answer alone is not confident enough.
+    const valueKeys = keys.filter((key) => !(key in files));
+    const empty = page.fields
+      .filter((candidate) => (candidate.node.value ?? "").trim() === "")
+      .slice(0, MAX_REVERSE);
+    if (valueKeys.length > 0 && valueKeys.length < MAX_CHOICE_OPTIONS)
+      for (const candidate of empty)
+        questions[`value:${candidate.ref}`] = choice(
+          {
+            question: "Which entry of `values` belongs in `field`? Answer none if no entry does.",
+            field: candidate.line,
+          },
+          {
+            ...Object.fromEntries(valueKeys.map((key) => [key, shownValues[key] ?? null])),
+            [NONE]: "No entry of `values` belongs in this field",
+          },
+        );
     const response = await options.jev.ask(state, questions, signal, usage);
     const answers = response.answers;
     const runoff = (id: string, instructions: unknown) => async (refs: string[]) => {
@@ -327,9 +349,20 @@ export async function runAct(
     const uploads: { key: string; ref: string }[] = [];
     const unsure: string[] = [];
     const secretFields: string[] = [];
+    const agreed = (key: string, ref: string) => {
+      const reverse = answers[`value:${ref}`];
+      return (
+        reverse?.type === "choice" &&
+        reverse.choice === key &&
+        (reverse.probabilities[key] ?? 0) >= FIELD_MIN
+      );
+    };
     for (const { key, pick } of picks) {
       if (pick.ref === NONE || taken.has(pick.ref)) continue;
-      if (pick.probability < FIELD_MIN) {
+      if (
+        pick.probability < FIELD_MIN &&
+        !(pick.probability >= AGREED_MIN && agreed(key, pick.ref))
+      ) {
         unsure.push(`${key} → ${tab.refs.label(pick.ref)} (${pick.probability.toFixed(2)})`);
         continue;
       }
@@ -348,7 +381,10 @@ export async function runAct(
         pending.delete(key);
         continue;
       }
-      fields.push({ key, ref: pick.ref, value });
+      // A yes/no question asked as a radio group takes the option's label.
+      const answer =
+        typeof value === "boolean" && node && isRadioGroup(node) ? (value ? "Yes" : "No") : value;
+      fields.push({ key, ref: pick.ref, value: answer });
     }
     if (fields.length > 0 || uploads.length > 0) {
       const done: string[] = [];
@@ -406,13 +442,32 @@ export async function runAct(
         question: "Which control should be clicked next to move toward `goal`?",
       }),
     );
+    const consequential = page.clickables
+      .filter(
+        (candidate) =>
+          classify({
+            tool: "click",
+            args: { ref: candidate.ref },
+            meta: (ref) => tab.refs.meta(ref),
+            page: { url: tab.url, title: tab.title },
+          }).scope !== "browser:interact",
+      )
+      .map((candidate) => tab.refs.label(candidate.ref));
+    const leftHere = consequential.length
+      ? [
+          `consequential controls on this page (click with commit: true): ${consequential.join(", ")}`,
+        ]
+      : [];
+    // Nothing moves toward the goal because the goal says to stop here.
+    if (next.ref === NONE && noulOf(answers.done) >= DONE_WHEN_NOTHING_NEXT)
+      return finish("done", "the page shows the goal reached", leftHere);
     if (next.ref === NONE || next.probability < CLICK_MIN)
       return finish(
         "unsure",
         next.ref === NONE
           ? "no control on the page moves toward the goal; decide the next step yourself"
           : `unsure what to click next (best guess ${tab.refs.label(next.ref)}, ${next.probability.toFixed(2)})`,
-        unsure.length ? [`unsure: ${unsure.join("; ")}`] : [],
+        [...(unsure.length ? [`unsure: ${unsure.join("; ")}`] : []), ...leftHere],
       );
     // A button would submit the step with a required field left empty; a link just leaves.
     const emptyRequired = page.fields.filter(
