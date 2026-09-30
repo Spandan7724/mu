@@ -14,3 +14,6 @@ CLAUDE.md
 .claude/
 examples/previews/
 scripts/palette-preview.ts
+.mu/
+AGENTS.md
+scripts/preview-tui.ts
