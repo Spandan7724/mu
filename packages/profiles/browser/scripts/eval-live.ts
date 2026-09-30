@@ -1,6 +1,6 @@
 // Live task matrix (EVALS.md §3) against a real Codex-plan model:
 //   bun packages/profiles/browser/scripts/eval-live.ts [--model ref] [--tasks 1,2,6] [--runs 3]
-//     [--google --eval-profile eval --self you@example.com] [--headed] [--out path]
+//     [--google --eval-profile eval --self you@example.com] [--headed] [--jev off] [--out path]
 // Non-Google tasks use a temporary signed-out profile; Google tasks (3, 4, 5, 8) need
 // --google and the managed profile named by --eval-profile, signed in to a test account.
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -21,6 +21,8 @@ const runs = Number(flag("--runs") ?? 3);
 const selected = flag("--tasks")?.split(",").map(Number);
 const google = argv.includes("--google");
 const headed = argv.includes("--headed");
+// --jev off runs without the act tool even when a Jev key is set (for A/B runs).
+const jev = flag("--jev") === "off" ? ("off" as const) : ("auto" as const);
 const stamp = new Date().toISOString().slice(5, 19).replace(/[-:T]/g, "");
 // One file per invocation: eval-results.md is the curated summary and is never overwritten.
 const out =
@@ -60,12 +62,14 @@ try {
               headless: !headed,
               keepOpen: true,
               vision: "auto" as const,
+              jev,
             }
           : {
               home: tempUserDataDir(),
               headless: !headed,
               keepOpen: false,
               vision: "auto" as const,
+              jev,
               ...(testBrowserPath ? { executable: testBrowserPath } : {}),
             };
         const metrics = await runTask(task, mode, run, {
@@ -77,7 +81,7 @@ try {
         });
         results.push(metrics);
         console.log(
-          `#${task.id} ${mode} run ${run}: ${metrics.pass ? "PASS" : "FAIL"} · ${metrics.turns} turns · ${(metrics.wallMs / 1000).toFixed(1)} s (model ${(metrics.modelMs / 1000).toFixed(1)} s, browser ${(metrics.browserMs / 1000).toFixed(1)} s) · $${metrics.costUsd.toFixed(3)} · ${metrics.error ?? metrics.note}`,
+          `#${task.id} ${mode} run ${run}: ${metrics.pass ? "PASS" : "FAIL"} · ${metrics.turns} turns · ${(metrics.wallMs / 1000).toFixed(1)} s (model ${(metrics.modelMs / 1000).toFixed(1)} s, browser ${(metrics.browserMs / 1000).toFixed(1)} s${metrics.jev?.calls ? `, jev ${metrics.jev.calls} calls ${(metrics.jev.ms / 1000).toFixed(1)} s` : ""}) · $${metrics.costUsd.toFixed(3)} · ${metrics.error ?? metrics.note}`,
         );
       }
     }

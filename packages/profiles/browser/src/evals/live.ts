@@ -472,6 +472,8 @@ export interface RunMetrics {
   answer?: string;
   // Every tool call, sub-tasks' included, to see how a run went without a trace.
   calls?: string[];
+  // Decisions the act tool left to Jev, sub-tasks' included.
+  jev?: { calls: number; ms: number };
   error?: string;
 }
 
@@ -509,6 +511,21 @@ function callLog(messages: AgentMessage[], prefix = ""): string[] {
       ? callLog(details.messages ?? [], `${prefix}[${details.description}] `)
       : [];
   });
+}
+
+function jevUse(messages: AgentMessage[]): { calls: number; ms: number } {
+  const use = { calls: 0, ms: 0 };
+  for (const message of messages) {
+    if (message.role !== "toolResult") continue;
+    const details = message.details as
+      | { type?: string; messages?: AgentMessage[]; details?: { jev?: typeof use } }
+      | undefined;
+    const inner =
+      details?.type === "subagent" ? jevUse(details.messages ?? []) : details?.details?.jev;
+    use.calls += inner?.calls ?? 0;
+    use.ms += inner?.ms ?? 0;
+  }
+  return use;
 }
 
 // Time spent in browser tools, including inside task subagents.
@@ -618,6 +635,7 @@ export async function runTask(
       asks: asks.map((ask) => ask.permission),
       answer: result.text.slice(0, 600),
       calls: callLog(result.messages),
+      jev: jevUse(result.messages),
       askDetails: asks.map(
         (ask) =>
           `${ask.permission}: ${ask.preview?.kind === "text" ? ask.preview.lines.join(" | ") : ask.description}`,

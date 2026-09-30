@@ -70,7 +70,15 @@ const FIELD_ROLES = new Set([
   "slider",
   "radiogroup",
 ]);
-const CLICK_ROLES = new Set(["button", "link", "tab", "menuitem", "menuitemcheckbox", "option"]);
+const CLICK_ROLES = new Set([
+  "button",
+  "link",
+  "tab",
+  "menuitem",
+  "menuitemcheckbox",
+  "option",
+  "clickable",
+]);
 
 interface Candidate {
   ref: string;
