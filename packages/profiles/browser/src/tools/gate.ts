@@ -37,10 +37,15 @@ function typedValues(tool: string, args: Record<string, unknown>): string[] {
     return (args.fields as { value?: unknown }[])
       .map((field) => field.value)
       .filter((value): value is string => typeof value === "string");
-  if (tool === "act" && args.values && typeof args.values === "object")
-    return Object.values(args.values).flatMap((value) =>
-      typeof value === "string" ? [value] : Array.isArray(value) ? value.map(String) : [],
-    );
+  if (tool === "act")
+    return [
+      ...Object.values((args.values as Record<string, unknown>) ?? {}).flatMap((value) =>
+        typeof value === "string" ? [value] : Array.isArray(value) ? value.map(String) : [],
+      ),
+      ...((args.steps as { action?: string; text?: unknown }[]) ?? []).flatMap((step) =>
+        step.action === "type" && typeof step.text === "string" ? [step.text] : [],
+      ),
+    ];
   return [];
 }
 
@@ -152,9 +157,11 @@ export async function detailsFor(
       break;
     }
     case "act": {
-      lines.push(
-        `action: work toward "${String(args.goal ?? "")}" (stops before consequential steps)`,
-      );
+      lines.push("action: run these steps (stops before consequential ones)");
+      for (const step of (args.steps as Record<string, unknown>[]) ?? [])
+        lines.push(
+          `  ${String(step.action)}${step.target ? ` ${JSON.stringify(step.target)}` : ""}${step.text !== undefined ? ` ${describeValue(step.text, false)}` : ""}`,
+        );
       for (const [key, value] of Object.entries((args.values as Record<string, unknown>) ?? {}))
         lines.push(`  ${key} = ${describeValue(value, false)}`);
       for (const [key, paths] of Object.entries((args.files as Record<string, string[]>) ?? {})) {

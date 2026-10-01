@@ -29,7 +29,7 @@ import {
 import { jevFromEnv } from "./jev/client.ts";
 import { visionEnabled } from "./page/screenshot.ts";
 import type { SecretRegistry } from "./page/secrets.ts";
-import { actFirstTools, actTool } from "./tools/act.ts";
+import { actTool } from "./tools/act.ts";
 import { delegateTool } from "./tools/delegate.ts";
 import { fileTools } from "./tools/files.ts";
 import { interactionTools } from "./tools/interact.ts";
@@ -198,7 +198,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
         pageText: (text) => lane.dataflow.leak(text, "")?.from,
       }),
     ] as AnyTool[];
-    return (jev ? actFirstTools(rawTools, deps) : rawTools).map((candidate) =>
+    return rawTools.map((candidate) =>
       observingDataFlow(
         redacting(recordingCommits(candidate, lane, laneState), lane.secrets),
         lane,

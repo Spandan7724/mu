@@ -1,4 +1,5 @@
-// Live Jev benchmark for the act tool on the local fixture site (headless, temp dirs).
+// Live Jev benchmark for the act tool's step plans, on the fixture site and real sites
+// (read-only; nothing is submitted), headless with temp dirs.
 // Usage: JEV_API_KEY=… bun scripts/bench-jev.ts [--runs N] [--only name,name]
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -31,15 +32,19 @@ const applicant = {
   "authorized to work": "Yes",
 };
 const REVIEW = "document.getElementById('review').innerText";
+const WIZARD: ActInput["steps"] = [
+  { action: "fill" },
+  { action: "click", target: "Next" },
+  { action: "fill" },
+  { action: "click", target: "Next" },
+  { action: "click", target: "Submit application" },
+];
+const BOOKS = "https://books.toscrape.com/";
 const scenarios: Scenario[] = [
   {
     name: "wizard",
     page: "wizard",
-    input: {
-      goal: "the application is filled in up to its final submit",
-      values: applicant,
-      files: { resume: ["resume.pdf"] },
-    },
+    input: { steps: WIZARD, values: applicant, files: { resume: ["resume.pdf"] } },
     stops: ["needs-approval"],
     check: {
       expression: REVIEW,
@@ -53,26 +58,10 @@ const scenarios: Scenario[] = [
     submissions: 0,
   },
   {
-    name: "wizard-other",
-    page: "wizard",
-    input: {
-      goal: "the application is filled in up to its final submit",
-      values: {
-        ...applicant,
-        "how did you hear about us": "Other",
-        "where you heard about us, if other": "A meetup talk",
-      },
-      files: { resume: ["resume.pdf"] },
-    },
-    stops: ["needs-approval"],
-    check: { expression: REVIEW, contains: ["Heard about us: Other (A meetup talk)"] },
-    submissions: 0,
-  },
-  {
     name: "wizard-eval13",
     page: "wizard",
     input: {
-      goal: "Complete the application through the final review step, filling all fields with the provided details and uploading the resume, but stop before the final submit",
+      steps: WIZARD,
       values: {
         "full name": "Grace Hopper",
         email: "grace@example.com",
@@ -84,7 +73,7 @@ const scenarios: Scenario[] = [
       },
       files: { resume: ["resume.pdf"] },
     },
-    stops: ["needs-approval", "done"],
+    stops: ["needs-approval"],
     check: {
       expression: REVIEW,
       contains: [
@@ -96,21 +85,10 @@ const scenarios: Scenario[] = [
     submissions: 0,
   },
   {
-    name: "wizard-missing",
-    page: "wizard",
-    input: {
-      goal: "the application is filled in up to its final submit",
-      values: { ...applicant, "how did you hear about us": "Other" },
-    },
-    stops: ["needs-input", "error"],
-    check: { expression: "document.querySelector('.step.active').id", contains: ["step1"] },
-    submissions: 0,
-  },
-  {
     name: "contact",
     page: "form-basic",
     input: {
-      goal: "the contact form is filled in, ready to send",
+      steps: [{ action: "fill" }, { action: "click", target: "Send message" }],
       values: {
         name: "Ada Lovelace",
         email: "ada@example.com",
@@ -121,7 +99,7 @@ const scenarios: Scenario[] = [
         country: "France",
       },
     },
-    stops: ["needs-approval", "done"],
+    stops: ["needs-approval"],
     check: {
       expression:
         "JSON.stringify(Object.fromEntries(new FormData(document.querySelector('form')))) + ' newsletter=' + document.querySelector('[type=checkbox]').checked",
@@ -129,30 +107,21 @@ const scenarios: Scenario[] = [
     },
   },
   {
-    name: "questions",
-    page: "questions",
-    input: {
-      goal: "the answers are saved (the page shows what was sent)",
-      values: {
-        "worked here before": "No",
-        "needs visa sponsorship": "Yes",
-        country: "India",
-      },
-    },
-    stops: ["done", "needs-approval"],
-    check: { expression: "document.body.innerText", contains: ["India"] },
-  },
-  {
-    name: "shop",
+    name: "shop-blue",
     page: "shop-mock",
-    input: { goal: "the blue mug is in the cart (the cart count shows 1)" },
+    input: { steps: [{ action: "click", target: "Add to cart for the blue mug" }] },
     stops: ["done"],
     check: { expression: "document.getElementById('count').textContent", contains: ["1"] },
   },
   {
     name: "shop-filter",
     page: "shop-mock",
-    input: { goal: "only red products are listed, sorted by price from low to high" },
+    input: {
+      steps: [
+        { action: "select", target: "the Color filter", text: "red" },
+        { action: "select", target: "Sort", text: "price low to high" },
+      ],
+    },
     stops: ["done"],
     check: {
       expression:
@@ -163,10 +132,7 @@ const scenarios: Scenario[] = [
   {
     name: "shop-search",
     page: "shop-mock",
-    input: {
-      goal: "the search results for the search text are showing",
-      values: { "search text": "travel" },
-    },
+    input: { steps: [{ action: "type", target: "the search box", text: "travel", submit: true }] },
     stops: ["done"],
     check: {
       expression:
@@ -177,47 +143,133 @@ const scenarios: Scenario[] = [
   {
     name: "shop-checkout-gate",
     page: "shop-mock",
-    input: { goal: "the Travel Mug is ordered", values: { name: "Ada Lovelace" } },
+    input: {
+      steps: [
+        { action: "click", target: "Add to cart for the Travel Mug" },
+        { action: "click", target: "the cart link" },
+        { action: "fill" },
+        { action: "click", target: "Place order" },
+      ],
+      values: { name: "Ada Lovelace" },
+    },
     stops: ["needs-approval"],
     check: { expression: "document.body.innerText", contains: ["Travel Mug $15.00"] },
   },
   {
     name: "spa",
     page: "spa-nav",
-    input: { goal: "the Reports page with its revenue figures is showing" },
+    input: {
+      steps: [
+        { action: "click", target: "Reports" },
+        { action: "wait", text: "Q2 revenue" },
+      ],
+    },
     stops: ["done"],
     check: { expression: "document.body.innerText", contains: ["Q2 revenue"] },
   },
   {
     name: "infinite",
     page: "infinite",
-    input: { goal: "Post 15 is open" },
-    stops: ["done", "unsure", "error"],
+    input: {
+      steps: [
+        { action: "scroll", direction: "down" },
+        { action: "click", target: "Post 15" },
+      ],
+    },
+    stops: ["done", "error"],
     check: { expression: "location.pathname", contains: ["/post/15"] },
   },
   {
     name: "cookies",
     page: "modal",
-    input: { goal: "the cookie banner is closed after rejecting cookies" },
+    input: { steps: [{ action: "click", target: "Reject in the cookie banner" }] },
     stops: ["done"],
     check: {
-      expression: "String(!document.body.innerText.includes('Accept all')) + ' ' + document.title",
+      expression: "String(!document.body.innerText.includes('Accept all'))",
       contains: ["true"],
     },
   },
   {
     name: "buy-gate",
     page: "chrome",
-    input: { goal: "one product is bought" },
+    input: { steps: [{ action: "click", target: "Buy one" }] },
     stops: ["needs-approval"],
     check: { expression: "document.body.innerText", contains: ["In stock: 3"] },
   },
   {
-    name: "combobox",
-    page: "combobox",
-    input: { goal: "Paris is chosen as the destination", values: { city: "Paris" } },
+    name: "real:books-nav",
+    page: BOOKS,
+    input: {
+      steps: [
+        { action: "click", target: "the Mystery category link" },
+        { action: "click", target: "the next page link" },
+        { action: "click", target: "the first book in the list" },
+      ],
+    },
     stops: ["done"],
-    check: { expression: "document.body.innerText", contains: ["Chosen: Paris"] },
+    check: {
+      expression: "document.querySelector('h1')?.innerText ?? ''",
+      contains: ["Mysterious Affair at Styles"],
+    },
+  },
+  {
+    name: "real:books-basket-gate",
+    page: BOOKS,
+    input: { steps: [{ action: "click", target: "Add to basket for Tipping the Velvet" }] },
+    stops: ["needs-approval", "done"],
+    check: { expression: "location.href", contains: ["books.toscrape.com"] },
+  },
+  {
+    name: "real:hn-comments",
+    page: "https://news.ycombinator.com/",
+    input: { steps: [{ action: "click", target: "the comments link of the top story" }] },
+    stops: ["done"],
+    check: { expression: "location.href", contains: ["item?id="] },
+  },
+  {
+    name: "real:wiki-search",
+    page: "https://en.wikipedia.org/wiki/Iceland",
+    input: {
+      steps: [
+        { action: "type", target: "the Wikipedia search box", text: "Reykjavik", submit: true },
+      ],
+    },
+    stops: ["done"],
+    check: { expression: "document.title", contains: ["Reykjav"] },
+  },
+  {
+    name: "real:wiki-toc",
+    page: "https://en.wikipedia.org/wiki/Iceland",
+    input: { steps: [{ action: "click", target: "the Demographics section in the contents" }] },
+    stops: ["done"],
+    check: { expression: "location.hash", contains: ["Demographics"] },
+  },
+  {
+    name: "real:pizza",
+    page: "https://httpbin.org/forms/post",
+    input: {
+      steps: [{ action: "fill" }, { action: "click", target: "Submit order" }],
+      values: {
+        "customer name": "Ada Lovelace",
+        telephone: "555-0100",
+        email: "ada@example.com",
+        "pizza size": "Medium",
+        toppings: ["Bacon", "Extra Cheese"],
+        "preferred delivery time": "19:30",
+        "delivery instructions": "Ring twice",
+      },
+    },
+    stops: ["needs-approval"],
+    check: {
+      expression: "new URLSearchParams(new FormData(document.querySelector('form'))).toString()",
+      contains: [
+        "custname=Ada+Lovelace",
+        "size=medium",
+        "topping=bacon",
+        "topping=cheese",
+        "delivery=19%3A30",
+      ],
+    },
   },
 ];
 
@@ -254,7 +306,18 @@ try {
       site?.stop();
       site = startFixtureSite();
       const tab: Tab = await browser.activeTab(AbortSignal.timeout(10_000));
-      await navigateTo(tab, site.url(scenario.page), AbortSignal.timeout(15_000));
+      try {
+        await navigateTo(
+          tab,
+          scenario.page.startsWith("http") ? scenario.page : site.url(scenario.page),
+          AbortSignal.timeout(30_000),
+        );
+      } catch (error) {
+        console.log(
+          `SKIP ${scenario.name} #${run}: could not open the page (${error instanceof Error ? error.message : error})`,
+        );
+        continue;
+      }
       const started = performance.now();
       let line: string;
       try {
@@ -311,7 +374,7 @@ try {
         // Stopping to hand the step back is slower but never wrong, unless something was submitted.
         const handback =
           !ok &&
-          (report.stop === "unsure" || report.stop === "needs-llm") &&
+          report.stop === "not-found" &&
           (scenario.submissions === undefined || site.submissions.length === scenario.submissions);
         if (ok) passed++;
         if (handback) handedBack++;
