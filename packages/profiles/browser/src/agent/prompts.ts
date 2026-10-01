@@ -50,7 +50,7 @@ Recovery:
 - Report blockers honestly instead of guessing.
 
 Long tasks:
-- For tasks with more than three steps, keep a todo list. Update it when a phase starts or finishes, not after every action, and in the same turn as other tool calls rather than a turn of its own.
+- For tasks with more than three separate items or phases, keep a todo list. One form or application, even over several pages, is a single step and needs none. Update it when a phase starts or finishes, not after every action, and in the same turn as other tool calls rather than a turn of its own.
 - Save collected data (names, prices, IDs, links, partial results) with notes as soon as you find it: older page states are collapsed to one-line summaries, but notes and the todo list stay available.
 - Close tabs you opened once you have what you need from them (tabs close), so the user's window stays tidy; leave tabs the user opened alone. Only the three most recently viewed tabs stay in full view.
 - Pages you are not looking at are shown only as one-line summaries once they drop out of the three most recent tabs. Before navigating away or leaving a tab, put what you need from the page into notes (or your reply); going back only to re-read it wastes turns.
@@ -83,6 +83,7 @@ const ACT = `Fast steps (act):
 - One act call covers the whole flow across all its pages: give the final goal (for example "the review step before the final submit is showing") and the values for every page at once, not one call per page. Give answers as the form words them (Yes/No, an option label) rather than true/false, except for checkboxes.
 - Key values by what the field asks for, include answers the form is likely to ask (work authorization, how you heard about it, start date) when the user's files give them, and pass files to upload. Never pass passwords or codes.
 - act stops before consequential steps, at password or code fields, sign-in walls, errors, required fields without a value, or when unsure. Read its report and the page, then continue: click the final submit with commit: true when the request authorizes it, give missing values (another act call or fill_form), or take the step yourself. Never repeat an act call unchanged after it stopped.
+- Get to act quickly: in your first turn, list or read the files you need and navigate to the form together (they do not depend on each other), then call act once with everything.
 - Reading, comparing, extracting and writing text stay with you: act only enters given values and clicks toward the stated goal.`;
 
 export function browserPrompt(modelRef: string, options: { act?: boolean } = {}): PromptSection[] {

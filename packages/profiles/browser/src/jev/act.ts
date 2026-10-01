@@ -73,6 +73,9 @@ const FIELD_ROLES = new Set([
   "switch",
   "slider",
   "radiogroup",
+  "time",
+  "date",
+  "datetime",
 ]);
 const CLICK_ROLES = new Set([
   "button",
@@ -92,6 +95,8 @@ interface Candidate {
 
 interface PageCandidates {
   fields: Candidate[];
+  // The checkbox group each grouped checkbox belongs to.
+  groupOf: Map<string, PageNode>;
   clickables: Candidate[];
   text: string;
 }
@@ -104,16 +109,36 @@ function isRadioGroup(node: PageNode): boolean {
   return node.role === "radiogroup" || (node.role === "group" && hasRadio(node));
 }
 
+function checkboxesIn(node: PageNode): PageNode[] {
+  return node.children.flatMap((child) =>
+    child.role === "checkbox" ? [child] : checkboxesIn(child),
+  );
+}
+
+// A group of checkboxes answers one question with several choices ("toppings").
+function isCheckboxGroup(node: PageNode): boolean {
+  return node.role === "group" && !hasRadio(node) && checkboxesIn(node).length >= 2;
+}
+
 // Fields and clickable controls the rendered page shows, in page order.
 export function pageCandidates(model: PageModel): PageCandidates {
   const rendered = renderSnapshot(model, { scope: "full" });
   const fields: Candidate[] = [];
   const clickables: Candidate[] = [];
+  const groupOf = new Map<string, PageNode>();
   const walk = (node: PageNode, inGroup: boolean) => {
     const group = isRadioGroup(node) && node.ref !== undefined;
+    const boxes = node.ref !== undefined && isCheckboxGroup(node);
+    if (boxes) for (const box of checkboxesIn(node)) if (box.ref) groupOf.set(box.ref, node);
     if (node.ref && rendered.refs.has(node.ref) && !node.states.disabled) {
       const candidate = { ref: node.ref, node, line: describeNode(node, model.url).slice(0, 160) };
-      if (FIELD_ROLES.has(node.role) || group || (node.role === "radio" && !inGroup))
+      if (
+        FIELD_ROLES.has(node.role) ||
+        node.editable !== undefined ||
+        group ||
+        boxes ||
+        (node.role === "radio" && !inGroup)
+      )
         fields.push(candidate);
       else if (CLICK_ROLES.has(node.role)) clickables.push(candidate);
     }
@@ -123,7 +148,7 @@ export function pageCandidates(model: PageModel): PageCandidates {
   const text = rendered.text
     .replace(/^<page_content untrusted="true">\n/, "")
     .replace(/\n<\/page_content>$/, "");
-  return { fields, clickables, text };
+  return { fields, clickables, groupOf, text };
 }
 
 // A Choice over refs, split into requests of at most 255 options (with "none")
@@ -381,6 +406,27 @@ export async function runAct(
         pending.delete(key);
         continue;
       }
+      // Several choices for a checkbox group (or one of its boxes) tick the matching boxes.
+      const boxGroup = node && isCheckboxGroup(node) ? node : page.groupOf.get(pick.ref);
+      if (boxGroup && typeof value !== "boolean") {
+        const wanted = (Array.isArray(value) ? value : value.split(/\s*,\s*/)).filter(Boolean);
+        const boxes = checkboxesIn(boxGroup);
+        const unmatched: string[] = [];
+        for (const item of wanted) {
+          const label = item.trim().toLowerCase();
+          const box =
+            boxes.find((candidate) => candidate.name.trim().toLowerCase() === label) ??
+            boxes.find((candidate) => candidate.name.toLowerCase().includes(label));
+          if (box?.ref) fields.push({ key, ref: box.ref, value: true });
+          else unmatched.push(item);
+        }
+        if (unmatched.length)
+          notEntered.push(
+            `${key}: no checkbox matches ${unmatched.map((item) => JSON.stringify(item)).join(", ")}`,
+          );
+        if (unmatched.length === wanted.length) pending.delete(key);
+        continue;
+      }
       // A yes/no question asked as a radio group takes the option's label.
       const answer =
         typeof value === "boolean" && node && isRadioGroup(node) ? (value ? "Yes" : "No") : value;
@@ -432,16 +478,6 @@ export async function runAct(
         "needs-approval",
         `a password or one-time-code field is next (${secretFields.join(", ")}); enter it with type or fill_form, which asks the user`,
       );
-    if (noulOf(answers.done) >= DONE_MIN) return finish("done", "the page shows the goal reached");
-    if (lastAction === "click" && noulOf(answers.error) >= ERROR_MIN)
-      return finish("error", "the page shows an error after the last step; read it below");
-    const next = await resolvePick(
-      "next",
-      answers,
-      runoff("next", {
-        question: "Which control should be clicked next to move toward `goal`?",
-      }),
-    );
     const consequential = page.clickables
       .filter(
         (candidate) =>
@@ -458,6 +494,17 @@ export async function runAct(
           `consequential controls on this page (click with commit: true): ${consequential.join(", ")}`,
         ]
       : [];
+    if (noulOf(answers.done) >= DONE_MIN)
+      return finish("done", "the page shows the goal reached", leftHere);
+    if (lastAction === "click" && noulOf(answers.error) >= ERROR_MIN)
+      return finish("error", "the page shows an error after the last step; read it below");
+    const next = await resolvePick(
+      "next",
+      answers,
+      runoff("next", {
+        question: "Which control should be clicked next to move toward `goal`?",
+      }),
+    );
     // Nothing moves toward the goal because the goal says to stop here.
     if (next.ref === NONE && noulOf(answers.done) >= DONE_WHEN_NOTHING_NEXT)
       return finish("done", "the page shows the goal reached", leftHere);
