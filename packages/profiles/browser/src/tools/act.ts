@@ -1,8 +1,9 @@
-import type { AnyTool, ToolResult } from "@mu/core";
+import { type AnyTool, evaluate, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { uploadRoots } from "../actions/files.ts";
 import { hostOf } from "../actions/navigate.ts";
+import { hostRules, SCOPES } from "../agent/permissions.ts";
 import type { Tab } from "../browser/tabs.ts";
 import { DEFAULT_MAX_STEPS, runAct } from "../jev/act.ts";
 import type { JevClient } from "../jev/client.ts";
@@ -24,7 +25,7 @@ function markActed(tab: Tab | undefined): void {
   acted.set(tab, pages);
 }
 
-const FIELD_TOOLS = new Set(["fill_form", "type", "select"]);
+const OPERATING_TOOLS = new Set(["click", "fill_form", "type", "select"]);
 
 function fieldRefs(args: Record<string, unknown>): string[] {
   if (Array.isArray(args.fields))
@@ -34,31 +35,40 @@ function fieldRefs(args: Record<string, unknown>): string[] {
   return typeof args.ref === "string" ? [args.ref] : [];
 }
 
-// Why a field tool must wait for act on the current page, if it must.
-function actFirst(deps: BrowserToolDeps, args: Record<string, unknown>): string | undefined {
+// Why an operating tool must wait for act on the current page, if it must. A click
+// the model marks consequential (after act handed it back, with the user's approval)
+// and password or code fields never wait.
+function actFirst(
+  deps: BrowserToolDeps,
+  tool: string,
+  args: Record<string, unknown>,
+): string | undefined {
   const tab = deps.browser.currentTab();
   if (!tab || acted.get(tab)?.has(pageKey(tab))) return undefined;
+  if (tool === "click" && args.commit === true) return undefined;
   const refs = fieldRefs(args);
   const secret = refs.some((ref) => {
     const editable = tab.refs.meta(ref)?.editable;
     return editable === "secret" || editable === "otp";
   });
   if (secret) return undefined;
-  return "Fill fields with act first: call act with the goal for this flow and every value you have (all pages at once). Once act has run on this page, fill_form, type and select are available here for whatever it could not do.";
+  return "Operate pages with act first: call act with the goal and every value you have (all pages of the flow at once). Once act has run on this page, click, fill_form, type and select are available here for what it handed back. Consequential clicks (commit: true) are always available.";
 }
 
-// With Jev available, act is the default way to fill fields: the manual field tools
-// refuse on a page act has not worked on yet (before any approval is asked).
+// With Jev available, act operates the browser: the manual operating tools refuse on
+// a page act has not worked on yet (before any approval is asked).
 export function actFirstTools(tools: AnyTool[], deps: BrowserToolDeps): AnyTool[] {
   return tools.map((candidate) => {
-    if (!FIELD_TOOLS.has(candidate.name)) return candidate;
+    if (!OPERATING_TOOLS.has(candidate.name)) return candidate;
     const { permissionScope, execute } = candidate;
     return {
       ...candidate,
       permissionScope: (args: Record<string, unknown>) =>
-        actFirst(deps, args) ? "browser:interact" : (permissionScope?.(args) ?? "browser:interact"),
+        actFirst(deps, candidate.name, args)
+          ? "browser:interact"
+          : (permissionScope?.(args) ?? "browser:interact"),
       execute: async (...call: Parameters<AnyTool["execute"]>): Promise<ToolResult> => {
-        const refusal = actFirst(deps, call[1] as Record<string, unknown>);
+        const refusal = actFirst(deps, candidate.name, call[1] as Record<string, unknown>);
         if (refusal) return { content: [{ type: "text", text: refusal }], isError: true };
         return execute(...call);
       },
@@ -67,10 +77,11 @@ export function actFirstTools(tools: AnyTool[], deps: BrowserToolDeps): AnyTool[
 }
 
 export function actTool(deps: BrowserToolDeps, jev: JevClient) {
+  const hosts = hostRules(deps.config.allowedHosts, deps.config.blockedHosts);
   return tool({
     name: "act",
     description:
-      "Hand a goal and the values for it to a fast decision model that works the page step by step without you: it matches values to fields by meaning and fills them, uploads files, and clicks through steps that are easy to undo (Next, Continue, tabs, links, cookie banners) until the goal is reached. It stops and hands back before anything consequential (submit, send, buy: you then click it with commit: true), at password or code fields, sign-in walls, errors, required fields you gave no value for, or when unsure, and reports each step plus the page state. Use it for multi-step forms and click-through flows; do the reading, comparing and writing yourself.",
+      "Operate the browser toward a goal with a fast decision model that takes every step itself, each in well under a second: clicking (buttons, links, tabs, menus, options, checkboxes), typing the values you give, choosing dropdown options, pressing Enter, scrolling and waiting, across pages (navigation, search, filters, menus, multi-page forms, cookie banners). It stops and hands back before anything consequential (submit, send, buy: you then click it with commit: true), at password or code fields, sign-in walls, errors, a field it has no value for, a step that needs reading, comparing, writing or deciding, or when unsure, and reports each step plus the page state.",
     inputSchema: z.object({
       goal: z
         .string()
@@ -88,7 +99,7 @@ export function actTool(deps: BrowserToolDeps, jev: JevClient) {
         .record(z.string(), z.array(z.string().min(1)).min(1))
         .optional()
         .describe("Files from your folder to upload, keyed by what they are ('resume')"),
-      maxSteps: z.number().int().min(1).max(30).optional(),
+      maxSteps: z.number().int().min(1).max(40).optional(),
     }),
     executionMode: "sequential",
     permissionPattern: () =>
@@ -122,7 +133,11 @@ export function actTool(deps: BrowserToolDeps, jev: JevClient) {
               ...(args.files ? { files: args.files } : {}),
               maxSteps: args.maxSteps ?? DEFAULT_MAX_STEPS,
             },
-            { jev, uploadRoots: uploadRoots(deps.config) },
+            {
+              jev,
+              uploadRoots: uploadRoots(deps.config),
+              hostAllowed: (host) => evaluate(hosts, SCOPES.navigate, host) !== "deny",
+            },
           ),
         { detectChange: true },
       );

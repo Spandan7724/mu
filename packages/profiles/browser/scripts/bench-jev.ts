@@ -150,6 +150,69 @@ const scenarios: Scenario[] = [
     check: { expression: "document.getElementById('count').textContent", contains: ["1"] },
   },
   {
+    name: "shop-filter",
+    page: "shop-mock",
+    input: { goal: "only red products are listed, sorted by price from low to high" },
+    stops: ["done"],
+    check: {
+      expression:
+        "document.getElementById('color').value + '|' + document.getElementById('sort').value",
+      contains: ["red|price"],
+    },
+  },
+  {
+    name: "shop-search",
+    page: "shop-mock",
+    input: {
+      goal: "the search results for the search text are showing",
+      values: { "search text": "travel" },
+    },
+    stops: ["done"],
+    check: {
+      expression:
+        "document.getElementById('main').innerText.includes('Classic Mug') ? 'unfiltered' : document.getElementById('main').innerText",
+      contains: ["Travel Mug"],
+    },
+  },
+  {
+    name: "shop-checkout-gate",
+    page: "shop-mock",
+    input: { goal: "the Travel Mug is ordered", values: { name: "Ada Lovelace" } },
+    stops: ["needs-approval"],
+    check: { expression: "document.body.innerText", contains: ["Travel Mug $15.00"] },
+  },
+  {
+    name: "spa",
+    page: "spa-nav",
+    input: { goal: "the Reports page with its revenue figures is showing" },
+    stops: ["done"],
+    check: { expression: "document.body.innerText", contains: ["Q2 revenue"] },
+  },
+  {
+    name: "infinite",
+    page: "infinite",
+    input: { goal: "Post 15 is open" },
+    stops: ["done", "unsure", "error"],
+    check: { expression: "location.pathname", contains: ["/post/15"] },
+  },
+  {
+    name: "cookies",
+    page: "modal",
+    input: { goal: "the cookie banner is closed after rejecting cookies" },
+    stops: ["done"],
+    check: {
+      expression: "String(!document.body.innerText.includes('Accept all')) + ' ' + document.title",
+      contains: ["true"],
+    },
+  },
+  {
+    name: "buy-gate",
+    page: "chrome",
+    input: { goal: "one product is bought" },
+    stops: ["needs-approval"],
+    check: { expression: "document.body.innerText", contains: ["In stock: 3"] },
+  },
+  {
     name: "combobox",
     page: "combobox",
     input: { goal: "Paris is chosen as the destination", values: { city: "Paris" } },
@@ -183,6 +246,7 @@ const browser = new BrowserManager({
 let site: FixtureSite | undefined;
 const rows: string[] = [];
 let passed = 0;
+let handedBack = 0;
 let total = 0;
 try {
   for (const scenario of scenarios.filter((s) => only.length === 0 || only.includes(s.name))) {
@@ -202,7 +266,26 @@ try {
             signal: AbortSignal.timeout(120_000),
           },
           scenario.input,
-          { jev, uploadRoots: [workspace] },
+          {
+            jev,
+            uploadRoots: [workspace],
+            ...(args.includes("--trace")
+              ? {
+                  trace: (round, answers) => {
+                    const brief = Object.entries(answers)
+                      .filter(([id]) => !id.startsWith("risky:") && !id.startsWith("value:"))
+                      .map(([id, answer]) =>
+                        answer.type === "noul"
+                          ? `${id}=${answer.noul.toFixed(2)}`
+                          : answer.type === "choice"
+                            ? `${id}=${answer.choice}(${(answer.probabilities[answer.choice] ?? 0).toFixed(2)})`
+                            : id,
+                      );
+                    console.log(`    round ${round}: ${brief.join(" ")}`);
+                  },
+                }
+              : {}),
+          },
         );
         const wall = (performance.now() - started) / 1000;
         const active = await browser.activeTab(AbortSignal.timeout(5_000));
@@ -225,9 +308,15 @@ try {
             : []),
         ];
         const ok = problems.length === 0;
+        // Stopping to hand the step back is slower but never wrong, unless something was submitted.
+        const handback =
+          !ok &&
+          (report.stop === "unsure" || report.stop === "needs-llm") &&
+          (scenario.submissions === undefined || site.submissions.length === scenario.submissions);
         if (ok) passed++;
+        if (handback) handedBack++;
         const perCall = report.jev.calls ? Math.round(report.jev.ms / report.jev.calls) : 0;
-        line = `${ok ? "PASS" : "FAIL"} ${scenario.name} #${run}: ${report.stop} · ${wall.toFixed(1)} s · jev ${report.jev.calls} calls, ${Math.round(report.jev.ms)} ms (${perCall} ms/call), ${report.jev.inputTokens} tok${ok ? "" : ` · ${problems.join("; ")}`}`;
+        line = `${ok ? "PASS" : handback ? "HANDBACK" : "FAIL"} ${scenario.name} #${run}: ${report.stop} · ${wall.toFixed(1)} s · jev ${report.jev.calls} calls, ${Math.round(report.jev.ms)} ms (${perCall} ms/call), ${report.jev.inputTokens} tok${ok ? "" : ` · ${problems.join("; ")}`}`;
         console.log(line);
         console.log(`  ${report.summary}`);
         for (const step of (report.extra ?? "").split("\n")) console.log(`  ${step}`);
@@ -244,5 +333,7 @@ try {
   site?.stop();
   rmSync(home, { recursive: true, force: true });
 }
-console.log(`\n${passed}/${total} passed`);
+console.log(
+  `\n${passed}/${total} passed, ${handedBack} handed back, ${total - passed - handedBack} failed`,
+);
 for (const row of rows) console.log(row);

@@ -39,10 +39,11 @@ class ScriptedJev {
   ): Promise<JevResponse> {
     this.states.push(state);
     if (usage) usage.calls++;
-    const { page, last_step: lastStep = "" } = state as {
+    const { page, recent_steps: steps = [] } = state as {
       page: { content: string };
-      last_step?: string;
+      recent_steps?: { did: string }[];
     };
+    const lastStep = steps.at(-1)?.did ?? "";
     const answers: Record<string, JevAnswer> = {};
     const pickFrom = (options: Record<string, unknown>, pattern: RegExp | undefined) => {
       const ref = Object.entries(options).find(
@@ -61,23 +62,37 @@ class ScriptedJev {
         confidence: 0.9,
       };
     };
+    const clickOptions = Object.fromEntries(
+      Object.entries(questions)
+        .filter(([id]) => id.startsWith("click#"))
+        .flatMap(([, question]) =>
+          Object.entries((question as { criteria: Record<string, string> }).criteria),
+        ),
+    );
+    const nextPattern = this.rules.next(clickOptions, lastStep);
+    const clickable = pickFrom(clickOptions, nextPattern).choice !== "none";
+    const done = this.rules.done?.(page.content) ?? false;
     for (const [id, question] of Object.entries(questions)) {
       if (question.type === "choice" && id.startsWith("field")) {
         const item = (question.instructions as { item: { name: string } }).item.name;
         answers[id] = pickFrom(question.criteria, this.rules.fields[item]);
-      } else if (question.type === "choice" && id.startsWith("next")) {
+      } else if (question.type === "choice" && id.startsWith("click#")) {
+        answers[id] = pickFrom(question.criteria, nextPattern);
+      } else if (question.type === "choice" && id === "operation") {
         answers[id] = pickFrom(
           question.criteria,
-          this.rules.next(question.criteria as Record<string, string>, lastStep),
+          done ? /^Every part/ : clickable ? /^Click one element/ : /^The next step needs/,
         );
+      } else if (question.type === "choice") {
+        answers[id] = pickFrom(question.criteria, undefined);
       } else if (id === "done") {
-        answers[id] = { type: "noul", noul: this.rules.done?.(page.content) ? 0.95 : 0.05 };
+        answers[id] = { type: "noul", noul: done ? 0.95 : 0.05 };
       } else if (id === "blocked") {
         answers[id] = { type: "noul", noul: this.rules.blocked ? 0.95 : 0.02 };
       } else if (id === "error") {
         answers[id] = { type: "noul", noul: /Please fill in/.test(page.content) ? 0.9 : 0.05 };
-      } else if (id === "risky") {
-        const control = String((state as { control: string }).control);
+      } else if (id.startsWith("risky")) {
+        const control = String((question.instructions as { control: string }).control);
         answers[id] = { type: "noul", noul: this.rules.risky?.test(control) ? 0.9 : 0.05 };
       }
     }
@@ -175,6 +190,7 @@ describeWithBrowser(
       // Every decision saw the goal and values, never another field's secret.
       expect(JSON.stringify(jev.states[0])).toContain("Grace Hopper");
       expect(report.jev.calls).toBeGreaterThanOrEqual(4);
+      expect(report.jev.calls).toBeLessThanOrEqual(8);
     });
 
     test("a required field revealed by an answer, with no value for it, hands back for input", async () => {
@@ -278,7 +294,7 @@ describeWithBrowser(
       expect(tools.get("fill_form")?.permissionScope?.(fill)).toBe("browser:interact");
       const refused = await tools.get("fill_form")?.execute("f1", fill, AbortSignal.timeout(5_000));
       expect(refused?.isError).toBe(true);
-      expect(JSON.stringify(refused?.content)).toContain("Fill fields with act first");
+      expect(JSON.stringify(refused?.content)).toContain("Operate pages with act first");
       const password = await tools
         .get("type")
         ?.execute(
