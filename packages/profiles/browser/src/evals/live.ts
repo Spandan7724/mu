@@ -250,6 +250,26 @@ export const TASKS: EvalTask[] = [
     },
   },
   {
+    id: 17,
+    name: "click-through navigation (books.toscrape)",
+    modes: ["default"],
+    prompt: () =>
+      "On books.toscrape.com, open the Mystery category from the home page, go to the second page of that category, and open the first book listed there. Tell me its exact title and price.",
+    check: async ({ text }) => {
+      const html = await page(
+        "https://books.toscrape.com/catalogue/category/books/mystery_3/page-2.html",
+      );
+      const first = /title="([^"]+)"[\s\S]*?price_color">£([\d.]+)/.exec(html);
+      const title = decode(first?.[1] ?? "");
+      const price = first?.[2] ?? "";
+      if (!title) return { pass: false, note: "could not read the expected book" };
+      const named = text.includes(title.slice(0, 25));
+      return named && text.includes(price)
+        ? { pass: true, note: `${title} £${price}` }
+        : { pass: false, note: `expected ${title} £${price}` };
+    },
+  },
+  {
     id: 9,
     name: "multi-tab comparison",
     modes: ["default"],
