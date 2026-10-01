@@ -176,6 +176,24 @@ describeWithBrowser(
       expect(site.submissions).toHaveLength(0);
     });
 
+    test("one fill step with next fills every page of a form and stops before its final submit", async () => {
+      await open("wizard");
+      const report = await act(new ScriptedJev({ fields: wizardFields }), {
+        steps: [
+          { action: "fill", next: "Next" },
+          { action: "click", target: "Submit application" },
+        ],
+        values,
+        files: { resume: ["resume.pdf"] },
+      });
+      expect(report.stop).toBe("needs-approval");
+      expect(report.summary).toContain('button "Submit application"');
+      const review = String(await evaluate("document.getElementById('review').innerText"));
+      expect(review).toContain("Name: Grace Hopper");
+      expect(review).toContain("Resume: resume.pdf");
+      expect(site.submissions).toHaveLength(0);
+    });
+
     test("a description is matched by Jev with the element's context; a ref needs no Jev call at all", async () => {
       const tab = await open("shop-mock");
       const jev = new ScriptedJev({ targets: { "Add to cart for the blue mug": /Travel Mug/ } });

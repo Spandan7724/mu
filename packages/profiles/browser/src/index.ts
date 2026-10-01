@@ -29,7 +29,7 @@ import {
 import { jevFromEnv } from "./jev/client.ts";
 import { visionEnabled } from "./page/screenshot.ts";
 import type { SecretRegistry } from "./page/secrets.ts";
-import { actTool } from "./tools/act.ts";
+import { actTool, throughActTools } from "./tools/act.ts";
 import { delegateTool } from "./tools/delegate.ts";
 import { fileTools } from "./tools/files.ts";
 import { interactionTools } from "./tools/interact.ts";
@@ -198,7 +198,17 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
         pageText: (text) => lane.dataflow.leak(text, "")?.from,
       }),
     ] as AnyTool[];
-    return rawTools.map((candidate) =>
+    // With Jev, act covers what fill_form and select do; click and type remain for
+    // consequential clicks and secrets.
+    const available = jev
+      ? throughActTools(
+          rawTools.filter(
+            (candidate) => candidate.name !== "fill_form" && candidate.name !== "select",
+          ),
+          deps,
+        )
+      : rawTools;
+    return available.map((candidate) =>
       observingDataFlow(
         redacting(recordingCommits(candidate, lane, laneState), lane.secrets),
         lane,

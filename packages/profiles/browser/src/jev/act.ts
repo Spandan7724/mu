@@ -41,6 +41,12 @@ export interface ActStep {
   // type: press Enter afterwards.
   submit?: boolean | undefined;
   direction?: "up" | "down" | undefined;
+  // fill: after filling, click this control (the form's "Next") and fill the page it
+  // opens, until the control is no longer there.
+  next?: string | undefined;
+  // fill: values and files for this step (merged with the call's own).
+  values?: Record<string, ActValue> | undefined;
+  files?: Record<string, string[]> | undefined;
 }
 
 export interface ActInput {
@@ -88,6 +94,10 @@ const RISKY_MIN = 0.5;
 const MAX_REVERSE = 40;
 const MAX_SPECULATIVE_RISKY = 30;
 const FILL_PASSES = 3;
+const MAX_FORM_PAGES = 10;
+
+// Steps the executor adds itself: the repeated fill of a `next` form and its click.
+type QueuedStep = ActStep & { optional?: boolean; page?: number };
 const RISKY_ROLES = new Set(["button", "clickable", "menuitem"]);
 const PICKER_ROLES = new Set(["combobox", "date", "time", "datetime"]);
 
@@ -152,6 +162,8 @@ function describe(step: ActStep): string {
       return `scroll ${step.direction ?? "down"}${target ? ` in${target}` : ""}`;
     case "wait":
       return `wait for ${JSON.stringify(step.text ?? "")}`;
+    case "fill":
+      return step.next ? `fill, then ${JSON.stringify(step.next)} until the last page` : "fill";
     default:
       return `${step.action}${target}`;
   }
@@ -170,12 +182,17 @@ export async function runAct(
 ): Promise<ActReport> {
   const { signal } = ctx;
   const usage: JevUsage = { calls: 0, ms: 0, inputTokens: 0 };
-  const values = input.values ?? {};
-  const files = input.files ?? {};
+  const values: Record<string, ActValue> = { ...input.values };
+  const files: Record<string, string[]> = { ...input.files };
+  for (const step of input.steps) {
+    Object.assign(values, step.values);
+    Object.assign(files, step.files);
+  }
   const pending = new Set([...Object.keys(values), ...Object.keys(files)]);
   const startHost = hostOf(ctx.tab.url);
   const log: string[] = [];
   const notEntered: string[] = [];
+  const queue: QueuedStep[] = [...input.steps];
   let acted = false;
   const shownValues: Record<string, string> = Object.fromEntries(
     Object.entries(values).map(([key, value]) => [key, display(value)]),
@@ -186,7 +203,7 @@ export async function runAct(
   const finish = (stop: ActStop, summary: string, extra: string[] = []): ActReport => {
     const unused = [...pending];
     const lines = [
-      `steps run (${log.length} of ${input.steps.length}; jev ${usage.calls} calls, ${Math.round(usage.ms)} ms):`,
+      `steps run (${log.length} of ${queue.length}; jev ${usage.calls} calls, ${Math.round(usage.ms)} ms):`,
       ...log.map((line, index) => `${index + 1}. ${line}`),
       ...(unused.length ? [`values not used: ${unused.join(", ")}`] : []),
       ...notEntered.map((failure) => `could not enter ${failure}`),
@@ -399,7 +416,8 @@ export async function runAct(
     return { summary: done.length ? `filled ${done.join(", ")}` : "filled nothing on this page" };
   };
 
-  for (const [index, step] of input.steps.entries()) {
+  for (let index = 0; index < queue.length; index++) {
+    const step = queue[index] as QueuedStep;
     const stepName = `step ${index + 1} (${describe(step)})`;
     let result: ActionResult;
     let did: string;
@@ -408,6 +426,14 @@ export async function runAct(
       if ("stop" in filled) return filled;
       result = { summary: filled.summary };
       did = filled.summary;
+      const page = step.page ?? 1;
+      if (step.next && page < MAX_FORM_PAGES)
+        queue.splice(
+          index + 1,
+          0,
+          { action: "click", target: step.next, optional: true },
+          { ...step, page: page + 1 },
+        );
     } else if (step.action === "wait") {
       result = await waitFor(ctx, step.text ? { text: step.text } : { seconds: 1 });
       did = result.summary;
@@ -449,11 +475,28 @@ export async function runAct(
       // The element the step's target names. Code resolves refs and exact labels; Jev is
       // asked for descriptions, together with the page checks (after a step acted) and
       // whether each button would finalize something.
+      // Anything a click can land on: controls, and fields (a date field opens its picker).
+      const clickable = [
+        ...page.clicks,
+        ...[...page.fields, ...page.typing].filter(
+          (candidate, position, all) =>
+            !page.clicks.some((click) => click.ref === candidate.ref) &&
+            all.findIndex((other) => other.ref === candidate.ref) === position,
+        ),
+      ];
       const find = async (
         kind: "click" | "type" | "select",
         candidates: Candidate[],
       ): Promise<Grounded | ActReport> => {
         if (!step.target) return finish("needs-input", `${stepName} needs a target`);
+        // A ref from the page the model saw is used as given, even if it is no candidate.
+        const ref = step.target.trim().replace(/^\[?ref=|\]$/g, "");
+        if (
+          /^(f\d+)?e\d+$/.test(ref) &&
+          !candidates.some((c) => c.ref === ref) &&
+          tab.refs.has(ref)
+        )
+          return { ref, probability: 1, second: 0, top: [], by: "ref" };
         const exact = exactMatch(step.target, candidates);
         const risky =
           kind === "click"
@@ -462,7 +505,7 @@ export async function runAct(
         const found = await ground(options.jev, step.target, kind, candidates, where, signal, {
           usage,
           content,
-          extra: { ...(acted || !exact ? CHECKS : {}), ...risky },
+          extra: { ...(exact ? {} : CHECKS), ...risky },
         });
         options.trace?.(index, found.answers);
         const stopped = checks(found.answers, index);
@@ -472,11 +515,28 @@ export async function runAct(
       };
       switch (step.action) {
         case "click": {
-          const grounded = await find("click", page.clicks);
+          // A form's repeated "Next" is matched only by its exact label, never guessed.
+          const grounded = step.optional
+            ? (exactMatch(step.target ?? "", clickable) ?? {
+                ref: NONE,
+                probability: 0,
+                second: 0,
+                top: [],
+                by: "label" as const,
+              })
+            : await find("click", clickable);
           if ("stop" in grounded) return grounded;
-          if (!confident(grounded))
+          if (!confident(grounded)) {
+            // A form's "Next" that is no longer there: its last page is filled.
+            if (step.optional) {
+              if (queue[index + 1]?.page) queue.splice(index + 1, 1);
+              queue.splice(index, 1);
+              index--;
+              continue;
+            }
             return notFound(grounded, `no element clearly matches ${JSON.stringify(step.target)}`);
-          const candidate = page.clicks.find((entry) => entry.ref === grounded.ref);
+          }
+          const candidate = clickable.find((entry) => entry.ref === grounded.ref);
           const node = candidate?.node;
           // A button would submit a step with a required field left empty; a link just leaves.
           const emptyRequired = page.fields.filter(
@@ -515,7 +575,17 @@ export async function runAct(
         case "type": {
           if (step.text === undefined)
             return finish("needs-input", `${stepName} needs the text to type`);
-          const grounded = await find("type", page.typing);
+          // Read-only date fields and pickers are typed through their picker.
+          const typeTargets = [
+            ...page.typing,
+            ...page.fields.filter(
+              (field) =>
+                !page.typing.some((entry) => entry.ref === field.ref) &&
+                field.node.editable !== "secret" &&
+                field.node.editable !== "otp",
+            ),
+          ];
+          const grounded = await find("type", typeTargets);
           if ("stop" in grounded) return grounded;
           if (!confident(grounded))
             return notFound(grounded, `no field clearly matches ${JSON.stringify(step.target)}`);
@@ -533,8 +603,15 @@ export async function runAct(
                 `${stepName} submits a form (${gate.reason ?? gate.scope}); type it with type and commit: true if the user's request authorizes it`,
               );
           }
-          const role = page.typing.find((entry) => entry.ref === grounded.ref)?.node.role ?? "";
-          if (PICKER_ROLES.has(role)) {
+          const node = typeTargets.find((entry) => entry.ref === grounded.ref)?.node;
+          if (
+            !node ||
+            PICKER_ROLES.has(node.role) ||
+            node.states.readonly ||
+            !page.typing.includes(
+              typeTargets.find((entry) => entry.ref === grounded.ref) as Candidate,
+            )
+          ) {
             // Autocompletes and date fields: fill_form's machinery picks the suggestion or date.
             result = await fillForm(ctx, [{ ref: grounded.ref, value: step.text }]);
             if (step.submit && result.ok !== false) await pressKeys(ctx, "Enter", grounded.ref);
@@ -632,5 +709,5 @@ export async function runAct(
         result.extra ? [result.extra] : [],
       );
   }
-  return finish("done", `ran all ${input.steps.length} steps; check the page below`);
+  return finish("done", `ran all ${queue.length} steps; check the page below`);
 }
