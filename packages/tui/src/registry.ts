@@ -66,6 +66,9 @@ export interface ToolRendererFn {
   // Where the agent is after this call (a page, a remote host). It replaces the
   // footer's directory until another call reports a location.
   location?: (info: ToolRenderInfo) => string | undefined;
+  // A short plain phrase for what the call is doing or did, used where a
+  // whole row would not fit (a running sub-task's latest step).
+  describe?: (info: ToolRenderInfo) => string | undefined;
   // Explicit user actions may make their result the primary response rather
   // than supporting agent machinery. They can start open while retaining the
   // same disclosure controls and output bound.
@@ -727,6 +730,23 @@ function subagentTrace(
   return boundedSubagentRows(trace, ctx);
 }
 
+// Where a running child is and what it is doing, for children whose tools
+// report a location. Other children keep a single row.
+function latestChildStep(
+  state: SubagentProgressState,
+  registry: RendererRegistry,
+): string | undefined {
+  const calls = subagentToolCalls(state.messages, true);
+  let location: string | undefined;
+  for (const call of calls) {
+    if (call.info.result) location = registry.location(call.info) ?? location;
+  }
+  if (!location) return undefined;
+  const last = calls.at(-1);
+  const step = last ? registry.describe(last.info) : undefined;
+  return step ? `${location} ${GLYPHS.separator} ${step}` : location;
+}
+
 function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
   const renderer: ToolRendererFn = (info, ctx, registry) => {
     const details = subagentDetails(info);
@@ -768,6 +788,10 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
       GLYPHS.subagentSpinner[0];
     const name = details ? action.completed : `${spinner} ${action.running}`;
     if (kind === "task") {
+      const step =
+        !details && !info.expanded && progress && registry
+          ? latestChildStep(progress, registry)
+          : undefined;
       const lines = details
         ? toolCell(
             {
@@ -786,6 +810,7 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
               name: `${spinner} ${description}`,
               tone: action.tone,
               summary,
+              ...(step ? { tail: [step] } : {}),
             },
             ctx,
           );
@@ -858,6 +883,14 @@ export class RendererRegistry {
   location(info: ToolRenderInfo): string | undefined {
     try {
       return this.renderers.get(info.toolName)?.location?.(info);
+    } catch {
+      return undefined;
+    }
+  }
+
+  describe(info: ToolRenderInfo): string | undefined {
+    try {
+      return this.renderers.get(info.toolName)?.describe?.(info);
     } catch {
       return undefined;
     }

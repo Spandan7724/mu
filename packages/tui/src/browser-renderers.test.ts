@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { ToolResultMessage } from "@mu/core";
 import { App } from "./app.ts";
 import { browserRenderers } from "./browser-renderers.ts";
-import { RendererRegistry } from "./registry.ts";
+import { RendererRegistry, subagentRenderers } from "./registry.ts";
 import { stripAnsi } from "./style.ts";
 
 const ctx = { width: 120, depth: "none" as const };
@@ -194,4 +194,50 @@ test("the App folds a visit and leaves the commit outside it", () => {
   expect(transcript).toContain("  › mail.google.com  Standup — 2 clicks · 2 actions · 400ms");
   expect(transcript).toContain("  › ● Send To: alex@example.com · ✓ mail.google.com · 200 ms");
   expect(app.renderScreen().map(stripAnsi)).toContain("  mail.google.com · Standup");
+});
+
+test("a running sub-task shows where its browser is and what it is doing", () => {
+  const registry = browserRegistry();
+  registry.registerAll(subagentRenderers);
+  const lever = "https://jobs.lever.co/acme/apply";
+  const step = (id: string, name: string, args: object) => ({
+    role: "assistant" as const,
+    content: [{ type: "toolCall" as const, id, name, arguments: args }],
+    model: "m",
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    stopReason: "toolUse" as const,
+    timestamp: 1,
+  });
+  const messages = [
+    step("n1", "navigate", { url: lever }),
+    {
+      ...result(outcome("navigated to Acme — Apply", lever, "Acme — Apply"), false, "navigate"),
+      toolCallId: "n1",
+    },
+    step("u1", "upload", { ref: "e7", paths: ["resume.pdf"] }),
+  ];
+  const lines = registry
+    .render(
+      {
+        toolName: "task",
+        args: { description: "Apply to Acme" },
+        running: true,
+        elapsedMs: 41_000,
+        progress: {
+          type: "subagent-progress-state",
+          kind: "task",
+          description: "Apply to Acme",
+          model: "m",
+          thinkingLevel: "low",
+          messages,
+          answer: "",
+        },
+      },
+      { ...ctx, spinnerFrame: 0 },
+    )
+    .map(stripAnsi);
+  expect(lines).toEqual([
+    "  │ ⠋ Apply to Acme · 2 actions · 41s",
+    "  │ jobs.lever.co · Acme — Apply · upload e7",
+  ]);
 });

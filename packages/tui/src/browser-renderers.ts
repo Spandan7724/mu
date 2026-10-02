@@ -286,6 +286,15 @@ function summarizeVisit(infos: readonly ToolRenderInfo[], depth: ColorDepth): st
 
 browserRenderer.summarizeActivity = summarizeVisit;
 
+browserRenderer.describe = (info) => {
+  if (info.running || !info.result) {
+    const target = pendingTarget(info);
+    return target ? `${info.toolName} ${target}` : info.toolName;
+  }
+  const summary = outcomeOf(info).summary?.split("\n")[0];
+  return summary ? sanitizeUntrusted(summary) : info.toolName;
+};
+
 browserRenderer.location = (info) => {
   const outcome = outcomeOf(info);
   const where = host(urlOf(outcome));
