@@ -286,6 +286,16 @@ function summarizeVisit(infos: readonly ToolRenderInfo[], depth: ColorDepth): st
 
 browserRenderer.summarizeActivity = summarizeVisit;
 
+browserRenderer.location = (info) => {
+  const outcome = outcomeOf(info);
+  const where = host(urlOf(outcome));
+  if (!where) return undefined;
+  const title = sanitizeUntrusted(outcome.details?.title ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return title ? `${where} ${GLYPHS.separator} ${title}` : where;
+};
+
 const TOOLS = [
   "navigate",
   "click",

@@ -1807,6 +1807,8 @@ export class App {
     renderedLines?: string[],
     expandedOverride?: boolean,
   ): void {
+    const location = info.result ? this.registry.location(info) : undefined;
+    if (location) this.footerData = { ...this.footerData, cwd: location };
     const activityKind = this.registry.activityKind(info);
     const expanded = expandedOverride ?? this.registry.expandedByDefault(info);
     if (!activityKind) {

@@ -193,4 +193,5 @@ test("the App folds a visit and leaves the commit outside it", () => {
   expect(transcript).toContain("  › mail.google.com  Inbox — opened, read · 2 actions · 400ms");
   expect(transcript).toContain("  › mail.google.com  Standup — 2 clicks · 2 actions · 400ms");
   expect(transcript).toContain("  › ● Send To: alex@example.com · ✓ mail.google.com · 200 ms");
+  expect(app.renderScreen().map(stripAnsi)).toContain("  mail.google.com · Standup");
 });

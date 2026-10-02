@@ -63,6 +63,9 @@ export interface ToolRendererFn {
   // The collapsed header for a group of this renderer's calls. Without it the
   // coding classes are summarised.
   summarizeActivity?: (infos: readonly ToolRenderInfo[], depth: ColorDepth) => string;
+  // Where the agent is after this call (a page, a remote host). It replaces the
+  // footer's directory until another call reports a location.
+  location?: (info: ToolRenderInfo) => string | undefined;
   // Explicit user actions may make their result the primary response rather
   // than supporting agent machinery. They can start open while retaining the
   // same disclosure controls and output bound.
@@ -850,6 +853,14 @@ export class RendererRegistry {
 
   supportsLiveExpansion(toolName: string): boolean {
     return this.renderers.get(toolName)?.supportsLiveExpansion === true;
+  }
+
+  location(info: ToolRenderInfo): string | undefined {
+    try {
+      return this.renderers.get(info.toolName)?.location?.(info);
+    } catch {
+      return undefined;
+    }
   }
 
   activityGroup(info: ToolRenderInfo): string | undefined {
