@@ -69,6 +69,9 @@ export interface ToolRendererFn {
   // A short plain phrase for what the call is doing or did, used where a
   // whole row would not fit (a running sub-task's latest step).
   describe?: (info: ToolRenderInfo) => string | undefined;
+  // When a run ends on this call, the agent is waiting for the user to act
+  // outside the conversation; the phrase is shown until the next run.
+  awaitsUser?: (info: ToolRenderInfo) => string | undefined;
   // Explicit user actions may make their result the primary response rather
   // than supporting agent machinery. They can start open while retaining the
   // same disclosure controls and output bound.
@@ -883,6 +886,14 @@ export class RendererRegistry {
   location(info: ToolRenderInfo): string | undefined {
     try {
       return this.renderers.get(info.toolName)?.location?.(info);
+    } catch {
+      return undefined;
+    }
+  }
+
+  awaitsUser(info: ToolRenderInfo): string | undefined {
+    try {
+      return this.renderers.get(info.toolName)?.awaitsUser?.(info);
     } catch {
       return undefined;
     }

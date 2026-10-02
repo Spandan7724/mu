@@ -305,6 +305,57 @@ browserRenderer.location = (info) => {
   return title ? `${where} ${GLYPHS.separator} ${title}` : where;
 };
 
+interface BrowserHandoff {
+  reason?: string;
+  host?: string;
+}
+
+function handoffOf(info: ToolRenderInfo): BrowserHandoff | undefined {
+  const details = info.result?.details as { handoff?: unknown } | undefined;
+  const handoff = details?.handoff;
+  return typeof handoff === "object" && handoff !== null ? (handoff as BrowserHandoff) : undefined;
+}
+
+// ◆ your turn  sign in to linkedin.com
+// │ mu continues once the page moves on, or when you reply
+const handoffRenderer: ToolRendererFn = (info, ctx) => {
+  const handoff = handoffOf(info);
+  const reason = handoff?.reason ?? argString(info.args, "reason");
+  if (!handoff || info.result?.isError) {
+    return toolCell(
+      {
+        name: "handoff",
+        tone: "state",
+        ...(reason ? { primaryArg: reason } : {}),
+        ...(info.running ? { summary: "running" } : {}),
+        ...(info.result?.isError ? { isError: true } : {}),
+      },
+      ctx,
+    );
+  }
+  const [first = "", ...rest] = toolCell(
+    {
+      name: "your turn",
+      tone: "mutate",
+      ...(reason ? { primaryArg: reason } : {}),
+      ...(handoff.host ? { summary: handoff.host } : {}),
+      tail: ["mu continues once the page moves on, or when you reply"],
+    },
+    ctx,
+  );
+  const rail = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
+  return [
+    first.replace(rail, `${rail}${styleText("◆", { toolMutate: true }, ctx.depth)} `),
+    ...rest,
+  ];
+};
+handoffRenderer.ownsExpansion = true;
+handoffRenderer.awaitsUser = (info) => {
+  const handoff = handoffOf(info);
+  if (!handoff) return undefined;
+  return handoff.reason ? `waiting on you: ${handoff.reason}` : "waiting on you in the browser";
+};
+
 const TOOLS = [
   "navigate",
   "click",
@@ -331,5 +382,6 @@ const TOOLS = [
 
 export const browserRenderers: Record<string, ToolRendererFn> = {
   ...Object.fromEntries(TOOLS.map((name) => [name, browserRenderer])),
+  handoff: handoffRenderer,
   ...(codingRenderers.todo ? { todo: codingRenderers.todo } : {}),
 };

@@ -433,6 +433,10 @@ function webSearchDetail(event: Extract<AgentEvent, { type: "web_search_end" }>)
 interface ConversationView {
   editor: Editor;
   running: boolean;
+  // The newest completed tool of the current run, and what the agent is waiting
+  // for from the user if that tool handed the turn over.
+  lastTool: ToolRenderInfo | undefined;
+  awaitingUser: string | undefined;
   runStartedAt: number;
   compacting: boolean;
   compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
@@ -472,6 +476,8 @@ function conversationView(
   return {
     editor: new Editor(),
     running: false,
+    lastTool: undefined,
+    awaitingUser: undefined,
     runStartedAt: 0,
     compacting: false,
     compactionStage: undefined,
@@ -872,6 +878,8 @@ export class App {
     switch (event.type) {
       case "agent_start":
         this.running = true;
+        this.view.lastTool = undefined;
+        this.view.awaitingUser = undefined;
         this.runStartedAt = Date.now();
         if (this.eventSource === "main") {
           this.mainStatus = "working";
@@ -885,6 +893,9 @@ export class App {
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
+        const lastTool = this.view.lastTool;
+        this.view.awaitingUser =
+          event.reason === "done" && lastTool ? this.registry.awaitsUser(lastTool) : undefined;
         if (this.eventSource === "main") {
           this.mainStatus =
             event.reason === "error"
@@ -1043,6 +1054,7 @@ export class App {
           args: pending?.args ?? {},
           result: event.result,
         };
+        this.view.lastTool = info;
         const lines = this.registry.render(info, this.ctx);
         const expanded =
           pending && this.registry.supportsLiveExpansion(pending.toolName)
@@ -1643,6 +1655,14 @@ export class App {
             : this.compacting
               ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
               : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+          { dim: true },
+          depth,
+        )}`,
+      );
+    } else if (this.view.awaitingUser) {
+      lines.push(
+        `${MARGIN}${styleText(`◆ ${this.view.awaitingUser}`, { toolMutate: true }, depth)}${styleText(
+          ` ${GLYPHS.separator} reply when done`,
           { dim: true },
           depth,
         )}`,

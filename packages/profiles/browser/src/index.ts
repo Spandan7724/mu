@@ -7,6 +7,7 @@ import {
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
 import { hostOf } from "./actions/navigate.ts";
+import { Handoffs, handoffTool } from "./agent/handoff.ts";
 import { recordingCommits } from "./agent/ledger.ts";
 import { notesTool } from "./agent/notes.ts";
 import {
@@ -105,6 +106,16 @@ function observingDataFlow(tool: AnyTool, browser: BrowserManager): AnyTool {
 }
 
 // Scrubs known secret values from everything a browser tool hands back.
+function resumingHandoff(tool: AnyTool, handoffs: Handoffs): AnyTool {
+  return {
+    ...tool,
+    execute: (toolCallId, args, signal, onUpdate) => {
+      handoffs.cancel();
+      return tool.execute(toolCallId, args, signal, onUpdate);
+    },
+  };
+}
+
 function redacting(tool: AnyTool, secrets: SecretRegistry): AnyTool {
   const { permissionDetails } = tool;
   return {
@@ -155,6 +166,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   const todos = new TodoStore();
   // One agent's tools over one lane of the browser: the main agent's, or a sub-task's.
+  const handoffs = new Handoffs();
   const toolsFor = (lane: BrowserManager, laneState: BrowserState, laneTodos: TodoStore) => {
     const deps = {
       browser: lane,
@@ -194,18 +206,29 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
         pageText: (text) => lane.dataflow.leak(text, "")?.from,
       }),
     ] as AnyTool[];
-    return rawTools.map((candidate) =>
+    const tools = rawTools.map((candidate) =>
       observingDataFlow(
         redacting(recordingCommits(candidate, lane, laneState), lane.secrets),
         lane,
       ),
     );
+    // Only the main agent hands the window to the user; a sub-task reports the
+    // blocker instead. Any other tool call means the agent resumed on its own.
+    return lane === browser
+      ? [
+          ...tools.map((candidate) => resumingHandoff(candidate, handoffs)),
+          handoffTool(browser, handoffs),
+        ]
+      : tools;
   };
   const toolset = toolsFor(browser, state, todos);
   const runtime: ProfileRuntime = {
-    attach: () => {},
+    attach: (host) => handoffs.attach(host),
     stop: () => browser.stop(),
-    shutdown: () => browser.shutdown(),
+    shutdown: () => {
+      handoffs.cancel();
+      return browser.shutdown();
+    },
   };
   let environmentPromise: Promise<Record<string, string>> | undefined;
   const environment = () => {

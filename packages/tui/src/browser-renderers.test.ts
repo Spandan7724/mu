@@ -241,3 +241,38 @@ test("a running sub-task shows where its browser is and what it is doing", () =>
     "  │ jobs.lever.co · Acme — Apply · upload e7",
   ]);
 });
+
+test("a hand-off is its own row and leaves the session waiting on the user", () => {
+  const app = new App({
+    width: 100,
+    depth: "none",
+    model: "fake/fake-1",
+    cwd: "~",
+    contextWindow: 1000,
+    registry: browserRegistry(),
+    callbacks: { onSubmit: () => {}, onAbort: () => {}, onExit: () => {} },
+  });
+  const args = { reason: "sign in to linkedin.com" };
+  app.handleEvent({ type: "agent_start" });
+  app.handleEvent({ type: "tool_execution_start", toolCallId: "h1", toolName: "handoff", args });
+  app.handleEvent({
+    type: "tool_execution_end",
+    toolCallId: "h1",
+    result: {
+      ...result(
+        { handoff: { reason: args.reason, host: "www.linkedin.com", tabId: "t1" } },
+        false,
+        "handoff",
+      ),
+      toolCallId: "h1",
+    },
+  });
+  app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+  const transcript = app.renderTranscript().map(stripAnsi);
+  expect(transcript).toContain("  › ◆ your turn sign in to linkedin.com · www.linkedin.com");
+  expect(transcript).toContain("  │ mu continues once the page moves on, or when you reply");
+  const waiting = "  ◆ waiting on you: sign in to linkedin.com · reply when done";
+  expect(app.renderScreen().map(stripAnsi)).toContain(waiting);
+  app.handleEvent({ type: "agent_start" });
+  expect(app.renderScreen().map(stripAnsi)).not.toContain(waiting);
+});
