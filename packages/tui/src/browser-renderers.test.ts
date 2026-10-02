@@ -4,6 +4,7 @@ import { App } from "./app.ts";
 import { browserRenderers } from "./browser-renderers.ts";
 import { RendererRegistry, subagentRenderers } from "./registry.ts";
 import { stripAnsi } from "./style.ts";
+import { stringWidth } from "./width.ts";
 
 const ctx = { width: 120, depth: "none" as const };
 const GMAIL = "https://mail.google.com/mail/u/0/#inbox";
@@ -275,4 +276,22 @@ test("a hand-off is its own row and leaves the session waiting on the user", () 
   expect(app.renderScreen().map(stripAnsi)).toContain(waiting);
   app.handleEvent({ type: "agent_start" });
   expect(app.renderScreen().map(stripAnsi)).not.toContain(waiting);
+});
+
+test("a commit row never wraps past the width", () => {
+  const registry = browserRegistry();
+  const [row, ...rest] = registry.render(
+    {
+      toolName: "click",
+      args: { ref: "e97" },
+      result: result(
+        outcome('clicked button "Send" [e97]', THREAD, "Standup", {
+          commit: { id: "c", name: "Send", sends: ["To: someone-with-a-long-address@example.com"] },
+        }),
+      ),
+    },
+    { width: 60, depth: "none" },
+  );
+  expect(rest).toEqual([]);
+  expect(stringWidth(row ?? "")).toBeLessThanOrEqual(60);
 });

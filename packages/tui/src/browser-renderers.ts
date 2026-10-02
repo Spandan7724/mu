@@ -142,7 +142,8 @@ function commitRow(
       summary: meta.filter(Boolean).join(` ${GLYPHS.separator} `),
       isSuccess: true,
     },
-    ctx,
+    // The mark takes two columns of the row's width.
+    { ...ctx, width: ctx.width - 2 },
   );
   const rail = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
   const mark = `${styleText("●", { toolMutate: true }, ctx.depth)} `;
@@ -341,7 +342,8 @@ const handoffRenderer: ToolRendererFn = (info, ctx) => {
       ...(handoff.host ? { summary: handoff.host } : {}),
       tail: ["mu continues once the page moves on, or when you reply"],
     },
-    ctx,
+    // The mark takes two columns of the row's width.
+    { ...ctx, width: ctx.width - 2 },
   );
   const rail = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
   return [
