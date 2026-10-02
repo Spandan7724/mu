@@ -1,7 +1,12 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AnyTool, PermissionRequest, ToolResult } from "@mu/core";
+import {
+  type AnyTool,
+  type PermissionRequest,
+  permissionPreviewLines,
+  type ToolResult,
+} from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent, optionsFromProfile } from "mu";
 import { resolveUploadPaths } from "../actions/files.ts";
@@ -47,7 +52,7 @@ describeWithBrowser("prompt-injection guards", () => {
     expect(scope("navigate", { url: exfil })).toBe("browser:share");
     expect(scope("tabs", { action: "open", url: exfil })).toBe("browser:share");
     const details = await find("navigate").permissionDetails?.({ url: exfil });
-    expect(details?.preview?.kind === "text" && details.preview.lines.join("\n")).toContain(
+    expect(permissionPreviewLines(details?.preview).join("\n")).toContain(
       `why this asks: the URL carries text read on ${new URL(site.origin).host}`,
     );
     const partner = (

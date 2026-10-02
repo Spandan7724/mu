@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
-import type { ToolResult } from "@mu/core";
+import { permissionPreviewLines, type ToolResult } from "@mu/core";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import type { RefMeta } from "../page/refs.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
@@ -255,7 +255,7 @@ describeWithBrowser("classifier on fixture pages", () => {
       reason: "user asked",
     });
     expect(details?.description).toStartWith("Consequential browser action on 127.0.0.1");
-    expect(details?.preview?.kind === "text" && details.preview.lines.join("\n")).toContain(
+    expect(permissionPreviewLines(details?.preview).join("\n")).toContain(
       'action: click button "Place order"',
     );
     const form = await textOf("navigate", { url: site.url("form-basic") });
@@ -264,8 +264,7 @@ describeWithBrowser("classifier on fixture pages", () => {
       "browser:secret",
     );
     const secretDetails = await tool("type").permissionDetails?.({ ref: password, text: "s3cret" });
-    const shown =
-      secretDetails?.preview?.kind === "text" ? secretDetails.preview.lines.join("\n") : "";
+    const shown = permissionPreviewLines(secretDetails?.preview).join("\n");
     expect(shown).toContain("••••");
     expect(shown).not.toContain("s3cret");
   });

@@ -645,10 +645,16 @@ export function composerBox(
   return [top, ...body, composerBoxBottom(width, depth)];
 }
 
+export interface ApprovalSection {
+  title?: string;
+  fields: { label: string; value: string }[];
+}
+
 export interface ApprovalData {
   title: string;
   preview?: string[];
   diff?: DiffFile;
+  sections?: ApprovalSection[];
   maxPreviewRows?: number;
   selectedIndex: number;
 }
@@ -661,17 +667,19 @@ export function approvalOverlay(data: ApprovalData, width: number, depth: ColorD
   const out: string[] = [MARGIN + styleText(title, { bold: true }, depth)];
   const preview = data.diff
     ? diffCell(data.diff, { width, depth })
-    : // The command being approved is the whole question; it must not be the
-      // dimmest thing on the screen.
-      (data.preview ?? []).flatMap((line) =>
-        sanitizeUntrusted(line)
-          .split("\n")
-          .map(
-            (physical) =>
-              MARGIN +
-              styleText(truncateToWidth(physical, width - MARGIN.length), { code: true }, depth),
-          ),
-      );
+    : data.sections
+      ? approvalFields(data.sections, width, depth)
+      : // The command being approved is the whole question; it must not be the
+        // dimmest thing on the screen.
+        (data.preview ?? []).flatMap((line) =>
+          sanitizeUntrusted(line)
+            .split("\n")
+            .map(
+              (physical) =>
+                MARGIN +
+                styleText(truncateToWidth(physical, width - MARGIN.length), { code: true }, depth),
+            ),
+        );
   const bounded = boundPreview(preview, data.maxPreviewRows);
   for (const line of bounded) {
     // The preview is a command string or diff — never trusted.
@@ -681,6 +689,31 @@ export function approvalOverlay(data: ApprovalData, width: number, depth: ColorD
     i === data.selectedIndex ? accent(option, depth) : dim(option, depth),
   ).join(dim(` ${GLYPHS.separator} `, depth));
   out.push(MARGIN + options);
+  return out;
+}
+
+const MAX_LABEL_WIDTH = 24;
+
+// Labels in one dim column, values in terminal default: what will be sent is
+// the question, so it reads as content rather than as code or metadata.
+function approvalFields(sections: ApprovalSection[], width: number, depth: ColorDepth): string[] {
+  const clean = (text: string) => sanitizeUntrusted(text).replace(/[\r\n\t]+/g, " ");
+  const labelWidth = Math.min(
+    MAX_LABEL_WIDTH,
+    Math.max(0, ...sections.flatMap((section) => section.fields.map((f) => stringWidth(f.label)))),
+  );
+  const valueWidth = Math.max(8, width - MARGIN.length - labelWidth - 2);
+  const out: string[] = [];
+  for (const section of sections) {
+    if (section.fields.length === 0) continue;
+    out.push("");
+    if (section.title) out.push(MARGIN + dim(truncateToWidth(clean(section.title), width), depth));
+    for (const field of section.fields) {
+      const label = truncateToWidth(clean(field.label), labelWidth);
+      const pad = " ".repeat(labelWidth - stringWidth(label) + 2);
+      out.push(MARGIN + dim(label, depth) + pad + truncateToWidth(clean(field.value), valueWidth));
+    }
+  }
   return out;
 }
 

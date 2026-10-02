@@ -1552,9 +1552,11 @@ export class App {
                     lines: diffLinesFromHunks(preview.file.hunks),
                   },
                 }
-              : {
-                  preview: preview?.kind === "text" ? preview.lines : [request.pattern],
-                }),
+              : preview?.kind === "fields"
+                ? { sections: preview.sections }
+                : {
+                    preview: preview?.kind === "text" ? preview.lines : [request.pattern],
+                  }),
             maxPreviewRows: Math.max(3, Math.min(12, height - 8)),
             selectedIndex: this.approvalIndex,
           },

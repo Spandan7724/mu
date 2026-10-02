@@ -552,6 +552,48 @@ describe("components", () => {
     }
   });
 
+  test("approval overlay aligns labelled fields in sections", () => {
+    const lines = visible(
+      approvalOverlay(
+        {
+          title: "Consequential browser action on mail.google.com",
+          sections: [
+            {
+              fields: [
+                { label: "page", value: "Standup — mail.google.com" },
+                { label: "action", value: 'click button "Send"' },
+              ],
+            },
+            {
+              title: "sends",
+              fields: [
+                { label: "To", value: "alex@example.com" },
+                { label: "Message Body", value: "Hi\nAlex, a long message that cannot fit here" },
+                { label: "", value: "continued" },
+              ],
+            },
+            { fields: [] },
+          ],
+          selectedIndex: 0,
+        },
+        48,
+        "none",
+      ),
+    );
+    expect(lines).toEqual([
+      "  Consequential browser action on mail.google.com",
+      "",
+      "  page          Standup — mail.google.com",
+      '  action        click button "Send"',
+      "",
+      "  sends",
+      "  To            alex@example.com",
+      "  Message Body  Hi Alex, a long message that ca…",
+      "                continued",
+      `  ${APPROVAL_OPTIONS.join(" · ")}`,
+    ]);
+  });
+
   test("select list marks the selection with the accent glyph", () => {
     const list = new SelectList([
       { label: "claude-opus-5", description: "most capable" },

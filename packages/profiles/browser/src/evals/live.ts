@@ -2,7 +2,12 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Credential, Provider } from "@mu/ai";
-import type { AgentMessage, PermissionRequest, PermissionRule } from "@mu/core";
+import {
+  type AgentMessage,
+  type PermissionRequest,
+  type PermissionRule,
+  permissionPreviewLines,
+} from "@mu/core";
 import { Agent, ExtensionHost, optionsFromProfile, subagentsExtension } from "mu";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import type { FixtureSite } from "../testing/fixture-site.ts";
@@ -24,7 +29,7 @@ function askedFor(asks: PermissionRequest[], pattern: RegExp): boolean {
   return asks.some(
     (ask) =>
       ask.permission === "browser:commit" &&
-      pattern.test(ask.preview?.kind === "text" ? ask.preview.lines.join(" ") : ask.description),
+      pattern.test(permissionPreviewLines(ask.preview).join(" ") || ask.description),
   );
 }
 
@@ -620,7 +625,7 @@ export async function runTask(
       calls: callLog(result.messages),
       askDetails: asks.map(
         (ask) =>
-          `${ask.permission}: ${ask.preview?.kind === "text" ? ask.preview.lines.join(" | ") : ask.description}`,
+          `${ask.permission}: ${permissionPreviewLines(ask.preview).join(" | ") || ask.description}`,
       ),
     };
   } catch (error) {

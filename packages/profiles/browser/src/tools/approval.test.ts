@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
-import type { AnyTool, ToolResult } from "@mu/core";
+import { type AnyTool, permissionPreviewLines, type ToolResult } from "@mu/core";
 import { type BrowserProfile, browserProfile } from "../index.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
@@ -19,7 +19,7 @@ describeWithBrowser("approvals show what a consequential action sends", () => {
       .join("");
   const preview = async (name: string, args: Record<string, unknown>) => {
     const details = await find(name).permissionDetails?.(args);
-    return details?.preview?.kind === "text" ? details.preview.lines : [];
+    return permissionPreviewLines(details?.preview);
   };
   const refOf = (page: string, role: string, name: string) =>
     new RegExp(`${role} "${name}" \\[ref=(e\\d+)\\]`).exec(page)?.[1] as string;

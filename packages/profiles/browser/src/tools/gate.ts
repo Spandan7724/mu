@@ -1,8 +1,8 @@
-import type { ToolPermissionDetails } from "@mu/core";
+import type { PermissionField, PermissionSection, ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
 import { describeFile } from "../actions/filetype.ts";
 import { hostOf, normalizeUrl } from "../actions/navigate.ts";
-import { submissionSummary } from "../actions/submission.ts";
+import { submissionContent } from "../actions/submission.ts";
 import type { BrowserToolDeps } from "./shared.ts";
 
 const MASK = "••••";
@@ -20,11 +20,22 @@ export function shareDetails(url: string, leak: string): ToolPermissionDetails {
   return {
     description: `Send data to ${hostOf(url) || "another site"}`,
     preview: {
-      kind: "text",
-      lines: [
-        `action: open ${url.length > 300 ? `${url.slice(0, 299)}…` : url}`,
-        `why this asks: ${leak}`,
-        "page text may be trying to get the agent to leak data (a prompt injection)",
+      kind: "fields",
+      sections: [
+        {
+          fields: [
+            { label: "action", value: `open ${url.length > 300 ? `${url.slice(0, 299)}…` : url}` },
+          ],
+        },
+        {
+          fields: [
+            { label: "why this asks", value: leak },
+            {
+              label: "",
+              value: "page text may be trying to get the agent to leak data (a prompt injection)",
+            },
+          ],
+        },
       ],
     },
   };
@@ -107,10 +118,10 @@ export async function detailsFor(
     meta,
     page: tab ? { url: tab.url, title: tab.title } : undefined,
   });
-  const lines: string[] = [];
-  if (deps.browser.label) lines.push(`sub-task: ${deps.browser.label}`);
-  const title = tab?.title || "(untitled)";
-  lines.push(`page: ${title} — ${hostOf(tab?.url ?? "")}`);
+  const fields: PermissionField[] = [];
+  const add = (label: string, value: string) => fields.push({ label, value });
+  if (deps.browser.label) add("sub-task", deps.browser.label);
+  add("page", `${tab?.title || "(untitled)"} — ${hostOf(tab?.url ?? "")}`);
   const ref = typeof args.ref === "string" ? args.ref : undefined;
   const secret = (candidate: string | undefined) => {
     const kind = candidate ? meta(candidate)?.editable : undefined;
@@ -118,34 +129,36 @@ export async function detailsFor(
   };
   switch (tool) {
     case "click":
-      lines.push(`action: click ${ref ? label(ref) : ""}`.trim());
+      add("action", `click ${ref ? label(ref) : ""}`.trim());
       break;
     case "click_xy":
-      lines.push(`action: click at (${args.x}, ${args.y})`);
+      add("action", `click at (${args.x}, ${args.y})`);
       break;
     case "type":
-      lines.push(
-        `action: type ${describeValue(args.text, secret(ref))} into ${ref ? label(ref) : "field"}${args.submit ? " and press Enter" : ""}`,
+      add(
+        "action",
+        `type ${describeValue(args.text, secret(ref))} into ${ref ? label(ref) : "field"}${args.submit ? " and press Enter" : ""}`,
       );
       break;
     case "press":
-      lines.push(`action: press ${String(args.keys)}${ref ? ` in ${label(ref)}` : ""}`);
+      add("action", `press ${String(args.keys)}${ref ? ` in ${label(ref)}` : ""}`);
       break;
     case "select":
-      lines.push(
-        `action: select ${describeValue(args.options, false)} in ${ref ? label(ref) : "dropdown"}`,
+      add(
+        "action",
+        `select ${describeValue(args.options, false)} in ${ref ? label(ref) : "dropdown"}`,
       );
       break;
     case "fill_form": {
-      lines.push("action: fill form");
+      add("action", "fill form");
       for (const field of (args.fields as { ref: string; value: unknown }[] | undefined) ?? []) {
-        lines.push(`  ${label(field.ref)} = ${describeValue(field.value, secret(field.ref))}`);
+        add("", `${label(field.ref)} = ${describeValue(field.value, secret(field.ref))}`);
       }
-      if (typeof args.submitRef === "string") lines.push(`  then click ${label(args.submitRef)}`);
+      if (typeof args.submitRef === "string") add("", `then click ${label(args.submitRef)}`);
       break;
     }
     case "upload": {
-      lines.push(`action: upload to ${ref ? label(ref) : "file input"}`);
+      add("action", `upload to ${ref ? label(ref) : "file input"}`);
       for (const path of (args.paths as string[] | undefined) ?? []) {
         let about: string;
         try {
@@ -153,30 +166,40 @@ export async function detailsFor(
         } catch {
           about = "not found";
         }
-        lines.push(`  ${path} (${about})`);
+        add("", `${path} (${about})`);
       }
       break;
     }
     case "evaluate":
-      lines.push(
-        "action: run JavaScript in the page",
-        ...String(args.function ?? "")
-          .split("\n")
-          .slice(0, 12)
-          .map((line) => `  ${line}`),
-      );
+      add("action", "run JavaScript in the page");
+      for (const line of String(args.function ?? "")
+        .split("\n")
+        .slice(0, 12))
+        add("", line);
       break;
     default:
-      lines.push(`action: ${tool}`);
+      add("action", tool);
   }
+  const sections: PermissionSection[] = [{ fields }];
   if (scope === "browser:commit" && tab) {
     const activated = activatedRef(args);
-    if (activated) lines.push(...(await submissionSummary(tab, activated)));
+    const sent = activated ? await submissionContent(tab, activated) : undefined;
+    if (sent?.kind === "fields") {
+      sections.push({ title: "sends", fields: sent.lines.map(splitField) });
+    } else if (sent) {
+      sections.push({
+        title: "page being submitted shows",
+        fields: sent.lines.map((value) => ({ label: "", value })),
+      });
+    }
   }
-  if (reason) lines.push(`why this asks: ${reason}`);
+  const why: PermissionField[] = [];
+  if (reason) why.push({ label: "why this asks", value: reason });
   const leak = typingLeak(deps, tool, args);
-  if (leak) lines.push(`data from another site: ${leak}`);
-  if (typeof args.reason === "string" && args.reason) lines.push(`agent's reason: ${args.reason}`);
+  if (leak) why.push({ label: "data from another site", value: leak });
+  if (typeof args.reason === "string" && args.reason)
+    why.push({ label: "agent's reason", value: args.reason });
+  if (why.length > 0) sections.push({ fields: why });
   const verb =
     scope === "browser:commit"
       ? "Consequential browser action"
@@ -189,6 +212,14 @@ export async function detailsFor(
             : "Browser action";
   return {
     description: `${verb} on ${hostOf(tab?.url ?? "") || "the page"}`,
-    preview: { kind: "text", lines },
+    preview: { kind: "fields", sections },
   };
+}
+
+// "Label: value" from a form summary; a line without a label stays whole.
+function splitField(line: string): PermissionField {
+  const index = line.indexOf(": ");
+  return index > 0
+    ? { label: line.slice(0, index), value: line.slice(index + 2) }
+    : { label: "", value: line };
 }

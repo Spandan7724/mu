@@ -20,7 +20,39 @@ export interface PermissionRequest {
 
 export type PermissionPreview =
   | { kind: "text"; lines: string[] }
-  | { kind: "diff"; file: CheckpointDiffFile };
+  | { kind: "diff"; file: CheckpointDiffFile }
+  | { kind: "fields"; sections: PermissionSection[] };
+
+// Labelled values for an approval whose subject is what an action will send or
+// change rather than a command or a file. An empty label continues the value
+// above it.
+export interface PermissionField {
+  label: string;
+  value: string;
+}
+
+export interface PermissionSection {
+  title?: string;
+  fields: PermissionField[];
+}
+
+// Any preview as plain lines, for surfaces that only show text.
+export function permissionPreviewLines(preview: PermissionPreview | undefined): string[] {
+  if (!preview) return [];
+  if (preview.kind === "text") return preview.lines;
+  if (preview.kind === "diff") {
+    return [`${preview.file.path} +${preview.file.added} -${preview.file.removed}`];
+  }
+  return preview.sections.flatMap((section) => {
+    const indent = section.title ? "  " : "";
+    return [
+      ...(section.title ? [`${section.title}:`] : []),
+      ...section.fields.map((field) =>
+        field.label ? `${indent}${field.label}: ${field.value}` : `  ${field.value}`,
+      ),
+    ];
+  });
+}
 
 export interface ToolPermissionDetails {
   description?: string;

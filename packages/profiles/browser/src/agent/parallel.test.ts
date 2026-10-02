@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
 import type { LlmContext, ModelInfo, Provider, StreamOpts } from "@mu/ai";
-import type { AgentMessage } from "@mu/core";
+import { type AgentMessage, permissionPreviewLines } from "@mu/core";
 import { FakeProvider, fakeModel, type ScriptedTurn } from "@mu/core/testing/fake-provider.ts";
 import {
   Agent,
@@ -193,9 +193,7 @@ describeWithBrowser("parallel browser sub-tasks", () => {
     const page = await run("n1", "navigate", { url: site.url("form-basic") });
     const ref = /button "Send message" \[ref=(e\d+)\]/.exec(page)?.[1];
     const details = await tools.get("click")?.permissionDetails?.({ ref, commit: true });
-    expect(details?.preview?.kind === "text" && details.preview.lines[0]).toBe(
-      "sub-task: send the contact form",
-    );
+    expect(permissionPreviewLines(details?.preview)[0]).toBe("sub-task: send the contact form");
     await run("c1", "click", { ref, commit: true });
     expect(profile.ledger.records().map((record) => record.id)).toContain("c1");
     await session.close();

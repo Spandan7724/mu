@@ -83,12 +83,14 @@ export {
 } from "./microcompaction.ts";
 export type {
   PermissionAction,
+  PermissionField,
   PermissionPreview,
   PermissionRequest,
   PermissionRule,
+  PermissionSection,
   ToolPermissionDetails,
 } from "./permission.ts";
-export { evaluate } from "./permission.ts";
+export { evaluate, permissionPreviewLines } from "./permission.ts";
 export type {
   ManagedProcessHandle,
   ProcessEvents,

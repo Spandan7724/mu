@@ -142,12 +142,3 @@ export async function submissionContent(
     return undefined;
   }
 }
-
-export async function submissionSummary(tab: Tab, ref: string): Promise<string[]> {
-  const value = await submissionContent(tab, ref);
-  if (!value) return [];
-  return [
-    value.kind === "fields" ? "sends:" : "page being submitted shows:",
-    ...value.lines.map((line) => `  ${line}`),
-  ];
-}
