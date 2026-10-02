@@ -112,8 +112,17 @@ const SUMMARIZE = `function (maxLines) {
   return { kind: "text", lines: text };
 }`;
 
+export interface SubmissionContent {
+  // `fields` are "Label: value" pairs; `text` is what the submitting region shows.
+  kind: "fields" | "text";
+  lines: string[];
+}
+
 // Best effort: a page without a real form, or a slow one, yields nothing.
-export async function submissionSummary(tab: Tab, ref: string): Promise<string[]> {
+export async function submissionContent(
+  tab: Tab,
+  ref: string,
+): Promise<SubmissionContent | undefined> {
   const signal = AbortSignal.timeout(2_000);
   try {
     const target = await resolveRef(tab, ref, signal);
@@ -127,13 +136,18 @@ export async function submissionSummary(tab: Tab, ref: string): Promise<string[]
       },
       { signal, timeoutMs: 2_000 },
     );
-    const value = result.result.value as { kind: "fields" | "text"; lines: string[] } | null;
-    if (!value?.lines.length) return [];
-    return [
-      value.kind === "fields" ? "sends:" : "page being submitted shows:",
-      ...value.lines.map((line) => `  ${line}`),
-    ];
+    const value = result.result.value as SubmissionContent | null;
+    return value?.lines.length ? value : undefined;
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+export async function submissionSummary(tab: Tab, ref: string): Promise<string[]> {
+  const value = await submissionContent(tab, ref);
+  if (!value) return [];
+  return [
+    value.kind === "fields" ? "sends:" : "page being submitted shows:",
+    ...value.lines.map((line) => `  ${line}`),
+  ];
 }

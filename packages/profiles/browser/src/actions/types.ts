@@ -26,6 +26,7 @@ export type OutcomeKind =
 export interface OutcomeDetails {
   timings: Timings;
   url: string;
+  title: string;
   tabId: string;
   fingerprint: string;
   snapshotTokens: number;

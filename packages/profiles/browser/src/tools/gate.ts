@@ -68,6 +68,18 @@ export function scopeFor(
   return scope;
 }
 
+// The control a commit activates: the submit button named for Enter, else the
+// target, else the first field of a form fill.
+export function activatedRef(args: Record<string, unknown>): string | undefined {
+  if (typeof args.submitRef === "string") return args.submitRef;
+  if (typeof args.ref === "string") return args.ref;
+  if (!Array.isArray(args.fields)) return undefined;
+  const field = (args.fields as { ref?: unknown }[]).find(
+    (candidate) => typeof candidate.ref === "string",
+  );
+  return field?.ref as string | undefined;
+}
+
 export function retryKey(tool: string, args: Record<string, unknown>): string {
   const { reason: _reason, commit: _commit, ...rest } = args;
   return `${tool} ${JSON.stringify(rest)}`;
@@ -158,13 +170,7 @@ export async function detailsFor(
       lines.push(`action: ${tool}`);
   }
   if (scope === "browser:commit" && tab) {
-    const firstField = Array.isArray(args.fields)
-      ? (args.fields as { ref?: unknown }[]).find((field) => typeof field.ref === "string")?.ref
-      : undefined;
-    const activated =
-      typeof args.submitRef === "string"
-        ? args.submitRef
-        : (ref ?? (firstField as string | undefined));
+    const activated = activatedRef(args);
     if (activated) lines.push(...(await submissionSummary(tab, activated)));
   }
   if (reason) lines.push(`why this asks: ${reason}`);

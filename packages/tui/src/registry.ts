@@ -41,7 +41,8 @@ export interface ToolRenderInfo {
   progress?: unknown;
 }
 
-export type ActivityKind = "explore" | "edit" | "command";
+// The coding classes plus whatever a profile declares; the TUI only compares them.
+export type ActivityKind = "explore" | "edit" | "command" | (string & {});
 
 export interface ToolRendererFn {
   (info: ToolRenderInfo, ctx: RenderContext, registry?: RendererRegistry): string[];
@@ -56,6 +57,12 @@ export interface ToolRendererFn {
   // collapsible transcript group. Profiles declare the semantic class here;
   // the TUI remains unaware of tool names and domains.
   activityKind?: ActivityKind | ((info: ToolRenderInfo) => ActivityKind | undefined);
+  // Narrows a group to calls sharing this key (one page, one target). Without
+  // it, consecutive calls of the same kind group.
+  activityGroup?: (info: ToolRenderInfo) => string | undefined;
+  // The collapsed header for a group of this renderer's calls. Without it the
+  // coding classes are summarised.
+  summarizeActivity?: (infos: readonly ToolRenderInfo[], depth: ColorDepth) => string;
   // Explicit user actions may make their result the primary response rather
   // than supporting agent machinery. They can start open while retaining the
   // same disclosure controls and output bound.
@@ -224,7 +231,7 @@ function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string
   return out;
 }
 
-function formatDuration(durationMs: number | undefined): string | undefined {
+export function formatDuration(durationMs: number | undefined): string | undefined {
   if (durationMs === undefined) return undefined;
   if (durationMs < 1_000) return `${Math.max(0, Math.round(durationMs))}ms`;
   if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;
@@ -639,12 +646,13 @@ function renderSubagentActivity(
   ctx: RenderContext,
   registry: RendererRegistry,
 ): string[] {
-  const groups: { kind?: ActivityKind; calls: SubagentToolCall[] }[] = [];
+  const groups: { kind?: ActivityKind; group?: string; calls: SubagentToolCall[] }[] = [];
   for (const call of calls) {
     const kind = registry.activityKind(call.info);
+    const group = kind ? registry.activityGroup(call.info) : undefined;
     const previous = groups.at(-1);
-    if (kind && previous?.kind === kind) previous.calls.push(call);
-    else groups.push({ ...(kind ? { kind } : {}), calls: [call] });
+    if (kind && previous?.kind === kind && previous.group === group) previous.calls.push(call);
+    else groups.push({ ...(kind ? { kind } : {}), ...(group ? { group } : {}), calls: [call] });
   }
 
   return groups.flatMap((group) => {
@@ -844,11 +852,17 @@ export class RendererRegistry {
     return this.renderers.get(toolName)?.supportsLiveExpansion === true;
   }
 
+  activityGroup(info: ToolRenderInfo): string | undefined {
+    return this.renderers.get(info.toolName)?.activityGroup?.(info);
+  }
+
   activitySummary(
     activityKind: ActivityKind,
     infos: readonly ToolRenderInfo[],
     depth: ColorDepth,
   ): string {
+    const summarize = infos[0] && this.renderers.get(infos[0].toolName)?.summarizeActivity;
+    if (summarize) return summarize(infos, depth);
     if (activityKind === "explore") {
       const searches = infos.filter((info) => info.toolName === "bash").length;
       const files = infos.length - searches;

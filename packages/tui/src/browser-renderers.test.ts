@@ -1,15 +1,19 @@
 import { expect, test } from "bun:test";
 import type { ToolResultMessage } from "@mu/core";
+import { App } from "./app.ts";
 import { browserRenderers } from "./browser-renderers.ts";
 import { RendererRegistry } from "./registry.ts";
+import { stripAnsi } from "./style.ts";
 
 const ctx = { width: 120, depth: "none" as const };
+const GMAIL = "https://mail.google.com/mail/u/0/#inbox";
+const THREAD = "https://mail.google.com/mail/u/0/#inbox/FMfcgz";
 
-function result(details: unknown, isError = false): ToolResultMessage {
+function result(details: unknown, isError = false, toolName = "click"): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId: "c1",
-    toolName: "click",
+    toolName,
     content: [
       {
         type: "text",
@@ -22,25 +26,38 @@ function result(details: unknown, isError = false): ToolResultMessage {
   };
 }
 
-test("an action renders as one row: verb, target, host, duration", () => {
+function outcome(summary: string, url: string, title: string, extra: object = {}) {
+  return {
+    ok: true,
+    summary,
+    details: { url, title, tabId: "t1", timings: { totalMs: 200 } },
+    ...extra,
+  };
+}
+
+function browserRegistry(): RendererRegistry {
   const registry = new RendererRegistry();
   registry.registerAll(browserRenderers);
+  return registry;
+}
+
+test("an action renders as one row: verb, target, host, duration", () => {
+  const registry = browserRegistry();
   const lines = registry.render(
     {
       toolName: "click",
       args: { ref: "e14" },
       result: result({
         ok: true,
-        summary: 'clicked button "Send" [e14]',
+        summary: 'clicked button "Compose" [e14]',
         details: { url: "https://mail.google.com/mail/u/0/", timings: { totalMs: 182.4 } },
-        commit: { id: "c1" },
       }),
     },
     ctx,
   );
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toContain('click button "Send" [e14]');
-  expect(lines[0]).toContain("mail.google.com · 182 ms · committed");
+  expect(lines[0]).toContain('click button "Compose" [e14]');
+  expect(lines[0]).toContain("mail.google.com · 182 ms");
   const expanded = registry.render(
     {
       toolName: "click",
@@ -53,9 +70,37 @@ test("an action renders as one row: verb, target, host, duration", () => {
   expect(expanded.join("\n")).toContain('button "Compose" [ref=e2]');
 });
 
+test("a commit is a loud row led by the control's name and what it sent", () => {
+  const registry = browserRegistry();
+  const info = {
+    toolName: "click",
+    args: { ref: "e14", commit: true },
+    result: result(
+      outcome('clicked button "Send" [e14]', THREAD, "Re: Standup", {
+        commit: {
+          id: "c1",
+          host: "mail.google.com",
+          target: 'button "Send" [e14]',
+          name: "Send",
+          sends: ["To: Alex <alex@example.com>", "Subject: Re: Standup", "Message: Hi"],
+        },
+      }),
+    ),
+  };
+  const [row] = registry.render(info, ctx);
+  expect(row).toBe(
+    "  │ ● Send To: Alex <alex@example.com> · Subject: Re: Standup · ✓ mail.google.com · 200 ms",
+  );
+  expect(registry.activityKind(info)).toBeUndefined();
+  const [bare] = registry.render(
+    { ...info, result: result({ summary: 'clicked button "Buy" [e2]', commit: { id: "c2" } }) },
+    ctx,
+  );
+  expect(bare).toBe('  │ ● committed button "Buy" [e2] · ✓');
+});
+
 test("running calls show their target from the arguments; failures are marked", () => {
-  const registry = new RendererRegistry();
-  registry.registerAll(browserRenderers);
+  const registry = browserRegistry();
   const running = registry.render(
     { toolName: "navigate", args: { url: "gmail.com" }, running: true },
     ctx,
@@ -77,4 +122,75 @@ test("running calls show their target from the arguments; failures are marked", 
     ctx,
   );
   expect(failed[0]).toContain('button "Buy" [e2]: it is covered by region "Cookies"');
+});
+
+test("calls group by page visit and the header says what happened there", () => {
+  const registry = browserRegistry();
+  const call = (toolName: string, args: object, url: string, title: string, isError = false) => ({
+    toolName,
+    args,
+    result: result(outcome(`${toolName}ed`, url, title), isError, toolName),
+  });
+  const inbox = call("navigate", { url: "gmail.com" }, GMAIL, "Inbox (3)");
+  const search = call(
+    "find",
+    { text: "Alex" },
+    "https://mail.google.com/mail/u/0/?q=1#inbox",
+    "Inbox (3)",
+  );
+  const thread = call("click", { ref: "e41" }, THREAD, "Standup moved");
+  expect(registry.activityKind(inbox)).toBe("browse");
+  expect(registry.activityGroup(inbox)).toBe(registry.activityGroup(search));
+  expect(registry.activityGroup(inbox)).not.toBe(registry.activityGroup(thread));
+  const visit = [
+    thread,
+    call("click", { ref: "e88" }, THREAD, "Standup moved"),
+    call("type", { ref: "e93", text: "hi" }, THREAD, "Standup moved"),
+    call("fill_form", { fields: [{}, {}] }, THREAD, "Standup moved"),
+    call("click", { ref: "e99" }, THREAD, "Standup moved", true),
+  ];
+  expect(stripAnsi(registry.activitySummary("browse", visit, "none"))).toBe(
+    "mail.google.com  Standup moved — 2 clicks, typed into 1 field, filled 2 fields · 5 actions · 1 failed · 1.0s",
+  );
+  expect(registry.activityKind({ toolName: "notes", args: {} })).toBeUndefined();
+});
+
+test("the App folds a visit and leaves the commit outside it", () => {
+  const app = new App({
+    width: 120,
+    depth: "none",
+    model: "fake/fake-1",
+    cwd: "~",
+    contextWindow: 1000,
+    registry: browserRegistry(),
+    callbacks: {
+      onSubmit: () => {},
+      onAbort: () => {},
+      onExit: () => {},
+    },
+  });
+  const complete = (id: string, toolName: string, args: object, details: unknown) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: { ...result(details, false, toolName), toolCallId: id },
+    });
+  };
+  complete("n1", "navigate", { url: "gmail.com" }, outcome("navigated to Inbox", GMAIL, "Inbox"));
+  complete("f1", "find", { text: "Alex" }, outcome('find "Alex"', GMAIL, "Inbox"));
+  complete("c1", "click", { ref: "e41" }, outcome("clicked link", THREAD, "Standup"));
+  complete("c2", "click", { ref: "e88" }, outcome("clicked button", THREAD, "Standup"));
+  complete(
+    "c3",
+    "click",
+    { ref: "e97" },
+    outcome('clicked button "Send" [e97]', THREAD, "Standup", {
+      commit: { id: "c3", host: "mail.google.com", name: "Send", sends: ["To: alex@example.com"] },
+    }),
+  );
+  const transcript = app.renderTranscript().map(stripAnsi);
+  expect(transcript).toContain("  › mail.google.com  Inbox — opened, read · 2 actions · 400ms");
+  expect(transcript).toContain("  › mail.google.com  Standup — 2 clicks · 2 actions · 400ms");
+  expect(transcript).toContain("  › ● Send To: alex@example.com · ✓ mail.google.com · 200 ms");
 });

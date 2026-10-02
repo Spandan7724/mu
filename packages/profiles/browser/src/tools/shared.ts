@@ -174,6 +174,7 @@ export async function pageAction(
     details: {
       timings: stopwatch.finish(),
       url: observation.url,
+      title: observation.title,
       tabId: tab.tabId,
       fingerprint: observation.fingerprint,
       snapshotTokens: observation.tokens,

@@ -15,6 +15,13 @@ export interface CommitRecord {
   valuesDigest?: string;
 }
 
+// What a tool result carries about its commit: the ledger record plus what the
+// person would recognise — the control's name and the fields it sent.
+export interface CommitDetails extends CommitRecord {
+  name?: string;
+  sends?: string[];
+}
+
 export const STATE_TYPE = "browser-state";
 const STATE_KEY = "browser:state";
 const STATE_MARKER = "state-json: ";

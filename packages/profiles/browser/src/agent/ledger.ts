@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import type { AnyTool, ToolResult } from "@mu/core";
 import { classify } from "../actions/classify.ts";
 import { hostOf } from "../actions/navigate.ts";
+import { submissionContent } from "../actions/submission.ts";
 import type { OutcomeKind } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
-import { retryKey } from "../tools/gate.ts";
-import type { BrowserState, CommitRecord } from "./state.ts";
+import { activatedRef, retryKey } from "../tools/gate.ts";
+import type { BrowserState, CommitDetails, CommitRecord } from "./state.ts";
 
 const COMMIT_TOOLS = new Set(["click", "click_xy", "type", "press", "select", "fill_form"]);
 // Failures that happen before any input is dispatched, so the approval still stands.
@@ -51,6 +52,10 @@ export function recordingCommits(
         url: tab?.url ?? "",
         target: typeof input.ref === "string" ? (tab?.refs.label(input.ref) ?? input.ref) : "",
       };
+      const activated = scope === "browser:commit" ? activatedRef(input) : undefined;
+      // Read before acting: a send usually clears or replaces the form it sent.
+      const sent = tab && activated ? await submissionContent(tab, activated) : undefined;
+      const name = activated ? tab?.refs.meta(activated)?.name : undefined;
       const retry = browser.approvedRetry;
       browser.approvedRetry =
         retry && retry.remaining > 1 ? { ...retry, remaining: retry.remaining - 1 } : undefined;
@@ -84,10 +89,15 @@ export function recordingCommits(
         ...(valuesDigest ? { valuesDigest } : {}),
       };
       state.ledger.append(record);
+      const commit: CommitDetails = {
+        ...record,
+        ...(name ? { name } : {}),
+        ...(sent?.kind === "fields" ? { sends: sent.lines } : {}),
+      };
       const details =
         result.details && typeof result.details === "object"
-          ? { ...(result.details as object), commit: record }
-          : { commit: record };
+          ? { ...(result.details as object), commit }
+          : { commit };
       return { ...result, details };
     },
   };

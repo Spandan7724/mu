@@ -399,6 +399,7 @@ type TranscriptItem =
       kind: "activity";
       id: string;
       activityKind: ActivityKind;
+      group?: string;
       tools: ActivityTool[];
       expanded: boolean;
     };
@@ -1840,8 +1841,13 @@ export class App {
           }
         : {}),
     };
+    const group = this.registry.activityGroup(info);
     const previous = this.transcript.at(-1);
-    if (previous?.kind === "activity" && previous.activityKind === activityKind) {
+    if (
+      previous?.kind === "activity" &&
+      previous.activityKind === activityKind &&
+      previous.group === group
+    ) {
       previous.tools.push(tool);
       this.transcriptVersion++;
       this.transcriptCache = undefined;
@@ -1851,6 +1857,7 @@ export class App {
       kind: "activity",
       id: `activity:${id}`,
       activityKind,
+      ...(group ? { group } : {}),
       tools: [tool],
       expanded: false,
     });
