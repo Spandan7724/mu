@@ -53,7 +53,7 @@ export class Handoffs {
       this.host?.followUp(
         customMessage(
           "browser-handoff",
-          `The user finished the hand-off (${reason}): tab ${tab.tabId} is now at ${JSON.stringify(tab.title || "(untitled)")} ${url}. Continue the task.`,
+          `The user finished the hand-off (${reason}): tab ${tab.tabId} is now at ${JSON.stringify(url)}. Continue the task.`,
         ),
       );
     }, this.pollMs);
