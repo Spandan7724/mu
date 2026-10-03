@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { browserProfile, managedState } from "@mu/profile-browser";
 import {
@@ -10,6 +10,9 @@ import { currentExecutableCommand } from "./agent-supervisor.ts";
 import { parseArgs } from "./args.ts";
 import { runBrowserClose, runBrowserLogin, runBrowserStatus } from "./browser-command.ts";
 import { profileOptionsFromArgs } from "./profiles.ts";
+
+// These launch Chrome up to twice per test; a cold CI runner can take ~10 s.
+setDefaultTimeout(60_000);
 
 describe("mu browser arguments", () => {
   test("mu browser selects the browser profile for the interactive app", () => {
