@@ -54,7 +54,7 @@ const CONFIRMED =
   /\b(thank you|thanks for|confirmed|confirmation|complete|completed|success|successful|submitted|sent)\b/i;
 
 // Creating an account is final even though its form carries a password.
-const SIGN_UP = /\b(sign up|register|create (an |your )?account|join)\b/i;
+const SIGN_UP = /\b(sign up|register|create (an |your )?account)\b/i;
 
 export function commitStrength(
   names: (string | undefined)[],
@@ -69,7 +69,7 @@ export function commitStrength(
   for (const name of names) {
     const trimmed = name?.trim();
     if (!trimmed || SAFE_LEXICON.test(trimmed)) continue;
-    if (MONEY.test(trimmed) || FINAL_LEXICON.test(trimmed)) return "final";
+    if (MONEY.test(trimmed) || FINAL_LEXICON.test(trimmed) || SIGN_UP.test(trimmed)) return "final";
     if (paying && FINISHING.test(trimmed)) return "final";
   }
   if (after && after.url !== before.url) {
