@@ -9,6 +9,7 @@ import {
   type ConnectedBrowser,
   connectManaged,
   connectToEndpoint,
+  waitForUnlock,
 } from "./connect.ts";
 import { DownloadTracker } from "./downloads.ts";
 import type { Size } from "./launch.ts";
@@ -662,6 +663,8 @@ export class BrowserManager {
       );
     }
     await connection.close();
+    if (close && this.options.connect === "managed" && this.options.userDataDir)
+      await waitForUnlock(this.options.userDataDir);
     shared.connected = undefined;
     this.attached.clear();
     for (const lane of shared.lanes) lane.activeTargetId = undefined;

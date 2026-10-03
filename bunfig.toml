@@ -2,3 +2,6 @@
 exact = true
 
 minimumReleaseAge = 4320
+
+[test]
+preload = ["./scripts/test-preload.ts"]

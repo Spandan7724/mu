@@ -106,7 +106,7 @@ export function profileLocked(userDataDir: string): boolean {
   }
 }
 
-async function waitForUnlock(userDataDir: string, signal?: AbortSignal): Promise<void> {
+export async function waitForUnlock(userDataDir: string, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (profileLocked(userDataDir) && Date.now() < deadline) {
     if (signal?.aborted) throw new CdpError("aborted", "connect", "aborted");
@@ -204,5 +204,7 @@ export async function closeManaged(userDataDir: string): Promise<boolean> {
   await connection.send("Browser.close", undefined, { timeoutMs: 3_000 }).catch(() => {});
   await Promise.race([connection.closed, Bun.sleep(3_000)]);
   await connection.close();
+  // The socket drops before Chrome finishes writing its profile and exits.
+  await waitForUnlock(userDataDir);
   return true;
 }
