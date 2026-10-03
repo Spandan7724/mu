@@ -20,7 +20,19 @@ const declarationPackages = [
     source: join(repositoryRoot, "packages", "profiles", "coding", "dist"),
     destination: "profile-coding",
   },
+  {
+    source: join(repositoryRoot, "packages", "profiles", "browser", "dist", "profile-browser"),
+    destination: "profile-browser",
+  },
 ] as const;
+
+// devtools-protocol is a dev-only dependency, so the published CDP aliases are loose.
+const LOOSE_CDP_TYPES = `export type CommandName = string;
+export type EventName = string;
+export type CommandParams<_M extends CommandName> = Record<string, unknown> | undefined;
+export type CommandResult<_M extends CommandName> = any;
+export type EventParams<_E extends EventName> = any;
+`;
 
 function modulePath(fromFile: string, targetFile: string): string {
   const path = relative(dirname(fromFile), targetFile).split(sep).join("/");
@@ -32,6 +44,7 @@ function rewriteModules(declaration: string, destination: string): string {
     "@mu/ai": modulePath(destination, join(outputRoot, "ai", "index.js")),
     "@mu/core": modulePath(destination, join(outputRoot, "core", "index.js")),
     "@mu/profile-coding": modulePath(destination, join(outputRoot, "profile-coding", "index.js")),
+    "@mu/profile-browser": modulePath(destination, join(outputRoot, "profile-browser", "index.js")),
     mu: modulePath(destination, join(outputRoot, "sdk", "index.js")),
   };
 
@@ -49,9 +62,20 @@ function rewriteModules(declaration: string, destination: string): string {
     .replace(/\/\/# sourceMappingURL=.*(?:\r?\n)?/g, "");
 }
 
+function loosenCdpTypes(declaration: string): string {
+  const rest = declaration.indexOf("export interface SendOptions");
+  if (rest < 0) throw new Error("cdp/types.d.ts no longer declares SendOptions");
+  return LOOSE_CDP_TYPES + declaration.slice(rest);
+}
+
 async function writeDeclaration(source: string, destination: string): Promise<void> {
   await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, rewriteModules(await readFile(source, "utf8"), destination));
+  let declaration = await readFile(source, "utf8");
+  if (destination === join(outputRoot, "profile-browser", "cdp", "types.d.ts"))
+    declaration = loosenCdpTypes(declaration);
+  if (declaration.includes("devtools-protocol"))
+    throw new Error(`${relative(repositoryRoot, source)} references devtools-protocol`);
+  await writeFile(destination, rewriteModules(declaration, destination));
 }
 
 async function copyDeclarations(sourceRoot: string, destinationName: string): Promise<void> {
