@@ -53,11 +53,18 @@ const FINISHING = /^\W*(finish|complete|confirm|place|pay|submit|done)\b/i;
 const CONFIRMED =
   /\b(thank you|thanks for|confirmed|confirmation|complete|completed|success|successful|submitted|sent)\b/i;
 
+// Creating an account is final even though its form carries a password.
+const SIGN_UP = /\b(sign up|register|create (an |your )?account|join)\b/i;
+
 export function commitStrength(
   names: (string | undefined)[],
   before: PageContext,
   after?: PageContext,
+  credentials = false,
 ): CommitStrength {
+  // Signing in only moves the task along, whatever the button says or the next page
+  // ("logged in successfully") reports.
+  if (credentials && !names.some((name) => name && SIGN_UP.test(name))) return "step";
   const paying = PAYING_PAGE.test(before.url) || PAYING_PAGE.test(before.title);
   for (const name of names) {
     const trimmed = name?.trim();

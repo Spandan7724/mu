@@ -124,7 +124,7 @@ describeWithBrowser("commit records", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test("a form fill that submits records what it sent, password masked, as a final commit", async () => {
+  test("a form fill that submits records what it sent, password masked; a password form is a step", async () => {
     const typed = "pw-commit-9921";
     const provider = new FakeProvider([
       call("c1", "navigate", { url: site.url("form-basic") }),
@@ -153,7 +153,7 @@ describeWithBrowser("commit records", () => {
     const commit = (fill?.details as { commit?: Record<string, unknown> } | undefined)?.commit;
     expect(commit).toMatchObject({
       name: "Send message",
-      strength: "final",
+      strength: "step",
       sends: ["Full name: Grace", "Password: ••••"],
     });
     expect(JSON.stringify(fill?.details)).not.toContain(typed);

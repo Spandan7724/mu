@@ -104,18 +104,21 @@ const SUMMARIZE = `function (maxLines) {
     }
   }
   if (!scope) return null;
-  if (lines.length > 0) return { kind: "fields", lines: lines };
+  var credentials = !!scope.querySelector("input[type=password]");
+  if (lines.length > 0) return { kind: "fields", lines: lines, credentials: credentials };
   var text = String(scope.innerText || "").split("\\n").map(function (line) { return clean(line, 100); })
     .filter(function (line, index, all) { return line && all.indexOf(line) === index; });
   if (text.length === 0) return null;
   if (text.length > maxLines) text = text.slice(0, maxLines - 6).concat(["…"], text.slice(-5));
-  return { kind: "text", lines: text };
+  return { kind: "text", lines: text, credentials: credentials };
 }`;
 
 export interface SubmissionContent {
   // `fields` are "Label: value" pairs; `text` is what the submitting region shows.
   kind: "fields" | "text";
   lines: string[];
+  // The form holds a password field: signing in, unless the button signs up.
+  credentials?: boolean;
 }
 
 // Best effort: a page without a real form, or a slow one, yields nothing.

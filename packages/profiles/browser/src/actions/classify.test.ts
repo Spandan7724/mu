@@ -153,6 +153,11 @@ describe("consequential-action classifier", () => {
     expect(commitStrength(["Continue"], step, { url: step.url, title: "Order confirmed" })).toBe(
       "step",
     );
+    const login = { url: "https://practicetestautomation.com/practice-test-login/", title: "" };
+    const landed = { url: "https://practicetestautomation.com/logged-in-successfully/", title: "" };
+    expect(commitStrength(["Submit"], login, landed, true)).toBe("step");
+    expect(commitStrength(["Submit"], login, landed)).toBe("final");
+    expect(commitStrength(["Create account"], login, undefined, true)).toBe("final");
   });
 
   test("Enter only submits plain fields of forms with a submit button", () => {

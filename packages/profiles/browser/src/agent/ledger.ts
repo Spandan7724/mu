@@ -61,6 +61,15 @@ function filledFields(args: Record<string, unknown>, tab: Tab | undefined): stri
   });
 }
 
+function fillsSecret(args: Record<string, unknown>, tab: Tab | undefined): boolean {
+  if (!Array.isArray(args.fields)) return false;
+  return (args.fields as { ref?: unknown }[]).some((field) => {
+    const editable =
+      typeof field.ref === "string" ? tab?.refs.meta(field.ref)?.editable : undefined;
+    return editable === "secret" || editable === "otp";
+  });
+}
+
 // Records every consequential action that went through, so compaction or a
 // resumed session never repeats a send.
 export function recordingCommits(
@@ -95,16 +104,24 @@ export function recordingCommits(
       const page = { url: tab?.url ?? "", title: tab?.title ?? "" };
       // Only a final action shows what it sent. Read before acting: a send usually
       // clears or replaces the form it sent.
+      const read =
+        scope === "browser:commit" &&
+        tool.name !== "fill_form" &&
+        tab &&
+        activated &&
+        commitStrength(names, page) === "final"
+          ? await submissionContent(tab, activated)
+          : undefined;
       const sends =
         scope !== "browser:commit"
           ? undefined
           : tool.name === "fill_form"
             ? filledFields(input, tab)
-            : tab && activated && commitStrength(names, page) === "final"
-              ? await submissionContent(tab, activated).then((content) =>
-                  content?.kind === "fields" ? content.lines : undefined,
-                )
+            : read?.kind === "fields"
+              ? read.lines
               : undefined;
+      const credentials =
+        read?.credentials === true || (tool.name === "fill_form" && fillsSecret(input, tab));
       const retry = browser.approvedRetry;
       browser.approvedRetry =
         retry && retry.remaining > 1 ? { ...retry, remaining: retry.remaining - 1 } : undefined;
@@ -148,6 +165,7 @@ export function recordingCommits(
           names,
           page,
           landed?.url !== undefined ? { url: landed.url, title: landed.title ?? "" } : undefined,
+          credentials,
         ),
       };
       const details =
