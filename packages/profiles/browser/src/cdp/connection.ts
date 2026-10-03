@@ -316,7 +316,9 @@ export async function openWebSocketTransport(
   options: { signal?: AbortSignal | undefined; timeoutMs?: number | undefined } = {},
 ): Promise<CdpTransport> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_CDP_TIMEOUT_MS;
-  const socket = new WebSocket(url);
+  // Bun 1.3's client fails inflating some of Chrome's compressed frames ("Invalid
+  // compressed data"); the socket is loopback, so compression buys nothing.
+  const socket = new WebSocket(url, { perMessageDeflate: false });
   const messageHandlers: ((data: string) => void)[] = [];
   const closeHandlers: ((reason: string) => void)[] = [];
   let closed = false;
