@@ -24,7 +24,7 @@ function physicalFrame(lines: string[], width = 80): RenderFrame {
 
 function harness(
   overrides: Partial<AppCallbacks> = {},
-  options: Partial<Pick<AppOptions, "depth" | "version">> = {},
+  options: Partial<Pick<AppOptions, "depth" | "version" | "tagline">> = {},
 ) {
   const submitted: string[] = [];
   const steers: string[] = [];
@@ -3888,6 +3888,13 @@ describe("startup banner", () => {
     expect(banner).toContain("/ for commands");
     expect(banner).toContain("ctrl+t");
     expect(banner).toContain("ctrl+c to exit");
+  });
+
+  test("a profile tagline replaces the generic one", () => {
+    const h = harness({}, { version: "1.2.3", tagline: "browser agent · Google Chrome" });
+    const banner = stripAnsi(h.app.banner().join("\n"));
+    expect(banner).toContain("mu v1.2.3  browser agent · Google Chrome");
+    expect(banner).not.toContain("general-purpose");
   });
 });
 

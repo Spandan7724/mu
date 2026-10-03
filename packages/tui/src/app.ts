@@ -117,6 +117,7 @@ export interface AppOptions {
   depth: ColorDepth;
   model: string;
   version?: string;
+  tagline?: string;
   cwd?: string;
   contextWindow?: number;
   thinkingLevels?: readonly string[];
@@ -1220,7 +1221,7 @@ export class App {
     return [
       "",
       `${MARGIN}${styleText(AGENT_LABEL, { accent: true, bold: true }, depth)}${version}  ${styleText(
-        "a general-purpose, extensible agent",
+        this.options.tagline ?? "a general-purpose, extensible agent",
         { dim: true },
         depth,
       )}`,

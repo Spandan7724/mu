@@ -44,3 +44,22 @@ export function createRendererRegistry(
   registerDeclaredRenderers(registry, extensionRenderers);
   return registry;
 }
+
+// Says which agent the session is before the first prompt; coding keeps the
+// generic line.
+export function profileTagline(
+  profile: Pick<Profile, "name"> | undefined,
+  environment: Record<string, string> = {},
+): string | undefined {
+  if (profile?.name !== "browser") return undefined;
+  const parts = ["browser agent"];
+  if (environment.browser && !environment.browser.startsWith("unavailable"))
+    parts.push(environment.browser.replace(/\s+[\d.]+$/, ""));
+  parts.push(
+    environment.connection?.startsWith("cdp")
+      ? environment.connection.replace(/^cdp endpoint/, "cdp")
+      : `profile ${environment.browserProfile ?? "default"}`,
+  );
+  if (environment.headless === "true") parts.push("headless");
+  return parts.join(" · ");
+}

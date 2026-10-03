@@ -61,7 +61,7 @@ import {
 import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
 import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
-import { createRendererRegistry } from "./presentation.ts";
+import { createRendererRegistry, profileTagline } from "./presentation.ts";
 import { browserFlags } from "./profiles.ts";
 import {
   normalizeSessionTitle,
@@ -341,12 +341,14 @@ export async function runInteractive(
     app?.activeConversation === "side" && sideConversation ? sideConversation.agent : agent;
   const activeRunPromise = () => (app?.activeConversation === "side" ? sideRun : activeRun);
 
+  const tagline = profileTagline(profile, resolved.sessionEnvironment);
   app = new App({
     width: terminal.columns,
     height: terminal.rows,
     depth,
     model: modelRef,
     version: cliPackage.version,
+    ...(tagline ? { tagline } : {}),
     cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
     contextWindow: agent.contextWindow,
     thinkingLevels: agent.thinkingLevels,
