@@ -6,16 +6,22 @@ export const MAX_WAIT_SECONDS = 30;
 const MAX_RESULT_CHARS = 4_000;
 
 // Event-driven: a MutationObserver re-checks the page text on every change.
+// Case-sensitive: "Secure Area" must not match a login page that mentions "the secure
+// area". A miss that only differs in case is reported rather than counted.
 const WAIT_FOR_TEXT = `function (text, gone, capMs) {
   return new Promise(function (resolve) {
-    var needle = text.toLowerCase();
-    function present() { return ((document.body && document.body.innerText) || "").toLowerCase().indexOf(needle) >= 0; }
+    function body() { return (document.body && document.body.innerText) || ""; }
+    function present() { return body().indexOf(text) >= 0; }
     function satisfied() { return gone ? !present() : present(); }
-    if (satisfied()) return resolve({ met: true, waited: 0 });
+    if (satisfied()) return resolve({ met: true, waited: 0, already: true });
     var started = Date.now();
     var observer = new MutationObserver(function () { if (satisfied()) finish(true); });
     var timer = setTimeout(function () { finish(false); }, capMs);
-    function finish(met) { observer.disconnect(); clearTimeout(timer); resolve({ met: met, waited: Date.now() - started }); }
+    function finish(met) {
+      observer.disconnect(); clearTimeout(timer);
+      var caseOnly = !met && !gone && body().toLowerCase().indexOf(text.toLowerCase()) >= 0;
+      resolve({ met: met, waited: Date.now() - started, caseOnly: caseOnly });
+    }
     observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
   });
 }`;
@@ -59,13 +65,22 @@ export async function waitFor(
       { signal, timeoutMs: seconds * 1_000 + 2_000 },
     ),
   );
-  const value = result.result.value as { met: boolean; waited: number } | undefined;
+  const value = result.result.value as
+    | { met: boolean; waited: number; already?: boolean; caseOnly?: boolean }
+    | undefined;
   const what = `${JSON.stringify(options.text)} ${options.gone ? "to disappear" : "to appear"}`;
   if (!value?.met) {
     return {
       ok: false,
       kind: "timeout",
-      summary: `waited ${seconds} s for ${what}; it did not happen`,
+      summary: `waited ${seconds} s for ${what}; it did not happen${value?.caseOnly ? " (the page has it only in different capitalization)" : ""}`,
+    };
+  }
+  if (value.already) {
+    return {
+      summary: options.gone
+        ? `${JSON.stringify(options.text)} was already absent; nothing to wait for`
+        : `${JSON.stringify(options.text)} was already on the page; nothing to wait for`,
     };
   }
   return { summary: `waited ${Math.round(value.waited)} ms for ${what}` };

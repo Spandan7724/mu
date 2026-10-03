@@ -393,6 +393,11 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(waited.text).toMatch(/^waited \d+ ms for "Q2 revenue" to appear/);
     const timeout = await run("wait", { text: "never shows", seconds: 0.3 });
     expect(timeout.outcome.kind).toBe("timeout");
+    const already = await run("wait", { text: "Q2 revenue", seconds: 0.3 });
+    expect(already.text).toMatch(/^"Q2 revenue" was already on the page/);
+    const cased = await run("wait", { text: "q2 REVENUE", seconds: 0.3 });
+    expect(cased.outcome.kind).toBe("timeout");
+    expect(cased.text).toContain("only in different capitalization");
     const evaluated = await run("evaluate", { function: "() => document.title" });
     expect(evaluated.text).toContain('result (untrusted page data): "Dashboard"');
     const thrown = await run("evaluate", { function: "() => { throw new Error('boom') }" });
