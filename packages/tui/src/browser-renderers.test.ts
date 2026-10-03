@@ -3,13 +3,14 @@ import type { ToolResultMessage } from "@mu/core";
 import { App } from "./app.ts";
 import { browserRenderers } from "./browser-renderers.ts";
 import { InputDecoder } from "./input.ts";
-import { RendererRegistry, subagentRenderers } from "./registry.ts";
+import { formatDuration, RendererRegistry, subagentRenderers } from "./registry.ts";
 import { stripAnsi } from "./style.ts";
 import { stringWidth } from "./width.ts";
 
 const ctx = { width: 120, depth: "none" as const };
 const GMAIL = "https://mail.google.com/mail/u/0/#inbox";
 const THREAD = "https://mail.google.com/mail/u/0/#inbox/FMfcgz";
+const WIKI = "https://en.wikipedia.org/wiki/Pune";
 
 function result(details: unknown, isError = false, toolName = "click"): ToolResultMessage {
   return {
@@ -272,7 +273,11 @@ test("a hand-off is its own row and leaves the session waiting on the user", () 
   app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
   const transcript = app.renderTranscript().map(stripAnsi);
   expect(transcript).toContain("  › ◆ your turn sign in to linkedin.com · www.linkedin.com");
-  expect(transcript).toContain("  │ mu continues once the page moves on, or when you reply");
+  expect(transcript).toContain(
+    "  │ finish in the browser, submit included · mu continues when the page moves on or you reply",
+  );
+  expect(transcript.at(-3)).toBe("");
+  expect(transcript.at(-2)).toStartWith("  worked for ");
   const waiting = "  ◆ waiting on you: sign in to linkedin.com · reply when done";
   expect(app.renderScreen().map(stripAnsi)).toContain(waiting);
   app.handleEvent({ type: "agent_start" });
@@ -380,4 +385,35 @@ test("a step commit is an ordinary row inside its visit; a final one warns when 
     "  │ ● Finish · no visible change · mail.google.com · 200 ms",
   );
   expect(registry.activityKind(stalled)).toBeUndefined();
+});
+
+test("read-only tools join the visit and name it; scripts and durations read plainly", () => {
+  const registry = browserRegistry();
+  const navigate = {
+    toolName: "navigate",
+    args: {},
+    result: result(outcome("navigated to Pune", WIKI, "Pune - Wikipedia"), false, "navigate"),
+  };
+  const read = {
+    toolName: "read_page",
+    args: {},
+    result: result(
+      { url: WIKI, title: "Pune - Wikipedia", tabId: "t1", timings: { totalMs: 30 } },
+      false,
+      "read_page",
+    ),
+  };
+  const script = (id: string) => ({
+    toolName: "evaluate",
+    args: {},
+    result: result(outcome(`ran script ${id}`, WIKI, "Pune - Wikipedia"), false, "evaluate"),
+  });
+  expect(registry.activityGroup(read)).toBe(registry.activityGroup(navigate));
+  expect(
+    stripAnsi(registry.activitySummary("browse", [read, script("a"), script("b")], "none")),
+  ).toBe("en.wikipedia.org  Pune - Wikipedia — read, ran 2 scripts · 3 actions · 430ms");
+  expect(formatDuration(179_600)).toBe("3m");
+  expect(formatDuration(59_600)).toBe("1m");
+  expect(formatDuration(9_960)).toBe("10s");
+  expect(formatDuration(125_000)).toBe("2m 5s");
 });

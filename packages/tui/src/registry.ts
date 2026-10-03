@@ -4,6 +4,7 @@ import {
   type DiffLine,
   diffCell,
   diffLinesFromHunks,
+  formatDuration as formatCellDuration,
   type PlanItem,
   type PlanStatus,
   type PrimaryRole,
@@ -244,13 +245,7 @@ function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string
 }
 
 export function formatDuration(durationMs: number | undefined): string | undefined {
-  if (durationMs === undefined) return undefined;
-  if (durationMs < 1_000) return `${Math.max(0, Math.round(durationMs))}ms`;
-  if (durationMs < 10_000) return `${(durationMs / 1_000).toFixed(1)}s`;
-  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
-  const minutes = Math.floor(durationMs / 60_000);
-  const seconds = Math.round((durationMs % 60_000) / 1_000);
-  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  return durationMs === undefined ? undefined : formatCellDuration(durationMs);
 }
 
 function stringArg(args: unknown, key: string): string {

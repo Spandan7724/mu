@@ -313,14 +313,15 @@ export interface TaskCellOptions {
   tail?: string[];
 }
 
-function formatDuration(durationMs: number): string {
+export function formatDuration(durationMs: number): string {
   const ms = Math.max(0, durationMs);
   if (ms < 1_000) return `${Math.round(ms)}ms`;
-  if (ms < 10_000) return `${(ms / 1_000).toFixed(1)}s`;
-  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1_000);
-  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
+  if (ms < 9_950) return `${(ms / 1_000).toFixed(1)}s`;
+  // Round once, then split: 179.6 s is 3m, not 2m 60s.
+  const seconds = Math.round(ms / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return seconds % 60 === 0 ? `${minutes}m` : `${minutes}m ${seconds % 60}s`;
 }
 
 // Background process cells live in the managed region while running and are

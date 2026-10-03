@@ -13,6 +13,7 @@ import {
   compactionCell,
   diffLinesFromHunks,
   errorCell,
+  formatDuration,
   type RenderContext,
   thinkingCell,
   toolOutputCell,
@@ -283,16 +284,6 @@ function openFenceAtEnd(text: string): MarkdownFence | undefined {
     if (close.test(line)) open = undefined;
   }
   return open;
-}
-
-function formatDuration(durationMs: number): string {
-  const ms = Math.max(0, durationMs);
-  if (ms < 1_000) return `${Math.round(ms)}ms`;
-  if (ms < 10_000) return `${(ms / 1_000).toFixed(1)}s`;
-  if (ms < 60_000) return `${Math.round(ms / 1_000)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1_000);
-  return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`;
 }
 
 class LiveToolOutput {
@@ -1446,9 +1437,7 @@ export class App {
           : [];
       const separated =
         next !== undefined &&
-        (next.kind === "user" || next.kind === "assistant"
-          ? true
-          : next.kind === "tool" && visibleLines.length > 1);
+        (next.kind === "user" || next.kind === "assistant" ? true : visibleLines.length > 1);
       const lines = this.disclosureLines(
         visibleLines,
         revealAll || item.expanded,

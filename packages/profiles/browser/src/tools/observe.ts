@@ -120,7 +120,7 @@ export function screenshotTool(deps: BrowserToolDeps) {
           { type: "text", text: `${summary}\n\n${header}\n${screenshotHeader(shot)}` },
           { type: "image", mimeType: shot.mimeType, data: shot.data },
         ],
-        details: { timings: stopwatch.finish(), url: tab.url, tabId: tab.tabId },
+        details: { timings: stopwatch.finish(), url: tab.url, title: tab.title, tabId: tab.tabId },
         retention: { key: "browser:screenshot", summary },
       };
     },
@@ -178,7 +178,12 @@ export function readPageTool(deps: BrowserToolDeps) {
       ].join("\n");
       return {
         content: [{ type: "text", text }],
-        details: { timings: stopwatch.finish(), url: model.url, tabId: tab.tabId },
+        details: {
+          timings: stopwatch.finish(),
+          url: model.url,
+          title: model.title,
+          tabId: tab.tabId,
+        },
         retention: {
           key: "browser:read_page",
           summary: `${summary} (content collapsed; keep data in notes)`,
@@ -268,7 +273,13 @@ export function findTool(deps: BrowserToolDeps) {
             text: `${summary}\n[page] ${model.title}\nurl: ${model.url}\n<page_content untrusted="true">\n${body.replace(/<(\/?)page_content/gi, "‹$1page_content")}\n</page_content>`,
           },
         ],
-        details: { timings: stopwatch.finish(), url: model.url, tabId: tab.tabId, total },
+        details: {
+          timings: stopwatch.finish(),
+          url: model.url,
+          title: model.title,
+          tabId: tab.tabId,
+          total,
+        },
         retention: { key: "browser:find", summary },
       };
     },

@@ -29,8 +29,11 @@ interface BrowserOutcome {
   kind?: string;
   commit?: BrowserCommit;
   details?: { url?: string; title?: string; tabId?: string; timings?: { totalMs?: number } };
+  // Read-only tools (read_page, find, screenshot) report these at the top level.
   timings?: { totalMs?: number };
   url?: string;
+  title?: string;
+  tabId?: string;
 }
 
 const OBSERVE = new Set([
@@ -74,6 +77,12 @@ const WARNINGS: Record<string, string> = {
 
 function urlOf(outcome: BrowserOutcome): string | undefined {
   return outcome.details?.url ?? outcome.url;
+}
+
+function titleOf(outcome: BrowserOutcome): string {
+  return sanitizeUntrusted(outcome.details?.title ?? outcome.title ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function host(url: string | undefined): string | undefined {
@@ -218,7 +227,7 @@ browserRenderer.groupsAcrossThinking = true;
 browserRenderer.activityGroup = (info) => {
   const outcome = outcomeOf(info);
   const url = urlOf(outcome);
-  return url ? `${outcome.details?.tabId ?? ""} ${pageKey(url)}` : undefined;
+  return url ? `${outcome.details?.tabId ?? outcome.tabId ?? ""} ${pageKey(url)}` : undefined;
 };
 
 const plural = (count: number, one: string, many = `${one}s`) =>
@@ -277,6 +286,9 @@ function visitStory(infos: readonly ToolRenderInfo[]): string {
       case "dialog":
         phrases.push("answered a dialog");
         break;
+      case "evaluate":
+        phrases.push(`ran ${plural(count, "script")}`);
+        break;
       default:
         phrases.push(name);
     }
@@ -288,9 +300,7 @@ function visitStory(infos: readonly ToolRenderInfo[]): string {
 function summarizeVisit(infos: readonly ToolRenderInfo[], depth: ColorDepth): string {
   const last = outcomeOf(infos.at(-1) ?? { toolName: "", args: {} });
   const where = host(urlOf(last)) ?? "page";
-  const title = sanitizeUntrusted(last.details?.title ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const title = titleOf(last);
   const story = visitStory(infos);
   const failed = infos.filter((info) => info.result?.isError).length;
   const total = infos.reduce((sum, info) => sum + (durationOf(info) ?? 0), 0);
@@ -322,9 +332,7 @@ browserRenderer.location = (info) => {
   const outcome = outcomeOf(info);
   const where = host(urlOf(outcome));
   if (!where) return undefined;
-  const title = sanitizeUntrusted(outcome.details?.title ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const title = titleOf(outcome);
   return title ? `${where} ${GLYPHS.separator} ${title}` : where;
 };
 
@@ -362,7 +370,9 @@ const handoffRenderer: ToolRendererFn = (info, ctx) => {
       tone: "mutate",
       ...(reason ? { primaryArg: reason } : {}),
       ...(handoff.host ? { summary: handoff.host } : {}),
-      tail: ["mu continues once the page moves on, or when you reply"],
+      tail: [
+        "finish in the browser, submit included · mu continues when the page moves on or you reply",
+      ],
     },
     // The mark takes two columns of the row's width.
     { ...ctx, width: ctx.width - 2 },
