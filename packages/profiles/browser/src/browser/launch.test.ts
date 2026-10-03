@@ -64,6 +64,22 @@ describe("managed launch configuration", () => {
     },
   );
 
+  test.skipIf(process.platform !== "linux")(
+    "a lock held by an exited but unreaped browser is not live",
+    async () => {
+      const dir = tempUserDataDir();
+      // The exec'd sleep never reaps its finished child, which stays a zombie.
+      const parent = Bun.spawn(["sh", "-c", "true & echo $!; exec sleep 5"], { stdout: "pipe" });
+      const reader = parent.stdout.getReader();
+      const pid = Number(new TextDecoder().decode((await reader.read()).value).trim());
+      await Bun.sleep(100);
+      symlinkSync(`${hostname()}-${pid}`, join(dir, "SingletonLock"));
+      expect(profileLocked(dir)).toBe(false);
+      parent.kill();
+      await parent.exited;
+    },
+  );
+
   test("--cdp reports an unreachable endpoint clearly", async () => {
     await expect(resolveCdpUrl("127.0.0.1:1", { timeoutMs: 500 })).rejects.toThrow(
       "No CDP endpoint answered",

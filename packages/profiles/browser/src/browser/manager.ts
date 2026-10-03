@@ -664,7 +664,7 @@ export class BrowserManager {
     }
     await connection.close();
     if (close && this.options.connect === "managed" && this.options.userDataDir)
-      await waitForUnlock(this.options.userDataDir);
+      await waitForUnlock(this.options.userDataDir, undefined, 2_000);
     shared.connected = undefined;
     this.attached.clear();
     for (const lane of shared.lanes) lane.activeTargetId = undefined;

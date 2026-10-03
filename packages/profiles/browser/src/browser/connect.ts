@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { type CdpConnection, CdpError, connectCdp } from "../cdp/connection.ts";
@@ -75,13 +75,24 @@ export async function resolveCdpUrl(endpoint: string, options: Signals = {}): Pr
   return body.webSocketDebuggerUrl;
 }
 
+// An exited browser its parent has not reaped yet still answers kill(pid, 0).
+function zombie(pid: number): boolean {
+  if (process.platform !== "linux") return false;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+  return !zombie(pid);
 }
 
 // Chrome's SingletonLock is a symlink to "<hostname>-<pid>" on Unix; a lock
@@ -106,8 +117,12 @@ export function profileLocked(userDataDir: string): boolean {
   }
 }
 
-export async function waitForUnlock(userDataDir: string, signal?: AbortSignal): Promise<void> {
-  const deadline = Date.now() + 5_000;
+export async function waitForUnlock(
+  userDataDir: string,
+  signal?: AbortSignal,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (profileLocked(userDataDir) && Date.now() < deadline) {
     if (signal?.aborted) throw new CdpError("aborted", "connect", "aborted");
     await Bun.sleep(50);
@@ -148,6 +163,9 @@ export async function connectManaged(options: ManagedConnectOptions): Promise<Co
     await connection.close();
     await waitForUnlock(options.userDataDir, options.signal);
   }
+  // A browser that was just closed or killed releases its lock moments later.
+  if (profileLocked(options.userDataDir))
+    await waitForUnlock(options.userDataDir, options.signal, 2_000);
   if (profileLocked(options.userDataDir)) {
     throw new Error(
       `The browser profile ${options.userDataDir} is already open in a browser that mu cannot control (it was started without remote debugging). Close that browser window, then try again; mu will reopen it with debugging enabled.`,
