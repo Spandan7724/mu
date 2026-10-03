@@ -244,6 +244,8 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       return browserPrompt(modelRef);
     },
     refreshContext: (messages, context) => {
+      // A new run means the user replied or the hand-off already woke the agent.
+      handoffs.cancel();
       browser.dataflow.userSaid(
         messages
           .filter((message) => message.role === "user")

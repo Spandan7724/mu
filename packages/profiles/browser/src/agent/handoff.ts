@@ -69,7 +69,7 @@ export function handoffTool(browser: BrowserManager, handoffs: Handoffs) {
   return tool({
     name: "handoff",
     description:
-      "Hand the browser window to the user for something only they can do: signing in, a two-factor code, a CAPTCHA, payment details. Brings the window forward. Then end your turn with one short line; you are woken when the page moves on or the user replies.",
+      "Hand the browser window to the user for something only they can do: signing in, a two-factor code, a CAPTCHA, payment details. Brings the window forward and ends your turn; you are woken when the page moves past the sign-in or check, or when the user replies.",
     inputSchema: z.object({
       reason: z
         .string()
@@ -97,10 +97,13 @@ export function handoffTool(browser: BrowserManager, handoffs: Handoffs) {
         content: [
           {
             type: "text",
-            text: `Handed the browser to the user: ${reason}. End your turn now with one short line telling the user what to do; you will be woken when the page moves on or the user replies.`,
+            text: `Handed the browser to the user: ${reason}. Your turn ends here; you are woken when the page moves on or the user replies.`,
           },
         ],
         details: { handoff },
+        // Waiting is the user's move: no further model call until the page moves on
+        // or they reply.
+        terminate: true,
       };
     },
   });
