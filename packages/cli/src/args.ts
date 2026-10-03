@@ -187,40 +187,143 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return parsed;
 }
 
-export const HELP_TEXT = `mu — a general-purpose, extensible AI agent
+export const HELP_TEXT = `mu — a general-purpose, extensible AI agent for the terminal
+
+mu ships two agents in one install. The coding agent is the default. The browser agent
+starts with \`mu browser\` and drives a Chrome-family browser already installed on this
+machine; it stays inert until you use it.
 
 Usage:
-  mu                       start the interactive terminal app
-  mu --resume <session>    resume an interactive session
-  mu -p "<prompt>"         run one prompt and print the result
-  mu --rpc                 newline-delimited JSON: events out, ops in
-  mu browser               start the interactive app with the browser profile
-  mu browser login [url]   open the managed browser to sign in to sites once
-  mu browser status        show the browser binary, profile and whether it is running
-  mu browser close         close the managed browser left open by earlier runs
-  mu agents                manage several ordinary sessions
-  mu agents stop           stop the managed-session supervisor
-  mu self update           update a global npm, Bun, or GitHub-release install
-  mu self uninstall        remove a global npm, Bun, or GitHub-release install
+  mu [options]                        coding agent, interactive terminal app
+  mu -p "<prompt>" [options]          coding agent, run one prompt and print the result
+  mu --rpc [options]                  coding agent over NDJSON (ops on stdin, events on stdout)
+  mu browser [options]                browser agent, interactive terminal app
+  mu browser -p "<prompt>" [options]  browser agent, run one prompt and print the result
+  mu browser --rpc [options]          browser agent over NDJSON
+  mu browser login [url] [options]    open the managed browser to sign in to sites yourself
+  mu browser status [options]         show the browser binary, profile dir and whether it runs
+  mu browser close [options]          close the managed browser left open by earlier runs
+  mu agents [options]                 run and watch several sessions side by side
+  mu agents stop                      stop the background supervisor behind \`mu agents\`
+  mu self update                      update a global npm, Bun or GitHub-release install
+  mu self uninstall [--purge]         remove that install (--purge also deletes ~/.mu)
 
-Options:
-  -p, --print <prompt>     headless one-shot mode
-      --json               stream events as JSON (headless mode)
-      --model <ref>        model to use, e.g. anthropic/claude-opus-5
-      --profile <name>     profile to load (default: coding)
-      --resume <session>   resume an earlier session (interactive, headless, or RPC)
-      --max-turns <n>      stop after n turns
-      --max-cost <usd>     stop once the run costs this much
+Coding agent (default, or --profile coding)
+  Works in the current directory: reads, searches, edits and creates files, runs shell
+  commands and background processes, and delegates to subagents (task, search, counsel,
+  recall). Each prompt gets a checkpoint outside your Git repo that /undo can restore.
+
+  Permission modes (--permission-mode, /permissions or shift+tab in the app):
+    default          read freely; ask before edits and commands
+    accept-edits     read and edit files freely; ask before commands
+    plan-readonly    inspect and plan only; deny file, command and task changes
+    yolo             allow every tool call without asking (same as --allow-all)
+
+  Coding options:
+        --no-instructions    skip AGENTS.md and other global/project instruction files
+
+  Coding slash commands:
+    /undo [n]        revert the last n prompts, files and conversation together
+    /redo            re-apply the step that was undone
+    /diff            show everything this session changed in the workspace
+    /instructions [reload]
+                     show the loaded instruction files, or reload them
+    /reload          reload instruction files
+    /subagents       list subagents and how to ask for each one
+
+Browser agent (mu browser, or --profile browser)
+  Navigates, reads, clicks, types, fills forms, uploads and downloads in real tabs, keeps
+  notes and a record of consequential actions (sends, purchases, deletions), and can run
+  parallel sub-tasks in separate tabs. It uses mu's own persistent Chrome profile under
+  ~/.mu/browser/profiles/<name>, or any browser you point --cdp at. When a site needs
+  you (sign-in, captcha, 2FA) it hands you the window and continues once the page moves
+  on or you reply. Page content is treated as untrusted data.
+
+  Permission modes (--permission-mode, /permissions or shift+tab in the app):
+    default          browse and interact freely; ask before sending, buying, deleting,
+                     entering secrets, uploading and running page scripts
+    supervised       ask before every navigation and interaction
+    read-only        look and navigate only; deny clicks, typing and consequential actions
+    autonomous       allow everything, including sending, buying and deleting, without
+                     asking (same as --allow-all)
+
+  Browser options:
+        --browser-profile <name>
+                             managed browser profile to use (default: default)
+        --cdp <url>          drive an existing browser's DevTools endpoint instead of
+                             launching one (not for login or close)
+        --headless           run the managed browser without a window (not for login)
+
+  Browser slash commands:
+    /browser         browser status, active tab and consequential actions taken
+    /tabs            list the browser's open tabs
+    /login [url]     open a site in the browser window so you can sign in yourself
+
+Options for both agents:
+  -p, --print <prompt>       headless one-shot mode; prints the final answer
+      --json                 with -p, stream every event as JSON lines instead
+      --rpc                  NDJSON mode for other programs (see RPC below)
+      --model <ref>          model to use, e.g. anthropic/claude-opus-5 or openai/gpt-5.1
+                             (default: "model" in ~/.mu/config.json)
+      --profile <name>       profile to load: coding, browser, or a module path/package
+      --resume <session>     resume an earlier session (interactive, -p or --rpc)
       --permission-mode <mode>
-                           coding: default | accept-edits | plan-readonly | yolo
-                           browser: default | supervised | read-only | autonomous
-      --allow-all          alias for the profile's unrestricted mode (yolo / autonomous)
-      --no-instructions    disable global and project instruction loading
-      --browser-profile <name>
-                           managed browser profile (default: default)
-      --cdp <url>          drive an existing browser's CDP endpoint instead
-      --headless           run the managed browser without a window
-      --purge              with self uninstall, also delete ~/.mu (config, credentials, sessions)
-  -h, --help               show this help
-  -v, --version            show the version
+                             start in this mode (see each agent above)
+      --allow-all            start in the profile's unrestricted mode (yolo / autonomous)
+      --max-turns <n>        stop after n model turns (-p and --rpc)
+      --max-cost <usd>       stop once the run has cost this much (-p and --rpc)
+  -h, --help                 show this help
+  -v, --version              show the version
+
+  In -p mode nothing can ask: any action that would ask is denied and reported. Use
+  --permission-mode or --allow-all to permit it.
+
+Slash commands in every session:
+  /help            list the commands available in this session
+  /model [ref]     show or switch the model
+  /login           configure a provider account or API key
+  /logout          remove provider authentication
+  /permissions     choose the permission mode
+  /compact [focus] summarize older context now, keeping recent work
+  /fork            branch the conversation from an earlier point
+  /resume          resume an earlier session
+  /rename          name the current conversation
+  /new             clear the screen and start a new chat
+  /btw             open an ephemeral side conversation
+  /export [path]   save the transcript as Markdown
+  /cost            token usage and cost for this session
+  /keybindings     list every key binding
+  Markdown commands from ~/.mu/commands and .mu/commands are added as /<name>.
+
+In the app:
+  !<command>       run a shell command yourself    @<path>    mention a file
+  ctrl+o           review tool output              ctrl+t     cycle thinking level
+  shift+tab        cycle permission mode           esc        stop the current run
+  ctrl+c           exit
+
+RPC (--rpc):
+  One JSON object per line. Ops in: input, steer, follow_up, command, shell,
+  permission_reply, permission_mode, cycle_permission_mode, thinking, resume,
+  remove_queued, snapshot, resize, abort, shutdown. Out: ready, event, snapshot,
+  command_result, op_result, error, shutdown.
+
+Files:
+  ~/.mu/config.json        default model, and a "browser" section (browserProfile, connect,
+                           cdpUrl, executable, channel, headless, vision, viewport, keepOpen,
+                           downloadsDir, allowedHosts, blockedHosts, workspace)
+  ~/.mu/auth.json          provider credentials (/login)
+  ~/.mu/models.json        custom and local models
+  ~/.mu/sessions/          saved conversations (per profile and project)
+  ~/.mu/checkpoints/       coding checkpoints for /undo
+  ~/.mu/AGENTS.md          global instructions; AGENTS.md in the project adds to it
+  ~/.mu/commands/          Markdown slash commands (.mu/commands in a project too)
+  ~/.mu/skills/            skills          ~/.mu/extensions/    extensions
+  ~/.mu/browser/           browser profiles and downloads
+
+Environment:
+  NO_COLOR                 disable color
+  MU_FORCE_COLOR           truecolor | ansi256 | ansi16 | none
+  MU_HOME                  state directory for \`mu agents\` (default ~/.mu)
+
+Exit codes (-p): 0 done · 1 error · 2 usage · 3 turn, cost or token budget hit · 130 aborted
 `;

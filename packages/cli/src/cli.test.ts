@@ -68,6 +68,23 @@ describe("parseArgs", () => {
     expect(HELP_TEXT).toContain("--no-instructions");
   });
 
+  test("help separates the coding and browser agents with their modes and commands", () => {
+    const coding = HELP_TEXT.slice(
+      HELP_TEXT.indexOf("Coding agent ("),
+      HELP_TEXT.indexOf("Browser agent ("),
+    );
+    const browser = HELP_TEXT.slice(
+      HELP_TEXT.indexOf("Browser agent ("),
+      HELP_TEXT.indexOf("Options for both agents:"),
+    );
+    for (const mode of ["default", "accept-edits", "plan-readonly", "yolo", "/undo"])
+      expect(coding).toContain(mode);
+    for (const mode of ["supervised", "read-only", "autonomous", "--cdp", "/tabs"])
+      expect(browser).toContain(mode);
+    expect(coding).not.toContain("--cdp");
+    expect(browser).not.toContain("--no-instructions");
+  });
+
   test("web search has no startup mode", () => {
     expect(parseArgs(["--web-search", "live"]).errors[0]).toContain("Unknown flag");
     expect(HELP_TEXT).not.toContain("--web-search");
