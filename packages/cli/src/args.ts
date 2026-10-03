@@ -257,7 +257,7 @@ Browser agent (mu browser, or --profile browser)
   Browser slash commands:
     /browser         browser status, active tab and consequential actions taken
     /tabs            list the browser's open tabs
-    /login [url]     open a site in the browser window so you can sign in yourself
+    /signin [url]    open a site in the browser window so you can sign in yourself
 
 Options for both agents:
   -p, --print <prompt>       headless one-shot mode; prints the final answer

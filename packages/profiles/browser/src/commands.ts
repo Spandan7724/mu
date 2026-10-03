@@ -41,8 +41,9 @@ export function browserCommands(browser: BrowserManager, ledger: CommitLedger): 
       },
     },
     {
-      name: "login",
-      description: "Open a site in the browser window so you can sign in yourself: /login [url]",
+      // Not "login": the terminal app's /login (provider accounts) would replace it.
+      name: "signin",
+      description: "Open a site in the browser window so you can sign in yourself: /signin [url]",
       run: async (ctx) => {
         const target = ctx.args.trim();
         let tab = await browser.activeTab();

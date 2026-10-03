@@ -120,7 +120,7 @@ describeWithBrowser("mu browser status and close", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test("slash commands: /browser status with ledger, /tabs, /login", async () => {
+  test("slash commands: /browser status with ledger, /tabs, /signin", async () => {
     const home = tempUserDataDir();
     const profile = await browserProfile({
       home,
@@ -153,7 +153,8 @@ describeWithBrowser("mu browser status and close", () => {
     const after = (await command("browser")?.run(ctx(""))) as { message: string };
     expect(after.message).toContain("state: connected (launched by mu)");
     expect(after.message).toContain('mail.test: click button "Send"');
-    const login = (await command("login")?.run(ctx("about:blank"))) as { message: string };
+    expect(command("login")).toBeUndefined();
+    const login = (await command("signin")?.run(ctx("about:blank"))) as { message: string };
     expect(login.message).toContain("running headless");
     await profile.browser.shutdown({ close: true });
     rmSync(home, { recursive: true, force: true });
