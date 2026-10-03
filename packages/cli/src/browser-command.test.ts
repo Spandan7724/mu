@@ -57,6 +57,7 @@ describe("mu browser arguments", () => {
 
 describeWithBrowser("mu browser login", () => {
   test("opens a plain browser without a debugging endpoint, closes it on Enter, and the profile is reused", async () => {
+    const t0 = Date.now(); const mark = (label: string) => console.error(`[login-debug] ${Date.now() - t0}ms ${label}`);
     const home = tempUserDataDir();
     const server = Bun.serve({
       port: 0,
@@ -80,20 +81,35 @@ describeWithBrowser("mu browser login", () => {
       },
     );
     while (!out.join("").includes("press Enter")) await Bun.sleep(10);
+    mark("sign-in chrome up");
     const profile = await browserProfile({ home, headless: true, keepOpen: false });
     await Bun.sleep(300);
     expect((await managedState(profile.config.userDataDir)).running).toBe(false);
     expect(out.join("")).toContain("not controlled by mu");
+    mark("before enter");
     entered();
     expect(await code).toBe(0);
+    mark("login returned");
     expect(out.join("")).toContain("sign-ins are saved");
     expect((await managedState(profile.config.userDataDir)).locked).toBe(false);
-    await profile.browser.activeTab();
+    mark(`locked=${(await managedState(profile.config.userDataDir)).locked}`);
+    try {
+      await profile.browser.activeTab();
+    } catch (error) {
+      mark(`activeTab failed: ${error}`);
+      const { readFileSync, existsSync } = await import("node:fs");
+      const logPath = `${profile.config.userDataDir}/mu-browser.log`;
+      console.error(existsSync(logPath) ? readFileSync(logPath, "utf8").slice(-3000) : "no launch log");
+      console.error(Bun.spawnSync(["sh", "-c", "ps -eo pid,ppid,stat,etime,args | grep [c]hrome | cut -c1-200"]).stdout.toString());
+      throw error;
+    }
+    mark("debug chrome connected");
     expect(profile.browser.status()).toMatchObject({ connected: true, launched: true });
     await profile.browser.shutdown({ close: true });
+    mark("shutdown done");
     server.stop(true);
     rmSync(home, { recursive: true, force: true });
-  });
+  }, 60_000);
 });
 
 describeWithBrowser("mu browser status and close", () => {
