@@ -193,6 +193,8 @@ function pageKey(url: string): string {
 browserRenderer.activityKind = (info) =>
   info.toolName === "notes" || commitOf(info) ? undefined : "browse";
 
+browserRenderer.groupsAcrossThinking = true;
+
 browserRenderer.activityGroup = (info) => {
   const outcome = outcomeOf(info);
   const url = urlOf(outcome);

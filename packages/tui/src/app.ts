@@ -355,6 +355,9 @@ interface ActivityTool {
   id: string;
   info: ToolRenderInfo;
   expanded: boolean;
+  // A thinking-only turn that came between this call and the previous one in
+  // its group, kept here so it does not split the group.
+  thinking?: AssistantMessage;
   rendered?: { width: number; expanded: boolean; lines: string[] };
 }
 
@@ -408,6 +411,10 @@ const SUBAGENT_TOOL_NAMES = new Set(["task", "search", "recall", "counsel"]);
 
 function isSubagentTool(item: TranscriptItem | undefined): boolean {
   return item?.kind === "tool" && SUBAGENT_TOOL_NAMES.has(item.info.toolName);
+}
+
+function hasAssistantText(message: AssistantMessage): boolean {
+  return message.content.some((block) => block.type === "text" && block.text.trim().length > 0);
 }
 
 function hasAssistantDisplay(message: AssistantMessage): boolean {
@@ -1119,6 +1126,11 @@ export class App {
       case "compaction_end": {
         this.compacting = false;
         this.compactionStage = undefined;
+        // Layer 1 is per-turn housekeeping without a model call (expired tool output,
+        // superseded results); the footer's context gauge already shows its effect.
+        if (event.layer === 1 && event.status !== "failed" && event.status !== "cancelled") {
+          return [];
+        }
         const lines =
           event.status === "failed" || event.status === "cancelled"
             ? [
@@ -1388,7 +1400,12 @@ export class App {
       if (item.kind === "activity") {
         const lines = this.renderActivity(item, selectedId, revealAll);
         const next = this.transcript[index + 1];
-        return next?.kind === "activity" && item.tools.length === 1 ? lines : [...lines, ""];
+        // A single one-row call runs on into the next call like any tool row; a
+        // group always gets air after it.
+        const tight =
+          item.tools.length === 1 &&
+          (next?.kind === "activity" || (next?.kind === "tool" && lines.length === 1));
+        return tight ? lines : [...lines, ""];
       }
       const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
       if (
@@ -1866,12 +1883,23 @@ export class App {
         : {}),
     };
     const group = this.registry.activityGroup(info);
-    const previous = this.transcript.at(-1);
+    const last = this.transcript.at(-1);
+    const thinking =
+      last?.kind === "assistant" &&
+      !hasAssistantText(last.message) &&
+      this.registry.groupsAcrossThinking(info)
+        ? last
+        : undefined;
+    const previous = thinking ? this.transcript.at(-2) : last;
     if (
       previous?.kind === "activity" &&
       previous.activityKind === activityKind &&
       previous.group === group
     ) {
+      if (thinking) {
+        this.transcript.splice(this.transcript.indexOf(thinking), 1);
+        tool.thinking = thinking.message;
+      }
       previous.tools.push(tool);
       this.transcriptVersion++;
       this.transcriptCache = undefined;
@@ -1959,9 +1987,10 @@ export class App {
     if (!expanded) return [summary];
     return [
       summary,
-      ...item.tools.flatMap((tool) =>
-        this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll),
-      ),
+      ...item.tools.flatMap((tool) => [
+        ...(tool.thinking ? this.assistantRows(tool.thinking, revealAll) : []),
+        ...this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll),
+      ]),
     ];
   }
 

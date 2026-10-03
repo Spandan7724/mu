@@ -60,6 +60,9 @@ export interface ToolRendererFn {
   // Narrows a group to calls sharing this key (one page, one target). Without
   // it, consecutive calls of the same kind group.
   activityGroup?: (info: ToolRenderInfo) => string | undefined;
+  // Thinking-only turns between calls do not close this renderer's groups; the
+  // thinking moves inside the group, shown when it is expanded.
+  groupsAcrossThinking?: boolean;
   // The collapsed header for a group of this renderer's calls. Without it the
   // coding classes are summarised.
   summarizeActivity?: (infos: readonly ToolRenderInfo[], depth: ColorDepth) => string;
@@ -905,6 +908,10 @@ export class RendererRegistry {
     } catch {
       return undefined;
     }
+  }
+
+  groupsAcrossThinking(info: ToolRenderInfo): boolean {
+    return this.renderers.get(info.toolName)?.groupsAcrossThinking === true;
   }
 
   activityGroup(info: ToolRenderInfo): string | undefined {

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { ToolResultMessage } from "@mu/core";
 import { App } from "./app.ts";
 import { browserRenderers } from "./browser-renderers.ts";
+import { InputDecoder } from "./input.ts";
 import { RendererRegistry, subagentRenderers } from "./registry.ts";
 import { stripAnsi } from "./style.ts";
 import { stringWidth } from "./width.ts";
@@ -294,4 +295,58 @@ test("a commit row never wraps past the width", () => {
   );
   expect(rest).toEqual([]);
   expect(stringWidth(row ?? "")).toBeLessThanOrEqual(60);
+});
+
+test("thinking between calls on one page stays inside the visit; routine compaction is silent", () => {
+  const app = new App({
+    width: 120,
+    depth: "none",
+    model: "fake/fake-1",
+    cwd: "~",
+    contextWindow: 1000,
+    registry: browserRegistry(),
+    callbacks: { onSubmit: () => {}, onAbort: () => {}, onExit: () => {} },
+  });
+  const complete = (id: string, toolName: string, details: unknown) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args: {} });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: { ...result(details, false, toolName), toolCallId: id },
+    });
+  };
+  const think = (text: string, speech = "") =>
+    app.handleEvent({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: text },
+          ...(speech ? [{ type: "text" as const, text: speech }] : []),
+        ],
+        model: "m",
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "toolUse",
+        timestamp: 1,
+      },
+    });
+  complete("n1", "navigate", outcome("navigated to Inbox", GMAIL, "Inbox"));
+  app.handleEvent({ type: "compaction_start", layer: 1 });
+  app.handleEvent({ type: "compaction_end", layer: 1, tokensFreed: 44 });
+  think("Looking for Alex");
+  complete("f1", "find", outcome('find "Alex"', GMAIL, "Inbox"));
+  let transcript = app.renderTranscript().map(stripAnsi);
+  expect(transcript).toContain("  › mail.google.com  Inbox — opened, read · 2 actions · 400ms");
+  expect(transcript.join("\n")).not.toContain("Context compacted");
+  expect(transcript.join("\n")).not.toContain("thinking");
+
+  for (const event of new InputDecoder().push("\u000f")) app.handleInput(event);
+  app.handleInput({ type: "key", key: { name: "return", ctrl: false, alt: false, shift: false } });
+  expect(app.renderScreen().map(stripAnsi).join("\n")).toContain("thinking · Looking for Alex");
+
+  think("Done here", "Found it.");
+  complete("f2", "find", outcome('find "Bob"', GMAIL, "Inbox"));
+  transcript = app.renderTranscript().map(stripAnsi);
+  expect(transcript).toContain("  mu  Found it.");
+  expect(transcript.filter((line) => line.includes("mail.google.com  Inbox"))).toHaveLength(1);
 });
