@@ -22,13 +22,45 @@ jobs:
         with:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
-      - run: bun run ci
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test --path-ignore-patterns='packages/profiles/browser/**' --path-ignore-patterns='**/browser-*.test.ts'
+      - run: bun run purity
       - run: bun run build
       - run: bun scripts/agent-view-smoke.ts ./dist/mu
-      - run: bun run build:npm
+      - run: bun run verify:npm
       - run: bun packages/cli/dist/mu.js --version
       - run: bun pm pack --dry-run
         working-directory: packages/cli
+
+  # Runs the real-Chrome suites unless every changed file is coding-only or docs.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        shell: bash
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" HEAD | grep -qvE '^(packages/profiles/coding/|packages/ripgrep-|docs/)|\.md$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: oven-sh/setup-bun@v2
+        if: steps.changes.outputs.run == 'true'
+        with:
+          bun-version-file: package.json
+      - if: steps.changes.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.changes.outputs.run == 'true'
+        env:
+          MU_BROWSER_TESTS: require
+        run: bun test packages/profiles/browser packages/tui/src/browser-renderers.test.ts packages/cli/src/browser-command.test.ts packages/cli/src/browser-headless.test.ts
 
   windows:
     runs-on: windows-latest
@@ -66,6 +98,7 @@ jobs:
     name: Publish ${{ matrix.package }}
     needs:
       - test
+      - browser
       - windows
       - macos
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
