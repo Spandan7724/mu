@@ -2,7 +2,8 @@
 
 Mu is an extensible AI agent for the terminal and TypeScript. Its default coding profile
 provides repository inspection, file editing, shell commands, background processes,
-permissions, checkpoints, and managed subagents. The underlying agent kernel is
+permissions, checkpoints, and managed subagents; `mu browser` starts a browser profile that
+drives your installed Chrome. The underlying agent kernel is
 domain-neutral: tools, prompts, permissions, commands, and TUI renderers are supplied by
 profiles and extensions.
 
@@ -197,6 +198,29 @@ diffs, tool activity, approvals, and live background output. Notable controls ar
 | `Ctrl+B` | Switch between main and `/btw` conversations |
 
 Run `/keybindings` in the TUI for the current list.
+
+## Browser profile
+
+`mu browser` starts the same app with the browser profile, which drives a Chrome-family
+browser already installed on your machine over the Chrome DevTools Protocol. It ships in
+the same package but stays inert: coding sessions never load its tools, and nothing
+launches or writes browser state until a browser session uses it.
+
+```sh
+mu browser login [url]    # sign in to sites once in mu's own Chrome profile
+mu browser                # start a browser session
+mu browser -p "find the cheapest flight to Lisbon next Friday" --permission-mode autonomous
+mu browser status         # browser binary, profile, and whether it is running
+mu browser close          # close the managed browser left open by earlier runs
+```
+
+The browser runs on mu's persistent profile under `~/.mu/browser/profiles/<name>`
+(`--browser-profile <name>`), or on any existing browser through `--cdp <url>`;
+`--headless` hides the window. Page content is treated as untrusted data. Permission modes
+are `default` (asks before sending, buying, deleting, publishing, or changing account
+settings), `supervised`, `read-only`, and `autonomous`. When a site needs you, for
+example to sign in or solve a check, the agent hands the window to you and continues once
+the page moves on or you reply.
 
 ## Instructions, extensions, skills, and MCP
 
