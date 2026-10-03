@@ -5,7 +5,7 @@ import { type BrowserProfile, browserProfile } from "../index.ts";
 import type { RefMeta } from "../page/refs.ts";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { type FixtureSite, startFixtureSite } from "../testing/fixture-site.ts";
-import { classify, matchesCommitLexicon } from "./classify.ts";
+import { classify, commitStrength, matchesCommitLexicon } from "./classify.ts";
 
 setDefaultTimeout(30_000);
 
@@ -123,6 +123,36 @@ describe("consequential-action classifier", () => {
     expect(scopeAt("e3", at("https://jobs.test/apply?step=2"))).toBe("browser:interact");
     expect(scopeAt("e5", at("https://shop.test/checkout/payment"))).toBe("browser:interact");
     expect(scopeAt("e6", at("https://shop.test/checkout"))).toBe("browser:interact");
+  });
+
+  test("only the action that finishes the job reads as final", () => {
+    const shop = { url: "https://www.saucedemo.com/inventory.html", title: "Swag Labs" };
+    const overview = {
+      url: "https://www.saucedemo.com/checkout-step-two.html",
+      title: "Swag Labs",
+    };
+    const step = { url: "https://www.saucedemo.com/checkout-step-one.html", title: "Swag Labs" };
+    const done = { url: "https://www.saucedemo.com/checkout-complete.html", title: "Swag Labs" };
+    expect(commitStrength(["Login"], { url: "https://www.saucedemo.com/", title: "" })).toBe(
+      "step",
+    );
+    expect(commitStrength(["Add to cart"], shop)).toBe("step");
+    expect(commitStrength(["Remove"], shop)).toBe("step");
+    expect(commitStrength(["Checkout"], shop)).toBe("step");
+    expect(commitStrength(["Continue"], step, overview)).toBe("step");
+    expect(commitStrength(["Finish"], overview)).toBe("final");
+    expect(commitStrength(["Finish"], shop)).toBe("step");
+    expect(commitStrength(["Reset App State"], shop, done)).toBe("final");
+    expect(
+      commitStrength(["Send"], { url: "https://mail.google.com/mail/u/0/", title: "Inbox" }),
+    ).toBe("final");
+    expect(commitStrength(["Place order ₹1,299"], shop)).toBe("final");
+    expect(commitStrength(["Pay $12.00"], shop)).toBe("final");
+    expect(commitStrength(["Cancel"], overview)).toBe("step");
+    expect(commitStrength([undefined, "Submit application"], shop)).toBe("final");
+    expect(commitStrength(["Continue"], step, { url: step.url, title: "Order confirmed" })).toBe(
+      "step",
+    );
   });
 
   test("Enter only submits plain fields of forms with a submit button", () => {

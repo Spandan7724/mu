@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import type { AnyTool, ToolResult } from "@mu/core";
-import { classify } from "../actions/classify.ts";
+import { classify, commitStrength } from "../actions/classify.ts";
 import { hostOf } from "../actions/navigate.ts";
 import { submissionContent } from "../actions/submission.ts";
 import type { OutcomeKind } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
+import type { Tab } from "../browser/tabs.ts";
 import { activatedRef, retryKey } from "../tools/gate.ts";
 import type { BrowserState, CommitDetails, CommitRecord } from "./state.ts";
 
@@ -27,6 +28,37 @@ function digest(args: Record<string, unknown>): string | undefined {
       : undefined);
   if (values === undefined) return undefined;
   return createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 12);
+}
+
+// Icon fonts put private-use glyphs into accessible names.
+function cleanName(name: string | undefined): string | undefined {
+  const cleaned = name
+    ?.replace(/[\u200B-\u200D\uFEFF\uE000-\uF8FF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || undefined;
+}
+
+// What a form fill sends, from its own arguments: the page still holds the old
+// values until the fill runs.
+function filledFields(args: Record<string, unknown>, tab: Tab | undefined): string[] | undefined {
+  if (!Array.isArray(args.fields)) return undefined;
+  return (args.fields as { ref?: unknown; value?: unknown }[]).flatMap((field) => {
+    if (typeof field.ref !== "string") return [];
+    const meta = tab?.refs.meta(field.ref);
+    const label = cleanName(meta?.name) ?? field.ref;
+    const secret = meta?.editable === "secret" || meta?.editable === "otp";
+    const value = secret
+      ? "••••"
+      : typeof field.value === "boolean"
+        ? field.value
+          ? "checked"
+          : "unchecked"
+        : Array.isArray(field.value)
+          ? field.value.join(", ")
+          : String(field.value ?? "");
+    return [`${label}: ${value.length > 80 ? `${value.slice(0, 79)}…` : value}`];
+  });
 }
 
 // Records every consequential action that went through, so compaction or a
@@ -53,9 +85,26 @@ export function recordingCommits(
         target: typeof input.ref === "string" ? (tab?.refs.label(input.ref) ?? input.ref) : "",
       };
       const activated = scope === "browser:commit" ? activatedRef(input) : undefined;
-      // Read before acting: a send usually clears or replaces the form it sent.
-      const sent = tab && activated ? await submissionContent(tab, activated) : undefined;
-      const name = activated ? tab?.refs.meta(activated)?.name : undefined;
+      const meta = activated ? tab?.refs.meta(activated) : undefined;
+      const name = cleanName(meta?.name);
+      // Enter or a typed submit activates the form's submit button, not the field.
+      const names = [
+        name,
+        tool.name === "press" || tool.name === "type" ? meta?.form?.submitLabel : undefined,
+      ];
+      const page = { url: tab?.url ?? "", title: tab?.title ?? "" };
+      // Only a final action shows what it sent. Read before acting: a send usually
+      // clears or replaces the form it sent.
+      const sends =
+        scope !== "browser:commit"
+          ? undefined
+          : tool.name === "fill_form"
+            ? filledFields(input, tab)
+            : tab && activated && commitStrength(names, page) === "final"
+              ? await submissionContent(tab, activated).then((content) =>
+                  content?.kind === "fields" ? content.lines : undefined,
+                )
+              : undefined;
       const retry = browser.approvedRetry;
       browser.approvedRetry =
         retry && retry.remaining > 1 ? { ...retry, remaining: retry.remaining - 1 } : undefined;
@@ -89,10 +138,17 @@ export function recordingCommits(
         ...(valuesDigest ? { valuesDigest } : {}),
       };
       state.ledger.append(record);
+      const landed = (result.details as { details?: { url?: string; title?: string } } | undefined)
+        ?.details;
       const commit: CommitDetails = {
         ...record,
         ...(name ? { name } : {}),
-        ...(sent?.kind === "fields" ? { sends: sent.lines } : {}),
+        ...(sends?.length ? { sends } : {}),
+        strength: commitStrength(
+          names,
+          page,
+          landed?.url !== undefined ? { url: landed.url, title: landed.title ?? "" } : undefined,
+        ),
       };
       const details =
         result.details && typeof result.details === "object"

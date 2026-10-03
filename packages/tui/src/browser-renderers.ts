@@ -19,6 +19,9 @@ interface BrowserCommit {
   target?: string;
   name?: string;
   sends?: string[];
+  // "step" commits (Checkout, Continue, a login) read as ordinary actions; a final
+  // one, or one recorded before strengths existed, stands out.
+  strength?: "final" | "step";
 }
 
 interface BrowserOutcome {
@@ -57,6 +60,17 @@ function commitOf(info: ToolRenderInfo): BrowserCommit | undefined {
   const commit = outcomeOf(info).commit;
   return typeof commit === "object" && commit !== null ? commit : undefined;
 }
+
+function finalCommit(info: ToolRenderInfo): BrowserCommit | undefined {
+  const commit = commitOf(info);
+  return commit && commit.strength !== "step" && !info.result?.isError ? commit : undefined;
+}
+
+// Outcomes that undercut a ✓: the action went through but may not have done its job.
+const WARNINGS: Record<string, string> = {
+  "no-change": "no visible change",
+  "value-mismatch": "value differs from what was typed",
+};
 
 function urlOf(outcome: BrowserOutcome): string | undefined {
   return outcome.details?.url ?? outcome.url;
@@ -127,11 +141,16 @@ function commitRow(
   commit: BrowserCommit,
   ctx: Parameters<ToolRendererFn>[1],
 ) {
-  const name = commit.name?.trim() ? truncateToWidth(commit.name.trim(), 32) : "committed";
+  const outcome = outcomeOf(info);
+  const named = commit.name?.trim();
+  const name = named ? truncateToWidth(named, 32) : "committed";
   const sent = (commit.sends ?? []).slice(0, 2).join(` ${GLYPHS.separator} `);
-  const summary = outcomeOf(info).summary?.split("\n")[0];
-  const what = sent || commit.target || (summary ? outcomeTarget(summary, info.toolName) : "");
-  const meta = [commit.host ?? host(urlOf(outcomeOf(info)))];
+  const summary = outcome.summary?.split("\n")[0];
+  // A named row already says what was pressed; the target would only repeat it.
+  const what =
+    sent || (named ? "" : commit.target || (summary ? outcomeTarget(summary, info.toolName) : ""));
+  const warning = outcome.kind ? WARNINGS[outcome.kind] : undefined;
+  const meta = [warning, commit.host ?? host(urlOf(outcome))];
   const ms = durationOf(info);
   if (ms !== undefined) meta.push(`${Math.round(ms)} ms`);
   const [first = "", ...rest] = toolCell(
@@ -140,7 +159,7 @@ function commitRow(
       tone: "mutate",
       ...(what ? { primaryArg: what } : {}),
       summary: meta.filter(Boolean).join(` ${GLYPHS.separator} `),
-      isSuccess: true,
+      ...(warning ? { summaryError: true } : { isSuccess: true }),
     },
     // The mark takes two columns of the row's width.
     { ...ctx, width: ctx.width - 2 },
@@ -151,8 +170,8 @@ function commitRow(
 }
 
 const browserRenderer: ToolRendererFn = (info, ctx) => {
-  const commit = commitOf(info);
-  if (commit && !info.result?.isError) return commitRow(info, commit, ctx);
+  const commit = finalCommit(info);
+  if (commit) return commitRow(info, commit, ctx);
   const outcome = outcomeOf(info);
   const summary = outcome.summary;
   const target = summary
@@ -165,6 +184,7 @@ const browserRenderer: ToolRendererFn = (info, ctx) => {
     if (where) meta.push(where);
     const ms = durationOf(info);
     if (ms !== undefined) meta.push(`${Math.round(ms)} ms`);
+    if (commitOf(info)) meta.push("committed");
   }
   return toolCell(
     {
@@ -191,7 +211,7 @@ function pageKey(url: string): string {
 }
 
 browserRenderer.activityKind = (info) =>
-  info.toolName === "notes" || commitOf(info) ? undefined : "browse";
+  info.toolName === "notes" || finalCommit(info) ? undefined : "browse";
 
 browserRenderer.groupsAcrossThinking = true;
 

@@ -1,4 +1,5 @@
 import { type AgentMessage, type CustomMessage, customMessage } from "@mu/core";
+import type { CommitStrength } from "../actions/classify.ts";
 
 export interface NoteEntry {
   key: string;
@@ -20,6 +21,7 @@ export interface CommitRecord {
 export interface CommitDetails extends CommitRecord {
   name?: string;
   sends?: string[];
+  strength: CommitStrength;
 }
 
 export const STATE_TYPE = "browser-state";

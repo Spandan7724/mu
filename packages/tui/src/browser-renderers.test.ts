@@ -350,3 +350,34 @@ test("thinking between calls on one page stays inside the visit; routine compact
   expect(transcript).toContain("  mu  Found it.");
   expect(transcript.filter((line) => line.includes("mail.google.com  Inbox"))).toHaveLength(1);
 });
+
+test("a step commit is an ordinary row inside its visit; a final one warns when nothing changed", () => {
+  const registry = browserRegistry();
+  const step = {
+    toolName: "click",
+    args: { ref: "e50" },
+    result: result(
+      outcome('clicked button "Checkout" [e50]', THREAD, "Cart", {
+        commit: { id: "c1", name: "Checkout", strength: "step" },
+      }),
+    ),
+  };
+  expect(registry.render(step, ctx)[0]).toBe(
+    '  │ click button "Checkout" [e50] · ✓ mail.google.com · 200 ms · committed',
+  );
+  expect(registry.activityKind(step)).toBe("browse");
+  const stalled = {
+    toolName: "click",
+    args: { ref: "e70" },
+    result: result(
+      outcome('clicked button "Finish" [e70] (no visible change)', THREAD, "Overview", {
+        kind: "no-change",
+        commit: { id: "c2", name: "Finish", target: 'button "Finish" [e70]', strength: "final" },
+      }),
+    ),
+  };
+  expect(registry.render(stalled, ctx)[0]).toBe(
+    "  │ ● Finish · no visible change · mail.google.com · 200 ms",
+  );
+  expect(registry.activityKind(stalled)).toBeUndefined();
+});

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { PermissionRequest } from "@mu/core";
+import type { PermissionRequest, ToolResultMessage } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent, FileSessionStore, optionsFromProfile } from "mu";
 import { type BrowserProfile, browserProfile } from "../index.ts";
@@ -99,6 +99,64 @@ describeWithBrowser("secrets never reach observations, prompts or the session fi
       )
       .join("\n");
     expect(withoutCallArguments).not.toContain(typed);
+    await agent.shutdown();
+  });
+});
+
+describeWithBrowser("commit records", () => {
+  const home = tempUserDataDir();
+  let site: FixtureSite;
+  let profile: BrowserProfile;
+
+  beforeAll(async () => {
+    site = startFixtureSite();
+    profile = await browserProfile({
+      home,
+      headless: true,
+      keepOpen: false,
+      vision: "off",
+      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+    });
+  });
+  afterAll(async () => {
+    await profile.browser.shutdown({ close: true });
+    site.stop();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("a form fill that submits records what it sent, password masked, as a final commit", async () => {
+    const typed = "pw-commit-9921";
+    const provider = new FakeProvider([
+      call("c1", "navigate", { url: site.url("form-basic") }),
+      call("c2", "fill_form", {
+        fields: [
+          { ref: "e4", value: "Grace" },
+          { ref: "e7", value: typed },
+        ],
+        submitRef: "e14",
+        commit: true,
+      }),
+      { content: [{ type: "text", text: "Sent." }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", {
+        provider,
+        model: fakeModel,
+        onPermission: async () => "allow",
+      }),
+    );
+    const result = await agent.run("Send the form as Grace");
+    const fill = result.messages.find(
+      (message): message is ToolResultMessage =>
+        message.role === "toolResult" && message.toolName === "fill_form",
+    );
+    const commit = (fill?.details as { commit?: Record<string, unknown> } | undefined)?.commit;
+    expect(commit).toMatchObject({
+      name: "Send message",
+      strength: "final",
+      sends: ["Full name: Grace", "Password: ••••"],
+    });
+    expect(JSON.stringify(fill?.details)).not.toContain(typed);
     await agent.shutdown();
   });
 });

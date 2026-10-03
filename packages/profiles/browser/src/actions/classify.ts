@@ -40,6 +40,41 @@ export interface PageContext {
   title: string;
 }
 
+// How a consequential action reads afterwards. The gate and the ledger treat every
+// commit alike; a record of an unattended run only stands out for the action that
+// finished the job, not the steps leading to it (Checkout, Continue, a login) or an
+// action only the model flagged (Add to cart).
+export type CommitStrength = "final" | "step";
+
+const FINAL_LEXICON =
+  /\b(send|submit|pay|buy|purchase|place (your )?order|order now|delete|erase|trash|discard|post|publish|transfer|wire|book|reserve|subscribe|unsubscribe|sign up|register|confirm|save changes|donate|accept (the )?terms|i agree|withdraw|cancel (my )?(order|subscription|account|booking)|close account|deactivate)\b/i;
+const FINISHING = /^\W*(finish|complete|confirm|place|pay|submit|done)\b/i;
+// A page reporting that the job is done.
+const CONFIRMED =
+  /\b(thank you|thanks for|confirmed|confirmation|complete|completed|success|successful|submitted|sent)\b/i;
+
+export function commitStrength(
+  names: (string | undefined)[],
+  before: PageContext,
+  after?: PageContext,
+): CommitStrength {
+  const paying = PAYING_PAGE.test(before.url) || PAYING_PAGE.test(before.title);
+  for (const name of names) {
+    const trimmed = name?.trim();
+    if (!trimmed || SAFE_LEXICON.test(trimmed)) continue;
+    if (MONEY.test(trimmed) || FINAL_LEXICON.test(trimmed)) return "final";
+    if (paying && FINISHING.test(trimmed)) return "final";
+  }
+  if (after && after.url !== before.url) {
+    let path = "";
+    try {
+      path = new URL(after.url).pathname.replace(/[-_/.]+/g, " ");
+    } catch {}
+    if (CONFIRMED.test(path) || CONFIRMED.test(after.title)) return "final";
+  }
+  return "step";
+}
+
 function clickTarget(meta: RefMeta | undefined, page?: PageContext): string | undefined {
   if (!meta) return undefined;
   if (MONEY.test(meta.name)) return `"${meta.name}" names an amount of money`;
