@@ -265,4 +265,4 @@ See the [project README](https://github.com/Spandan7724/mu#typescript-sdk) and
 
 ## License
 
-MIT
+Apache-2.0. See NOTICE for attribution requirements.

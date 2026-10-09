@@ -361,4 +361,4 @@ bun run build:macos
 bun run build:windows
 ```
 
-Mu is licensed under the [MIT License](LICENSE).
+Mu is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution requirements.

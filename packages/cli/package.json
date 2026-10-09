@@ -21,6 +21,7 @@
     "dist/types",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "THIRD_PARTY_LICENSES.txt"
   ],
   "scripts": {
@@ -38,7 +39,7 @@
     "typescript"
   ],
   "author": "Spandan Chavan",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Spandan7724/mu.git",
