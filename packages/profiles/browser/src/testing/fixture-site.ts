@@ -8,6 +8,8 @@ export interface FixtureSite {
   // A different host name, so its pages are cross-site (out-of-process) inside `origin` pages.
   crossOrigin: string;
   url: (page: string) => string;
+  // Every request either server received, as "<origin><path>", oldest first.
+  requests: string[];
   // What the wizard fixture's final submit sent, oldest first.
   submissions: Record<string, unknown>[];
   // Sign-ups on the signup fixture: the code it "emailed" and whether it was entered.
@@ -24,8 +26,10 @@ export function startFixtureSite(): FixtureSite {
   let crossOrigin = "";
   const submissions: Record<string, unknown>[] = [];
   const signups: FixtureSite["signups"] = [];
+  const requests: string[] = [];
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+    requests.push(`${url.origin}${url.pathname}`);
     const path = url.pathname;
     if (path === "/signup/send" && request.method === "POST") {
       const { email } = (await request.json()) as { email: string };
@@ -109,6 +113,7 @@ export function startFixtureSite(): FixtureSite {
     origin,
     crossOrigin,
     url: (page) => `${origin}/${page}`,
+    requests,
     submissions,
     signups,
     stop: () => {

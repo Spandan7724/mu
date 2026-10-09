@@ -1,7 +1,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pagePattern } from "../actions/navigate.ts";
 import { DataFlowGuard } from "../agent/dataflow.ts";
 import { type CdpConnection, CdpError, isCdpError } from "../cdp/connection.ts";
+import { CdpSession } from "../cdp/session.ts";
 import type { Protocol } from "../cdp/types.ts";
 import { SecretRegistry } from "../page/secrets.ts";
 import {
@@ -13,7 +15,7 @@ import {
 } from "./connect.ts";
 import { DownloadTracker } from "./downloads.ts";
 import type { Size } from "./launch.ts";
-import { Tab, type TabInfo } from "./tabs.ts";
+import { blockOffHostLoads, enableLoadBlocking, Tab, type TabInfo } from "./tabs.ts";
 
 export interface BrowserManagerOptions {
   connect: "managed" | "cdp";
@@ -93,6 +95,8 @@ class SharedBrowser {
   readonly downloads: DownloadTracker;
   readonly secrets = new SecretRegistry();
   readonly dataflow = new DataFlowGuard();
+  // Loads the popup guard stopped before mu attached to the popup, by target id.
+  readonly blockedLoads = new Map<string, string>();
 
   constructor(downloadsDir: string | undefined) {
     const run = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 6)}`;
@@ -222,6 +226,8 @@ export class BrowserManager {
         shared.downloads.attach(connection, signal),
       ]);
       for (const info of targetInfos) this.trackTarget(info);
+      if (this.options.hostAllowed)
+        await this.guardNewPages(connection, this.options.hostAllowed, signal);
       const [product, number] = version.product.split("/");
       shared.product = {
         product: connected.browser?.product ?? product ?? version.product,
@@ -234,6 +240,76 @@ export class BrowserManager {
     }
     shared.connected = connected;
     return connected;
+  }
+
+  // A popup starts loading as soon as it opens, before mu attaches to it, so with host
+  // lists set every new page starts paused: popups of the agent's tabs get the load
+  // block first; any other page is resumed and left alone.
+  private async guardNewPages(
+    connection: CdpConnection,
+    hostAllowed: (url: string) => boolean,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const existing: string[] = [];
+    let started = false;
+    connection.on("Target.attachedToTarget", (event, sessionId) => {
+      // Children of a tab session (frames, workers) are the frame registry's.
+      if (sessionId !== undefined) return;
+      const session = new CdpSession(connection, event.sessionId, event.targetInfo.targetId);
+      // Pages that already existed are attached too, unpaused; explicit attaches later
+      // report here as well and must be left to their owner.
+      if (!event.waitingForDebugger) {
+        if (!started) existing.push(event.sessionId);
+        return;
+      }
+      void this.guardPage(session, event.targetInfo, hostAllowed);
+    });
+    await connection.send(
+      "Target.setAutoAttach",
+      { autoAttach: true, waitForDebuggerOnStart: true, flatten: true, filter: [{ type: "page" }] },
+      { signal, timeoutMs: 5_000 },
+    );
+    started = true;
+    for (const sessionId of existing)
+      void connection
+        .send("Target.detachFromTarget", { sessionId }, { timeoutMs: 2_000 })
+        .catch(() => {});
+  }
+
+  private async guardPage(
+    session: CdpSession,
+    info: Protocol.Target.TargetInfo,
+    hostAllowed: (url: string) => boolean,
+  ): Promise<void> {
+    const resume = () =>
+      session
+        .send("Runtime.runIfWaitingForDebugger", undefined, { timeoutMs: 2_000 })
+        .catch(() => {});
+    if (!info.openerId || !this.agentOwned(info.openerId)) {
+      await resume();
+      await session.detach();
+      return;
+    }
+    // The session stays attached for the popup's life: the block lives on it.
+    blockOffHostLoads(
+      session,
+      () => info.targetId,
+      hostAllowed,
+      (url) => {
+        this.shared.blockedLoads.set(info.targetId, url);
+        const tab = this.shared.attached.get(info.targetId);
+        if (tab) tab.blockedNavigation = url;
+      },
+    );
+    await enableLoadBlocking(session).catch(() => {});
+    await resume();
+  }
+
+  // Opened by the agent, or by a page in a tab it opened (popups of popups included).
+  private agentOwned(targetId: string, depth = 0): boolean {
+    const page = this.shared.pages.get(targetId);
+    if (!page || depth > 8) return false;
+    return page.openedByAgent || (!!page.openerId && this.agentOwned(page.openerId, depth + 1));
   }
 
   private requireCdpUrl(): string {
@@ -365,6 +441,20 @@ export class BrowserManager {
     return [...this.pages.values()].filter((page) => this.own(page)).map((page) => this.info(page));
   }
 
+  // The permission pattern for being on a tab (the active one by default). An attached
+  // tab's own state wins over target info, which names an error page by the URL that failed.
+  tabPattern(tabId?: string): string | undefined {
+    const page = [...this.pages.values()].find((candidate) =>
+      tabId === undefined
+        ? candidate.targetId === this.activeTargetId
+        : candidate.tabId === tabId && this.own(candidate),
+    );
+    if (!page) return undefined;
+    const tab = this.attached.get(page.targetId);
+    if (tab?.errorPage) return "about:blank";
+    return pagePattern(tab?.url ?? page.url);
+  }
+
   // The user opened this tab themselves: neither the agent nor a page it was on did.
   userTab(tab: Tab): boolean {
     const page = this.pages.get(tab.targetId);
@@ -410,6 +500,11 @@ export class BrowserManager {
               { signal, timeoutMs: 3_000 },
             )
             .catch(() => {});
+        const blocked = this.shared.blockedLoads.get(targetId);
+        if (blocked) {
+          this.shared.blockedLoads.delete(targetId);
+          tab.blockedNavigation = blocked;
+        }
         this.attached.set(targetId, tab);
         return tab;
       })

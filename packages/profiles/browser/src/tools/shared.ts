@@ -151,6 +151,9 @@ export interface PageActionOptions {
   // Interactions compare the page before and after to report "no visible change".
   detectChange?: boolean;
   tabSwitch?: boolean;
+  // navigate and tabs move the agent off the page without reading it, so they run even
+  // when the active tab is on an excluded host.
+  leavesPage?: boolean;
   // Observation-only tools name themselves to be told when they keep returning the same result.
   repeatTool?: string;
 }
@@ -172,8 +175,17 @@ export async function pageAction(
     await deps.browser.ensureForeground(active, signal);
     return active;
   });
+  // A tab can reach an excluded host between calls (a load the network block missed):
+  // nothing is done on it, so no input or script reaches that site.
+  const blockedFirst =
+    options.leavesPage === true
+      ? undefined
+      : await stopwatch.time("cdpMs", () => enforceHosts(deps, tab, signal));
+  if (blockedFirst?.withhold) return withheldResult(blockedFirst, tab, stopwatch);
   let result: ActResult;
-  if (options.blockedByDialog !== false && tab.dialog) {
+  if (blockedFirst) {
+    result = blockedFirst.result;
+  } else if (options.blockedByDialog !== false && tab.dialog) {
     result = {
       ok: false,
       kind: "blocked-by-dialog",

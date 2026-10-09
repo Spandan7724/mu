@@ -20,6 +20,41 @@ export interface JsDialog {
   defaultPrompt?: string;
 }
 
+// Fails a page's main-frame document requests to hosts the host lists exclude, redirect
+// hops included, before they leave the browser. Needs enableLoadBlocking on the session.
+export function blockOffHostLoads(
+  session: CdpSession,
+  mainFrameId: () => string,
+  hostAllowed: (url: string) => boolean,
+  onBlocked: (url: string) => void,
+): () => void {
+  return session.on("Fetch.requestPaused", (event) => {
+    const options = { timeoutMs: 5_000 };
+    if (event.frameId === mainFrameId() && !hostAllowed(event.request.url)) {
+      onBlocked(event.request.url);
+      void session
+        .send(
+          "Fetch.failRequest",
+          { requestId: event.requestId, errorReason: "BlockedByClient" },
+          options,
+        )
+        .catch(() => {});
+      return;
+    }
+    void session
+      .send("Fetch.continueRequest", { requestId: event.requestId }, options)
+      .catch(() => {});
+  });
+}
+
+export function enableLoadBlocking(session: CdpSession, signal?: AbortSignal): Promise<unknown> {
+  return session.send(
+    "Fetch.enable",
+    { patterns: [{ resourceType: "Document", requestStage: "Request" }] },
+    { signal, timeoutMs: 5_000 },
+  );
+}
+
 // One browser tab the agent can operate: its flattened session, frame tree,
 // and the page-level state that must survive between tool calls.
 export class Tab {
@@ -103,39 +138,21 @@ export class Tab {
     );
     if (hostAllowed) {
       tab.offs.push(
-        session.on("Fetch.requestPaused", (event) => {
-          const mainFrame = event.frameId === (frames.mainFrameId ?? target.targetId);
-          const options = { timeoutMs: 5_000 };
-          if (mainFrame && !hostAllowed(event.request.url)) {
-            tab.blockedNavigation = event.request.url;
-            void session
-              .send(
-                "Fetch.failRequest",
-                { requestId: event.requestId, errorReason: "BlockedByClient" },
-                options,
-              )
-              .catch(() => {});
-            return;
-          }
-          void session
-            .send("Fetch.continueRequest", { requestId: event.requestId }, options)
-            .catch(() => {});
-        }),
+        blockOffHostLoads(
+          session,
+          () => frames.mainFrameId ?? target.targetId,
+          hostAllowed,
+          (url) => {
+            tab.blockedNavigation = url;
+          },
+        ),
       );
     }
     try {
       await Promise.all([
         frames.start(signal),
         session.send("Inspector.enable", undefined, { signal, timeoutMs: 5_000 }),
-        ...(hostAllowed
-          ? [
-              session.send(
-                "Fetch.enable",
-                { patterns: [{ resourceType: "Document", requestStage: "Request" }] },
-                { signal, timeoutMs: 5_000 },
-              ),
-            ]
-          : []),
+        ...(hostAllowed ? [enableLoadBlocking(session, signal)] : []),
         ...(emulateViewport
           ? [
               session.send(
@@ -151,6 +168,9 @@ export class Tab {
       await session.detach();
       throw error;
     }
+    // A page that showed an error before mu attached (a popup whose load was blocked).
+    const mainFrame = frames.mainFrameId ? frames.get(frames.mainFrameId) : undefined;
+    if (mainFrame?.url.startsWith("chrome-error:")) tab.errorPage = true;
     return tab;
   }
 

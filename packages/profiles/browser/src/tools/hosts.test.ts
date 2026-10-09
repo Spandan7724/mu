@@ -61,9 +61,42 @@ describeWithBrowser("allowedHosts hold wherever the page goes", () => {
   test("a popup on another host is left unread", async () => {
     const page = await run("navigate", { url: site.url("offsite-links") });
     const popup = await run("click", { ref: linkRef(page, "Other site in a new tab") });
-    expect(popup).toContain(`left ${site.crossOrigin}/form-basic unread`);
+    expect(popup).toContain(`blocked loading ${site.crossOrigin}/form-basic`);
     expect(popup).not.toContain("Contact us");
+    expect(site.requests).not.toContain(`${site.crossOrigin}/form-basic`);
     expect(await run("read_page", {})).not.toContain("Contact us");
+  });
+
+  test("nothing is done on a tab that reached an excluded host past the network block", async () => {
+    await run("navigate", { url: site.url("offsite-links") });
+    const tab = profile.browser.currentTab();
+    if (!tab) throw new Error("no tab");
+    // What a load the block missed leaves behind (e.g. a back-forward cache restore).
+    tab.url = `${site.crossOrigin}/form-basic`;
+    const result = await run("evaluate", { function: "fetch('/api/slow?ms=1').then(() => 'ran')" });
+    expect(result).toContain(`left ${site.crossOrigin}/form-basic unread`);
+    expect(result).not.toContain("ran");
+    expect(site.requests).not.toContain(`${site.origin}/api/slow`);
+    expect(profile.browser.currentTab()?.url).toBe("about:blank");
+  });
+
+  test("after a blocked load the agent may still go back and close the tab", async () => {
+    let page = await run("navigate", { url: site.url("offsite-links") });
+    await run("tabs", { action: "open", url: site.url("offsite-links") });
+    page = await run("snapshot", {});
+    expect(await run("click", { ref: linkRef(page, "Other site") })).toContain("blocked loading");
+    const tab = profile.browser.currentTab();
+    if (!tab) throw new Error("no tab");
+    // Target info names an error page by the URL that failed.
+    tab.url = `${site.crossOrigin}/form-basic`;
+    expect(tool("navigate")?.permissionPattern?.({ url: "back" })).toBe("about:blank");
+    expect(tool("tabs")?.permissionPattern?.({ action: "close", tabId: tab.tabId })).toBe(
+      "about:blank",
+    );
+    expect(tool("tabs")?.permissionPattern?.({ action: "switch", tabId: "t1" })).toBe(
+      new URL(site.origin).host,
+    );
+    await run("tabs", { action: "close", tabId: tab.tabId });
   });
 
   test("an excluded host stays a navigation, so the allowlist denies it even when it would share data", () => {
