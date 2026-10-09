@@ -35,6 +35,9 @@ export class Tab {
   lastFingerprint: string | undefined;
   // Consecutive interactions that left the page exactly as it was.
   unchangedStreak = 0;
+  // How many times each observation result was returned on the current document;
+  // interleaving scrolls breaks streaks, so repeats are counted, not streaks.
+  private repeats = { documentId: "", counts: new Map<string, number>() };
   private readonly offs: (() => void)[] = [];
 
   private constructor(
@@ -108,6 +111,15 @@ export class Tab {
       throw error;
     }
     return tab;
+  }
+
+  countRepeat(documentId: string, key: string): number {
+    if (this.repeats.documentId !== documentId) {
+      this.repeats = { documentId, counts: new Map() };
+    }
+    const count = (this.repeats.counts.get(key) ?? 0) + 1;
+    this.repeats.counts.set(key, count);
+    return count;
   }
 
   get detached(): boolean {

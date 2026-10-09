@@ -54,6 +54,19 @@ function screenshotWorthIt(
   return withoutScreenshot + 1 >= REFRESH_EVERY;
 }
 
+// Observing again cannot show anything new when the same result keeps coming back,
+// even with scrolls or no-op actions in between.
+export function repeatNudge(
+  tab: Tab,
+  documentId: string,
+  tool: string,
+  key: string,
+): string | undefined {
+  const count = tab.countRepeat(documentId, `${tool}:${Bun.hash(key).toString(36)}`);
+  if (count < LOOP_THRESHOLD) return undefined;
+  return `note: ${tool} has returned exactly this result ${count} times on this page — observing again (or scrolling first) will not change it. If something you expect is missing, use find with the words you are looking for, snapshot with an element's ref, or screenshot; otherwise act on what you have.`;
+}
+
 export type ActResult = ActionResult;
 
 export interface PageActionOptions {
@@ -66,6 +79,8 @@ export interface PageActionOptions {
   // Interactions compare the page before and after to report "no visible change".
   detectChange?: boolean;
   tabSwitch?: boolean;
+  // Observation-only tools name themselves to be told when they keep returning the same result.
+  repeatTool?: string;
 }
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
@@ -155,6 +170,14 @@ export async function pageAction(
     if (tab.unchangedStreak >= LOOP_THRESHOLD) {
       nudge = `note: the page has not changed after ${tab.unchangedStreak} actions — try a different approach, check for an overlay, a validation error or a disabled control, or ask the user.`;
     }
+  }
+  if (options.repeatTool && result.ok !== false) {
+    nudge = repeatNudge(
+      tab,
+      observation.model?.documentId ?? observation.url,
+      options.repeatTool,
+      `${options.scope ?? "viewport"} ${options.subtreeRef ?? ""} ${observation.fingerprint}`,
+    );
   }
   if (options.detectChange && result.ok !== false && before !== undefined) {
     const unchanged = before === observation.fingerprint;

@@ -10,7 +10,7 @@ import { resolveRef } from "../page/resolve.ts";
 import { captureScreenshot, screenshotHeader } from "../page/screenshot.ts";
 import { capturePage } from "../page/snapshot.ts";
 import { filterSections, findNodes, pageMarkdown, paginate } from "../page/text.ts";
-import { type BrowserToolDeps, pageAction } from "./shared.ts";
+import { type BrowserToolDeps, pageAction, repeatNudge } from "./shared.ts";
 
 const observeScope = () => "browser:observe";
 
@@ -39,6 +39,7 @@ export function snapshotTool(deps: BrowserToolDeps) {
         {
           blockedByDialog: false,
           screenshot: false,
+          repeatTool: "snapshot",
           ...(scope ? { scope } : {}),
           ...(ref ? { subtreeRef: ref } : {}),
         },
@@ -173,8 +174,15 @@ export function readPageTool(deps: BrowserToolDeps) {
             : "";
       const body = query && !filtered ? `(no section mentions "${query}")` : page.chunk;
       const summary = `read_page ${query ? `query "${query}" ` : ""}chars ${page.start}–${page.end} of ${page.total}`;
+      const nudge = repeatNudge(
+        tab,
+        model.documentId,
+        "read_page",
+        `${model.url} ${summary}\n${body}`,
+      );
       const text = [
         summary,
+        ...(nudge ? [nudge] : []),
         ...(looksLikeInjection(body) ? [INJECTION_NOTE] : []),
         `[page] url: ${model.url}\nreading: ${scope}`,
         `${fencePageContent([...pageFacts(model.title), body])}${more}`,
@@ -269,11 +277,12 @@ export function findTool(deps: BrowserToolDeps) {
         lines.length === 0
           ? "(no matches)"
           : `${lines.join("\n")}${total > matches.length ? `\n… (${total - matches.length} more; narrow the search or raise limit)` : ""}`;
+      const nudge = repeatNudge(tab, model.documentId, "find", `${model.url} ${summary}\n${body}`);
       return {
         content: [
           {
             type: "text",
-            text: `${summary}\n[page] url: ${model.url}\n${fencePageContent([...pageFacts(model.title), body])}`,
+            text: `${summary}${nudge ? `\n${nudge}` : ""}\n[page] url: ${model.url}\n${fencePageContent([...pageFacts(model.title), body])}`,
           },
         ],
         details: {

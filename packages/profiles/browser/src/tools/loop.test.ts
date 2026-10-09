@@ -60,6 +60,24 @@ describeWithBrowser("loop detection", () => {
     expect(clicked.split("\n")[0]).toEndWith("(no visible change)");
   });
 
+  test("observations that keep returning the same result get a nudge, even between scrolls", async () => {
+    await run("navigate", { url: site.url("long") });
+    const reads: string[] = [];
+    const snapshots: string[] = [];
+    for (const scroll of [{ direction: "down", amount: 600 }, { to: "top" }, {}]) {
+      snapshots.push(await run("snapshot", { scope: "full" }));
+      reads.push(await run("read_page", {}));
+      if ("to" in scroll || "direction" in scroll) await run("scroll", scroll);
+    }
+    expect(reads[0]).not.toContain("has returned exactly this result");
+    expect(reads[1]).not.toContain("has returned exactly this result");
+    expect(reads[2]).toContain("note: read_page has returned exactly this result 3 times");
+    expect(snapshots[2]).toContain("note: snapshot has returned exactly this result 3 times");
+    expect(await run("read_page", { offset: 10 })).not.toContain("has returned exactly");
+    await run("navigate", { url: site.url("long") });
+    expect(await run("read_page", {})).not.toContain("has returned exactly");
+  });
+
   test("repeated tab switching without acting gets a nudge", async () => {
     await run("navigate", { url: site.url("form-basic") });
     await run("tabs", { action: "open", url: site.url("long") });
