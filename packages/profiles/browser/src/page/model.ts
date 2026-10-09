@@ -35,6 +35,8 @@ export interface PageNode {
   options?: string[];
   optionCount?: number;
   cursorOnly?: boolean;
+  // A container that takes keyboard focus; it gets a ref even without a name.
+  focusable?: boolean;
   // Form and dialog context, for consequential-action classification.
   form?: { post: boolean; submit?: boolean; submitLabel?: string };
   dialogTitle?: string;

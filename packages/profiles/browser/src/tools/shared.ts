@@ -56,7 +56,7 @@ function screenshotWorthIt(
   return withoutScreenshot + 1 >= REFRESH_EVERY;
 }
 
-// Observing again cannot show anything new when the same result keeps coming back,
+// The same result coming back again and again means observing is not making progress,
 // even with scrolls or no-op actions in between.
 export function repeatNudge(
   tab: Tab,
@@ -66,7 +66,7 @@ export function repeatNudge(
 ): string | undefined {
   const count = tab.countRepeat(documentId, `${tool}:${Bun.hash(key).toString(36)}`);
   if (count < LOOP_THRESHOLD) return undefined;
-  return `note: ${tool} has returned exactly this result ${count} times on this page — observing again (or scrolling first) will not change it. If something you expect is missing, use find with the words you are looking for, snapshot with an element's ref, or screenshot; otherwise act on what you have.`;
+  return `note: ${tool} has returned exactly the same result ${count} times on this page. If you are waiting for something to load, use wait; if something you expect is missing, look for it with find, snapshot an element's ref or take a screenshot; otherwise act on what you have.`;
 }
 
 export type ActResult = ActionResult;

@@ -32,6 +32,10 @@ interface RawNode {
   sub?: 1;
   fsub?: string;
   dlg?: string;
+  // Name from an orphan question label (see questionTitle in the capture script).
+  q?: string;
+  // A container that takes keyboard focus (tabindex) without being a control.
+  foc?: 1;
   // Current value of a password/one-time-code field: used for redaction only, never rendered.
   sv?: string;
 }
@@ -218,7 +222,7 @@ function buildNode(
   const axName = ax && !ax.ignored ? String(ax.name?.value ?? "").trim() : "";
   const text = raw.t ?? "";
   const plain = text.replaceAll(INLINE_MARK, " ").replace(/\s+/g, " ").trim();
-  const name = raw.k === "t" ? plain : raw.k === "c" ? axName || plain : axName || text;
+  const name = raw.k === "t" ? plain : raw.k === "c" ? axName || raw.q || plain : axName || text;
   const states = axStates(ax && !ax.ignored ? ax : undefined);
   if (raw.lvl) states.level = raw.lvl;
   const node: PageNode = {
@@ -244,6 +248,7 @@ function buildNode(
     if (raw.optCount !== undefined) node.optionCount = raw.optCount;
   }
   if (raw.cur) node.cursorOnly = true;
+  if (raw.foc) node.focusable = true;
   if (raw.post !== undefined) {
     node.form = {
       post: raw.post === 1,
@@ -484,7 +489,8 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
   const assign = (node: PageNode) => {
     if (
       node.backendNodeId !== undefined &&
-      (node.kind === "interactive" || (node.kind === "container" && node.name !== ""))
+      (node.kind === "interactive" ||
+        (node.kind === "container" && (node.name !== "" || node.focusable === true)))
     ) {
       node.ref = tab.refs.refFor(node.frameId, node.backendNodeId);
       const name = node.name.length > 60 ? `${node.name.slice(0, 59)}…` : node.name;

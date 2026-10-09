@@ -16,6 +16,8 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     caption:"caption",figcaption:"caption",legend:"legend",blockquote:"blockquote",pre:"code",
     label:"label",output:"status"};
   var NATIVE = /^(a|button|select|textarea|input|summary)$/;
+  var CONTROL = "input:not([type=hidden]),button,select,textarea,[role=button],[role=radio]," +
+    "[role=checkbox],[role=switch],[role=combobox],[role=textbox],[role=listbox],[contenteditable=true]";
   var OTP = /otp|one.?time|2fa|totp|verification.?code|mfa|security.?code/i;
   var vw = window.innerWidth, vh = window.innerHeight;
   var margin = opts.margin || 0, maxText = opts.maxText || 300;
@@ -26,6 +28,20 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     for (var c = el.firstChild; c; c = c.nextSibling)
       if (c.nodeType === 3 && /\S/.test(c.nodeValue)) return true;
     return false;
+  }
+
+  // A question title written as a <label> whose for= matches no control (Ashby's Yes/No
+  // questions) names the controls that follow it, as a legend names a fieldset.
+  function questionTitle(el) {
+    var first = el.firstElementChild;
+    if (!first || first.tagName !== "LABEL" || first.control || first.querySelector(CONTROL)) return "";
+    var controls = el.querySelectorAll(CONTROL);
+    for (var i = 0; i < controls.length; i++) {
+      if (!first.contains(controls[i])) {
+        return (first.innerText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+      }
+    }
+    return "";
   }
 
   function editableKind(el, tag) {
@@ -74,7 +90,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     var role = (el.getAttribute("role") || "").toLowerCase().split(" ")[0];
     var pointer = style.cursor === "pointer";
     var editable = editableKind(el, tag);
-    var kind = "", why = "";
+    var kind = "", why = "", focusable = false;
     if (tag === "iframe" || tag === "frame") kind = "f";
     else if ((tag === "a" && el.hasAttribute("href")) || (NATIVE.test(tag) && tag !== "a" && !(tag === "input" && el.type === "hidden"))) kind = "i";
     else if (role && WIDGET_ROLES[role]) kind = "i";
@@ -85,7 +101,10 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       var tabindex = el.getAttribute("tabindex");
       // A focusable tabpanel, dialog or region is still a container: as a control its
       // text (headings, question labels) would be dropped as the control's own name.
-      if (tabindex !== null && Number(tabindex) >= 0 && !CONTAINER_TAGS[tag] && !(role && CONTAINER_ROLES[role])) { kind = "i"; why = "f"; }
+      if (tabindex !== null && Number(tabindex) >= 0 && !CONTAINER_TAGS[tag]) {
+        if (role && CONTAINER_ROLES[role]) focusable = true;
+        else { kind = "i"; why = "f"; }
+      }
     }
     if (!kind) {
       if (role && CONTAINER_ROLES[role]) kind = "c";
@@ -93,6 +112,8 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       else if (tag === "img" && el.getAttribute("alt")) kind = "t";
       else if (TEXT_TAGS[tag]) kind = "t";
     }
+    var title = (!kind || kind === "c") && sink !== -2 && tag !== "label" ? questionTitle(el) : "";
+    if (title && !kind) kind = "c";
     if (tag === "dialog" && !el.open) return;
     // Inside an interactive element only nested controls matter; its text is its name.
     if (sink === -2 && kind !== "i" && kind !== "f") {
@@ -121,7 +142,11 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       if (role) node.role = role;
       else if (tag === "img") node.role = "img";
       else if (kind === "t") node.role = TEXT_TAGS[tag] || "text";
-      else if (kind === "c") node.role = CONTAINER_TAGS[tag];
+      else if (kind === "c") node.role = CONTAINER_TAGS[tag] || "group";
+      if (title) node.q = title;
+      // Focusable without being a control (a tabpanel, grid or menu taking arrow keys):
+      // it keeps a ref even unnamed.
+      if (focusable) node.foc = 1;
       if (/^h[1-6]$/.test(tag)) node.lvl = Number(tag[1]);
       if (kind === "i") {
         // A field's content is its value, never its name: an unlabeled password field
@@ -160,7 +185,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       }
       var named = kind === "c" && (el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby") ||
         tag === "fieldset" || tag === "dialog" || role === "dialog" || role === "alertdialog" ||
-        tag === "table" || el.hasAttribute("title"));
+        tag === "table" || el.hasAttribute("title") || !!title || focusable);
       if (kind === "f") {
         node.cx = Math.round(rect.left + el.clientLeft + parseFloat(style.paddingLeft || "0"));
         node.cy = Math.round(rect.top + el.clientTop + parseFloat(style.paddingTop || "0"));

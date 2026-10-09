@@ -147,7 +147,15 @@ function redundantText(node: PageNode, siblings: PageNode[], parentName: string)
   const matches = (candidate: PageNode): boolean =>
     candidate.kind === "interactive" && candidate.name.startsWith(text);
   if (node.children.some((child) => matches(child) || child.children.some(matches))) return true;
-  return node.role === "label" && siblings.some(matches);
+  // A sibling control may sit inside an unnamed clickable wrapper (Ashby's radios).
+  return (
+    node.role === "label" &&
+    siblings.some(
+      (sibling) =>
+        matches(sibling) ||
+        (sibling.kind === "interactive" && !sibling.name && sibling.children.some(matches)),
+    )
+  );
 }
 
 interface Marks {
@@ -169,14 +177,16 @@ function collectLines(
   parentName = "",
 ): void {
   for (const node of nodes) {
+    // A focusable container is kept unnamed: its ref is where keys go.
     const drop =
-      (node.kind === "container" && !node.name && node.children.length === 0) ||
+      (node.kind === "container" && !node.name && !node.focusable && node.children.length === 0) ||
       (node.kind === "text" && !node.name && node.children.length === 0) ||
       (node.kind === "frame" && node.children.length === 0);
     if (drop) continue;
     const collapse =
       (node.kind === "container" &&
         !node.name &&
+        !node.focusable &&
         node.children.length === 1 &&
         !KEEP_SINGLE_CHILD.has(node.role)) ||
       redundantText(node, nodes, parentName);

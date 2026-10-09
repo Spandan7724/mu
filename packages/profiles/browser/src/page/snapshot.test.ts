@@ -156,8 +156,22 @@ describeWithBrowser("page snapshots in real headless Chrome", () => {
   test("tabpanel-form: a focusable tabpanel keeps its question labels", async () => {
     await load("tabpanel-form");
     const { model, text } = await snapshot();
-    expect(text).toContain("label: Are you authorized to work lawfully in the United States?");
-    expect(text).toContain("label: Which visa do you hold?");
+    // An orphan question label groups the controls after it, without repeating itself.
+    expect(text).toMatch(
+      /group "Are you authorized to work lawfully in the United States\?" \[ref=e\d+\]\n\s+- button "Yes" \[ref=e\d+\]\n\s+- button "No"/,
+    );
+    expect(text).toMatch(/group "Which visa do you hold\?" \[ref=e\d+\]\n\s+- radio "OPT"/);
+    expect(text.match(/Which visa do you hold\?/g)).toHaveLength(1);
+    // A label repeating a control inside an unnamed clickable wrapper is dropped.
+    expect(text).toMatch(/clickable \[ref=e\d+\]\n\s+- radio "TN"/);
+    expect(text).not.toContain("label: TN");
+    // A label tied to its control by for= names the control, not a group.
+    expect(text).toContain('textbox "Full Name*"');
+    expect(text).not.toContain('group "Full Name*"');
+    // Focusable composite widgets stay containers but keep a ref; their text is kept.
+    expect(text).toMatch(/- menu \[ref=e\d+\]\n\s+- menuitem "Copy" \[ref=e\d+\]/);
+    expect(text).toMatch(/- grid \[ref=e\d+\]/);
+    expect(text).toContain("gridcell: A1 text");
     const { markdown } = pageMarkdown(model);
     expect(markdown).toContain("Are you authorized to work lawfully in the United States?");
     expect(markdown).toContain("Which visa do you hold?");

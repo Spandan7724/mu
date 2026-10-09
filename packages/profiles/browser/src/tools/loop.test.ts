@@ -69,10 +69,10 @@ describeWithBrowser("loop detection", () => {
       reads.push(await run("read_page", {}));
       if ("to" in scroll || "direction" in scroll) await run("scroll", scroll);
     }
-    expect(reads[0]).not.toContain("has returned exactly this result");
-    expect(reads[1]).not.toContain("has returned exactly this result");
-    expect(reads[2]).toContain("note: read_page has returned exactly this result 3 times");
-    expect(snapshots[2]).toContain("note: snapshot has returned exactly this result 3 times");
+    expect(reads[0]).not.toContain("has returned exactly the same result");
+    expect(reads[1]).not.toContain("has returned exactly the same result");
+    expect(reads[2]).toContain("note: read_page has returned exactly the same result 3 times");
+    expect(snapshots[2]).toContain("note: snapshot has returned exactly the same result 3 times");
     expect(await run("read_page", { offset: 10 })).not.toContain("has returned exactly");
     await run("navigate", { url: site.url("long") });
     expect(await run("read_page", {})).not.toContain("has returned exactly");
