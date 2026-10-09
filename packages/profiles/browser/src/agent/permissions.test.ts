@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluate, type PermissionRule } from "@mu/core";
 import { browserProfile } from "../index.ts";
+import { hostAllowed } from "./permissions.ts";
 
 const home = () => mkdtempSync(join(tmpdir(), "mu-browser-perm-"));
 
@@ -67,6 +68,23 @@ describe("browser permission modes", () => {
     ).rules;
     expect(check(allowList, "navigate", "browser:navigate", "docs.example.com")).toBe("allow");
     expect(check(allowList, "navigate", "browser:navigate", "other.org")).toBe("deny");
+    expect(check(allowList, "navigate", "browser:navigate", "about:blank")).toBe("allow");
+  });
+
+  test("hostAllowed judges a page's URL by the same host lists", () => {
+    const lists = {
+      allowedHosts: ["*.example.com", "example.com"],
+      blockedHosts: ["bad.example.com"],
+    };
+    expect(hostAllowed("https://docs.example.com/a", lists)).toBe(true);
+    expect(hostAllowed("https://www.rubrik.com/careers?gh_jid=1", lists)).toBe(false);
+    expect(hostAllowed("https://bad.example.com/", lists)).toBe(false);
+    expect(hostAllowed("about:blank", lists)).toBe(true);
+    expect(hostAllowed("chrome-error://chromewebdata/", lists)).toBe(true);
+    expect(hostAllowed("https://anything.org/", { allowedHosts: [], blockedHosts: [] })).toBe(true);
+    expect(
+      hostAllowed("https://x.evil.test/", { allowedHosts: [], blockedHosts: ["*.evil.test"] }),
+    ).toBe(false);
   });
 
   test("always-allow is host-scoped and persists across sessions", async () => {

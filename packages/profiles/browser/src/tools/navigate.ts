@@ -1,6 +1,13 @@
 import { tool } from "mu";
 import { z } from "zod";
-import { goHistory, hostOf, navigateTo, normalizeUrl, reload } from "../actions/navigate.ts";
+import {
+  goHistory,
+  hostOf,
+  navigateTo,
+  normalizeUrl,
+  pagePattern,
+  reload,
+} from "../actions/navigate.ts";
 import { navigationLeak, shareDetails } from "./gate.ts";
 import { type BrowserToolDeps, pageAction } from "./shared.ts";
 
@@ -28,7 +35,7 @@ export function navigateTool(deps: BrowserToolDeps) {
     },
     permissionPattern: ({ url }) =>
       (HISTORY as readonly string[]).includes(url)
-        ? hostOf(deps.browser.tabs().find((tab) => tab.active)?.url ?? "")
+        ? pagePattern(deps.browser.tabs().find((tab) => tab.active)?.url ?? "")
         : hostOf(safeNormalize(url)),
     execute: ({ url, newTab }, { signal }) =>
       pageAction(deps, signal, async (tab, stopwatch, actionSignal) => {

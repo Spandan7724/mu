@@ -1,6 +1,6 @@
 import { tool } from "mu";
 import { z } from "zod";
-import { navigateTo, normalizeUrl } from "../actions/navigate.ts";
+import { navigateTo, normalizeUrl, pagePattern } from "../actions/navigate.ts";
 import type { TabInfo } from "../browser/tabs.ts";
 import { fencePageContent } from "../page/render.ts";
 import { navigationLeak, shareDetails } from "./gate.ts";
@@ -51,7 +51,9 @@ export function tabsTool(deps: BrowserToolDeps) {
           return url;
         }
       }
-      return tabId ?? "*";
+      // Switching to or closing a tab is judged by the host it is on, so host lists apply.
+      const target = deps.browser.tabs().find((candidate) => candidate.tabId === tabId);
+      return target ? pagePattern(target.url) : (tabId ?? "*");
     },
     execute: ({ action, url, tabId }, { signal }) =>
       pageAction(

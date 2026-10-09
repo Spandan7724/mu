@@ -3,14 +3,18 @@ import { classify } from "../actions/classify.ts";
 import { describeFile } from "../actions/filetype.ts";
 import { hostOf, normalizeUrl } from "../actions/navigate.ts";
 import { submissionContent } from "../actions/submission.ts";
+import { hostAllowed } from "../agent/permissions.ts";
 import type { BrowserToolDeps } from "./shared.ts";
 
 const MASK = "••••";
 
-// Why navigating to `url` would carry page data to another site, if it would.
+// Why navigating to `url` would carry page data to another site, if it would. A host
+// the host lists exclude is no share: it stays a navigation, which those lists deny.
 export function navigationLeak(deps: BrowserToolDeps, url: string): string | undefined {
   try {
-    return deps.browser.dataflow.navigationLeak(normalizeUrl(url));
+    const target = normalizeUrl(url);
+    if (!hostAllowed(target, deps.config)) return undefined;
+    return deps.browser.dataflow.navigationLeak(target);
   } catch {
     return undefined;
   }

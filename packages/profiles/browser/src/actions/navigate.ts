@@ -41,6 +41,12 @@ export function hostOf(url: string): string {
   }
 }
 
+// The permission pattern for a tab on `url`. Pages that are not on the web (about:blank,
+// error pages) hold nothing from any site and share about:blank's pattern.
+export function pagePattern(url: string): string {
+  return /^https?:/i.test(url) ? hostOf(url) : "about:blank";
+}
+
 export interface NavigationResult {
   settle: string;
   sameDocument: boolean;

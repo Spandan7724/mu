@@ -13,9 +13,11 @@ import { notesTool } from "./agent/notes.ts";
 import {
   BROWSER_PERMISSION_DEFAULTS,
   browserPermissionModes,
+  hostAllowed,
   hostRules,
   loadRememberedPermissions,
   rememberAllow,
+  restrictsHosts,
 } from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, BROWSER_TASK_PROMPT, browserPrompt } from "./agent/prompts.ts";
 import { BrowserState, type CommitLedger, formatNotes, type NotesStore } from "./agent/state.ts";
@@ -160,6 +162,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     keepOpen: config.keepOpen,
     launcher: config.launcher,
     downloadsDir: config.downloadsDir,
+    ...(restrictsHosts(config) ? { hostAllowed: (url: string) => hostAllowed(url, config) } : {}),
   });
   let activeModel: string | undefined;
   const state = new BrowserState();

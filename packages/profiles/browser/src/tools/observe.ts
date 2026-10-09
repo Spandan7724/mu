@@ -10,7 +10,13 @@ import { resolveRef } from "../page/resolve.ts";
 import { captureScreenshot, screenshotHeader } from "../page/screenshot.ts";
 import { capturePage } from "../page/snapshot.ts";
 import { filterSections, findNodes, pageMarkdown, paginate } from "../page/text.ts";
-import { type BrowserToolDeps, pageAction, repeatNudge } from "./shared.ts";
+import {
+  type BrowserToolDeps,
+  enforceHosts,
+  pageAction,
+  repeatNudge,
+  withheldResult,
+} from "./shared.ts";
 
 const observeScope = () => "browser:observe";
 
@@ -75,6 +81,8 @@ export function screenshotTool(deps: BrowserToolDeps) {
       const actionSignal = deps.browser.actionSignal(signal);
       const stopwatch = new Stopwatch();
       const tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(actionSignal));
+      const block = await stopwatch.time("cdpMs", () => enforceHosts(deps, tab, actionSignal));
+      if (block) return withheldResult(block, tab, stopwatch);
       if (tab.dialog) {
         return {
           content: [
@@ -148,6 +156,8 @@ export function readPageTool(deps: BrowserToolDeps) {
       const actionSignal = deps.browser.actionSignal(signal);
       const stopwatch = new Stopwatch();
       const tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(actionSignal));
+      const block = await stopwatch.time("cdpMs", () => enforceHosts(deps, tab, actionSignal));
+      if (block) return withheldResult(block, tab, stopwatch);
       if (tab.dialog) {
         return {
           content: [
@@ -251,6 +261,8 @@ export function findTool(deps: BrowserToolDeps) {
       const actionSignal = deps.browser.actionSignal(signal);
       const stopwatch = new Stopwatch();
       const tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(actionSignal));
+      const block = await stopwatch.time("cdpMs", () => enforceHosts(deps, tab, actionSignal));
+      if (block) return withheldResult(block, tab, stopwatch);
       if (tab.dialog) {
         return {
           content: [

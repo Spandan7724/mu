@@ -1,7 +1,9 @@
 import type { ToolResult } from "@mu/core";
 import type { ActionResult } from "../actions/click.ts";
+import { hostOf, navigateTo } from "../actions/navigate.ts";
 import type { ActionOutcome } from "../actions/types.ts";
 import { Stopwatch } from "../actions/types.ts";
+import { hostAllowed } from "../agent/permissions.ts";
 import type { BrowserManager } from "../browser/manager.ts";
 import type { Tab } from "../browser/tabs.ts";
 import { isCdpError } from "../cdp/connection.ts";
@@ -69,6 +71,76 @@ export function repeatNudge(
 
 export type ActResult = ActionResult;
 
+export interface HostBlock {
+  result: ActResult;
+  // The tab is the user's own, so it is left where it is and its content is not shown.
+  withhold: boolean;
+}
+
+// Keeps the agent's view inside allowedHosts/blockedHosts whatever took the tab
+// elsewhere (a redirect, a link, a script, a popup): the network block stops what it
+// can; a tab that got there anyway is sent to about:blank before anything is read.
+export async function enforceHosts(
+  deps: BrowserToolDeps,
+  tab: Tab,
+  signal: AbortSignal,
+): Promise<HostBlock | undefined> {
+  const stopped = tab.blockedNavigation;
+  tab.blockedNavigation = undefined;
+  const why = "it is outside the hosts this run may visit (allowedHosts/blockedHosts)";
+  if (tab.errorPage || hostAllowed(tab.url, deps.config)) {
+    if (!stopped) return undefined;
+    return {
+      withhold: false,
+      result: {
+        ok: false,
+        kind: "blocked-host",
+        summary: `blocked loading ${stopped}: ${why}. A link or redirect led there; stay on the allowed hosts.`,
+      },
+    };
+  }
+  const offHost = tab.url;
+  if (deps.browser.userTab(tab)) {
+    return {
+      withhold: true,
+      result: {
+        ok: false,
+        kind: "blocked-host",
+        summary: `not showing tab ${tab.tabId}: ${hostOf(offHost)} — ${why}. Switch to another tab.`,
+      },
+    };
+  }
+  await navigateTo(tab, "about:blank", signal).catch(() => {});
+  return {
+    withhold: false,
+    result: {
+      ok: false,
+      kind: "blocked-host",
+      summary: `left ${offHost} unread and opened about:blank: ${why}. A link, redirect or script led there; stay on the allowed hosts.`,
+    },
+  };
+}
+
+export function withheldResult(block: HostBlock, tab: Tab, stopwatch: Stopwatch): ToolResult {
+  return {
+    content: [{ type: "text", text: block.result.summary }],
+    details: {
+      ok: false,
+      summary: block.result.summary,
+      kind: "blocked-host",
+      details: {
+        timings: stopwatch.finish(),
+        url: tab.url,
+        title: "",
+        tabId: tab.tabId,
+        fingerprint: "",
+        snapshotTokens: 0,
+      },
+    } satisfies ActionOutcome,
+    isError: true,
+  };
+}
+
 export interface PageActionOptions {
   // Interactions cannot proceed while a JS dialog blocks the page.
   blockedByDialog?: boolean;
@@ -128,6 +200,9 @@ export async function pageAction(
       tab = await stopwatch.time("cdpMs", () => deps.browser.activeTab(signal));
     }
   }
+  const block = await stopwatch.time("cdpMs", () => enforceHosts(deps, tab, signal));
+  if (block?.withhold) return withheldResult(block, tab, stopwatch);
+  if (block) result = block.result;
   const before = tab.lastFingerprint;
   const notices = deps.browser.drainNotices();
   const observeOptions = {

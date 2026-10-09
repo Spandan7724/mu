@@ -35,6 +35,11 @@ export class Tab {
   lastFingerprint: string | undefined;
   // Consecutive interactions that left the page exactly as it was.
   unchangedStreak = 0;
+  // A main-frame navigation the host lists stopped before it left the browser.
+  blockedNavigation: string | undefined;
+  // The main frame shows Chrome's error page; tab.url (from target info) then names the
+  // URL that failed, though nothing from it loaded.
+  errorPage = false;
   // How many times each observation result was returned on the current document;
   // interleaving scrolls breaks streaks, so repeats are counted, not streaks.
   private repeats = { documentId: "", counts: new Map<string, number>() };
@@ -57,6 +62,9 @@ export class Tab {
     openedByAgent: boolean,
     signal?: AbortSignal,
     emulateViewport?: { width: number; height: number },
+    // Set when allowedHosts/blockedHosts are configured: main-frame documents on other
+    // hosts are failed before they are requested, which also stops redirects to them.
+    hostAllowed?: (url: string) => boolean,
   ): Promise<Tab> {
     const session = await attachToTarget(connection, target.targetId, { signal });
     const frames = new FrameRegistry(connection, session);
@@ -85,16 +93,49 @@ export class Tab {
         tab.crashed = true;
       }),
       session.on("Page.frameNavigated", (event) => {
-        if (!event.frame.parentId) tab.url = event.frame.url + (event.frame.urlFragment ?? "");
+        if (event.frame.parentId) return;
+        tab.url = event.frame.url + (event.frame.urlFragment ?? "");
+        tab.errorPage = event.frame.unreachableUrl !== undefined;
       }),
       session.on("Page.navigatedWithinDocument", (event) => {
         if (event.frameId === frames.mainFrameId) tab.url = event.url;
       }),
     );
+    if (hostAllowed) {
+      tab.offs.push(
+        session.on("Fetch.requestPaused", (event) => {
+          const mainFrame = event.frameId === (frames.mainFrameId ?? target.targetId);
+          const options = { timeoutMs: 5_000 };
+          if (mainFrame && !hostAllowed(event.request.url)) {
+            tab.blockedNavigation = event.request.url;
+            void session
+              .send(
+                "Fetch.failRequest",
+                { requestId: event.requestId, errorReason: "BlockedByClient" },
+                options,
+              )
+              .catch(() => {});
+            return;
+          }
+          void session
+            .send("Fetch.continueRequest", { requestId: event.requestId }, options)
+            .catch(() => {});
+        }),
+      );
+    }
     try {
       await Promise.all([
         frames.start(signal),
         session.send("Inspector.enable", undefined, { signal, timeoutMs: 5_000 }),
+        ...(hostAllowed
+          ? [
+              session.send(
+                "Fetch.enable",
+                { patterns: [{ resourceType: "Document", requestStage: "Request" }] },
+                { signal, timeoutMs: 5_000 },
+              ),
+            ]
+          : []),
         ...(emulateViewport
           ? [
               session.send(

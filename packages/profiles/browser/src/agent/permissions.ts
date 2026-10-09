@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { PermissionMode, PermissionRule } from "@mu/core";
+import { evaluate, type PermissionMode, type PermissionRule } from "@mu/core";
 import { z } from "zod";
 
 export const SCOPES = {
@@ -49,12 +49,42 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
 ];
 
 // allowedHosts/blockedHosts hold in every mode, so they close every mode's rule list.
+// An allowlist still permits about:blank, which holds nothing from any site.
 export function hostRules(allowedHosts: string[], blockedHosts: string[]): PermissionRule[] {
   return [
-    ...(allowedHosts.length > 0 ? [rule(SCOPES.navigate, "deny")] : []),
+    ...(allowedHosts.length > 0
+      ? [rule(SCOPES.navigate, "deny"), rule(SCOPES.navigate, "allow", "about:blank")]
+      : []),
     ...allowedHosts.map((host) => rule(SCOPES.navigate, "allow", host)),
     ...blockedHosts.map((host) => rule(SCOPES.navigate, "deny", host)),
   ];
+}
+
+export interface HostLists {
+  allowedHosts: string[];
+  blockedHosts: string[];
+}
+
+export function restrictsHosts(lists: HostLists): boolean {
+  return lists.allowedHosts.length > 0 || lists.blockedHosts.length > 0;
+}
+
+// Whether allowedHosts/blockedHosts let a tab be on `url`, judged by the same rules as
+// navigation permissions. Pages that are not on the web (about:blank, error pages) hold
+// nothing from any site and are always allowed.
+export function hostAllowed(url: string, lists: HostLists): boolean {
+  if (!restrictsHosts(lists) || !/^https?:/i.test(url)) return true;
+  let host: string;
+  try {
+    host = new URL(url).host;
+  } catch {
+    return false;
+  }
+  const rules = [
+    rule(SCOPES.navigate, "allow"),
+    ...hostRules(lists.allowedHosts, lists.blockedHosts),
+  ];
+  return evaluate(rules, SCOPES.navigate, host) !== "deny";
 }
 
 export function browserPermissionModes(hosts: PermissionRule[] = []): PermissionMode[] {

@@ -29,6 +29,8 @@ export interface BrowserManagerOptions {
   launcher?: BrowserLauncher | undefined;
   // Downloads of this manager's lifetime land in a fresh subdirectory here.
   downloadsDir?: string | undefined;
+  // Whether allowedHosts/blockedHosts let a tab load `url`; undefined when unrestricted.
+  hostAllowed?: ((url: string) => boolean) | undefined;
 }
 
 export interface BrowserStatus {
@@ -363,6 +365,12 @@ export class BrowserManager {
     return [...this.pages.values()].filter((page) => this.own(page)).map((page) => this.info(page));
   }
 
+  // The user opened this tab themselves: neither the agent nor a page it was on did.
+  userTab(tab: Tab): boolean {
+    const page = this.pages.get(tab.targetId);
+    return !tab.openedByAgent && !page?.openedByAgent && !page?.openerId;
+  }
+
   // Pages opened after `since` by one of the given tabs (popups, target=_blank).
   openedSince(since: number, openerTargetIds: string[]): TabInfo[] {
     return [...this.pages.values()]
@@ -389,6 +397,7 @@ export class BrowserManager {
       page.openedByAgent,
       signal,
       this.options.headless ? this.options.viewport : undefined,
+      this.options.hostAllowed,
     )
       .then(async (tab) => {
         // Only one window has focus, and a sub-task's window rarely does; pages

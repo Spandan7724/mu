@@ -21,6 +21,7 @@ export type OutcomeKind =
   | "timeout"
   | "blocked-by-dialog"
   | "not-interactable"
+  | "blocked-host"
   | "error";
 
 export interface OutcomeDetails {

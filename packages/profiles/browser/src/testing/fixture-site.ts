@@ -68,6 +68,9 @@ export function startFixtureSite(): FixtureSite {
       const all = ["Amsterdam", "Athens", "Austin", "Berlin", "Boston", "Barcelona", "Paris"];
       return Response.json(all.filter((city) => city.toLowerCase().startsWith(query)));
     }
+    if (path === "/redirect") {
+      return Response.redirect(url.searchParams.get("to") ?? "/", 302);
+    }
     if (path === "/api/slow") {
       await Bun.sleep(Number(url.searchParams.get("ms") ?? 500));
       return Response.json({ ok: true });
