@@ -208,6 +208,28 @@ Usage:
   mu self update                      update a global npm, Bun or GitHub-release install
   mu self uninstall [--purge]         remove that install (--purge also deletes ~/.mu)
 
+  With -p nothing can ask you: any action that would ask is denied and reported, and the
+  run carries on without it. Pick a --permission-mode (or --allow-all) for unattended work.
+
+Examples:
+  Coding agent
+    mu -p "explain how sessions are saved"
+          reads and searches freely; edits and commands are denied
+    mu -p "fix the typo in README.md" --permission-mode accept-edits
+          edits files without asking; shell commands are still denied
+    mu -p "make the failing tests pass" --allow-all --max-turns 40
+          fully unattended: edits and runs commands, stops after 40 model turns
+
+  Browser agent
+    mu browser -p "summarize my 3 newest unread emails"
+          browses and reads freely; sends, purchases, uploads and passwords are denied
+    mu browser -p "email alex@example.com saying I'm running late" --permission-mode autonomous
+          fully unattended: sends, buys and uploads without asking
+    mu browser -p "<task>" --allow-all --headless --json
+          same, with no browser window and every event streamed as JSON lines
+    mu browser login
+          sign in to your sites once in a normal window; later runs reuse the cookies
+
 Coding agent (default, or --profile coding)
   Works in the current directory: reads, searches, edits and creates files, runs shell
   commands and background processes, and delegates to subagents (task, search, counsel,
@@ -274,9 +296,6 @@ Options for both agents:
       --max-cost <usd>       stop once the run has cost this much (-p and --rpc)
   -h, --help                 show this help
   -v, --version              show the version
-
-  In -p mode nothing can ask: any action that would ask is denied and reported. Use
-  --permission-mode or --allow-all to permit it.
 
 Slash commands in every session:
   /help            list the commands available in this session

@@ -85,6 +85,25 @@ describe("parseArgs", () => {
     expect(browser).not.toContain("--no-instructions");
   });
 
+  test("help warns about -p denials up front and shows unattended examples for both agents", () => {
+    const examples = HELP_TEXT.indexOf("Examples:");
+    expect(HELP_TEXT.indexOf("With -p nothing can ask you")).toBeLessThan(examples);
+    expect(HELP_TEXT.match(/nothing can ask/g)).toHaveLength(1);
+    const section = HELP_TEXT.slice(examples, HELP_TEXT.indexOf("Coding agent ("));
+    expect(section).toContain('mu -p "make the failing tests pass" --allow-all');
+    expect(section).toContain("--permission-mode accept-edits");
+    expect(section).toContain("--permission-mode autonomous");
+    expect(section).toContain("mu browser login");
+    const commands = section.split("\n").filter((line) => line.trim().startsWith("mu "));
+    expect(commands).toHaveLength(7);
+    for (const command of commands) {
+      const argv = (command.match(/"[^"]*"|\S+/g) ?? []).map((token) =>
+        token.replace(/^"|"$/g, ""),
+      );
+      expect(parseArgs(argv.slice(1)).errors).toEqual([]);
+    }
+  });
+
   test("web search has no startup mode", () => {
     expect(parseArgs(["--web-search", "live"]).errors[0]).toContain("Unknown flag");
     expect(HELP_TEXT).not.toContain("--web-search");
