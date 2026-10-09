@@ -209,7 +209,7 @@ export async function pageAction(
     ...(outcome.ok ? {} : { isError: true }),
     retention: {
       key: observationKey(deps.browser.observationSlot(tab.tabId)),
-      summary: `${outcome.summary} (page: ${JSON.stringify(observation.title)} ${observation.url})`,
+      summary: `${outcome.summary} (page: ${observation.url})`,
     },
   };
 }

@@ -122,7 +122,11 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       else if (kind === "c") node.role = CONTAINER_TAGS[tag];
       if (/^h[1-6]$/.test(tag)) node.lvl = Number(tag[1]);
       if (kind === "i") {
-        var label = (el.innerText || el.value || "").replace(/\s+/g, " ").trim() ||
+        // A field's content is its value, never its name: an unlabeled password field
+        // would otherwise be named after the password.
+        var own = editable ? "" : (el.innerText ||
+          (tag === "input" && /^(submit|button|reset)$/.test(el.type) ? el.value : "") || "");
+        var label = own.replace(/\s+/g, " ").trim() ||
           el.getAttribute("title") || el.getAttribute("placeholder") || el.getAttribute("aria-label") || "";
         node.t = label.slice(0, 120);
         if (editable) node.ed = editable;

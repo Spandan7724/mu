@@ -10,6 +10,13 @@ export interface RefMeta {
   link?: boolean;
 }
 
+function normalize(ref: Ref): Ref {
+  return ref
+    .trim()
+    .replace(/^\[?ref=/, "")
+    .replace(/\]$/, "");
+}
+
 export interface RefTarget {
   frameId: string;
   backendNodeId: number;
@@ -79,12 +86,7 @@ export class RefTable {
   }
 
   meta(ref: Ref): RefMeta | undefined {
-    return this.metas.get(
-      ref
-        .trim()
-        .replace(/^\[?ref=/, "")
-        .replace(/\]$/, ""),
-    );
+    return this.metas.get(normalize(ref));
   }
 
   label(ref: Ref): string {
@@ -97,15 +99,10 @@ export class RefTable {
   }
 
   resolve(ref: Ref): RefTarget | undefined {
-    return this.byRef.get(
-      ref
-        .trim()
-        .replace(/^\[?ref=/, "")
-        .replace(/\]$/, ""),
-    );
+    return this.byRef.get(normalize(ref));
   }
 
   has(ref: Ref): boolean {
-    return this.byRef.has(ref);
+    return this.byRef.has(normalize(ref));
   }
 }

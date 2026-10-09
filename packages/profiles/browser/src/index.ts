@@ -105,7 +105,6 @@ function observingDataFlow(tool: AnyTool, browser: BrowserManager): AnyTool {
   };
 }
 
-// Scrubs known secret values from everything a browser tool hands back.
 function resumingHandoff(tool: AnyTool, handoffs: Handoffs): AnyTool {
   return {
     ...tool,
@@ -116,6 +115,7 @@ function resumingHandoff(tool: AnyTool, handoffs: Handoffs): AnyTool {
   };
 }
 
+// Scrubs known secret values from everything a browser tool hands back.
 function redacting(tool: AnyTool, secrets: SecretRegistry): AnyTool {
   const { permissionDetails } = tool;
   return {

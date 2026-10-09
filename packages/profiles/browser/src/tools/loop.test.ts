@@ -51,6 +51,15 @@ describeWithBrowser("loop detection", () => {
     expect(await run("snapshot", {})).not.toContain("has not changed");
   });
 
+  test("a no-op right after a fresh page counts as no change, despite collapsed landmarks", async () => {
+    const page = await run("navigate", { url: site.url("form-basic") });
+    expect(page).toContain('- navigation "Main"');
+    const disabled = /button "Save draft" \[ref=(e\d+)\] \[disabled\]/.exec(page)?.[1] as string;
+    const clicked = await run("click", { ref: disabled });
+    expect(clicked).toContain("(unchanged,");
+    expect(clicked.split("\n")[0]).toEndWith("(no visible change)");
+  });
+
   test("repeated tab switching without acting gets a nudge", async () => {
     await run("navigate", { url: site.url("form-basic") });
     await run("tabs", { action: "open", url: site.url("long") });

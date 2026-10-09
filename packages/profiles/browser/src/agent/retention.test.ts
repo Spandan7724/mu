@@ -68,7 +68,7 @@ describeWithBrowser("context retention end to end", () => {
       .map((message) =>
         message.content.map((block) => (block.type === "text" ? block.text : "")).join(""),
       );
-    expect(summaries[0]).toMatch(/^navigated to .*form-basic \(page: "Contact form"/);
+    expect(summaries[0]).toMatch(/^navigated to .*form-basic \(page: http:\/\/.*form-basic\)$/);
     expect(summaries[1]).toMatch(/^typed "Ada" into textbox "Full name" \[e4\]/);
     expect(summaries[3]).toMatch(/^clicked clickable "Select size ▾" \[e1\]/);
     for (const summary of summaries) expect(summary.length).toBeLessThan(250);

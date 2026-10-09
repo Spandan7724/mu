@@ -2,7 +2,7 @@ import type { Stopwatch } from "../actions/types.ts";
 import type { BrowserManager } from "../browser/manager.ts";
 import type { JsDialog, Tab } from "../browser/tabs.ts";
 import type { PageModel, PageNode } from "./model.ts";
-import { mergeSeen, renderSnapshot } from "./render.ts";
+import { fencePageContent, mergeSeen, renderSnapshot } from "./render.ts";
 import { StaleRefError } from "./resolve.ts";
 import { captureScreenshot, type Screenshot, screenshotHeader } from "./screenshot.ts";
 import { type CaptureOptions, capturePage } from "./snapshot.ts";
@@ -44,14 +44,13 @@ export function fingerprintOf(url: string, body: string): string {
   return `${url}#${Bun.hash(body).toString(36)}`;
 }
 
+// Only mu's own facts: whether a dialog is open, never its page-written message.
 function describeDialog(dialog: JsDialog | undefined): string {
   if (!dialog) return "none";
-  const message = dialog.message.replace(/\s+/g, " ").slice(0, 300);
-  return `${dialog.type} ${JSON.stringify(message)} — handle it with the dialog tool before anything else`;
+  return `${dialog.type} open (its message is in the page content) — handle it with the dialog tool before anything else`;
 }
 
 interface HeaderFacts {
-  title: string;
   url: string;
   scrollY?: number;
   pageHeight?: number;
@@ -59,6 +58,8 @@ interface HeaderFacts {
   newDocument?: boolean;
 }
 
+// The header holds what mu itself knows; page-written text (title, dialog message)
+// goes inside the untrusted fence through pageFacts.
 export function renderHeader(
   facts: HeaderFacts,
   tabs: { count: number; active: string },
@@ -72,11 +73,21 @@ export function renderHeader(
     facts.viewport ? `viewport ${facts.viewport.width}x${facts.viewport.height}` : undefined,
   ].filter(Boolean);
   return [
-    `[page] ${facts.title || "(untitled)"}`,
-    `url: ${facts.url}${facts.newDocument ? " (new page: refs from earlier observations no longer apply)" : ""}`,
+    `[page] url: ${facts.url}${facts.newDocument ? " (new page: refs from earlier observations no longer apply)" : ""}`,
     layout.join(" · "),
     `dialog: ${describeDialog(dialog)}`,
   ].join("\n");
+}
+
+export function pageFacts(title: string, dialog?: JsDialog): string[] {
+  return [
+    `title: ${title || "(untitled)"}`,
+    ...(dialog
+      ? [
+          `${dialog.type} dialog says: ${JSON.stringify(dialog.message.replace(/\s+/g, " ").slice(0, 300))}`,
+        ]
+      : []),
+  ];
 }
 
 export async function observe(
@@ -96,12 +107,16 @@ export async function observe(
     const tabs = { count: manager.tabs().length, active: tab.tabId };
     // A pending JS dialog blocks the renderer; only browser-side facts are available.
     if (tab.dialog) {
-      const text = `${renderHeader({ title: tab.title, url: tab.url }, tabs, tab.dialog)}\n<page_content untrusted="true">\n(the page is blocked until the dialog is handled)\n</page_content>`;
+      const body = fencePageContent([
+        ...pageFacts(tab.title, tab.dialog),
+        "(the page is blocked until the dialog is handled)",
+      ]);
+      const text = `${renderHeader({ url: tab.url }, tabs, tab.dialog)}\n${body}`;
       return {
         text,
         url: tab.url,
         title: tab.title,
-        fingerprint: fingerprintOf(tab.url, text),
+        fingerprint: fingerprintOf(tab.url, body),
         tokens: estimateTokens(text),
       };
     }
@@ -129,13 +144,13 @@ export async function observe(
       scope: capture.scope,
       ...(options.budgetTokens !== undefined ? { budgetTokens: options.budgetTokens } : {}),
       previous,
+      preamble: pageFacts(model.title),
     });
     tab.previous = { documentId: model.documentId, ...mergeSeen(previous, rendered) };
     tab.url = model.url;
     tab.title = model.title;
     const header = renderHeader(
       {
-        title: model.title,
         url: model.url,
         scrollY: model.viewport.scrollY,
         pageHeight: model.viewport.pageHeight,
@@ -146,7 +161,7 @@ export async function observe(
       tab.dialog,
     );
     const text = `${header}\n${rendered.text}`;
-    const fingerprint = fingerprintOf(model.url, rendered.text);
+    const fingerprint = fingerprintOf(model.url, rendered.canonical);
     if (
       typeof options.screenshot === "function" &&
       options.screenshot(model, rendered.text, fingerprint)

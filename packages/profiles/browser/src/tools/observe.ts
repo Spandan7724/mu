@@ -4,8 +4,8 @@ import { z } from "zod";
 import { hostOf } from "../actions/navigate.ts";
 import { Stopwatch } from "../actions/types.ts";
 import { INJECTION_NOTE, looksLikeInjection } from "../page/injection.ts";
-import { renderHeader } from "../page/observe.ts";
-import { describeNode } from "../page/render.ts";
+import { pageFacts, renderHeader } from "../page/observe.ts";
+import { describeNode, fencePageContent } from "../page/render.ts";
 import { resolveRef } from "../page/resolve.ts";
 import { captureScreenshot, screenshotHeader } from "../page/screenshot.ts";
 import { capturePage } from "../page/snapshot.ts";
@@ -110,14 +110,17 @@ export function screenshotTool(deps: BrowserToolDeps) {
         captureScreenshot(tab, { signal: actionSignal, box, fullPage }),
       );
       const header = renderHeader(
-        { title: tab.title, url: tab.url },
+        { url: tab.url },
         { count: deps.browser.tabs().length, active: tab.tabId },
         tab.dialog,
       );
       const summary = `screenshot of ${ref ?? (fullPage ? "the full page" : "the viewport")}`;
       return {
         content: [
-          { type: "text", text: `${summary}\n\n${header}\n${screenshotHeader(shot)}` },
+          {
+            type: "text",
+            text: `${summary}\n\n${header}\n${screenshotHeader(shot)}\n${fencePageContent(pageFacts(tab.title))}`,
+          },
           { type: "image", mimeType: shot.mimeType, data: shot.data },
         ],
         details: { timings: stopwatch.finish(), url: tab.url, title: tab.title, tabId: tab.tabId },
@@ -169,12 +172,12 @@ export function readPageTool(deps: BrowserToolDeps) {
             ? `\n(end of content; characters ${page.start}–${page.end} of ${page.total})`
             : "";
       const body = query && !filtered ? `(no section mentions "${query}")` : page.chunk;
-      const summary = `read_page ${model.title ? `"${model.title}" ` : ""}${query ? `query "${query}" ` : ""}chars ${page.start}–${page.end} of ${page.total}`;
+      const summary = `read_page ${query ? `query "${query}" ` : ""}chars ${page.start}–${page.end} of ${page.total}`;
       const text = [
         summary,
         ...(looksLikeInjection(body) ? [INJECTION_NOTE] : []),
-        `[page] ${model.title}\nurl: ${model.url}\nreading: ${scope}`,
-        `<page_content untrusted="true">\n${body.replace(/<(\/?)page_content/gi, "‹$1page_content")}\n</page_content>${more}`,
+        `[page] url: ${model.url}\nreading: ${scope}`,
+        `${fencePageContent([...pageFacts(model.title), body])}${more}`,
       ].join("\n");
       return {
         content: [{ type: "text", text }],
@@ -270,7 +273,7 @@ export function findTool(deps: BrowserToolDeps) {
         content: [
           {
             type: "text",
-            text: `${summary}\n[page] ${model.title}\nurl: ${model.url}\n<page_content untrusted="true">\n${body.replace(/<(\/?)page_content/gi, "‹$1page_content")}\n</page_content>`,
+            text: `${summary}\n[page] url: ${model.url}\n${fencePageContent([...pageFacts(model.title), body])}`,
           },
         ],
         details: {

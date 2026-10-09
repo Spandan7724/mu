@@ -77,7 +77,7 @@ describeWithBrowser("secrets never reach observations, prompts or the session fi
       .filter((message) => message.role === "toolResult")
       .map((message) => JSON.stringify(message))
       .join("\n");
-    expect(toolText).toContain("[page] Submitted");
+    expect(toolText).toContain("title: Submitted");
     expect(toolText).not.toContain(typed);
     expect(toolText).not.toContain("hunter2");
     expect(toolText).toContain("••••");

@@ -225,7 +225,7 @@ export async function handleDialog(
       ? ` with ${JSON.stringify(text)}`
       : "";
   return {
-    summary: `${action === "accept" ? "accepted" : "dismissed"} the ${dialog.type} ${JSON.stringify(dialog.message.slice(0, 80))}${answered}${settle.navigated ? " → navigated" : ""}`,
+    summary: `${action === "accept" ? "accepted" : "dismissed"} the ${dialog.type} dialog${answered}${settle.navigated ? " → navigated" : ""}`,
     settle: `${settle.reason} (${settle.ms} ms)`,
   };
 }

@@ -2,8 +2,14 @@ import { tool } from "mu";
 import { z } from "zod";
 import { navigateTo, normalizeUrl } from "../actions/navigate.ts";
 import type { TabInfo } from "../browser/tabs.ts";
+import { fencePageContent } from "../page/render.ts";
 import { navigationLeak, shareDetails } from "./gate.ts";
 import { type BrowserToolDeps, pageAction } from "./shared.ts";
+
+// Tab titles are page-written, so the list the model sees is fenced.
+function fencedTabs(tabs: TabInfo[]): string {
+  return fencePageContent([formatTabs(tabs)]);
+}
 
 export function formatTabs(tabs: TabInfo[]): string {
   if (tabs.length === 0) return "(no tabs)";
@@ -53,7 +59,7 @@ export function tabsTool(deps: BrowserToolDeps) {
         signal,
         async (tab, stopwatch, actionSignal) => {
           if (action === "list") {
-            return { summary: "listed tabs", extra: formatTabs(deps.browser.tabs()) };
+            return { summary: "listed tabs", extra: fencedTabs(deps.browser.tabs()) };
           }
           if (action === "open") {
             const target = url ? normalizeUrl(url) : undefined;
@@ -101,7 +107,7 @@ export function tabsTool(deps: BrowserToolDeps) {
           return {
             summary: `closed tab ${tabId}${tabId === tab.tabId ? `; now on ${next.tabId}` : ""}`,
             tab: next,
-            extra: formatTabs(deps.browser.tabs()),
+            extra: fencedTabs(deps.browser.tabs()),
           };
         },
         { blockedByDialog: action !== "list", tabSwitch: action === "switch" },

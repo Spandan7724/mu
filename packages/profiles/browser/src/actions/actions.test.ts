@@ -65,7 +65,7 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(click.outcome.kind).toBe("navigated");
     expect(click.outcome.details.timings.settleMs).toBeGreaterThanOrEqual(0);
     expect(click.outcome.details.path).toBe("mouse");
-    expect(click.text).toContain("[page] Submitted");
+    expect(click.text).toContain("title: Submitted");
     expect(click.text).toContain("cell: Ada Lovelace");
     expect(click.result.retention?.summary).toStartWith('clicked button "Send message" [e14]');
   });
@@ -83,7 +83,7 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
       submitRef: refIn(page, "button", "Send message"),
     });
     expect(filled.text).toStartWith("filled 5 fields");
-    expect(filled.text).toContain("[page] Submitted");
+    expect(filled.text).toContain("title: Submitted");
     expect(filled.text).toContain("cell: grace@example.com");
     expect(filled.text).toContain("cell: pro");
     expect(filled.text).toContain("cell: fr");
@@ -271,12 +271,12 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     const link = await run("click", { ref: refIn(page, "link", "Open contact form in new tab") });
     expect(link.outcome.kind).toBe("new-tab");
     expect(link.text).toMatch(/→ opened new tab t\d+ \(.*form-basic\); it is now the active tab/);
-    expect(link.text).toContain("[page] Contact form");
+    expect(link.text).toContain("title: Contact form");
     await run("tabs", { action: "close", tabId: link.outcome.details.tabId });
     await open("tabs-popups");
     const popup = await run("click", { ref: refIn(page, "button", "Open articles popup") });
     expect(popup.outcome.kind).toBe("new-tab");
-    expect(popup.text).toContain("[page] Long list");
+    expect(popup.text).toContain("title: Long list");
     await run("tabs", { action: "close", tabId: popup.outcome.details.tabId });
   });
 
@@ -285,11 +285,11 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     const confirmRef = refIn(page, "button", "Discard draft");
     const opened = await run("click", { ref: confirmRef });
     expect(opened.text).toContain("→ a JavaScript dialog opened");
-    expect(opened.text).toContain('dialog: confirm "Discard draft?"');
+    expect(opened.text).toContain('confirm dialog says: "Discard draft?"');
     const blocked = await run("click", { ref: confirmRef });
     expect(blocked.outcome.kind).toBe("blocked-by-dialog");
     const accepted = await run("dialog", { action: "accept" });
-    expect(accepted.text).toStartWith('accepted the confirm "Discard draft?"');
+    expect(accepted.text).toStartWith("accepted the confirm dialog");
     expect(accepted.text).toContain("paragraph: discarded");
     await run("click", { ref: refIn(page, "button", "Ask name") });
     const prompted = await run("dialog", { action: "accept", text: "Ada" });
@@ -316,7 +316,9 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
       paths: [markdown],
     });
     expect(rejected.result.isError).toBeUndefined();
-    expect(rejected.text).toContain('dialog: alert "Please choose a file type from pdf or txt."');
+    expect(rejected.text).toContain(
+      'alert dialog says: "Please choose a file type from pdf or txt."',
+    );
     expect(rejected.outcome.details.timings.totalMs).toBeLessThan(5_000);
     await run("dialog", { action: "accept" });
     const cvField = refIn(page, "button", "CV (PDF or Word)");
@@ -454,6 +456,6 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     const stale = await run("click", { ref: old });
     expect(stale.outcome.kind).toBe("stale-ref");
     expect(stale.text).toContain("use a ref from the page state below");
-    expect(stale.text).toContain("[page] Custom select");
+    expect(stale.text).toContain("title: Custom select");
   });
 });

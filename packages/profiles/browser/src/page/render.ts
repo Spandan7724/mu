@@ -19,10 +19,15 @@ export interface RenderOptions {
   previous?: Seen | undefined;
   // Show every landmark in full even when it has not changed.
   expandLandmarks?: boolean | undefined;
+  // Page-derived facts (title, dialog message) shown first inside the fence.
+  preamble?: string[] | undefined;
 }
 
 export interface RenderedSnapshot {
   text: string;
+  // The page content without `*` markers or collapsed landmarks, which differ
+  // between two views of an unchanged page.
+  canonical: string;
   refs: Set<string>;
   texts: Set<string>;
   landmarks: Map<string, string>;
@@ -250,9 +255,14 @@ function countInteractive(node: PageNode): number {
   );
 }
 
-export function renderSnapshot(model: PageModel, options: RenderOptions = {}): RenderedSnapshot {
-  const budget = Math.min(options.budgetTokens ?? DEFAULT_BUDGET_TOKENS, HARD_CAP_TOKENS);
-  const marks: Marks = {
+// Page text must not be able to close the untrusted fence early.
+export function fencePageContent(lines: string[]): string {
+  const body = lines.join("\n").replace(/<(\/?)page_content/gi, "‹$1page_content");
+  return `<page_content untrusted="true">\n${body}\n</page_content>`;
+}
+
+function emptyMarks(options: RenderOptions): Marks {
+  return {
     previous: options.previous,
     refs: new Set<string>(),
     texts: new Set<string>(),
@@ -260,6 +270,9 @@ export function renderSnapshot(model: PageModel, options: RenderOptions = {}): R
     landmarkCount: new Map<string, number>(),
     expandLandmarks: options.expandLandmarks === true || options.scope === "full",
   };
+}
+
+function contentLines(model: PageModel, marks: Marks): { lines: Line[]; trailer: string[] } {
   const lines: Line[] = [];
   const trailer: string[] = [];
   if (model.modal) {
@@ -281,6 +294,18 @@ export function renderSnapshot(model: PageModel, options: RenderOptions = {}): R
       trailer.push(`… (${above} more interactive elements above; scroll up or use find)`);
     if (below > 0) trailer.push(`… (${below} more interactive elements below; scroll or use find)`);
   }
+  return { lines, trailer };
+}
+
+export function renderSnapshot(model: PageModel, options: RenderOptions = {}): RenderedSnapshot {
+  const budget = Math.min(options.budgetTokens ?? DEFAULT_BUDGET_TOKENS, HARD_CAP_TOKENS);
+  const marks = emptyMarks(options);
+  const { lines, trailer } = contentLines(model, marks);
+  const preamble = options.preamble ?? [];
+  const plain = contentLines(model, emptyMarks({ expandLandmarks: true }));
+  const canonical = [...preamble, ...plain.lines.map((line) => line.text), ...plain.trailer].join(
+    "\n",
+  );
   if (lines.length === 0)
     lines.push({ text: "(no visible content)", depth: 0, kind: "text", inViewport: true });
 
@@ -325,12 +350,9 @@ export function renderSnapshot(model: PageModel, options: RenderOptions = {}): R
   if (model.frameErrors.length > 0) {
     trailer.push(`(${model.frameErrors.length} frame(s) could not be read yet)`);
   }
-  // Page text must not be able to close the untrusted fence early.
-  const body = [...lines.map((line) => line.text), ...trailer]
-    .join("\n")
-    .replace(/<(\/?)page_content/gi, "‹$1page_content");
   return {
-    text: `<page_content untrusted="true">\n${body}\n</page_content>`,
+    text: fencePageContent([...preamble, ...lines.map((line) => line.text), ...trailer]),
+    canonical,
     refs: marks.refs,
     texts: marks.texts,
     landmarks: marks.landmarks,
