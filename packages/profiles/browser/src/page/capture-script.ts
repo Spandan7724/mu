@@ -83,7 +83,9 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     else if (pointer && !parentPointer && tag !== "label") { kind = "i"; why = "c"; }
     else {
       var tabindex = el.getAttribute("tabindex");
-      if (tabindex !== null && Number(tabindex) >= 0 && !CONTAINER_TAGS[tag]) { kind = "i"; why = "f"; }
+      // A focusable tabpanel, dialog or region is still a container: as a control its
+      // text (headings, question labels) would be dropped as the control's own name.
+      if (tabindex !== null && Number(tabindex) >= 0 && !CONTAINER_TAGS[tag] && !(role && CONTAINER_ROLES[role])) { kind = "i"; why = "f"; }
     }
     if (!kind) {
       if (role && CONTAINER_ROLES[role]) kind = "c";

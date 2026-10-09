@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Application</title>
+  <style>
+    .yesno input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div role="tablist">
+      <a role="tab" href="#overview">Overview</a>
+      <a role="tab" aria-selected="true" href="#form">Application</a>
+    </div>
+    <!-- Ashby's application form: a focusable tabpanel, question labels whose for= matches no id. -->
+    <div tabindex="0" role="tabpanel" aria-labelledby="form-tab" id="form">
+      <h2 id="form-tab">Application</h2>
+      <div>
+        <label for="full-name">Full Name*</label>
+        <input id="full-name" type="text" required>
+      </div>
+      <div>
+        <label class="question-title" for="c2615aa4">Are you authorized to work lawfully in the United States?</label>
+        <div class="yesno">
+          <button type="button" aria-pressed="false">Yes</button>
+          <button type="button" aria-pressed="false">No</button>
+          <input type="checkbox" tabindex="-1" name="c2615aa4">
+        </div>
+      </div>
+      <fieldset>
+        <label class="question-title">Which visa do you hold?</label>
+        <label><input type="radio" name="visa"> OPT</label>
+        <label><input type="radio" name="visa"> H1B</label>
+      </fieldset>
+    </div>
+  </main>
+</body>
+</html>

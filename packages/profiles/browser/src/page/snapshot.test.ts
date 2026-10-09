@@ -11,6 +11,7 @@ import type { PageModel, PageNode } from "./model.ts";
 import { mergeSeen, renderSnapshot } from "./render.ts";
 import { resolveRef, StaleRefError } from "./resolve.ts";
 import { capturePage } from "./snapshot.ts";
+import { pageMarkdown } from "./text.ts";
 
 setDefaultTimeout(30_000);
 
@@ -150,6 +151,17 @@ describeWithBrowser("page snapshots in real headless Chrome", () => {
     golden("shadow", text);
     expect(text).toMatch(/searchbox "Search docs" \[ref=e\d+\]/);
     expect(text).toMatch(/button "Follow" \[ref=e\d+\]/);
+  });
+
+  test("tabpanel-form: a focusable tabpanel keeps its question labels", async () => {
+    await load("tabpanel-form");
+    const { model, text } = await snapshot();
+    expect(text).toContain("label: Are you authorized to work lawfully in the United States?");
+    expect(text).toContain("label: Which visa do you hold?");
+    const { markdown } = pageMarkdown(model);
+    expect(markdown).toContain("Are you authorized to work lawfully in the United States?");
+    expect(markdown).toContain("Which visa do you hold?");
+    expect(markdown).toMatch(/\[button "Yes" \[ref=e\d+\]\]/);
   });
 
   test("long pages render the viewport and summarize the rest; refs survive scrolling", async () => {
