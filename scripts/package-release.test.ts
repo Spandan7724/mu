@@ -107,6 +107,8 @@ describe("release packaging", () => {
     expect(listing).toContain("mu-linux-x64/licenses/ripgrep/LICENSE-MIT");
     expect(listing).toContain("mu-linux-x64/licenses/ripgrep/UNLICENSE");
     expect(listing).toContain("mu-linux-x64/licenses/highlight.js/LICENSE");
+    expect(listing).toContain("mu-linux-x64/LICENSE");
+    expect(listing).toContain("mu-linux-x64/NOTICE");
     expect(listing).toContain("mu-linux-x64/mu-package.json");
   });
 
@@ -139,7 +141,7 @@ describe("release packaging", () => {
     };
     expect(cli.name).toBe("@mu-agent/mu");
     expect(cli.author).toBe("Spandan Chavan");
-    expect(cli.license).toBe("MIT");
+    expect(cli.license).toBe("Apache-2.0");
     expect(cli.repository.url).toBe("git+https://github.com/Spandan7724/mu.git");
     expect(cli.main).toBe("./dist/index.js");
     expect(cli.types).toBe("./dist/types/index.d.ts");

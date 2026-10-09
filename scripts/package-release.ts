@@ -57,6 +57,8 @@ const HIGHLIGHT_LICENSE_PATH = resolve(
   "cli",
   "THIRD_PARTY_LICENSES.txt",
 );
+const MU_LICENSE_PATH = resolve(import.meta.dir, "..", "LICENSE");
+const MU_NOTICE_PATH = resolve(import.meta.dir, "..", "NOTICE");
 
 export const RELEASE_SPECS: Record<ReleaseTarget, ReleaseSpec> = {
   "linux-x64": {
@@ -304,6 +306,8 @@ export async function packageRelease(
       copyFile(join(sourceRoot, "LICENSE-MIT"), join(licenseDir, "LICENSE-MIT")),
       copyFile(join(sourceRoot, "UNLICENSE"), join(licenseDir, "UNLICENSE")),
       copyFile(HIGHLIGHT_LICENSE_PATH, join(highlightLicenseDir, "LICENSE")),
+      copyFile(MU_LICENSE_PATH, join(packageDir, "LICENSE")),
+      copyFile(MU_NOTICE_PATH, join(packageDir, "NOTICE")),
     ]);
     if (spec.target !== "windows-x64") {
       await Promise.all([chmod(packagedBinary, 0o755), chmod(packagedRg, 0o755)]);
