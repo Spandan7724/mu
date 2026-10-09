@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ToolResult } from "@mu/core";
 import { normalizeUrl } from "../actions/navigate.ts";
 import type { ActionOutcome } from "../actions/types.ts";
@@ -9,7 +10,23 @@ import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testin
 setDefaultTimeout(30_000);
 
 describe("URL normalization", () => {
-  test("bare domains get https, local hosts get http, schemes pass through", () => {
+  test("only web pages and about:blank are opened", () => {
+    for (const url of [
+      "file:///etc/passwd",
+      "FILE:///etc/passwd",
+      "file:/etc/passwd",
+      "view-source:file:///etc/passwd",
+      "chrome://settings",
+      "javascript:alert(1)",
+      "data:text/html,<h1>x</h1>",
+    ]) {
+      expect(() => normalizeUrl(url)).toThrow("only opens http and https URLs");
+    }
+    expect(normalizeUrl("HTTPS://example.com")).toBe("HTTPS://example.com");
+    expect(normalizeUrl("About:Blank")).toBe("About:Blank");
+  });
+
+  test("bare domains get https, local hosts get http, web schemes pass through", () => {
     expect(normalizeUrl("gmail.com")).toBe("https://gmail.com");
     expect(normalizeUrl("news.ycombinator.com/news?p=2")).toBe(
       "https://news.ycombinator.com/news?p=2",
@@ -108,6 +125,23 @@ describeWithBrowser("navigate and tabs tools in real headless Chrome", () => {
     expect(text(result)).toContain("could not load http://mu-does-not-exist.invalid/");
     expect(text(result)).toContain("ERR_NAME_NOT_RESOLVED");
     expect(result.retention?.key).toMatch(/^browser:observation:\d$/);
+  });
+
+  test("local files are refused by navigate and tabs open", async () => {
+    const secretFile = join(home, "secret.txt");
+    writeFileSync(secretFile, "local-file-canary-4821");
+    const tabsBefore = profile.browser.tabs().length;
+    for (const [name, args] of [
+      ["navigate", { url: `file://${secretFile}` }],
+      ["navigate", { url: `file://${secretFile}`, newTab: true }],
+      ["tabs", { action: "open", url: `file://${secretFile}` }],
+    ] as const) {
+      const result = await run(name, args);
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("only opens http and https URLs");
+      expect(text(result)).not.toContain("local-file-canary-4821");
+    }
+    expect(profile.browser.tabs().length).toBe(tabsBefore);
   });
 
   test("tabs open, list, switch and close", async () => {

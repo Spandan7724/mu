@@ -4,13 +4,25 @@ import { type SettleWatcher, watchSettle } from "../page/settle.ts";
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const HOST_PORT = /^[\w.-]+:\d+(?:[/?#]|$)/;
 const LOCAL = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(?::\d+)?(?:[/?#]|$)/i;
+// file:, view-source:, chrome: and the like would expose local files and browser
+// internals that the file tools and upload checks keep out of the agent's reach.
+const WEB_SCHEMES = new Set(["http:", "https:"]);
 
 export function normalizeUrl(input: string): string {
   const url = input.trim();
   if (!url) throw new Error("navigate needs a URL");
   if (LOCAL.test(url)) return `http://${url}`;
   if (HOST_PORT.test(url)) return `http://${url}`;
-  if (SCHEME.test(url)) return url;
+  if (SCHEME.test(url)) {
+    if (url.toLowerCase() === "about:blank") return url;
+    const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
+    if (!WEB_SCHEMES.has(scheme)) {
+      throw new Error(
+        `"${input}" is not a web page: the browser only opens http and https URLs (and about:blank). Read files in your folder with read.`,
+      );
+    }
+    return url;
+  }
   if (url.startsWith("//")) return `https:${url}`;
   const host = url.split(/[/?#]/, 1)[0] ?? "";
   if (/\s/.test(url) || !host.includes(".")) {

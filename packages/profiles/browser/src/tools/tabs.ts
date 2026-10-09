@@ -56,15 +56,13 @@ export function tabsTool(deps: BrowserToolDeps) {
             return { summary: "listed tabs", extra: formatTabs(deps.browser.tabs()) };
           }
           if (action === "open") {
+            const target = url ? normalizeUrl(url) : undefined;
             const opened = await stopwatch.time("cdpMs", () =>
               deps.browser.openTab(undefined, actionSignal),
             );
-            const settle = url
-              ? (
-                  await stopwatch.time("settleMs", () =>
-                    navigateTo(opened, normalizeUrl(url), actionSignal),
-                  )
-                ).settle
+            const settle = target
+              ? (await stopwatch.time("settleMs", () => navigateTo(opened, target, actionSignal)))
+                  .settle
               : undefined;
             return {
               summary: `opened tab ${opened.tabId}${url ? ` at ${url}` : ""}`,
