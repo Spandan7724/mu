@@ -51,6 +51,8 @@ const TOOL_READ_RGB = [52, 175, 210] as const;
 const TOOL_READ_256 = 74;
 const TOOL_MUTATE_RGB = [230, 161, 92] as const;
 const TOOL_MUTATE_256 = 173;
+// The peak of the compaction sweep: the mutate hue lifted toward white.
+const TOOL_MUTATE_PEAK_RGB = [255, 226, 184] as const;
 const TOOL_EXEC_RGB = [59, 130, 246] as const;
 const TOOL_EXEC_256 = 69;
 const TASK_RGB = [20, 184, 166] as const;
@@ -223,6 +225,40 @@ export const GLYPHS = {
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
   subagentSpinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const;
+
+export type ShimmerPart = { text: string; glow: true } | { text: string; style: Style };
+
+// One soft highlight sweeping left to right through the glowing parts of a span,
+// two cells per tick; the other parts keep its timing continuous. Truecolor only:
+// below it glowing parts take the plain mutate colour.
+export function mutateShimmer(
+  parts: readonly ShimmerPart[],
+  tick: number,
+  depth: ColorDepth,
+): string {
+  const total = parts.reduce((sum, part) => sum + [...part.text].length, 0);
+  const head = (tick * 2) % (total + 14);
+  let offset = 0;
+  return parts
+    .map((part) => {
+      const chars = [...part.text];
+      const start = offset;
+      offset += chars.length;
+      if (!("glow" in part)) return styleText(part.text, part.style, depth);
+      if (depth !== "truecolor") return styleText(part.text, { toolMutate: true }, depth);
+      if (chars.length === 0) return "";
+      return `${chars
+        .map((char, index) => {
+          const lift = Math.max(0, 1 - Math.abs(start + index - head + 7) / 6);
+          const [r, g, b] = TOOL_MUTATE_RGB.map((value, channel) =>
+            Math.round(value + ((TOOL_MUTATE_PEAK_RGB[channel] ?? value) - value) * lift),
+          );
+          return `${ESC}38;2;${r};${g};${b}m${char}`;
+        })
+        .join("")}${RESET}`;
+    })
+    .join("");
+}
 
 export const MARGIN = "  ";
 export const AGENT_LABEL = "mu";

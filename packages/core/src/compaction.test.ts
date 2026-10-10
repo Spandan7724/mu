@@ -9,6 +9,7 @@ import {
   serializeCompactionMessages,
   shouldCompact,
 } from "./compaction.ts";
+import type { CompactionProgress } from "./events.ts";
 import { type AgentMessage, customMessage, userMessage } from "./messages.ts";
 import { FakeProvider, fakeModel, type ScriptedTurn } from "./testing/fake-provider.ts";
 
@@ -143,6 +144,46 @@ describe("compact", () => {
     expect(result.keptMessages.length).toBeGreaterThan(0);
     expect(result.keptMessages.length).toBeLessThan(10);
     expect(result.tokensFreed).toBeGreaterThan(0);
+  });
+
+  test("reports summarizer facts when each request starts and as its summary streams", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "the handoff" }] }]);
+    const reports: CompactionProgress[] = [];
+    await compact(longHistory(), {
+      provider,
+      model: fakeModel,
+      keepRecentTokens: 8,
+      onProgress: (progress) => reports.push(progress),
+    });
+
+    expect(reports.map((report) => report.outputChars)).toEqual([0, "the handoff".length]);
+    const [first] = reports;
+    expect(first?.request).toBe(1);
+    expect(first?.summarizedChars).toBe(0);
+    expect(first?.requestChars).toBe(first?.sourceChars);
+    expect(first?.sourceTokens).toBeGreaterThan(0);
+    expect(first?.expectedOutputChars).toBeGreaterThan(0);
+  });
+
+  test("a retried chunk keeps its part number and later parts start from the cursor", async () => {
+    const provider = new FakeProvider([
+      { content: [], stopReason: "error", errorMessage: "maximum context length exceeded" },
+      { content: [{ type: "text", text: "bounded summary" }] },
+      { content: [{ type: "text", text: "final summary" }] },
+    ]);
+    const starts: CompactionProgress[] = [];
+    await compact(longHistory(), {
+      provider,
+      model: fakeModel,
+      keepRecentTokens: 3,
+      onProgress: (progress) => {
+        if (progress.outputChars === 0) starts.push(progress);
+      },
+    });
+
+    expect(starts.map((start) => start.request)).toEqual([1, 1, 2]);
+    expect(starts[1]?.requestChars).toBeLessThan(starts[0]?.requestChars ?? 0);
+    expect(starts[2]?.summarizedChars).toBe(starts[1]?.requestChars);
   });
 
   test("the summarization request carries the enumerated instructions", async () => {

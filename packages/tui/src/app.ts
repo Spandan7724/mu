@@ -6,11 +6,15 @@ import type {
   AgentMessage,
   AssistantMessage,
   CheckpointDiffFile,
+  CompactionProgress,
   PermissionRequest,
 } from "@mu/core";
 import {
   agentCell,
+  type CompactionProgressState,
   compactionCell,
+  compactionProgressRow,
+  compactionTargetPercent,
   diffLinesFromHunks,
   errorCell,
   formatDuration,
@@ -439,6 +443,10 @@ interface ConversationView {
   runStartedAt: number;
   compacting: boolean;
   compactionStage: "clearing-tool-output" | "summarizing" | "installing" | undefined;
+  compactionProgress: CompactionProgress | undefined;
+  compactionWaitingSince: number;
+  // Eased on spinner ticks so repaints for other reasons do not speed it up.
+  compactionPercent: number;
   pendingTools: Map<string, PendingTool>;
   pendingInputs: PendingInput[];
   webSearchBoundaryPending: boolean;
@@ -480,6 +488,9 @@ function conversationView(
     runStartedAt: 0,
     compacting: false,
     compactionStage: undefined,
+    compactionProgress: undefined,
+    compactionWaitingSince: 0,
+    compactionPercent: 0,
     pendingTools: new Map(),
     pendingInputs: [],
     webSearchBoundaryPending: false,
@@ -1108,12 +1119,28 @@ export class App {
       case "compaction_start":
         this.compacting = event.layer !== 1;
         this.compactionStage = this.compacting ? "summarizing" : undefined;
+        this.view.compactionProgress = undefined;
+        this.view.compactionWaitingSince = Date.now();
+        this.view.compactionPercent = 0;
         return [];
 
-      case "compaction_update":
+      case "compaction_update": {
+        const view = this.view;
+        if (!this.compacting) {
+          view.compactionProgress = undefined;
+          view.compactionPercent = 0;
+        }
+        if (
+          (event.stage === "summarizing" && this.compactionStage !== "summarizing") ||
+          (event.progress && event.progress.request !== view.compactionProgress?.request)
+        ) {
+          view.compactionWaitingSince = Date.now();
+        }
         this.compacting = true;
         this.compactionStage = event.stage;
+        if (event.progress) view.compactionProgress = event.progress;
         return [];
+      }
 
       case "compaction_end": {
         this.compacting = false;
@@ -1232,6 +1259,23 @@ export class App {
 
   tickSpinner(): void {
     this.spinner.tick();
+    const view = this.view;
+    if (!view.compacting || !view.compactionStage) return;
+    const gap = compactionTargetPercent(this.compactionState()) - view.compactionPercent;
+    if (gap > 0)
+      view.compactionPercent = Math.min(
+        99,
+        view.compactionPercent + Math.max(gap * 0.35, Math.min(gap, 0.1)),
+      );
+  }
+
+  private compactionState(): CompactionProgressState {
+    const view = this.view;
+    return {
+      stage: view.compactionStage ?? "summarizing",
+      ...(view.compactionProgress ? { progress: view.compactionProgress } : {}),
+      waitingMs: Math.max(0, Date.now() - view.compactionWaitingSince),
+    };
   }
 
   appendTranscript(lines: string[], source: ConversationSource = this.activeSource): void {
@@ -1529,6 +1573,18 @@ export class App {
       lines.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth), "");
     }
     if (hasLiveSubagent && lines.at(-1) !== "") lines.push("");
+    if (this.compacting && this.compactionStage && this.mode !== "activity") {
+      if (lines.length > 0 && lines.at(-1) !== "") lines.push("");
+      lines.push(
+        compactionProgressRow(
+          this.compactionState(),
+          this.view.compactionPercent,
+          this.spinner.frameIndex,
+          this.ctx,
+        ),
+        "",
+      );
+    }
 
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
@@ -1648,19 +1704,13 @@ export class App {
           ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
           : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
-      const compactStage =
-        this.compactionStage === "clearing-tool-output"
-          ? "clearing tool output"
-          : this.compactionStage === "installing"
-            ? "installing checkpoint"
-            : "summarizing earlier context";
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
         `${MARGIN}${this.spinner.render(depth)}${styleText(
           this.mode === "activity"
             ? ` ${elapsed} ${GLYPHS.separator} transcript review`
             : this.compacting
-              ? ` ${elapsed} ${GLYPHS.separator} compacting context ${GLYPHS.separator} ${compactStage} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
+              ? ` ${elapsed} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
               : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,

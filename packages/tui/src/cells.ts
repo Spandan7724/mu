@@ -1,4 +1,4 @@
-import type { CheckpointDiffFile } from "@mu/core";
+import type { CheckpointDiffFile, CompactionProgress, CompactionStage } from "@mu/core";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import {
@@ -7,6 +7,7 @@ import {
   type ColorDepth,
   GLYPHS,
   MARGIN,
+  mutateShimmer,
   type Style,
   styleText,
 } from "./style.ts";
@@ -441,6 +442,91 @@ export function compactionCell(
     // The headline stays undimmed so the boundary is legible at a glance.
     return `${MARGIN}${glyph} ${line.slice(0, headline.length)}${dim(line.slice(headline.length), ctx.depth)}`;
   });
+}
+
+export interface CompactionProgressState {
+  stage: CompactionStage;
+  progress?: CompactionProgress;
+  // Since the summarizer request in flight was sent, or since summarizing began
+  // when no request has reported yet.
+  waitingMs: number;
+}
+
+// Nothing reports while the model reads its input, so that wait creeps, slowing
+// as it goes; it never claims the next phase.
+const readingCreep = (ms: number) => 1 - Math.exp(-ms / 6_000);
+
+// An estimate, not a measurement: the share of source already summarized is
+// exact, but the in-flight request's output is judged against an expected summary
+// length, so a summary that ends early jumps forward at the end.
+export function compactionTargetPercent(state: CompactionProgressState): number {
+  if (state.stage === "clearing-tool-output") return 3;
+  if (state.stage === "installing") return 96;
+  const progress = state.progress;
+  if (!progress || (progress.request === 1 && progress.outputChars === 0)) {
+    return 5 + 15 * readingCreep(state.waitingMs);
+  }
+  const source = Math.max(1, progress.sourceChars);
+  const share = progress.requestChars / source;
+  const within =
+    progress.outputChars === 0
+      ? 0.1 * readingCreep(state.waitingMs)
+      : 0.1 +
+        0.9 * Math.min(0.97, progress.outputChars / Math.max(1, progress.expectedOutputChars));
+  return Math.min(92, 20 + 72 * (progress.summarizedChars / source + share * within));
+}
+
+function compactionStageLabel(state: CompactionProgressState): string {
+  if (state.stage === "clearing-tool-output") return "clearing tool output";
+  if (state.stage === "installing") return "installing checkpoint";
+  const progress = state.progress;
+  if (!progress) return "summarizing earlier context";
+  const part =
+    progress.request > 1 || progress.requestChars < progress.sourceChars
+      ? ` part ${progress.request}`
+      : "";
+  if (progress.outputChars > 0) return `summarizing${part}`;
+  if (part) return `reading${part}`;
+  const tokens = progress.sourceTokens;
+  return `reading ${tokens >= 1_000 ? `${Math.round(tokens / 1_000)}k` : tokens} tokens`;
+}
+
+const COMPACTION_HEADLINE = "Compacting context";
+const COMPACTION_BAR_CELLS = 20;
+const COMPACTION_MIN_BAR_CELLS = 8;
+
+// The live row that `• Context compacted` replaces in place. A narrow terminal
+// shortens the bar before it drops the stage.
+export function compactionProgressRow(
+  state: CompactionProgressState,
+  percent: number,
+  tick: number,
+  ctx: RenderContext,
+): string {
+  const shown = Math.max(0, Math.min(100, percent));
+  const label = `${Math.floor(shown)}%`;
+  const stage = ` ${GLYPHS.separator} ${compactionStageLabel(state)}`;
+  const fixed = MARGIN.length + 2 + COMPACTION_HEADLINE.length + 2 + label.length;
+  const room = ctx.width - fixed;
+  const withStage = room - stringWidth(stage);
+  const keepStage = withStage >= COMPACTION_MIN_BAR_CELLS;
+  const cells = Math.max(0, Math.min(COMPACTION_BAR_CELLS, keepStage ? withStage : room));
+  const exact = (shown / 100) * cells;
+  const full = Math.floor(exact);
+  const half = exact - full >= 0.5 && full < cells;
+  const fill = "━".repeat(full) + (half ? "╸" : "");
+  const track = (half || full >= cells ? "" : "╺") + "━".repeat(Math.max(0, cells - full - 1));
+  const row = `${MARGIN}${styleText(GLYPHS.bullet, { toolMutate: true }, ctx.depth)} ${mutateShimmer(
+    [
+      { text: COMPACTION_HEADLINE, glow: true },
+      { text: cells > 0 ? " " : "", style: {} },
+      { text: fill, glow: true },
+      { text: track, style: { dim: true } },
+    ],
+    tick,
+    ctx.depth,
+  )} ${label}`;
+  return keepStage ? row + dim(stage, ctx.depth) : row;
 }
 
 export interface CheckpointCellOptions {

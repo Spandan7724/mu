@@ -272,6 +272,18 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       layer: z.union([z.literal(1), z.literal(2), z.literal(3)]),
       stage: z.enum(["clearing-tool-output", "summarizing", "installing"]),
       toolResultsCleared: z.number().int().nonnegative().optional(),
+      progress: z
+        .object({
+          sourceTokens: z.number().int().nonnegative(),
+          sourceChars: z.number().int().nonnegative(),
+          summarizedChars: z.number().int().nonnegative(),
+          request: z.number().int().positive(),
+          requestChars: z.number().int().nonnegative(),
+          outputChars: z.number().int().nonnegative(),
+          expectedOutputChars: z.number().int().positive(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   z

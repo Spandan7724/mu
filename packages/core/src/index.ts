@@ -33,6 +33,7 @@ export type {
   AgentEndReason,
   AgentEvent,
   AgentEventType,
+  CompactionProgress,
   CompactionStage,
   CompactionTrigger,
   EventSink,

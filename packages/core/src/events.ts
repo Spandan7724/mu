@@ -25,6 +25,19 @@ export type AgentEndReason = "done" | "aborted" | "budget" | "maxTurns" | "error
 export type CompactionTrigger = "manual" | "threshold" | "overflow" | "model-change";
 export type CompactionStage = "clearing-tool-output" | "summarizing" | "installing";
 
+// What the summarizer knows while it runs, in serialized characters. Consumers
+// derive any percentage; the final summary length is unknown until it ends, so
+// `expectedOutputChars` is an estimate rather than a bound.
+export interface CompactionProgress {
+  sourceTokens: number;
+  sourceChars: number;
+  summarizedChars: number;
+  request: number;
+  requestChars: number;
+  outputChars: number;
+  expectedOutputChars: number;
+}
+
 // THE contract. Every consumer (UI, session persistence, extensions, RPC
 // clients, SDK streaming) reads this union, and nothing user-visible happens
 // outside it. Every member must be JSON-serializable.
@@ -64,6 +77,7 @@ export type AgentEvent =
       layer: 1 | 2 | 3;
       stage: CompactionStage;
       toolResultsCleared?: number;
+      progress?: CompactionProgress;
     }
   | {
       type: "compaction_end";

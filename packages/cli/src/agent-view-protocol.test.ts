@@ -132,4 +132,31 @@ describe("agent-view protocol", () => {
 
     expect(parseAgentViewResponse(JSON.stringify(response))).toEqual(response);
   });
+
+  test("carries compaction progress facts and rejects unknown fields in them", () => {
+    const progress = {
+      sourceTokens: 182_804,
+      sourceChars: 731_216,
+      summarizedChars: 0,
+      request: 1,
+      requestChars: 731_216,
+      outputChars: 1_445,
+      expectedOutputChars: 6_800,
+    };
+    const response = {
+      type: "event",
+      sessionId: "s1",
+      event: { type: "compaction_update", layer: 2, stage: "summarizing", progress },
+    } as const;
+
+    expect(parseAgentViewResponse(JSON.stringify(response))).toEqual(response);
+    expect(() =>
+      parseAgentViewResponse(
+        JSON.stringify({
+          ...response,
+          event: { ...response.event, progress: { ...progress, percent: 40 } },
+        }),
+      ),
+    ).toThrow();
+  });
 });

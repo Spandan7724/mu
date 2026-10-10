@@ -88,6 +88,20 @@ const samples: AgentEvent[] = [
   { type: "compaction_start", layer: 2, trigger: "manual", contextTokensBefore: 10_000 },
   { type: "compaction_update", layer: 2, stage: "summarizing" },
   {
+    type: "compaction_update",
+    layer: 2,
+    stage: "summarizing",
+    progress: {
+      sourceTokens: 100,
+      sourceChars: 350,
+      summarizedChars: 0,
+      request: 1,
+      requestChars: 350,
+      outputChars: 20,
+      expectedOutputChars: 400,
+    },
+  },
+  {
     type: "compaction_end",
     layer: 2,
     trigger: "manual",

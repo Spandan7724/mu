@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   agentCell,
+  type CompactionProgressState,
   compactionCell,
+  compactionProgressRow,
+  compactionTargetPercent,
   diffCell,
   diffLinesFromHunks,
   errorCell,
@@ -235,6 +238,98 @@ describe("transcript cells (golden lines)", () => {
     expect(rendered).toContain("92,000 → 28,000");
     expect(rendered).toContain("64,000 freed");
     expect(rendered).toContain("7 tool outputs cleared");
+  });
+
+  test("compaction progress creeps while reading and fills as the summary streams", () => {
+    const facts = {
+      sourceTokens: 182_804,
+      sourceChars: 700_000,
+      summarizedChars: 0,
+      request: 1,
+      requestChars: 700_000,
+      outputChars: 0,
+      expectedOutputChars: 7_000,
+    };
+    const at = (state: Partial<CompactionProgressState>) =>
+      compactionTargetPercent({ stage: "summarizing", waitingMs: 0, ...state });
+
+    expect(compactionTargetPercent({ stage: "clearing-tool-output", waitingMs: 0 })).toBeLessThan(
+      5,
+    );
+    const reading = [0, 2_000, 10_000, 600_000].map((waitingMs) =>
+      at({ progress: facts, waitingMs }),
+    );
+    expect(reading).toEqual([...reading].sort((a, b) => a - b));
+    expect(reading[0]).toBe(5);
+    expect(reading.at(-1)).toBeLessThanOrEqual(20);
+
+    const streamed = [1, 3_500, 7_000, 70_000].map((outputChars) =>
+      at({ progress: { ...facts, outputChars } }),
+    );
+    expect(streamed).toEqual([...streamed].sort((a, b) => a - b));
+    expect(streamed[0]).toBeGreaterThanOrEqual(20);
+    expect(streamed.at(-1)).toBeLessThan(92);
+
+    const secondPart = at({
+      progress: { ...facts, request: 2, summarizedChars: 350_000, requestChars: 350_000 },
+    });
+    expect(secondPart).toBeGreaterThan(55);
+    expect(compactionTargetPercent({ stage: "installing", waitingMs: 0 })).toBeGreaterThan(92);
+  });
+
+  test("compaction progress row names the phase and shortens the bar before the stage", () => {
+    const progress = {
+      sourceTokens: 182_804,
+      sourceChars: 700_000,
+      summarizedChars: 0,
+      request: 1,
+      requestChars: 700_000,
+      outputChars: 0,
+      expectedOutputChars: 7_000,
+    };
+    const wide = { width: 100, depth: "none" } as const;
+    expect(
+      stripAnsi(
+        compactionProgressRow({ stage: "summarizing", progress, waitingMs: 0 }, 40, 0, wide),
+      ),
+    ).toBe("  • Compacting context ━━━━━━━━╺━━━━━━━━━━━ 40% · reading 183k tokens");
+    expect(
+      stripAnsi(
+        compactionProgressRow(
+          {
+            stage: "summarizing",
+            progress: { ...progress, request: 2, outputChars: 9 },
+            waitingMs: 0,
+          },
+          60,
+          0,
+          wide,
+        ),
+      ),
+    ).toContain("60% · summarizing part 2");
+
+    const narrow = stripAnsi(
+      compactionProgressRow({ stage: "installing", waitingMs: 0 }, 96, 0, plain),
+    );
+    expect(narrow).toContain("96% · installing checkpoint");
+    expect(stringWidth(narrow)).toBeLessThanOrEqual(plain.width);
+    const tiny = stripAnsi(
+      compactionProgressRow({ stage: "installing", waitingMs: 0 }, 96, 0, {
+        width: 40,
+        depth: "none",
+      }),
+    );
+    expect(tiny).not.toContain("installing");
+    expect(stringWidth(tiny)).toBeLessThanOrEqual(40);
+  });
+
+  test("compaction shimmer colours each glowing cell only at truecolor", () => {
+    const state = { stage: "installing", waitingMs: 0 } as const;
+    const truecolor = compactionProgressRow(state, 50, 4, { width: 100, depth: "truecolor" });
+    const ansi256 = compactionProgressRow(state, 50, 4, { width: 100, depth: "ansi256" });
+    expect(new Set(truecolor.match(/38;2;\d+;\d+;\d+/g)).size).toBeGreaterThan(2);
+    expect(ansi256).not.toContain("38;2;");
+    expect(stripAnsi(truecolor)).toBe(stripAnsi(ansi256));
   });
 
   test("a no-op compaction says so instead of reporting a boundary", () => {

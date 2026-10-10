@@ -7,6 +7,7 @@ import {
   type Usage,
   zeroUsage,
 } from "@mu/ai";
+import type { CompactionProgress } from "./events.ts";
 import type { AgentMessage } from "./messages.ts";
 import { isContextTooLongResult } from "./recovery.ts";
 
@@ -14,6 +15,8 @@ import { isContextTooLongResult } from "./recovery.ts";
 // available and estimated otherwise; the estimate is deliberately conservative
 // (over- rather than under-reporting) so the trigger fires before a hard fail.
 const CHARS_PER_TOKEN = 3.5;
+// Streamed-summary progress is a display signal; bound how often it is reported.
+const PROGRESS_INTERVAL_MS = 100;
 
 export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
@@ -251,6 +254,9 @@ export interface CompactorOptions {
   // Budget available for the installed transcript, excluding instructions/tools/output.
   contextTokens?: number;
   canContinue?: (usage: Usage) => boolean;
+  // Reported for the handoff summary only; condensing an oversized retained tool
+  // observation and re-shortening an oversized handoff report nothing.
+  onProgress?: (progress: CompactionProgress) => void;
 }
 
 // Layer 2 — full compaction. Core owns the machinery; the profile injects what
@@ -330,8 +336,16 @@ export async function compact(
     previous = "",
     outputTokens = maxTokens,
     observation = false,
+    report?: (progress: CompactionProgress) => void,
   ): Promise<string> {
     let summary = previous;
+    const sourceTokens = estimateTextTokens(source);
+    const outputCap = Math.floor(outputTokens * CHARS_PER_TOKEN);
+    const expectedOutputChars = Math.max(
+      1,
+      previous ? Math.min(previous.length, outputCap) : Math.floor(outputCap / 2),
+    );
+    let part = 0;
     if (estimateTextTokens(summary) > outputTokens) {
       source = `[Previous handoff]\n${summary}\n${source}`;
       summary = "";
@@ -361,6 +375,17 @@ export async function compact(
         throw new Error("context window is too small for the handoff and evidence");
       const size = Math.min(available, retryChars ?? available);
       const chunk = source.slice(cursor, cursor + size);
+      if (failures === 0) part++;
+      const progress = (outputChars: number): CompactionProgress => ({
+        sourceTokens,
+        sourceChars: source.length,
+        summarizedChars: cursor,
+        request: part,
+        requestChars: chunk.length,
+        outputChars,
+        expectedOutputChars,
+      });
+      report?.(progress(0));
       const context: LlmContext = {
         systemPrompt: [{ text: instructions }],
         messages: [
@@ -376,14 +401,25 @@ export async function compact(
           },
         ],
       };
-      const result = await options.provider
-        .stream(options.model, context, {
-          ...options.streamOpts,
-          sessionId: `${options.streamOpts?.sessionId ?? "mu"}:compact:${Date.now().toString(36)}:${requests++}`,
-          maxTokens: outputTokens,
-          ...(options.signal ? { signal: options.signal } : {}),
-        })
-        .result();
+      const stream = options.provider.stream(options.model, context, {
+        ...options.streamOpts,
+        sessionId: `${options.streamOpts?.sessionId ?? "mu"}:compact:${Date.now().toString(36)}:${requests++}`,
+        maxTokens: outputTokens,
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      if (report) {
+        let outputChars = 0;
+        let reportedAt = 0;
+        for await (const event of stream) {
+          if (event.type !== "text_delta") continue;
+          outputChars += event.delta.length;
+          const now = Date.now();
+          if (now - reportedAt < PROGRESS_INTERVAL_MS) continue;
+          reportedAt = now;
+          report(progress(outputChars));
+        }
+      }
+      const result = await stream.result();
       usage = addUsage(usage, result.usage);
       options.signal?.throwIfAborted();
       if (
@@ -461,7 +497,14 @@ export async function compact(
     );
     const summary =
       toSummarize.length > 0 || replacements.length > 0
-        ? await summarize(source, referenceFor(keptMessages), previous ? textBlocks(previous) : "")
+        ? await summarize(
+            source,
+            referenceFor(keptMessages),
+            previous ? textBlocks(previous) : "",
+            maxTokens,
+            false,
+            options.onProgress,
+          )
         : "";
     const compacted: CompactionResult = {
       summary,

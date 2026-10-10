@@ -448,6 +448,52 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("• Context compacted");
   });
 
+  test("compaction progress eases forward on spinner ticks and settles into the boundary", () => {
+    const h = harness();
+    const percent = () =>
+      Number(
+        h.app
+          .renderBottom()
+          .map(stripAnsi)
+          .find((line) => line.includes("Compacting context"))
+          ?.match(/(\d+)%/)?.[1] ?? Number.NaN,
+      );
+    h.app.handleEvent({ type: "agent_start" });
+    h.app.handleEvent({ type: "compaction_start", layer: 2, trigger: "manual" });
+    h.app.handleEvent({
+      type: "compaction_update",
+      layer: 2,
+      stage: "summarizing",
+      progress: {
+        sourceTokens: 50_000,
+        sourceChars: 175_000,
+        summarizedChars: 0,
+        request: 1,
+        requestChars: 175_000,
+        outputChars: 3_000,
+        expectedOutputChars: 4_000,
+      },
+    });
+    expect(percent()).toBe(0);
+    const seen: number[] = [];
+    for (let tick = 0; tick < 30; tick++) {
+      h.app.tickSpinner();
+      seen.push(percent());
+    }
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(seen.at(-1)).toBeGreaterThan(60);
+    expect(seen.at(-1)).toBeLessThan(92);
+
+    const lines = h.app.handleEvent({
+      type: "compaction_end",
+      layer: 2,
+      tokensFreed: 40_000,
+      status: "completed",
+    });
+    expect(stripAnsi(lines[0] ?? "")).toContain("• Context compacted");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("Compacting context");
+  });
+
   test("compaction shows its stage and queues enter as a follow-up", () => {
     const h = harness();
     h.app.handleEvent({ type: "agent_start" });
@@ -459,10 +505,11 @@ describe("fake-agent session", () => {
     });
     h.app.handleEvent({ type: "compaction_update", layer: 2, stage: "installing" });
 
-    const running = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(running).toContain("compacting context");
-    expect(running).toContain("installing checkpoint");
-    expect(running.replace(/\s+/g, " ")).toContain("enter queue");
+    const running = h.app.renderBottom().map(stripAnsi);
+    const row = running.find((line) => line.includes("Compacting context")) ?? "";
+    expect(row).toContain("installing checkpoint");
+    expect(running.indexOf(row)).toBeLessThan(running.findIndex((line) => line.includes("╭")));
+    expect(running.join(" ").replace(/\s+/g, " ")).toContain("enter queue · esc cancel");
     feed(h.app, "continue after compaction\r");
     expect(h.followUps).toEqual(["continue after compaction"]);
     expect(h.steers).toEqual([]);

@@ -761,6 +761,8 @@ export class Agent {
           ? { carryoverExtractor: this.options.carryoverExtractor }
           : {}),
         signal: this.controller.signal,
+        onProgress: (progress) =>
+          emit({ type: "compaction_update", layer: 2, stage: "summarizing", progress }),
         streamOpts: {
           sessionId: this._sessionId,
           ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
@@ -1859,6 +1861,8 @@ export class Agent {
               : {}),
             ...(focus ? { customInstructions: focus } : {}),
             signal: this.controller.signal,
+            onProgress: (progress) =>
+              emit({ type: "compaction_update", layer, stage: "summarizing", progress }),
           });
           compactionUsage = result.usage;
           let compacted = applyCompaction(result);
