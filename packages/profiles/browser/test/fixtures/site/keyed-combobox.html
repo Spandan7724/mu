@@ -5,7 +5,8 @@
 <body>
 <h1>Contact</h1>
 <!-- Like react-select (Greenhouse): the list opens on key events, not on inserted text,
-     and filters by substring; aria-controls names it only while it is open. -->
+     and filters by substring; aria-controls names it only while it is open, and typed
+     text that was not picked is dropped on blur. -->
 <label id="country-label" for="country">Country</label>
 <input id="country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="country-label" autocomplete="off">
 <p>Country: <span id="country-value">none</span></p>
@@ -53,6 +54,6 @@ function render() {
 }
 input.addEventListener('keydown', () => setTimeout(render));
 input.addEventListener('input', () => { if (menu) render(); });
-input.addEventListener('blur', close);
+input.addEventListener('blur', () => { input.value = ''; close(); });
 </script>
 </body></html>

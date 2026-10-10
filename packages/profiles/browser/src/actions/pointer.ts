@@ -103,11 +103,25 @@ function quadArea(points: number[]): number {
 }
 
 // A visible point on the element in its session's viewport coordinates, or undefined.
+const SCROLL_SETTLE_MS = 1_500;
+const SCROLL_POLL_MS = 50;
+
 export async function clickablePoint(
   target: ResolvedRef,
   viewport: { width: number; height: number },
   signal?: AbortSignal,
 ): Promise<Point | undefined> {
+  const read = async () =>
+    (
+      await target.session
+        .send(
+          "DOM.getContentQuads",
+          { backendNodeId: target.backendNodeId },
+          { signal, timeoutMs: 3_000 },
+        )
+        .catch(() => undefined)
+    )?.quads ?? [];
+  const before = await read();
   await target.session
     .send(
       "DOM.scrollIntoViewIfNeeded",
@@ -115,14 +129,18 @@ export async function clickablePoint(
       { signal, timeoutMs: 3_000 },
     )
     .catch(() => {});
-  const result = await target.session
-    .send(
-      "DOM.getContentQuads",
-      { backendNodeId: target.backendNodeId },
-      { signal, timeoutMs: 3_000 },
-    )
-    .catch(() => undefined);
-  const quads: Quad[] = (result?.quads ?? [])
+  let raw = await read();
+  // Smooth scrolling (CSS, or a widget scrolling its menu into view) keeps moving the
+  // element after the call returns; aiming before it stops clicks what passes under it.
+  if (JSON.stringify(raw) !== JSON.stringify(before)) {
+    for (let waited = 0; waited < SCROLL_SETTLE_MS; waited += SCROLL_POLL_MS) {
+      await new Promise((resolve) => setTimeout(resolve, SCROLL_POLL_MS));
+      const next = await read();
+      if (JSON.stringify(next) === JSON.stringify(raw)) break;
+      raw = next;
+    }
+  }
+  const quads: Quad[] = raw
     .map((points) => ({ points, area: quadArea(points) }))
     .filter((quad) => quad.area > 1);
   if (quads.length === 0) return undefined;

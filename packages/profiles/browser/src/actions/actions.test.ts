@@ -284,6 +284,53 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(ack.text).toContain("Sponsorship: none");
   });
 
+  test("fill_form picks from key-driven lists and never reports dropped text as filled", async () => {
+    await open("keyed-combobox");
+    const country = refIn(page, "combobox", "Country");
+    const filled = await run("fill_form", { fields: [{ ref: country, value: "India" }] });
+    expect(filled.text).toStartWith('filled 1 field (combobox "Country" [e1])');
+    expect(filled.text).toContain('picked suggestion "India +91"');
+    expect(filled.text).toContain("Country: India +91");
+    const punctuated = await run("fill_form", {
+      fields: [{ ref: country, value: "Ireland (+353)" }],
+    });
+    expect(punctuated.result.isError).toBeUndefined();
+    expect(punctuated.text).toContain("Country: Ireland +353");
+    const dropped = await run("fill_form", { fields: [{ ref: country, value: "Atlantis" }] });
+    expect(dropped.result.isError).toBe(true);
+    expect(dropped.text).toStartWith("filled 0 of 1 field; 1 failed");
+    expect(dropped.text).toContain('lists no option matching "Atlantis"');
+    expect(dropped.text).toContain("Country: Ireland +353");
+    // Free-text autocompletes keep typed text that matches no suggestion.
+    await open("combobox");
+    const city = await run("fill_form", {
+      fields: [{ ref: refIn(page, "combobox", "City"), value: "Zzyzx" }],
+    });
+    expect(city.result.isError).toBeUndefined();
+    expect(city.text).toMatch(/combobox "City" \[ref=e\d+\][^\n]*: Zzyzx/);
+  });
+
+  test("fill_form sets a checkbox or radio through the clickable wrapper around it", async () => {
+    await open("tabpanel-form");
+    const wrapper = /clickable \[ref=(e\d+)\]\n\s+- radio "TN"/.exec(page)?.[1] as string;
+    const filled = await run("fill_form", { fields: [{ ref: wrapper, value: true }] });
+    expect(filled.text).toStartWith("filled 1 field");
+    expect(filled.text).toMatch(/radio "TN" \[ref=e\d+\] \[checked\]/);
+    const opt = /clickable \[ref=(e\d+)\]\n\s+- radio "OPT"/.exec(page)?.[1];
+    expect(opt).toBeUndefined();
+  });
+
+  test("click waits for a page that keeps scrolling before aiming", async () => {
+    await open("moving-scroll");
+    const full = await run("snapshot", { scope: "full" });
+    await run("click", { ref: refIn(full.text, "button", "Target") });
+    const { result } = await (await profile.browser.activeTab()).session.send("Runtime.evaluate", {
+      expression: "document.getElementById('result').textContent",
+      returnByValue: true,
+    });
+    expect(result.value).toBe("target");
+  });
+
   test("clicking a native select redirects to select with its options", async () => {
     await open("form-basic");
     const clicked = await run("click", { ref: refIn(page, "combobox", "Country") });

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Moving scroll</title>
+<style>body{font-family:sans-serif;margin:20px} button{display:block;height:12px;width:200px;padding:0;font-size:8px}</style></head>
+<body>
+<h1>Keeps scrolling</h1>
+<p>Result: <output id="result">none</output></p>
+<div style="height:1600px"></div>
+<button type="button" onclick="document.getElementById('result').textContent = 'target'">Target</button>
+<div style="height:1600px"></div>
+<script>
+// Like react-select's animated menu scroll: a scroll starts an animation that keeps
+// moving the page for a while after the scroll that triggered it.
+let animating = false;
+addEventListener('scroll', () => {
+  if (animating) return;
+  animating = true;
+  const start = scrollY, began = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - began) / 500);
+    scrollTo(0, start + 500 * t);
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+});
+</script>
+</body></html>

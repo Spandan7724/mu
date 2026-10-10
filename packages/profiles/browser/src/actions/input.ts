@@ -334,6 +334,8 @@ export async function setChecked(
   const label = tab.refs.label(ref);
   const info = await fieldInfo(target, signal);
   if (!info.checkable) {
+    const inner = await soleCheckable(ctx, ref);
+    if (inner) return setChecked(ctx, inner, checked);
     return {
       ok: false,
       kind: "not-interactable",
@@ -368,6 +370,26 @@ export async function setChecked(
   return { ...clicked, summary: `${checked ? "checked" : "unchecked"} ${label}` };
 }
 
+const CHECKABLE_ROLES = new Set([
+  "checkbox",
+  "radio",
+  "switch",
+  "menuitemcheckbox",
+  "menuitemradio",
+]);
+
+// A clickable wrapper around a single checkbox or radio stands for that control.
+async function soleCheckable(ctx: ActionContext, ref: string): Promise<string | undefined> {
+  const model = await ctx.stopwatch.time("snapshotMs", () =>
+    capturePage(ctx.tab, { scope: "full", signal: ctx.signal }),
+  );
+  const wrapper = findNode(model.root, ref);
+  const inner = wrapper
+    ? collect(wrapper).filter((node) => node !== wrapper && CHECKABLE_ROLES.has(node.role))
+    : [];
+  return inner.length === 1 ? inner[0]?.ref : undefined;
+}
+
 function collect(node: PageNode, out: PageNode[] = []): PageNode[] {
   out.push(node);
   for (const child of node.children) collect(child, out);
@@ -396,7 +418,11 @@ function loose(text: string): string {
     .trim();
 }
 
-function pickOption(candidates: PageNode[], wanted: string): PageNode | undefined {
+function pickOption(
+  candidates: PageNode[],
+  wanted: string,
+  loosest: "contains" | "starts" = "contains",
+): PageNode | undefined {
   const named = candidates.filter((node) => node.ref && node.name);
   const byRole = (nodes: PageNode[]) => nodes.find((node) => node.role === "option") ?? nodes[0];
   const exact = named.filter(
@@ -408,7 +434,7 @@ function pickOption(candidates: PageNode[], wanted: string): PageNode | undefine
   for (const matches of [
     (name: string) => name === target,
     (name: string) => name.startsWith(target),
-    (name: string) => name.includes(target),
+    ...(loosest === "contains" ? [(name: string) => name.includes(target)] : []),
   ]) {
     const found = named.filter((node) => matches(loose(node.name)));
     if (found.length > 0) return byRole(found);
@@ -492,7 +518,9 @@ async function openedList(
     signal,
   ).catch(() => null);
   const popup = await popupNodeIds(target, signal).catch(() => new Set<number>());
-  const nodes = collect(model.root).filter((node) => node.ref !== target.ref && node.inViewport);
+  const nodes = collect(model.root).filter((node) => node.ref !== target.ref);
+  // The combobox's own list counts even where it runs past the viewport (it opens
+  // below the field); anything else must be on screen.
   if (popup.size > 0) {
     const inside = nodes.filter(
       (node) =>
@@ -506,7 +534,7 @@ async function openedList(
       expanded,
     };
   }
-  const appeared = nodes.filter((node) => !before.has(shownKey(node)));
+  const appeared = nodes.filter((node) => node.inViewport && !before.has(shownKey(node)));
   return {
     candidates: appeared.filter((node) => OPTION_ROLES.has(node.role) && node.ref),
     notes: appeared.filter((node) => node.kind === "text" && node.name).map((node) => node.name),
@@ -690,26 +718,51 @@ async function chooseInGroup(
   return clickRef(ctx, radio.ref);
 }
 
-// After typing into an autocomplete, take the suggestion that is the typed value
-// (or starts with it); anything looser keeps the typed text.
-async function takeSuggestion(
+// A checkbox or radio given text: its own label ("No" for the radio "No") checks it.
+function checkedBy(ctx: ActionContext, ref: string, value: string): boolean {
+  const name = ctx.tab.refs.meta(ref)?.name ?? "";
+  if (name && loose(name) === loose(value)) return true;
+  return !/^(false|no|off|0|)$/i.test(value);
+}
+
+// Typed with keystrokes so key-driven lists open; a suggestion that is the value (or
+// starts with it) is taken, anything looser keeps the typed text. Text the field drops
+// when it loses focus (react-select) was never its value: then pick from the list.
+async function fillCombobox(
   ctx: ActionContext,
-  ref: string,
-  typed: string,
-): Promise<string | undefined> {
-  const model = await ctx.stopwatch.time("snapshotMs", () =>
-    capturePage(ctx.tab, { scope: "full", signal: ctx.signal }),
+  target: ResolvedRef,
+  value: string,
+): Promise<ActionResult> {
+  const { tab, signal } = ctx;
+  const before = shown(
+    await ctx.stopwatch.time("snapshotMs", () => capturePage(tab, { scope: "full", signal })),
   );
-  const target = typed.trim().toLowerCase();
-  const options = collect(model.root).filter(
-    (node) => node.ref && node.ref !== ref && node.role === "option" && node.inViewport,
+  const typed = await typeText(ctx, target.ref, value, { keystrokes: true });
+  if (typed.ok === false) return typed;
+  const list = await openedList(ctx, target, before);
+  const suggestion = pickOption(list.candidates, value, "starts");
+  if (suggestion?.ref) {
+    const clicked = await clickRef(ctx, suggestion.ref);
+    if (clicked.ok === false) return clicked;
+    return {
+      ...typed,
+      summary: `${typed.summary}; picked suggestion ${JSON.stringify(suggestion.name)}`,
+    };
+  }
+  const kept = await call<string>(
+    target,
+    `function () {
+      this.blur();
+      var el = this;
+      return new Promise(function (done) {
+        setTimeout(function () { done(String(el.isContentEditable ? el.innerText : el.value == null ? "" : el.value)); }, 50);
+      });
+    }`,
+    [],
+    signal,
   );
-  const match =
-    options.find((node) => node.name.trim().toLowerCase() === target) ??
-    options.find((node) => node.name.trim().toLowerCase().startsWith(target));
-  if (!match?.ref) return undefined;
-  const clicked = await clickRef(ctx, match.ref);
-  return clicked.ok === false ? undefined : match.name;
+  if (loose(kept).includes(loose(value))) return typed;
+  return selectOptions(ctx, target.ref, [value]);
 }
 
 // Labels of fields that take a date even when the page does not say so in markup.
@@ -880,9 +933,12 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<ActionRe
   }
   const target = await resolveRef(ctx.tab, field.ref, ctx.signal);
   const info = await fieldInfo(target, ctx.signal);
-  if (info.tag === "select" || (info.editable === "none" && !info.checkable))
+  if (info.tag === "select" || (info.editable === "none" && !info.checkable)) {
+    const inner = info.tag === "select" ? undefined : await soleCheckable(ctx, field.ref);
+    if (inner) return setChecked(ctx, inner, checkedBy(ctx, inner, field.value));
     return selectOptions(ctx, field.ref, [field.value]);
-  if (info.checkable) return setChecked(ctx, field.ref, !/^(false|no|off|0|)$/i.test(field.value));
+  }
+  if (info.checkable) return setChecked(ctx, field.ref, checkedBy(ctx, field.ref, field.value));
   const date = parseDate(field.value);
   if (
     date &&
@@ -891,12 +947,8 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<ActionRe
       DATE_FIELD.test(ctx.tab.refs.label(field.ref)))
   )
     return setDate(ctx, field.ref, field.value, date, info);
-  const typed = await typeText(ctx, field.ref, field.value, { settle: info.combobox });
-  if (typed.ok === false || !info.combobox) return typed;
-  const picked = await takeSuggestion(ctx, field.ref, field.value);
-  return picked
-    ? { ...typed, summary: `${typed.summary}; picked suggestion ${JSON.stringify(picked)}` }
-    : typed;
+  if (info.combobox) return fillCombobox(ctx, target, field.value);
+  return typeText(ctx, field.ref, field.value, { settle: false });
 }
 
 // Fills every field it can and reports the rest, so one call covers a whole form
