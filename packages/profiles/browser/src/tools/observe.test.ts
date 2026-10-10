@@ -80,7 +80,7 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(body).toContain("Fill in the form and we will get back to you");
     expect(body).toContain('[button "Send message" [ref=e14]]');
     expect(body).not.toContain("Pricing");
-    expect(read.retention?.key).toBe("browser:read_page");
+    expect(read.retention?.key).toBe(`browser:read_page ${site.url("form-basic")}`);
     await run("navigate", { url: site.url("long") });
     const longRead = text(await run("read_page", {}));
     expect(longRead).toContain("reading: whole page\n");

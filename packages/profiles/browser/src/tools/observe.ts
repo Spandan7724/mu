@@ -143,7 +143,7 @@ export function readPageTool(deps: BrowserToolDeps) {
   return tool({
     name: "read_page",
     description:
-      "Read the whole page as compact markdown (headings, text, lists, tables, links with refs), without scrolling; its site header, navigation, footer and sidebars are kept as text only. Pass query to keep only sections mentioning it (searches everything, menus included); pass offset to continue a long page. Copy anything you need to keep into notes: older read_page output is collapsed later.",
+      "Read the whole page as compact markdown (headings, text, lists, tables, links with refs), without scrolling; its site header, navigation, footer and sidebars are kept as text only. Pass query to keep only sections mentioning it (searches everything, menus included); pass offset to continue a long page. Copy anything you need to keep into notes: reading the same page again collapses the older read, and all older reads collapse once the context fills up.",
     inputSchema: z.object({
       query: z.string().optional().describe("Keep only sections mentioning these words"),
       offset: z.number().int().min(0).optional().describe("Character offset to continue from"),
@@ -205,8 +205,10 @@ export function readPageTool(deps: BrowserToolDeps) {
           title: model.title,
           tabId: tab.tabId,
         },
+        // One key per page (and query and offset): reading another page keeps this read in
+        // view; only re-reading the same thing, or context pressure, collapses it.
         retention: {
-          key: "browser:read_page",
+          key: `browser:read_page ${model.url.split("#")[0]}${query ? ` query:${query.trim().toLowerCase()}` : ""}${page.start ? ` offset:${page.start}` : ""}`,
           summary: `${summary} (content collapsed; keep data in notes)`,
         },
       };

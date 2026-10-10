@@ -180,3 +180,59 @@ describeWithBrowser("live-tab cap", () => {
     await agent.shutdown();
   });
 });
+
+describeWithBrowser("read_page retention per page", () => {
+  const home = tempUserDataDir();
+  let site: FixtureSite;
+  let profile: BrowserProfile;
+  beforeAll(async () => {
+    site = startFixtureSite();
+    profile = await browserProfile({
+      home,
+      headless: true,
+      keepOpen: false,
+      vision: "off",
+      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+    });
+  });
+  afterAll(async () => {
+    await profile.browser.shutdown({ close: true });
+    site.stop();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test("reading another page keeps earlier reads; re-reading the same page collapses its older read", async () => {
+    const provider = new FakeProvider([
+      call("r1", "navigate", { url: site.url("form-basic") }),
+      call("r2", "read_page", {}),
+      call("r3", "read_page", {}),
+      call("r4", "navigate", { url: site.url("custom-select") }),
+      call("r5", "read_page", {}),
+      call("r6", "navigate", { url: site.url("long") }),
+      call("r7", "read_page", {}),
+      call("r8", "read_page", { offset: 100 }),
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+    );
+    await agent.run("compare pages");
+    const reads = new Map(
+      (provider.requests.at(-1)?.messages ?? []).flatMap((message) =>
+        message.role === "toolResult" && message.toolName === "read_page"
+          ? [
+              [
+                message.toolCallId,
+                message.content.map((block) => (block.type === "text" ? block.text : "")).join(""),
+              ] as const,
+            ]
+          : [],
+      ),
+    );
+    expect(reads.get("r2")).toMatch(
+      /^read_page chars 0–\d+ of \d+ \(content collapsed; keep data in notes\)$/,
+    );
+    for (const id of ["r3", "r5", "r7", "r8"]) expect(reads.get(id)).toContain("<page_content");
+    await agent.shutdown();
+  });
+});
