@@ -15,7 +15,15 @@ export interface MicrocompactionOptions {
   imageRetentionTurns?: number;
   imageBudgetTokens?: number;
   imagesOnly?: boolean;
+  // Shorten a superseded keyed tool result only within this many assistant turns of the
+  // end. Rewriting an earlier message invalidates the prompt cache for everything after
+  // it, which costs more than carrying the stale result; a pass without this (context
+  // pressure, manual compaction) shortens the rest at once.
+  supersedeWithinTurns?: number;
 }
+
+// Below pressure the agent loop shortens superseded results only this close to the end.
+export const SUPERSEDE_WITHIN_TURNS = 2;
 
 export interface MicrocompactionResult {
   messages: AgentMessage[];
@@ -46,6 +54,15 @@ export function microcompact(
 
   const underTarget = () => target !== undefined && estimateTokens(result) <= target;
 
+  const assistants: number[] = [];
+  result.forEach((message, index) => {
+    if (message.role === "assistant") assistants.push(index);
+  });
+  const recentFrom =
+    options.supersedeWithinTurns === undefined
+      ? -1
+      : (assistants.at(-(options.supersedeWithinTurns + 1)) ?? -1);
+
   const newestResult = new Map<string, number>();
   result.forEach((message, index) => {
     if (message.role === "toolResult" && message.retention)
@@ -55,7 +72,8 @@ export function microcompact(
     if (
       message.role !== "toolResult" ||
       !message.retention ||
-      newestResult.get(message.retention.key) === index
+      newestResult.get(message.retention.key) === index ||
+      index < recentFrom
     )
       return;
     const { retention, ...rest } = message;

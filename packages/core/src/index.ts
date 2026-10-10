@@ -80,6 +80,7 @@ export {
   IMAGE_TOMBSTONE,
   MICROCOMPACT_THRESHOLD,
   microcompact,
+  SUPERSEDE_WITHIN_TURNS,
   TOMBSTONE,
 } from "./microcompaction.ts";
 export type {

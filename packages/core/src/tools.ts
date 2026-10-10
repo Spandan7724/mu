@@ -11,7 +11,8 @@ export interface ToolResult {
   // When every call in a batch returns terminate, the loop stops after it.
   terminate?: boolean;
   // Only the newest result carrying a key stays verbatim. Older results with the
-  // same key are replaced by `summary` during microcompaction.
+  // same key are replaced by `summary` during microcompaction: within the last two turns
+  // right away, earlier ones once the context is under pressure (prompt-cache prefix).
   retention?: { key: string; summary: string };
 }
 

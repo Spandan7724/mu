@@ -176,6 +176,78 @@ describe("tool-result retention", () => {
     expect(result.messages[0]?.content).toEqual([{ type: "text", text: "summary of failed" }]);
   });
 
+  const turn = (id: string): AgentMessage =>
+    ({
+      role: "assistant",
+      content: [{ type: "toolCall", id, name: "tool", arguments: {} }],
+      timestamp: 1,
+    }) as unknown as AgentMessage;
+  const text = (message: AgentMessage | undefined) =>
+    message?.content[0]?.type === "text" ? message.content[0].text : undefined;
+
+  test("below pressure, a superseded result is shortened only within the last two turns", () => {
+    const messages: AgentMessage[] = [
+      userMessage("task"),
+      turn("1"),
+      observation("read", "page one"),
+      turn("2"),
+      observation("state", "after click"),
+      turn("3"),
+      observation("state", "after type"),
+      turn("4"),
+      observation("read", "page two"),
+    ];
+    const result = microcompact(messages, { imagesOnly: true, supersedeWithinTurns: 2 });
+
+    expect(result.messages[2]).toBe(messages[2]);
+    expect(text(result.messages[4])).toBe("summary of after click");
+    expect(result.messages[6]).toBe(messages[6]);
+    expect(result.evicted).toBe(1);
+    const pressured = microcompact(result.messages, { imagesOnly: false });
+    expect(text(pressured.messages[2])).toBe("summary of page one");
+  });
+
+  test("a growing session never rewrites a message more than two turns back", () => {
+    const keys = ["state", "read", "state", "state", "read", "state", "find", "state", "read"];
+    let messages: AgentMessage[] = [userMessage("task")];
+    let previous = messages;
+    keys.forEach((key, index) => {
+      messages = [...messages, turn(String(index)), observation(key, `${key} ${index}`)];
+      messages = microcompact(messages, { imagesOnly: true, supersedeWithinTurns: 2 }).messages;
+      const changed = previous.findIndex((message, at) => messages[at] !== message);
+      const assistants = messages.flatMap((message, at) =>
+        message.role === "assistant" ? [at] : [],
+      );
+      if (changed >= 0) expect(changed).toBeGreaterThan(assistants.at(-3) ?? -1);
+      previous = messages;
+    });
+    expect(text(messages[4])).toBe("read 1");
+    expect(text(messages[10])).toBe("read 4");
+  });
+
+  test("superseded context snapshots are still replaced at once", () => {
+    const snapshot = (body: string): AgentMessage =>
+      ({
+        role: "custom",
+        customType: "instructions",
+        content: [{ type: "text", text: body }],
+        display: false,
+        timestamp: 1,
+        retention: { key: "instructions" },
+      }) as AgentMessage;
+    const messages: AgentMessage[] = [
+      snapshot("old rules"),
+      turn("1"),
+      toolResult("work"),
+      turn("2"),
+      toolResult("more work"),
+      turn("3"),
+      snapshot("new rules"),
+    ];
+    const result = microcompact(messages, { imagesOnly: true, supersedeWithinTurns: 2 });
+    expect(text(result.messages[0])).toBe("[Context snapshot superseded: instructions]");
+  });
+
   test("a second pass over already-superseded results changes nothing", () => {
     const first = microcompact([observation("state", "a"), observation("state", "b")]);
     const second = microcompact(first.messages);

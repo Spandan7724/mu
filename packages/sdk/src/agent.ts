@@ -48,6 +48,7 @@ import {
   SESSION_VERSION,
   type SessionStore,
   SessionTree,
+  SUPERSEDE_WITHIN_TURNS,
   shouldCompact,
   type TurnInfo,
   type UserContent,
@@ -1761,6 +1762,9 @@ export class Agent {
         if (auto && !this.compactRequested) {
           const micro = microcompact(working, {
             imagesOnly: state.percent < MICROCOMPACT_THRESHOLD,
+            ...(state.percent < MICROCOMPACT_THRESHOLD
+              ? { supersedeWithinTurns: SUPERSEDE_WITHIN_TURNS }
+              : {}),
             imageRetentionTurns: this.options.imageRetentionTurns ?? 3,
             imageBudgetTokens:
               this.options.imageBudgetTokens ?? Math.floor(runModel.contextWindow * 0.1),

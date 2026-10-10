@@ -96,7 +96,7 @@ describeWithBrowser("per-tab retention", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test("each open tab keeps its latest page state; older states of a tab collapse", async () => {
+  test("each open tab keeps its latest page state; a tab's older state collapses within two turns", async () => {
     const provider = new FakeProvider([
       call("b1", "navigate", { url: site.url("form-basic") }),
       call("b2", "tabs", { action: "open", url: site.url("long") }),
@@ -118,7 +118,10 @@ describeWithBrowser("per-tab retention", () => {
         ),
       )
       .map((message) => message.toolCallId);
-    expect(full).toEqual(["b3", "b4"]);
+    // t2's scroll replaced its page a turn later, so that page collapsed. t1's first page
+    // was replaced three turns later: it waits for context pressure instead of rewriting
+    // the cached prefix.
+    expect(full).toEqual(["b1", "b3", "b4"]);
     await agent.shutdown();
   });
 });
@@ -143,7 +146,7 @@ describeWithBrowser("live-tab cap", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  test("only the three most recently observed tabs stay in full; a closed tab's slot is reused", async () => {
+  test("three live-observation slots; a reused slot's page collapses within two turns; a closed tab's slot is reused", async () => {
     const provider = new FakeProvider([
       call("c1", "navigate", { url: site.url("form-basic") }),
       call("c2", "tabs", { action: "open", url: site.url("long") }),
@@ -167,12 +170,13 @@ describeWithBrowser("live-tab cap", () => {
             ),
         )
         .map((message) => (message.role === "toolResult" ? message.toolCallId : ""));
-    // After four tabs: the first tab's page collapsed, the latest three remain.
-    expect(live(4)).toEqual(["c2", "c3", "c4"]);
-    // Closing t4 re-observes the tab it lands on; the next new tab takes t4's slot.
-    expect(live(6)).not.toContain("c4");
-    expect(live(6).length).toBeLessThanOrEqual(3);
-    expect(live(6)).toContain("c6");
+    // The fourth tab takes the first tab's slot three turns after it was observed, so that
+    // page waits for context pressure rather than rewriting the cached prefix.
+    expect(live(4)).toEqual(["c1", "c2", "c3", "c4"]);
+    // Closing t4 re-observes t3 (its older page collapses); the next new tab takes t4's
+    // slot, collapsing t4's page two turns later.
+    expect(live(5)).toEqual(["c1", "c2", "c4", "c5"]);
+    expect(live(6)).toEqual(["c1", "c2", "c5", "c6"]);
     await agent.shutdown();
   });
 });
