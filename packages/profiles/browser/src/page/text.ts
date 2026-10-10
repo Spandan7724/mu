@@ -3,7 +3,19 @@ import { describeNode, displayUrl } from "./render.ts";
 
 export const READ_PAGE_CHARS = 12_000;
 
-const SKIPPED_OUTSIDE_MAIN = new Set(["navigation", "banner", "contentinfo", "complementary"]);
+// Site chrome outside the main content: read as text only, its links and controls counted.
+const PAGE_CHROME: Record<string, string> = {
+  banner: "header",
+  navigation: "navigation",
+  contentinfo: "footer",
+  complementary: "sidebar",
+};
+const CONTENT_ROLES = new Set(["main", "article"]);
+
+interface Omitted {
+  links: number;
+  controls: number;
+}
 
 function linkText(node: PageNode, pageUrl: string): string {
   const label = node.name || node.url || "link";
@@ -35,9 +47,41 @@ function inline(node: PageNode, pageUrl: string): string {
   return [own, ...children].filter(Boolean).join(" ");
 }
 
-function toMarkdown(node: PageNode, pageUrl: string, out: string[], listDepth: number): void {
+interface MarkdownContext {
+  // Set while compacting: chrome outside the content is reduced to its text.
+  omitted?: Omitted;
+  inContent: boolean;
+}
+
+function toMarkdown(
+  node: PageNode,
+  pageUrl: string,
+  out: string[],
+  listDepth: number,
+  context: MarkdownContext,
+): void {
+  const chrome = PAGE_CHROME[node.role];
+  if (chrome && !context.inContent) {
+    const label = `${chrome}${node.name ? ` "${node.name}"` : ""}`;
+    if (!context.omitted) {
+      out.push(`[${label}]`);
+    } else {
+      const lines: string[] = [];
+      const omitted: Omitted = { links: 0, controls: 0 };
+      for (const child of node.children) chromeText(child, lines, omitted);
+      context.omitted.links += omitted.links;
+      context.omitted.controls += omitted.controls;
+      const counts = [count(omitted.links, "link"), count(omitted.controls, "control")].filter(
+        Boolean,
+      );
+      if (lines.length === 0 && counts.length === 0) return;
+      out.push(`[${label}${counts.length ? `: ${counts.join(", ")} not listed` : ""}]`, ...lines);
+      return;
+    }
+  }
+  if (CONTENT_ROLES.has(node.role) && !context.inContent) context = { ...context, inContent: true };
   const children = () => {
-    for (const child of node.children) toMarkdown(child, pageUrl, out, listDepth);
+    for (const child of node.children) toMarkdown(child, pageUrl, out, listDepth, context);
   };
   switch (node.role) {
     case "heading":
@@ -47,7 +91,7 @@ function toMarkdown(node: PageNode, pageUrl: string, out: string[], listDepth: n
       out.push(`${"  ".repeat(Math.max(0, listDepth - 1))}- ${inline(node, pageUrl)}`);
       return;
     case "list":
-      for (const child of node.children) toMarkdown(child, pageUrl, out, listDepth + 1);
+      for (const child of node.children) toMarkdown(child, pageUrl, out, listDepth + 1, context);
       return;
     case "row": {
       const cells = node.children.map((child) => inline(child, pageUrl).replace(/\|/g, "\\|"));
@@ -78,26 +122,96 @@ function toMarkdown(node: PageNode, pageUrl: string, out: string[], listDepth: n
   children();
 }
 
-function findMain(node: PageNode): PageNode | undefined {
-  if (node.role === "main") return node;
-  for (const child of node.children) {
-    const found = findMain(child);
-    if (found) return found;
+const count = (n: number, noun: string) => (n ? `${n} ${noun}${n === 1 ? "" : "s"}` : "");
+
+function countControls(node: PageNode, omitted: Omitted): void {
+  if (node.kind === "interactive") {
+    if (node.role === "link") omitted.links++;
+    else omitted.controls++;
+    return;
   }
-  return undefined;
+  for (const child of node.children) countControls(child, omitted);
 }
 
-export function pageMarkdown(model: PageModel): { markdown: string; scope: string } {
-  const main = findMain(model.root);
+// A block's words without its controls; links inside running text keep their label.
+function plainText(node: PageNode, omitted: Omitted): string {
+  if (node.kind === "interactive") {
+    if (node.role === "link" && node.name) return node.name;
+    countControls(node, omitted);
+    return "";
+  }
+  const parts: string[] = [];
+  const segments = node.segments;
+  if (segments) {
+    const interactive = node.children.filter((child) => child.kind === "interactive");
+    const rest = node.children.filter((child) => child.kind !== "interactive");
+    segments.forEach((segment, index) => {
+      if (segment.trim()) parts.push(segment.trim());
+      const child = index < segments.length - 1 ? interactive[index] : undefined;
+      if (child) parts.push(plainText(child, omitted));
+    });
+    for (const child of interactive.slice(segments.length - 1)) countControls(child, omitted);
+    for (const child of rest) parts.push(plainText(child, omitted));
+  } else {
+    if (node.name && node.kind !== "container") parts.push(node.name);
+    for (const child of node.children) parts.push(plainText(child, omitted));
+  }
+  return parts.filter(Boolean).join(" ");
+}
+
+function hasWords(node: PageNode): boolean {
+  if (node.kind === "interactive") return false;
+  if (node.segments) {
+    if (node.segments.some((segment) => segment.trim())) return true;
+  } else if (node.name && node.kind !== "container") return true;
+  return node.children.some(hasWords);
+}
+
+// Chrome is kept as its own words: lines that are only links or controls (menus,
+// social buttons, language pickers) are counted instead of listed.
+function chromeText(node: PageNode, out: string[], omitted: Omitted): void {
+  if (node.kind === "interactive") {
+    countControls(node, omitted);
+    return;
+  }
+  if (node.role === "img") return;
+  const line = node.kind === "text" || node.role === "listitem" || node.role === "row";
+  if (!line) {
+    for (const child of node.children) chromeText(child, out, omitted);
+    return;
+  }
+  if (!hasWords(node)) {
+    countControls(node, omitted);
+    return;
+  }
+  const text = plainText(node, omitted);
+  if (node.role === "heading")
+    out.push(`${"#".repeat(Math.min(6, node.states.level ?? 2))} ${text}`);
+  else if (node.role === "listitem") out.push(`- ${text}`);
+  else out.push(text);
+}
+
+export interface PageText {
+  // Chrome (site header, navigation, footer, sidebars) reduced to its text.
+  markdown: string;
+  // Everything, for searching: a query must never miss text that is on the page.
+  full: string;
+  scope: string;
+}
+
+export function pageMarkdown(model: PageModel): PageText {
+  const omitted: Omitted = { links: 0, controls: 0 };
   const out: string[] = [];
-  if (main) {
-    toMarkdown(main, model.url, out, 0);
-    return { markdown: out.join("\n"), scope: "main content" };
-  }
-  for (const child of model.root.children) {
-    if (!SKIPPED_OUTSIDE_MAIN.has(child.role)) toMarkdown(child, model.url, out, 0);
-  }
-  return { markdown: out.join("\n"), scope: "page (navigation, header and footer omitted)" };
+  const full: string[] = [];
+  toMarkdown(model.root, model.url, out, 0, { omitted, inContent: false });
+  toMarkdown(model.root, model.url, full, 0, { inContent: false });
+  const unlisted = [count(omitted.links, "link"), count(omitted.controls, "control")]
+    .filter(Boolean)
+    .join(" and ");
+  const scope = unlisted
+    ? `whole page; its header, navigation, footer and sidebars as text only (${unlisted} there not listed: find or snapshot shows them)`
+    : "whole page";
+  return { markdown: out.join("\n"), full: full.join("\n"), scope };
 }
 
 // Keeps the sections (split at headings) that mention any query term.

@@ -15,6 +15,18 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     p:"paragraph",li:"listitem",td:"cell",th:"columnheader",dt:"term",dd:"definition",
     caption:"caption",figcaption:"caption",legend:"legend",blockquote:"blockquote",pre:"code",
     label:"label",output:"status"};
+  // header and footer are page landmarks only outside sectioning content; aside only
+  // at page level or in main, unless named (HTML-AAM). Nested ones are plain wrappers.
+  var SECTIONING = "article,aside,main,nav,section,[role=article],[role=complementary]," +
+    "[role=main],[role=navigation],[role=region]";
+  var ASIDE_SECTIONING = "article,aside,nav,section,[role=article],[role=complementary]," +
+    "[role=navigation],[role=region]";
+  function pageLandmark(el, tag) {
+    if (tag !== "header" && tag !== "footer" && tag !== "aside") return true;
+    if (tag === "aside" && (el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby"))) return true;
+    var parent = el.parentElement;
+    return !(parent && parent.closest(tag === "aside" ? ASIDE_SECTIONING : SECTIONING));
+  }
   var NATIVE = /^(a|button|select|textarea|input|summary)$/;
   var CONTROL = "input:not([type=hidden]),button,select,textarea,[role=button],[role=radio]," +
     "[role=checkbox],[role=switch],[role=combobox],[role=textbox],[role=listbox],[contenteditable=true]";
@@ -119,7 +131,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     }
     if (!kind) {
       if (role && CONTAINER_ROLES[role]) kind = "c";
-      else if (CONTAINER_TAGS[tag] && (tag !== "section" || el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby"))) kind = "c";
+      else if (CONTAINER_TAGS[tag] && (tag !== "section" || el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby")) && pageLandmark(el, tag)) kind = "c";
       else if (tag === "img" && el.getAttribute("alt")) kind = "t";
       else if (TEXT_TAGS[tag]) kind = "t";
     }

@@ -70,11 +70,12 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(text(stale)).toContain("ref e999");
   });
 
-  test("read_page: main content as markdown with link refs, query filter", async () => {
+  test("read_page: the page as markdown with link refs, query filter", async () => {
     await run("navigate", { url: site.url("form-basic") });
     const read = await run("read_page", {});
     const body = text(read);
-    expect(body).toContain("reading: main content");
+    expect(body).toContain("reading: whole page;");
+    expect(body).toContain("[header: 2 links not listed]");
     expect(body).toContain("# Contact us");
     expect(body).toContain("Fill in the form and we will get back to you");
     expect(body).toContain('[button "Send message" [ref=e14]]');
@@ -82,10 +83,50 @@ describeWithBrowser("observation tools in real headless Chrome", () => {
     expect(read.retention?.key).toBe("browser:read_page");
     await run("navigate", { url: site.url("long") });
     const longRead = text(await run("read_page", {}));
-    expect(longRead).toContain("reading: page (navigation, header and footer omitted)");
+    expect(longRead).toContain("reading: whole page\n");
     expect(longRead).toMatch(/\n- \[Article 80\]\(e\d+ \/article\/80\) by author 80\n/);
     const none = text(await run("read_page", { query: "zebra" }));
     expect(none).toContain('(no section mentions "zebra")');
+  });
+
+  test("read_page reads outside <main> and keeps site chrome as text; query searches all of it", async () => {
+    await run("navigate", { url: site.url("read-regions") });
+    const read = text(await run("read_page", {}));
+    expect(read).toContain(
+      "reading: whole page; its header, navigation, footer and sidebars as text only (16 links and 1 control there not listed",
+    );
+    expect(read).toContain(
+      "## Backend Engineer\nLisbon, Portugal\nEngineering / Full time / On-site",
+    );
+    expect(read).toMatch(/\n\[Apply for this job\]\(e\d+ \/apply\)\n/);
+    expect(read).toMatch(/Own the ledger service and its \[public APIs\]\(e\d+ \/apis\) \./);
+    expect(read).toContain("[header: 4 links not listed]\nHiring in 12 countries");
+    expect(read).toContain(
+      "[sidebar: 10 links not listed]\n#### All teams\nLast reviewed 3 March 2026",
+    );
+    expect(read).toContain(
+      "[footer: 2 links, 1 control not listed]\nJob reference code: PR-7342-K\nText is available under the Acme Content License .",
+    );
+    expect(read).not.toContain("Team 7");
+    expect(read).not.toContain("Cookie settings");
+    const menu = text(await run("read_page", { query: "Team 7" }));
+    expect(menu).toMatch(/\[Team 7\]\(e\d+ \/t\/7\)/);
+    const code = text(await run("read_page", { query: "reference" }));
+    expect(code).toContain("Job reference code: PR-7342-K");
+
+    await run("navigate", { url: site.url("sectioned-page") });
+    const sectioned = text(await run("read_page", {}));
+    for (const kept of [
+      "## Starter\n$9 per month\nFor individuals.\nBilled annually; taxes extra.",
+      "## Team\n$29 per user per month.\nMost popular with startups.\nIncludes SSO.",
+      "[header: 2 links not listed]",
+      "[footer: 1 link not listed]\nPrices in USD.",
+    ])
+      expect(sectioned).toContain(kept);
+    const snapshot = text(await run("snapshot", { scope: "full" }));
+    expect(snapshot.match(/contentinfo/g)).toHaveLength(1);
+    expect(snapshot).not.toContain("banner");
+    expect(snapshot).not.toContain("complementary");
   });
 
   test("find: whole-page search with refs and positions", async () => {

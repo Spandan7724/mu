@@ -143,7 +143,7 @@ export function readPageTool(deps: BrowserToolDeps) {
   return tool({
     name: "read_page",
     description:
-      "Read the page's main content as compact markdown (headings, text, lists, tables, links with refs), without scrolling. Pass query to keep only sections mentioning it; pass offset to continue a long page. Copy anything you need to keep into notes: older read_page output is collapsed later.",
+      "Read the whole page as compact markdown (headings, text, lists, tables, links with refs), without scrolling; its site header, navigation, footer and sidebars are kept as text only. Pass query to keep only sections mentioning it (searches everything, menus included); pass offset to continue a long page. Copy anything you need to keep into notes: older read_page output is collapsed later.",
     inputSchema: z.object({
       query: z.string().optional().describe("Keep only sections mentioning these words"),
       offset: z.number().int().min(0).optional().describe("Character offset to continue from"),
@@ -173,8 +173,8 @@ export function readPageTool(deps: BrowserToolDeps) {
         capturePage(tab, { scope: "full", signal: actionSignal, maxText: 20_000 }),
       );
       for (const secret of model.secrets) deps.browser.secrets.add(secret);
-      const { markdown, scope } = pageMarkdown(model);
-      const filtered = query ? filterSections(markdown, query) : markdown;
+      const { markdown, full, scope } = pageMarkdown(model);
+      const filtered = query ? filterSections(full, query) : markdown;
       const page = paginate(filtered, offset ?? 0);
       const more =
         page.end < page.total
