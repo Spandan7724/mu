@@ -31,6 +31,8 @@ export interface ActionResult {
   settle?: string;
   tab?: Tab;
   extra?: string;
+  // Things the agent should know about how its input landed (fill_form lists them too).
+  notices?: string[];
   path?: "mouse" | "js" | "keyboard";
   occludedBy?: Occluder;
   newTab?: TabInfo;

@@ -207,6 +207,64 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(page).not.toMatch(/button "Create account" \[ref=e\d+\] \[disabled\]/);
   });
 
+  test("typed line breaks never submit a form or send a message", async () => {
+    const links = "https://linkedin.com/in/ada\nhttps://github.com/ada";
+    const spaced = "https://linkedin.com/in/ada https://github.com/ada";
+    await open("line-breaks");
+    const typed = await run("type", { ref: refIn(page, "textbox", "Links"), text: links });
+    expect(typed.outcome.kind).toBeUndefined();
+    expect(typed.text).toContain("; line breaks became spaces (the field holds one line)");
+    expect(typed.text).toContain(`textbox "Links" [ref=`);
+    expect(typed.text).toContain(`: ${spaced}`);
+    expect(typed.text).not.toContain("Submitted");
+
+    const keyed = await run("type", {
+      ref: refIn(page, "textbox", "Links"),
+      text: links,
+      keystrokes: true,
+    });
+    expect(keyed.text).toContain(`: ${spaced}`);
+    expect(keyed.text).not.toContain("Submitted");
+
+    const filled = await run("fill_form", {
+      fields: [
+        { ref: refIn(page, "textbox", "Links"), value: links },
+        { ref: refIn(page, "textbox", "Why us?"), value: "Payments.\nReliability." },
+      ],
+    });
+    expect(filled.outcome.kind).toBeUndefined();
+    expect(filled.text).toMatch(
+      /note: textbox "Links" \[e\d+\]: line breaks became spaces \(the field holds one line\)/,
+    );
+    expect(filled.text).toContain("Payments.⏎Reliability.");
+    expect(filled.text).not.toContain("Submitted");
+
+    const chat = await run("type", {
+      ref: refIn(page, "textbox", "Chat message"),
+      text: "Hi Alex,\nRunning late.\nSee you soon",
+    });
+    expect(chat.text).toContain("Hi Alex,⏎Running late.⏎See you soon");
+    const reply = await run("type", {
+      ref: refIn(page, "textbox", "Reply"),
+      text: "One\nTwo",
+      keystrokes: true,
+    });
+    expect(reply.text).toContain("One⏎Two");
+    expect(reply.text).toContain("Messages sent: 0");
+
+    const coupon = await run("type", { ref: refIn(page, "textbox", "Coupon"), text: "SAVE10!" });
+    expect(coupon.text).toContain(
+      "the page tried to submit the form while typing; mu blocked it (submit with submit: true or the form's submit button)",
+    );
+    expect(coupon.text).toContain("Scripted submissions: 0");
+    const submitted = await run("type", {
+      ref: refIn(page, "textbox", "Handle"),
+      text: "ada",
+      submit: true,
+    });
+    expect(submitted.text).toContain("Scripted submissions: 1");
+  });
+
   test("rich editor: multi-line text lands as lines", async () => {
     await open("rich-editor");
     const typed = await run("type", {

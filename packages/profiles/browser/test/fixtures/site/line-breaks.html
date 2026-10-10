@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Line breaks</title>
+<style>body{font-family:sans-serif;margin:20px} [contenteditable]{border:1px solid #999;min-height:40px}</style></head>
+<body>
+<!-- Typed line breaks must never submit or send: a single-line input in a posting form,
+     a script-handled form (like React's), and chat boxes where a bare Enter sends. -->
+<form method="post" action="/echo">
+  <label>Name <input name="name" value="Ada"></label>
+  <label>Links <input name="links"></label>
+  <label>Why us? <textarea name="why"></textarea></label>
+  <button>Submit application</button>
+</form>
+<form id="scripted">
+  <label>Handle <input id="handle"></label>
+  <label>Coupon <input id="coupon"></label>
+  <button>Save</button>
+</form>
+<p>Scripted submissions: <span id="submits">0</span></p>
+<div id="chat" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Chat message"></div>
+<label>Reply <textarea id="reply"></textarea></label>
+<p>Messages sent: <span id="sent">0</span></p>
+<script>
+const scripted = document.getElementById('scripted');
+scripted.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const count = document.getElementById('submits');
+  count.textContent = String(Number(count.textContent) + 1);
+});
+// A page that submits by itself once a coupon is complete.
+document.getElementById('coupon').addEventListener('input', (event) => {
+  if (event.target.value.endsWith('!')) scripted.requestSubmit();
+});
+for (const id of ['chat', 'reply']) {
+  document.getElementById(id).addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    const sent = document.getElementById('sent');
+    sent.textContent = String(Number(sent.textContent) + 1);
+  });
+}
+</script>
+</body></html>

@@ -207,8 +207,11 @@ export async function typeKeystrokes(
   signal?: AbortSignal,
 ): Promise<void> {
   for (const char of text) {
+    // Shift+Enter breaks the line in editors and textareas where a bare Enter sends
+    // the message or submits the form.
+    if (char === "\r") continue;
     if (char === "\n") {
-      await pressCombo(session, parseKeys("Enter"), signal);
+      await pressCombo(session, parseKeys("Shift+Enter"), signal);
       continue;
     }
     const key = characterKey(char);

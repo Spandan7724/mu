@@ -144,6 +144,23 @@ export interface TypeOptions {
   settle?: boolean;
 }
 
+// While text goes in, the field's document refuses form submission: typing must never
+// submit (a line break or a stray Enter would). Submitting is an explicit, gated step.
+const SUBMIT_GUARD = `function () {
+  var view = this.ownerDocument.defaultView;
+  var guard = function (event) { event.preventDefault(); event.stopImmediatePropagation(); guard.blocked++; };
+  guard.blocked = 0;
+  view.addEventListener("submit", guard, true);
+  view.__muSubmitGuard = guard;
+}`;
+const SUBMIT_UNGUARD = `function () {
+  var view = this.ownerDocument.defaultView, guard = view.__muSubmitGuard;
+  if (!guard) return 0;
+  view.removeEventListener("submit", guard, true);
+  delete view.__muSubmitGuard;
+  return guard.blocked;
+}`;
+
 export async function typeText(
   ctx: ActionContext,
   ref: string,
@@ -170,6 +187,10 @@ export async function typeText(
   }
   if (info.secret) ctx.browser.secrets.add(text);
   const shown = quoteValue(text, info.secret);
+  // A single-line input cannot hold a line break, and every way of entering one there
+  // (Enter, Shift+Enter, inserted "\n") submits its form.
+  const typed = info.tag === "input" ? text.replace(/\r\n?|\n/g, " ") : text;
+  const notices = typed === text ? [] : ["line breaks became spaces (the field holds one line)"];
   const watcher =
     options.settle === false ? undefined : watchSettle(tab, info.combobox ? "typing" : "in-page");
   let actual: string;
@@ -211,23 +232,35 @@ export async function typeText(
           signal,
         );
       }
-      if (options.keystrokes) {
-        await typeKeystrokes(tab.session, text, signal);
-      } else if (info.editable === "rich" || (info.tag === "input" && text.includes("\n"))) {
-        const lines = text.split("\n");
-        for (let index = 0; index < lines.length; index++) {
-          if (index > 0) await pressCombo(tab.session, parseKeys("Enter"), signal);
-          const line = lines[index] as string;
-          if (line)
-            await tab.session.send(
-              "Input.insertText",
-              { text: line },
-              { signal, timeoutMs: 5_000 },
-            );
+      await call(target, SUBMIT_GUARD, [], signal).catch(() => {});
+      let blocked = 0;
+      try {
+        if (options.keystrokes) {
+          await typeKeystrokes(tab.session, typed, signal);
+        } else if (info.editable === "rich") {
+          // Shift+Enter is a line break in every rich editor; a bare Enter sends in chat
+          // composers, and inserting "\n" corrupts some editors (Draft.js).
+          const lines = typed.split(/\r?\n/);
+          for (let index = 0; index < lines.length; index++) {
+            if (index > 0) await pressCombo(tab.session, parseKeys("Shift+Enter"), signal);
+            const line = lines[index] as string;
+            if (line)
+              await tab.session.send(
+                "Input.insertText",
+                { text: line },
+                { signal, timeoutMs: 5_000 },
+              );
+          }
+        } else {
+          await tab.session.send("Input.insertText", { text: typed }, { signal, timeoutMs: 5_000 });
         }
-      } else {
-        await tab.session.send("Input.insertText", { text }, { signal, timeoutMs: 5_000 });
+      } finally {
+        blocked = await call<number>(target, SUBMIT_UNGUARD, [], signal).catch(() => 0);
       }
+      if (blocked > 0)
+        notices.push(
+          "the page tried to submit the form while typing; mu blocked it (submit with submit: true or the form's submit button)",
+        );
     });
     actual = await call<string>(
       target,
@@ -253,12 +286,12 @@ export async function typeText(
       ? normalizeDateValue(info.type, text)
       : options.clear === false
         ? undefined
-        : text;
+        : typed;
   const mismatch =
     expected !== undefined &&
     (info.editable === "rich"
       ? !normalize(actual).includes(normalize(expected).split("\n")[0] ?? "")
-      : normalize(actual) !== normalize(expected.replace(/\n/g, info.tag === "input" ? "" : "\n")));
+      : normalize(actual) !== normalize(expected));
   let suggestions = "";
   if (info.combobox && !settle?.navigated) {
     const expanded = await resolveRef(tab, ref, signal)
@@ -284,9 +317,11 @@ export async function typeText(
   const mismatchNote = mismatch
     ? `; the field now shows ${quoteValue(actual, info.secret)} (reformatted, masked, or changed by the page)`
     : "";
+  const noticeText = notices.map((notice) => `; ${notice}`).join("");
   return {
-    summary: `typed ${shown} into ${label}${submitted}${mismatchNote}${suggestions}${settleNote(settle)}`,
+    summary: `typed ${shown} into ${label}${submitted}${noticeText}${mismatchNote}${suggestions}${settleNote(settle)}`,
     path: "keyboard",
+    ...(notices.length ? { notices } : {}),
     ...(settle ? { settle: `${settle.reason} (${settle.ms} ms)` } : {}),
     ...(mismatch ? { kind: "value-mismatch" as const } : {}),
     ...(settle?.navigated ? { kind: "navigated" as const } : {}),
@@ -1022,6 +1057,7 @@ export async function fillForm(
   const watcher = watchSettle(tab, "in-page");
   const done: string[] = [];
   const notes: string[] = [];
+  let mismatched = false;
   const failed: string[] = [];
   try {
     for (const field of fields) {
@@ -1042,8 +1078,12 @@ export async function fillForm(
         );
         continue;
       }
-      if (result.kind === "value-mismatch") notes.push(result.summary);
-      else if (result.summary.includes("picked suggestion")) notes.push(result.summary);
+      if (result.kind === "value-mismatch") {
+        notes.push(result.summary);
+        mismatched = true;
+      } else if (result.summary.includes("picked suggestion")) notes.push(result.summary);
+      else if (result.notices)
+        notes.push(`${tab.refs.label(field.ref)}: ${result.notices.join("; ")}`);
       done.push(tab.refs.label(field.ref));
     }
   } catch (error) {
@@ -1075,9 +1115,7 @@ export async function fillForm(
   return {
     summary,
     settle: `${settle.reason} (${settle.ms} ms)`,
-    ...(notes.some((note) => !note.includes("picked suggestion"))
-      ? { kind: "value-mismatch" as const }
-      : {}),
+    ...(mismatched ? { kind: "value-mismatch" as const } : {}),
     ...(extra ? { extra } : {}),
   };
 }
