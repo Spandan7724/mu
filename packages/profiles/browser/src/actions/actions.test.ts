@@ -328,6 +328,18 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
       "did not upload cv.md: the field accepts .pdf, .docx; this is Markdown text (.md)",
     );
     writeFileSync(join(home, "cv.pdf"), "%PDF-1.4\n");
+    const preview = async (paths: string[]) =>
+      JSON.stringify(
+        await profile.toolset
+          .find((candidate) => candidate.name === "upload")
+          ?.permissionDetails?.({ ref: cvField, paths }),
+      );
+    // The workspace is not the process's cwd: the preview resolves paths as the upload does.
+    expect(await preview(["cv.pdf"])).toContain("cv.pdf (PDF, 1 KB)");
+    expect(await preview(["/nope.txt"])).toContain("/nope.txt (will be refused: File not found");
+    expect(await preview([join(home, ".env")])).toContain("will be refused: File not found");
+    writeFileSync(join(home, ".env"), "TOKEN=1");
+    expect(await preview([join(home, ".env")])).toContain("is a credential, key or private-data");
     const relative = await run("upload", { ref: cvField, paths: ["cv.pdf"] });
     expect(relative.text).toStartWith("attached cv.pdf (PDF, 1 KB)");
     const elsewhere = tempUserDataDir();

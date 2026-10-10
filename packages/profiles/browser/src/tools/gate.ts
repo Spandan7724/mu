@@ -1,5 +1,6 @@
 import type { PermissionField, PermissionSection, ToolPermissionDetails } from "@mu/core";
 import { classify } from "../actions/classify.ts";
+import { resolveUploadPaths, uploadRoots } from "../actions/files.ts";
 import { describeFile } from "../actions/filetype.ts";
 import { hostOf, normalizeUrl } from "../actions/navigate.ts";
 import { submissionContent } from "../actions/submission.ts";
@@ -166,9 +167,10 @@ export async function detailsFor(
       for (const path of (args.paths as string[] | undefined) ?? []) {
         let about: string;
         try {
-          about = describeFile(path);
-        } catch {
-          about = "not found";
+          const [resolved] = resolveUploadPaths([path], uploadRoots(deps.config));
+          about = describeFile(resolved as string);
+        } catch (error) {
+          about = `will be refused: ${(error as Error).message}`;
         }
         add("", `${path} (${about})`);
       }
