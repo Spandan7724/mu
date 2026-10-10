@@ -39,9 +39,12 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     for (var i = 0; i < controls.length; i++) {
       if (!first.contains(controls[i])) {
         // CSS-generated text is part of the label as shown, as in accessible names:
-        // a required marker is often only a ::after "*".
-        var text = generated(first, "::before") + (first.innerText || "") + generated(first, "::after");
-        return text.replace(/\s+/g, " ").trim().slice(0, 200);
+        // a required marker is often only a ::after "*". Only the label's own text is
+        // shortened, so a marker at the end of a long question survives.
+        var body = (first.innerText || "").replace(/\s+/g, " ").trim();
+        if (body.length > 190) body = body.slice(0, 189).trim() + "…" + (/\*$/.test(body) ? "*" : "");
+        var text = generated(first, "::before") + body + generated(first, "::after");
+        return text.replace(/\s+/g, " ").trim();
       }
     }
     return "";
@@ -49,7 +52,7 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
 
   function generated(el, which) {
     var match = /^"((?:[^"\\]|\\.)*)"/.exec(getComputedStyle(el, which).content || "");
-    return match ? match[1].replace(/\\(.)/g, "$1") : "";
+    return match ? match[1].replace(/\\(.)/g, "$1").slice(0, 20) : "";
   }
 
   function editableKind(el, tag) {

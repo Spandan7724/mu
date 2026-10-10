@@ -348,7 +348,11 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     );
     expect(full).toMatch(/group "Anything else\?" \[ref=e\d+\]\n/);
     const authorized = group("Are you authorized to work lawfully in the United States?*");
-    const anchor = group("We work from our offices on Anchor Days. Are you able to?*");
+    // A long question is shortened, but keeps its trailing marker and [required].
+    const anchor = /group "We work from our offices[^"]{150,}…\*" \[ref=(e\d+)\] \[required\]/.exec(
+      full,
+    )?.[1] as string;
+    expect(anchor).toBeDefined();
     const pressed = async () => {
       const { result } = await (await profile.browser.activeTab()).session.send(
         "Runtime.evaluate",
