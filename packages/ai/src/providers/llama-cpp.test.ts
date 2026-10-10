@@ -24,9 +24,33 @@ describe("llama.cpp provider", () => {
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           })) as typeof fetch,
       }),
-    ).rejects.toThrow();
+    ).resolves.toBeUndefined();
 
     expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  test("an unconfigured probe skips silently when no llama.cpp server is there", async () => {
+    delete process.env.LLAMA_CPP_BASE_URL;
+    const refused = (async () => {
+      throw new Error("Unable to connect. Is the computer able to access the url?");
+    }) as unknown as typeof fetch;
+    const otherServer = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
+
+    expect(await discoverLlamaCppModels({ currentModels: [], fetch: refused })).toBeUndefined();
+    expect(await discoverLlamaCppModels({ currentModels: [], fetch: otherServer })).toBeUndefined();
+  });
+
+  test("a configured server that cannot be reached is still reported", async () => {
+    process.env.LLAMA_CPP_BASE_URL = "http://127.0.0.1:8000";
+    await expect(
+      discoverLlamaCppModels({
+        currentModels: [],
+        fetch: (async () => {
+          throw new Error("Unable to connect. Is the computer able to access the url?");
+        }) as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow("Unable to connect");
   });
 
   test("discovers the loaded alias and configured slot context", async () => {

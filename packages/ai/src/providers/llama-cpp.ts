@@ -52,10 +52,29 @@ function discoveryHeaders(credential: Credential | undefined): Record<string, st
 
 export async function discoverLlamaCppModels(
   options: ProviderModelDiscoveryOptions,
+): Promise<ModelInfo[] | undefined> {
+  const credential = await discoveryCredential(options);
+  if (process.env.LLAMA_CPP_BASE_URL !== undefined || credential) {
+    return probeLlamaCpp(options, credential);
+  }
+  // Unconfigured: the default localhost address is a guess, so anything other than a
+  // llama.cpp server there (nothing listening, another dev server on :8000) means
+  // "not in use" rather than a discovery failure.
+  try {
+    const models = await probeLlamaCpp(options, credential);
+    return models.length > 0 ? models : undefined;
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    return undefined;
+  }
+}
+
+async function probeLlamaCpp(
+  options: ProviderModelDiscoveryOptions,
+  credential: Credential | undefined,
 ): Promise<ModelInfo[]> {
   const request = options.fetch ?? fetch;
   const baseUrl = configuredBaseUrl();
-  const credential = await discoveryCredential(options);
   const headers = discoveryHeaders(credential);
   const signal = discoverySignal(options.signal);
   const modelsResponse = await request(`${baseUrl}/models`, {
