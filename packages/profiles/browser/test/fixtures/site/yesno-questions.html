@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Questions</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .required::after { content: "*"; color: red; }
+    .yesno button[aria-pressed=true] { background: #335; color: white; }
+  </style>
+</head>
+<body>
+  <main>
+    <!-- Ashby's markup: question labels whose for= matches no control, required marked
+         only by a CSS ::after "*", Yes/No answered with aria-pressed buttons. Both
+         questions start below the fold and scroll into view together. -->
+    <div style="height: 1400px"></div>
+    <div>
+      <label class="required" for="q-anchor">We work from our offices on Anchor Days. Are you able to?</label>
+      <div class="yesno" id="anchor">
+        <button type="button" aria-pressed="false">Yes</button>
+        <button type="button" aria-pressed="false">No</button>
+      </div>
+    </div>
+    <div>
+      <label class="required" for="q-authorized">Are you authorized to work lawfully in the United States?</label>
+      <div class="yesno" id="authorized">
+        <button type="button" aria-pressed="false">Yes</button>
+        <button type="button" aria-pressed="false">No</button>
+      </div>
+    </div>
+    <fieldset>
+      <label class="required" for="q-pronouns">What pronouns would you like us to use?</label>
+      <div><input type="radio" id="p0" name="pronouns"><label for="p0">He/Him</label></div>
+      <div><input type="radio" id="p1" name="pronouns"><label for="p1">Prefer not to say</label></div>
+    </fieldset>
+    <div>
+      <label for="q-note">Anything else?</label>
+      <div><input type="text" name="note"></div>
+    </div>
+  </main>
+  <script>
+    for (const group of document.querySelectorAll('.yesno')) {
+      for (const button of group.querySelectorAll('button')) {
+        button.addEventListener('click', () => {
+          for (const other of group.querySelectorAll('button'))
+            other.setAttribute('aria-pressed', String(other === button));
+        });
+      }
+    }
+  </script>
+</body>
+</html>

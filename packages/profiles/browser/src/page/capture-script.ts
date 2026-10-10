@@ -38,10 +38,18 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     var controls = el.querySelectorAll(CONTROL);
     for (var i = 0; i < controls.length; i++) {
       if (!first.contains(controls[i])) {
-        return (first.innerText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+        // CSS-generated text is part of the label as shown, as in accessible names:
+        // a required marker is often only a ::after "*".
+        var text = generated(first, "::before") + (first.innerText || "") + generated(first, "::after");
+        return text.replace(/\s+/g, " ").trim().slice(0, 200);
       }
     }
     return "";
+  }
+
+  function generated(el, which) {
+    var match = /^"((?:[^"\\]|\\.)*)"/.exec(getComputedStyle(el, which).content || "");
+    return match ? match[1].replace(/\\(.)/g, "$1") : "";
   }
 
   function editableKind(el, tag) {
@@ -143,7 +151,10 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
       else if (tag === "img") node.role = "img";
       else if (kind === "t") node.role = TEXT_TAGS[tag] || "text";
       else if (kind === "c") node.role = CONTAINER_TAGS[tag] || "group";
-      if (title) node.q = title;
+      if (title) {
+        node.q = title;
+        if (/\*$/.test(title) || el.querySelector("[required],[aria-required=true]")) node.req = 1;
+      }
       // Focusable without being a control (a tabpanel, grid or menu taking arrow keys):
       // it keeps a ref even unnamed.
       if (focusable) node.foc = 1;

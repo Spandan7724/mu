@@ -36,6 +36,8 @@ interface RawNode {
   q?: string;
   // A container that takes keyboard focus (tabindex) without being a control.
   foc?: 1;
+  // A question group marked required (a trailing "*", or a required control inside).
+  req?: 1;
   // Current value of a password/one-time-code field: used for redaction only, never rendered.
   sv?: string;
 }
@@ -225,6 +227,7 @@ function buildNode(
   const name = raw.k === "t" ? plain : raw.k === "c" ? axName || raw.q || plain : axName || text;
   const states = axStates(ax && !ax.ignored ? ax : undefined);
   if (raw.lvl) states.level = raw.lvl;
+  if (raw.req) states.required = true;
   const node: PageNode = {
     kind: KINDS[raw.k],
     role,

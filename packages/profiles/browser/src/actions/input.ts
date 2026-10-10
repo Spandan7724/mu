@@ -546,12 +546,10 @@ function shownKey(node: PageNode): string {
   return node.ref ?? `${node.frameId} ${node.backendNodeId ?? ""} ${node.role} ${node.name}`;
 }
 
+// Everything captured before opening, on screen or not: opening often scrolls, and
+// what scrolls into view did not appear.
 function shown(model: PageModel): Set<string> {
-  return new Set(
-    collect(model.root)
-      .filter((node) => node.inViewport)
-      .map(shownKey),
-  );
+  return new Set(collect(model.root).map(shownKey));
 }
 
 export async function selectOptions(
@@ -560,6 +558,17 @@ export async function selectOptions(
   options: string[],
 ): Promise<ActionResult> {
   const { tab, signal } = ctx;
+  const role = tab.refs.meta(ref)?.role;
+  if (role === "radiogroup" || role === "group") {
+    const results: ActionResult[] = [];
+    for (const wanted of options) {
+      const chosen = await chooseInGroup(ctx, ref, wanted);
+      if (chosen.ok === false) return chosen;
+      results.push(chosen);
+    }
+    const last = results[results.length - 1] as ActionResult;
+    return { ...last, summary: results.map((result) => result.summary).join("; ") };
+  }
   const target = await resolveRef(tab, ref, signal);
   const label = tab.refs.label(ref);
   const info = await fieldInfo(target, signal);
@@ -692,30 +701,84 @@ function findNode(node: PageNode, ref: string): PageNode | undefined {
   return undefined;
 }
 
-// A radio group set by the label of one of its own radios, never a radio elsewhere
-// on the page with the same label (forms repeat Yes/No).
+const CHOICE_ROLES = new Set([
+  "radio",
+  "checkbox",
+  "switch",
+  "button",
+  "option",
+  "menuitemradio",
+  "menuitemcheckbox",
+  "clickable",
+]);
+const FIELD_ROLES = new Set(["combobox", "textbox", "searchbox", "spinbutton", "listbox"]);
+
+// A question group is answered by one of its own choices (radios, Yes/No buttons,
+// checkboxes), never a same-named control elsewhere on the page (forms repeat Yes/No);
+// a group holding a single field is that field.
 async function chooseInGroup(
   ctx: ActionContext,
   ref: string,
   wanted: string,
-): Promise<ActionResult | undefined> {
+): Promise<ActionResult> {
+  const { tab, signal } = ctx;
+  const label = tab.refs.label(ref);
   const model = await ctx.stopwatch.time("snapshotMs", () =>
-    capturePage(ctx.tab, { scope: "full", signal: ctx.signal }),
+    capturePage(tab, { scope: "full", signal }),
   );
   const group = findNode(model.root, ref);
-  const radios = group ? collect(group).filter((node) => node.role === "radio") : [];
-  if (radios.length === 0) return undefined;
-  const radio = pickOption(radios, wanted);
-  if (!radio?.ref)
+  const inside = group ? collect(group).filter((node) => node !== group && node.ref) : [];
+  const choices = inside.filter((node) => CHOICE_ROLES.has(node.role) && node.name);
+  if (choices.length === 0) {
+    const fields = inside.filter(
+      (node) => FIELD_ROLES.has(node.role) || node.editable || node.options,
+    );
+    if (fields.length === 1 && fields[0]?.ref)
+      return fillField(ctx, { ref: fields[0].ref, value: wanted });
     return {
       ok: false,
       kind: "error",
-      summary: `${ctx.tab.refs.label(ref)} has no choice ${JSON.stringify(wanted)}`,
-      ...(radios.length > 0
-        ? { extra: `choices: ${radios.map((node) => JSON.stringify(node.name)).join(", ")}` }
-        : {}),
+      summary: `${label} holds no choice or single field to set to ${JSON.stringify(wanted)}; set one of its controls by its ref`,
     };
-  return clickRef(ctx, radio.ref);
+  }
+  const choice = pickOption(choices, wanted, "starts");
+  if (!choice?.ref)
+    return {
+      ok: false,
+      kind: "error",
+      summary: `${label} has no choice ${JSON.stringify(wanted)}`,
+      extra: `choices: ${choices.map((node) => JSON.stringify(node.name)).join(", ")}`,
+    };
+  if (CHECKABLE_ROLES.has(choice.role)) {
+    const checked = await setChecked(ctx, choice.ref, true);
+    return checked.ok === false
+      ? checked
+      : { ...checked, summary: `${checked.summary} in ${label}` };
+  }
+  const chosen = `${JSON.stringify(choice.name)} in ${label}`;
+  if (choice.states.pressed || choice.states.selected)
+    return { summary: `${chosen} was already chosen`, kind: "no-change" };
+  const clicked = await clickRef(ctx, choice.ref);
+  if (clicked.ok === false) return clicked;
+  if (choice.states.pressed === false) {
+    const pressed = await resolveRef(tab, choice.ref, signal)
+      .then((fresh) =>
+        call<string | null>(
+          fresh,
+          "function () { return this.getAttribute('aria-pressed'); }",
+          [],
+          signal,
+        ),
+      )
+      .catch(() => null);
+    if (pressed !== "true")
+      return {
+        ok: false,
+        kind: "value-mismatch",
+        summary: `clicked ${chosen} but it is not pressed`,
+      };
+  }
+  return { ...clicked, summary: `chose ${chosen}` };
 }
 
 // A checkbox or radio given text: its own label ("No" for the radio "No") checks it.
@@ -927,10 +990,7 @@ async function fillField(ctx: ActionContext, field: FormField): Promise<ActionRe
   if (typeof field.value === "boolean") return setChecked(ctx, field.ref, field.value);
   if (Array.isArray(field.value)) return selectOptions(ctx, field.ref, field.value);
   const role = ctx.tab.refs.meta(field.ref)?.role;
-  if (role === "radiogroup" || role === "group") {
-    const chosen = await chooseInGroup(ctx, field.ref, field.value);
-    if (chosen) return chosen;
-  }
+  if (role === "radiogroup" || role === "group") return chooseInGroup(ctx, field.ref, field.value);
   const target = await resolveRef(ctx.tab, field.ref, ctx.signal);
   const info = await fieldInfo(target, ctx.signal);
   if (info.tag === "select" || (info.editable === "none" && !info.checkable)) {

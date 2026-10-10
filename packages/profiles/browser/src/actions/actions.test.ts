@@ -331,6 +331,57 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(result.value).toBe("target");
   });
 
+  test("question groups are answered by their own choices; CSS required markers are kept", async () => {
+    await open("yesno-questions");
+    const full = (await run("snapshot", { scope: "full" })).text;
+    const group = (title: string) => {
+      const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = new RegExp(`group "${escaped}" \\[ref=(e\\d+)\\]`).exec(full);
+      if (!match?.[1]) throw new Error(`no group "${title}" in:\n${full}`);
+      return match[1];
+    };
+    expect(full).toMatch(
+      /group "Are you authorized to work lawfully in the United States\?\*" \[ref=e\d+\] \[required\]/,
+    );
+    expect(full).toMatch(
+      /group "What pronouns would you like us to use\?\*" \[ref=e\d+\] \[required\]/,
+    );
+    expect(full).toMatch(/group "Anything else\?" \[ref=e\d+\]\n/);
+    const authorized = group("Are you authorized to work lawfully in the United States?*");
+    const anchor = group("We work from our offices on Anchor Days. Are you able to?*");
+    const pressed = async () => {
+      const { result } = await (await profile.browser.activeTab()).session.send(
+        "Runtime.evaluate",
+        {
+          expression: `JSON.stringify(["anchor", "authorized"].map((id) => [...document.querySelectorAll("#" + id + " button")].filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => id + ":" + b.textContent)).flat())`,
+          returnByValue: true,
+        },
+      );
+      return JSON.parse(result.value) as string[];
+    };
+    const filled = await run("fill_form", {
+      fields: [
+        { ref: authorized, value: "No" },
+        { ref: group("What pronouns would you like us to use?*"), value: "Prefer not to say" },
+        { ref: group("Anything else?"), value: "Remote is fine" },
+      ],
+    });
+    expect(filled.result.isError).toBeUndefined();
+    expect(filled.text).toStartWith("filled 3 fields");
+    expect(await pressed()).toEqual(["authorized:No"]);
+    expect(filled.text).toMatch(/radio "Prefer not to say" \[ref=e\d+\] \[checked\]/);
+    expect(filled.text).toMatch(/textbox[^\n]*: Remote is fine/);
+    const again = await run("fill_form", { fields: [{ ref: authorized, value: "No" }] });
+    expect(again.text).toStartWith("filled 1 field");
+    expect(await pressed()).toEqual(["authorized:No"]);
+    const missing = await run("fill_form", { fields: [{ ref: anchor, value: "Maybe" }] });
+    expect(missing.result.isError).toBe(true);
+    expect(missing.text).toContain('has no choice "Maybe" (choices: "Yes", "No")');
+    const selected = await run("select", { ref: anchor, options: ["Yes"] });
+    expect(selected.text).toStartWith('chose "Yes" in group "We work from our offices');
+    expect(await pressed()).toEqual(["anchor:Yes", "authorized:No"]);
+  });
+
   test("clicking a native select redirects to select with its options", async () => {
     await open("form-basic");
     const clicked = await run("click", { ref: refIn(page, "combobox", "Country") });
