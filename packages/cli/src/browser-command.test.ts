@@ -100,6 +100,25 @@ describeWithBrowser("mu browser login", () => {
 });
 
 describeWithBrowser("mu browser status and close", () => {
+  test("close and login refuse while a live session holds the profile", async () => {
+    const home = tempUserDataDir();
+    const profile = await browserProfile({
+      home,
+      headless: true,
+      ...(testBrowserPath ? { executable: testBrowserPath } : {}),
+    });
+    await profile.browser.activeTab();
+    const out: string[] = [];
+    const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s) };
+    expect(await runBrowserClose(parseArgs(["browser", "close"]), io, { home })).toBe(2);
+    expect(await runBrowserLogin(parseArgs(["browser", "login"]), io, { home })).toBe(2);
+    const refusal = `mu: Browser profile "default" is in use by another mu session (pid ${process.pid}`;
+    expect(out.filter((line) => line.startsWith(refusal))).toHaveLength(2);
+    expect((await managedState(profile.config.userDataDir)).running).toBe(true);
+    await profile.browser.shutdown({ close: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
   test("status reports a running managed browser; close shuts it", async () => {
     const home = tempUserDataDir();
     const profile = await browserProfile({

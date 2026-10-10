@@ -348,4 +348,10 @@ export { BrowserManager };
 export { closeManaged, managedState } from "./browser/connect.ts";
 export { discoverBrowser } from "./browser/discover.ts";
 export { launchForSignIn } from "./browser/launch.ts";
+export {
+  type LeaseHolder,
+  liveHolder,
+  ProfileInUseError,
+  profileInUseMessage,
+} from "./browser/lease.ts";
 export default browserProfile;

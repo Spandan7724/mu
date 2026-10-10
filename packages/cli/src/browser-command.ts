@@ -3,7 +3,9 @@ import {
   closeManaged,
   discoverBrowser,
   launchForSignIn,
+  liveHolder,
   managedState,
+  profileInUseMessage,
 } from "@mu/profile-browser";
 import type { ParsedArgs } from "./args.ts";
 import { EXIT } from "./headless.ts";
@@ -59,6 +61,11 @@ export async function runBrowserLogin(
     ...(deps.executable ? { executable: deps.executable } : {}),
   });
   const config = profile.config;
+  const holder = liveHolder(config.userDataDir);
+  if (holder) {
+    io.stderr(`mu: ${profileInUseMessage(holder, config.browserProfile)}\n`);
+    return EXIT.usage;
+  }
   const state = await managedState(config.userDataDir);
   if (state.running) {
     io.stdout("Closing mu's browser on this profile so it can reopen without automation…\n");
@@ -141,6 +148,11 @@ export async function runBrowserClose(
     return EXIT.usage;
   }
   const profile = await browserProfile({ ...browserFlags(args), ...deps });
+  const holder = liveHolder(profile.config.userDataDir);
+  if (holder) {
+    io.stderr(`mu: ${profileInUseMessage(holder, profile.config.browserProfile)}\n`);
+    return EXIT.usage;
+  }
   const closed = await closeManaged(profile.config.userDataDir);
   io.stdout(closed ? "Closed the managed browser.\n" : "The managed browser is not running.\n");
   return 0;

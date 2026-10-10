@@ -58,11 +58,11 @@ describeWithBrowser("screenshots in real headless Chrome", () => {
       ...(testBrowserPath ? { executable: testBrowserPath } : {}),
     };
     profile = await browserProfile({ ...common, vision: "off" });
-    vision = await browserProfile({ ...common, vision: "on" });
+    vision = await browserProfile({ ...common, vision: "on", browserProfile: "vision" });
   });
 
   afterAll(async () => {
-    await vision.browser.shutdown({ close: false });
+    await vision.browser.shutdown({ close: true });
     await profile.browser.shutdown({ close: true });
     site.stop();
     rmSync(home, { recursive: true, force: true });

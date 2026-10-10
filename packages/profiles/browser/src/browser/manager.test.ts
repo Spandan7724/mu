@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describeWithBrowser, tempUserDataDir, testBrowserPath } from "../testing/chrome.ts";
 import { endpointAlive } from "./connect.ts";
 import { killBrowserProcess, readDevToolsActivePort } from "./launch.ts";
+import { ProfileInUseError } from "./lease.ts";
 import { BrowserManager } from "./manager.ts";
 
 setDefaultTimeout(30_000);
@@ -147,14 +148,59 @@ describeWithBrowser("BrowserManager in real headless Chrome", () => {
     expect(result.value).toBe(2);
   });
 
-  test("shutdown detaches by default and closes when asked", async () => {
+  test("a second live session on the profile is refused; the first keeps working", async () => {
+    const tab = await manager.activeTab();
+    const second = new BrowserManager({ ...manager.options, keepOpen: true });
+    const refused = await second.activeTab().catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ProfileInUseError);
+    expect((refused as Error).message).toContain(
+      `Browser profile "test" is in use by another mu session (pid ${process.pid}`,
+    );
+    expect(second.isConnected).toBe(false);
+    const { result } = await tab.session.send("Runtime.evaluate", {
+      expression: "1 + 1",
+      returnByValue: true,
+    });
+    expect(result.value).toBe(2);
+    await second.shutdown();
+  });
+
+  test("shutdown detaches by default and closes when asked; the next session re-attaches", async () => {
     const wsUrl = readDevToolsActivePort(userDataDir) as string;
+    await manager.shutdown({ close: false });
+    expect(await endpointAlive(wsUrl)).toBe(true);
     const kept = new BrowserManager({ ...manager.options, keepOpen: true });
     await kept.activeTab();
     expect(kept.status().launched).toBe(false);
     await kept.shutdown();
     expect(await endpointAlive(wsUrl)).toBe(true);
+    await manager.activeTab();
     await manager.shutdown({ close: true });
     await until(async () => !(await endpointAlive(wsUrl)));
+  });
+
+  test("a session held by another process is refused until that process dies", async () => {
+    const holder = Bun.spawn(
+      [
+        "bun",
+        "-e",
+        `const { BrowserManager } = await import(${JSON.stringify(join(import.meta.dir, "manager.ts"))});
+         const m = new BrowserManager(${JSON.stringify({ ...manager.options, keepOpen: true })});
+         await m.activeTab();
+         console.log("ready");
+         setInterval(() => {}, 1000);`,
+      ],
+      { stdout: "pipe", stderr: "inherit" },
+    );
+    const reader = holder.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("ready");
+    const other = new BrowserManager({ ...manager.options, keepOpen: true });
+    const refused = await other.activeTab().catch((error: unknown) => error);
+    expect((refused as Error).message).toContain(`(pid ${holder.pid}`);
+    holder.kill("SIGKILL");
+    await holder.exited;
+    await other.activeTab();
+    expect(other.status()).toMatchObject({ connected: true, launched: false });
+    await other.shutdown({ close: true });
   });
 });

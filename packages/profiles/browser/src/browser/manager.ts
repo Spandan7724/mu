@@ -15,6 +15,7 @@ import {
 } from "./connect.ts";
 import { DownloadTracker } from "./downloads.ts";
 import type { Size } from "./launch.ts";
+import { ProfileLease } from "./lease.ts";
 import { blockOffHostLoads, enableLoadBlocking, Tab, type TabInfo } from "./tabs.ts";
 
 export interface BrowserManagerOptions {
@@ -88,6 +89,7 @@ class SharedBrowser {
   nextTab = 1;
   nextLane = 1;
   closingIntentionally = false;
+  lease: ProfileLease | undefined;
   product: { product: string; version: string; executable?: string } | undefined;
   abort = new AbortController();
   readonly lanes = new Set<BrowserManager>();
@@ -196,19 +198,28 @@ export class BrowserManager {
 
   private async connect(signal?: AbortSignal): Promise<ConnectedBrowser> {
     const shared = this.shared;
-    const connected =
-      this.options.connect === "cdp"
-        ? await connectToEndpoint(this.requireCdpUrl(), { signal })
-        : await connectManaged({
-            userDataDir: this.options.userDataDir,
-            headless: this.options.headless,
-            viewport: this.options.viewport,
-            executable: this.options.executable,
-            channel: this.options.channel,
-            args: this.options.args,
-            launcher: this.options.launcher,
-            signal,
-          });
+    let connected: ConnectedBrowser;
+    if (this.options.connect === "cdp") {
+      connected = await connectToEndpoint(this.requireCdpUrl(), { signal });
+    } else {
+      shared.lease ??= new ProfileLease(this.options.userDataDir, this.options.profileName);
+      shared.lease.acquire();
+      try {
+        connected = await connectManaged({
+          userDataDir: this.options.userDataDir,
+          headless: this.options.headless,
+          viewport: this.options.viewport,
+          executable: this.options.executable,
+          channel: this.options.channel,
+          args: this.options.args,
+          launcher: this.options.launcher,
+          signal,
+        });
+      } catch (error) {
+        shared.lease.release();
+        throw error;
+      }
+    }
     const { connection } = connected;
     shared.closingIntentionally = false;
     shared.pages.clear();
@@ -741,7 +752,10 @@ export class BrowserManager {
     this.stop();
     const shared = this.shared;
     const connected = shared.connected;
-    if (!connected) return;
+    if (!connected) {
+      shared.lease?.release();
+      return;
+    }
     const close = options.close ?? !this.options.keepOpen;
     shared.closingIntentionally = true;
     const { connection } = connected;
@@ -770,6 +784,7 @@ export class BrowserManager {
     if (close && this.options.connect === "managed" && this.options.userDataDir)
       await waitForUnlock(this.options.userDataDir, undefined, 2_000);
     shared.connected = undefined;
+    shared.lease?.release();
     this.attached.clear();
     for (const lane of shared.lanes) lane.activeTargetId = undefined;
   }
