@@ -32,6 +32,7 @@ import {
 } from "./components.ts";
 import { stripAnsi, styleText } from "./style.ts";
 import { stringWidth } from "./width.ts";
+import { terminalRows } from "./wrap.ts";
 
 // Golden lines are asserted on the *visible* text; colour is left to the eye.
 const plain: RenderContext = { width: 60, depth: "none" };
@@ -330,6 +331,16 @@ describe("transcript cells (golden lines)", () => {
     expect(new Set(truecolor.match(/38;2;\d+;\d+;\d+/g)).size).toBeGreaterThan(2);
     expect(ansi256).not.toContain("38;2;");
     expect(stripAnsi(truecolor)).toBe(stripAnsi(ansi256));
+  });
+
+  test("compaction shimmer stays compact after wrapping for the terminal", () => {
+    const state = { stage: "installing", waitingMs: 0 } as const;
+    for (const tick of [0, 5, 12, 20]) {
+      const row = compactionProgressRow(state, 100, tick, { width: 100, depth: "truecolor" });
+      const [wrapped = ""] = terminalRows([row], 100);
+      expect(stripAnsi(wrapped)).toBe(stripAnsi(row));
+      expect(wrapped.length).toBeLessThan(800);
+    }
   });
 
   test("a no-op compaction says so instead of reporting a boundary", () => {

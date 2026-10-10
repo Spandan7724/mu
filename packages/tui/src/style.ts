@@ -246,16 +246,21 @@ export function mutateShimmer(
       offset += chars.length;
       if (!("glow" in part)) return styleText(part.text, part.style, depth);
       if (depth !== "truecolor") return styleText(part.text, { toolMutate: true }, depth);
-      if (chars.length === 0) return "";
-      return `${chars
-        .map((char, index) => {
-          const lift = Math.max(0, 1 - Math.abs(start + index - head + 7) / 6);
-          const [r, g, b] = TOOL_MUTATE_RGB.map((value, channel) =>
-            Math.round(value + ((TOOL_MUTATE_PEAK_RGB[channel] ?? value) - value) * lift),
-          );
-          return `${ESC}38;2;${r};${g};${b}m${char}`;
-        })
-        .join("")}${RESET}`;
+      // Each same-coloured run closes with a reset: wrapping accumulates every code
+      // since the last reset and replays them per character, so unclosed codes grow
+      // the row quadratically.
+      const runs: { code: string; text: string }[] = [];
+      for (const [index, char] of chars.entries()) {
+        const lift = Math.max(0, 1 - Math.abs(start + index - head + 7) / 6);
+        const [r, g, b] = TOOL_MUTATE_RGB.map((value, channel) =>
+          Math.round(value + ((TOOL_MUTATE_PEAK_RGB[channel] ?? value) - value) * lift),
+        );
+        const code = `${ESC}38;2;${r};${g};${b}m`;
+        const last = runs.at(-1);
+        if (last?.code === code) last.text += char;
+        else runs.push({ code, text: char });
+      }
+      return runs.map((run) => `${run.code}${run.text}${RESET}`).join("");
     })
     .join("");
 }
