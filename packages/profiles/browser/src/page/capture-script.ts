@@ -39,10 +39,10 @@ export const CAPTURE_SCRIPT = String.raw`(function capture(opts) {
     for (var i = 0; i < controls.length; i++) {
       if (!first.contains(controls[i])) {
         // CSS-generated text is part of the label as shown, as in accessible names:
-        // a required marker is often only a ::after "*". Only the label's own text is
-        // shortened, so a marker at the end of a long question survives.
+        // a required marker is often only a ::after "*". A very long question loses its
+        // middle, never its end, where the ask and the marker are.
         var body = (first.innerText || "").replace(/\s+/g, " ").trim();
-        if (body.length > 190) body = body.slice(0, 189).trim() + "…" + (/\*$/.test(body) ? "*" : "");
+        if (body.length > 580) body = body.slice(0, 230).trim() + " … " + body.slice(-347).trim();
         var text = generated(first, "::before") + body + generated(first, "::after");
         return text.replace(/\s+/g, " ").trim();
       }

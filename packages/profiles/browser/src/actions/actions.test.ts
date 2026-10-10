@@ -348,11 +348,16 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     );
     expect(full).toMatch(/group "Anything else\?" \[ref=e\d+\]\n/);
     const authorized = group("Are you authorized to work lawfully in the United States?*");
-    // A long question is shortened, but keeps its trailing marker and [required].
-    const anchor = /group "We work from our offices[^"]{150,}…\*" \[ref=(e\d+)\] \[required\]/.exec(
-      full,
-    )?.[1] as string;
-    expect(anchor).toBeDefined();
+    // A long question is shown whole; one past 600 characters loses only its middle,
+    // keeping the ask and the required marker at its end.
+    const anchor = group(
+      "We work from our offices on Mondays, Tuesdays, and Thursdays (Anchor Days). If you need an accommodation, we will partner with you and explore reasonable options consistent with applicable law. Are you able to work from the office on Anchor Days?*",
+    );
+    const terms =
+      /group "(We collect the information [^"]+ … [^"]+ Do you agree to these terms\?\*)" \[ref=e\d+\] \[required\]/.exec(
+        full,
+      )?.[1];
+    expect(terms?.length).toBeLessThanOrEqual(600);
     const pressed = async () => {
       const { result } = await (await profile.browser.activeTab()).session.send(
         "Runtime.evaluate",

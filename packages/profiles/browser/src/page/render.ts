@@ -3,6 +3,7 @@ import type { PageModel, PageNode } from "./model.ts";
 export const DEFAULT_BUDGET_TOKENS = 6_000;
 export const HARD_CAP_TOKENS = 12_000;
 const MAX_LINE_TEXT = 200;
+const MAX_CONTAINER_NAME = 600;
 const MAX_VALUE = 300;
 
 export interface Seen {
@@ -63,6 +64,14 @@ function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+// Container names are mostly question titles, whose ask comes last: long ones keep
+// their start and end.
+function clipMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 0.4);
+  return `${text.slice(0, head).trim()} … ${text.slice(head + 3 - max).trim()}`;
+}
+
 export function displayUrl(url: string, pageUrl: string): string {
   try {
     const target = new URL(url);
@@ -119,7 +128,14 @@ export function describeNode(node: PageNode, pageUrl: string): string {
     return node.name ? `${node.role}: ${clip(node.name, MAX_LINE_TEXT)}${more}` : node.role;
   }
   const parts = [node.role];
-  if (node.name) parts.push(quote(clip(node.name, MAX_LINE_TEXT)));
+  if (node.name)
+    parts.push(
+      quote(
+        node.kind === "container"
+          ? clipMiddle(node.name, MAX_CONTAINER_NAME)
+          : clip(node.name, MAX_LINE_TEXT),
+      ),
+    );
   if (node.ref) parts.push(`[ref=${node.ref}]`);
   parts.push(...stateTags(node));
   if (node.editable === "rich") parts.push("(rich)");
