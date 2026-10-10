@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Phone</title>
+<style>body{font-family:sans-serif;margin:20px} .menu{border:1px solid #999;width:240px} [role=option]{padding:4px;cursor:pointer}</style></head>
+<body>
+<h1>Contact</h1>
+<!-- Like react-select (Greenhouse): the list opens on key events, not on inserted text,
+     and filters by substring; aria-controls names it only while it is open. -->
+<label id="country-label" for="country">Country</label>
+<input id="country" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="country-label" autocomplete="off">
+<p>Country: <span id="country-value">none</span></p>
+<p>Do you need sponsorship?</p>
+<button type="button" onclick="document.getElementById('sponsorship').textContent = 'Yes'">Yes</button>
+<button type="button" onclick="document.getElementById('sponsorship').textContent = 'No'">No</button>
+<p>Sponsorship: <span id="sponsorship">none</span></p>
+<!-- A combobox whose list never opens. -->
+<label for="ack">I acknowledge the privacy notice</label>
+<input id="ack" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off">
+<script>
+const COUNTRIES = ['India +91', 'Indonesia +62', 'Ireland +353', 'United States +1'];
+const input = document.getElementById('country');
+let menu;
+function close() {
+  menu?.remove(); menu = undefined;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-controls');
+}
+function render() {
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.className = 'menu';
+    input.after(menu);
+  }
+  const shown = COUNTRIES.filter((c) => c.toLowerCase().includes(input.value.toLowerCase()));
+  menu.innerHTML = shown.length
+    ? '<div role="listbox" id="country-listbox"></div>'
+    : '<div class="notice">No options</div>';
+  for (const country of shown) {
+    const option = document.createElement('div');
+    option.role = 'option';
+    option.textContent = country;
+    option.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      document.getElementById('country-value').textContent = country;
+      input.value = '';
+      close();
+    });
+    menu.firstChild.appendChild(option);
+  }
+  input.setAttribute('aria-expanded', 'true');
+  if (shown.length) input.setAttribute('aria-controls', 'country-listbox');
+  else input.removeAttribute('aria-controls');
+}
+input.addEventListener('keydown', () => setTimeout(render));
+input.addEventListener('input', () => { if (menu) render(); });
+input.addEventListener('blur', close);
+</script>
+</body></html>

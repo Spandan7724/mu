@@ -259,6 +259,31 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(custom.text).toContain("status: M");
   });
 
+  test("select opens key-driven comboboxes and only ever picks from the list it opened", async () => {
+    await open("keyed-combobox");
+    const country = refIn(page, "combobox", "Country");
+    const picked = await run("select", { ref: country, options: ["India (+91)"] });
+    expect(picked.text).toStartWith('selected "India +91" in combobox "Country"');
+    expect(picked.text).toContain("Country: India +91");
+    const nothing = await run("select", { ref: country, options: ["Atlantis"] });
+    expect(nothing.result.isError).toBe(true);
+    expect(nothing.text.split("\n").slice(0, 2).join("\n")).toBe(
+      'combobox "Country" [e1] lists no option matching "Atlantis"\nthe list says: "No options"',
+    );
+    const wrong = await run("select", { ref: country, options: ["Ire"] });
+    expect(wrong.text).toContain('selected "Ireland +353"');
+    // A list that never opens must not fall back to a same-named control elsewhere.
+    const ack = await run("select", {
+      ref: refIn(page, "combobox", "I acknowledge the privacy notice"),
+      options: ["Yes"],
+    });
+    expect(ack.result.isError).toBe(true);
+    expect(ack.text.split("\n")[0]).toBe(
+      'combobox "I acknowledge the privacy notice" [e4] did not open a list of options for "Yes"',
+    );
+    expect(ack.text).toContain("Sponsorship: none");
+  });
+
   test("clicking a native select redirects to select with its options", async () => {
     await open("form-basic");
     const clicked = await run("click", { ref: refIn(page, "combobox", "Country") });

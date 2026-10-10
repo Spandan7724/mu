@@ -1,4 +1,4 @@
-import type { PageNode } from "../page/model.ts";
+import type { PageModel, PageNode } from "../page/model.ts";
 import { type ResolvedRef, resolveRef } from "../page/resolve.ts";
 import { type SettleResult, watchSettle } from "../page/settle.ts";
 import { capturePage } from "../page/snapshot.ts";
@@ -388,16 +388,142 @@ const OPTION_ROLES = new Set([
   "button",
 ]);
 
+// Case and punctuation aside: "India (+91)" is the option "India +91".
+function loose(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 function pickOption(candidates: PageNode[], wanted: string): PageNode | undefined {
-  const target = wanted.trim().toLowerCase();
   const named = candidates.filter((node) => node.ref && node.name);
   const byRole = (nodes: PageNode[]) => nodes.find((node) => node.role === "option") ?? nodes[0];
-  const exact = named.filter((node) => node.name.trim().toLowerCase() === target);
+  const exact = named.filter(
+    (node) => node.name.trim().toLowerCase() === wanted.trim().toLowerCase(),
+  );
   if (exact.length > 0) return byRole(exact);
-  const starts = named.filter((node) => node.name.trim().toLowerCase().startsWith(target));
-  if (starts.length > 0) return byRole(starts);
-  const contains = named.filter((node) => node.name.toLowerCase().includes(target));
-  return contains.length > 0 ? byRole(contains) : undefined;
+  const target = loose(wanted);
+  if (!target) return undefined;
+  for (const matches of [
+    (name: string) => name === target,
+    (name: string) => name.startsWith(target),
+    (name: string) => name.includes(target),
+  ]) {
+    const found = named.filter((node) => matches(loose(node.name)));
+    if (found.length > 0) return byRole(found);
+  }
+  return undefined;
+}
+
+// The list a combobox says it opened: aria-controls/aria-owns, the list holding its
+// active option, or a list inside it.
+const POPUPS = `function () {
+  var root = this.getRootNode ? this.getRootNode() : document;
+  var byId = function (id) { return (root.getElementById && root.getElementById(id)) || document.getElementById(id); };
+  var lists = '[role=listbox],[role=menu],[role=tree],[role=grid]';
+  var found = [];
+  var self = this;
+  ["aria-controls", "aria-owns"].forEach(function (name) {
+    (self.getAttribute(name) || "").split(" ").forEach(function (id) {
+      var el = id && byId(id);
+      if (el) found.push(el);
+    });
+  });
+  var active = this.getAttribute("aria-activedescendant");
+  var option = active && byId(active);
+  if (option) found.push(option.closest(lists) || option.parentElement);
+  var inner = this.querySelector(lists);
+  if (inner) found.push(inner);
+  return found;
+}`;
+
+async function popupNodeIds(target: ResolvedRef, signal?: AbortSignal): Promise<Set<number>> {
+  const ids = new Set<number>();
+  const send = { signal, timeoutMs: 3_000 };
+  const { result } = await target.session.send(
+    "Runtime.callFunctionOn",
+    { objectId: target.objectId, functionDeclaration: POPUPS, objectGroup: "mu-action" },
+    send,
+  );
+  if (!result.objectId) return ids;
+  const { result: entries } = await target.session.send(
+    "Runtime.getProperties",
+    { objectId: result.objectId, ownProperties: true },
+    send,
+  );
+  const add = (node: { backendNodeId: number; children?: unknown[]; shadowRoots?: unknown[] }) => {
+    ids.add(node.backendNodeId);
+    for (const child of [...(node.children ?? []), ...(node.shadowRoots ?? [])])
+      add(child as typeof node);
+  };
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry.name) || !entry.value?.objectId) continue;
+    const described = await target.session
+      .send("DOM.describeNode", { objectId: entry.value.objectId, depth: -1, pierce: true }, send)
+      .catch(() => undefined);
+    if (described) add(described.node);
+  }
+  return ids;
+}
+
+interface OpenedList {
+  candidates: PageNode[];
+  // Text the opened list shows when it has no options ("No options").
+  notes: string[];
+  expanded: string | null;
+}
+
+// Only the opened list's options are choices, never other controls on the page that
+// share a name (forms repeat Yes/No): the list the combobox names, else what appeared.
+async function openedList(
+  ctx: ActionContext,
+  target: ResolvedRef,
+  before: Set<string>,
+): Promise<OpenedList> {
+  const { tab, signal } = ctx;
+  const model = await ctx.stopwatch.time("snapshotMs", () =>
+    capturePage(tab, { scope: "full", signal }),
+  );
+  const expanded = await call<string | null>(
+    target,
+    "function () { return this.getAttribute('aria-expanded'); }",
+    [],
+    signal,
+  ).catch(() => null);
+  const popup = await popupNodeIds(target, signal).catch(() => new Set<number>());
+  const nodes = collect(model.root).filter((node) => node.ref !== target.ref && node.inViewport);
+  if (popup.size > 0) {
+    const inside = nodes.filter(
+      (node) =>
+        node.frameId === target.frameId &&
+        node.backendNodeId !== undefined &&
+        popup.has(node.backendNodeId),
+    );
+    return {
+      candidates: inside.filter((node) => OPTION_ROLES.has(node.role)),
+      notes: inside.filter((node) => node.kind === "text" && node.name).map((node) => node.name),
+      expanded,
+    };
+  }
+  const appeared = nodes.filter((node) => !before.has(shownKey(node)));
+  return {
+    candidates: appeared.filter((node) => OPTION_ROLES.has(node.role) && node.ref),
+    notes: appeared.filter((node) => node.kind === "text" && node.name).map((node) => node.name),
+    expanded,
+  };
+}
+
+function shownKey(node: PageNode): string {
+  return node.ref ?? `${node.frameId} ${node.backendNodeId ?? ""} ${node.role} ${node.name}`;
+}
+
+function shown(model: PageModel): Set<string> {
+  return new Set(
+    collect(model.root)
+      .filter((node) => node.inViewport)
+      .map(shownKey),
+  );
 }
 
 export async function selectOptions(
@@ -457,32 +583,61 @@ export async function selectOptions(
     };
   }
   // ARIA / custom dropdowns: open, then click the option by its visible name.
+  const typeable = info.combobox && info.editable !== "none";
   const chosen: string[] = [];
   for (const wanted of options) {
-    if (info.combobox && info.editable !== "none") {
-      const typed = await typeText(ctx, ref, wanted);
-      if (typed.ok === false) return typed;
-    } else {
-      const opened = await clickRef(ctx, ref);
-      if (opened.ok === false) return opened;
+    const before = shown(
+      await ctx.stopwatch.time("snapshotMs", () => capturePage(tab, { scope: "full", signal })),
+    );
+    // Real keystrokes: many comboboxes (react-select) open their list only on key events.
+    const opened = typeable
+      ? await typeText(ctx, ref, wanted, { keystrokes: true })
+      : await clickRef(ctx, ref);
+    if (opened.ok === false) return opened;
+    let list = await openedList(ctx, target, before);
+    if (list.candidates.length === 0 && list.expanded === "false") {
+      const watcher = watchSettle(tab, typeable ? "typing" : "in-page");
+      await pressCombo(tab.session, parseKeys("ArrowDown"), signal);
+      await ctx.stopwatch.time("settleMs", () => watcher.settle(signal));
+      list = await openedList(ctx, target, before);
     }
-    const model = await ctx.stopwatch.time("snapshotMs", () =>
-      capturePage(tab, { scope: "full", signal }),
-    );
-    const candidates = collect(model.root).filter(
-      (node) => node.ref !== ref && OPTION_ROLES.has(node.role) && node.inViewport,
-    );
-    const option = pickOption(candidates, wanted);
+    let option = pickOption(list.candidates, wanted);
+    // A filter that matches the option's text verbatim finds nothing for "India (+91)"
+    // when the option reads "India +91": retry with the words before the punctuation.
+    const shorter = wanted.split(/[^\p{L}\p{N}\s]/u)[0]?.trim() ?? "";
+    if (!option && typeable && shorter && shorter !== wanted.trim()) {
+      const retyped = await typeText(ctx, ref, shorter, { keystrokes: true });
+      if (retyped.ok === false) return retyped;
+      list = await openedList(ctx, target, before);
+      option = pickOption(list.candidates, wanted);
+    }
     if (!option?.ref) {
-      const visible = candidates
+      const choices = list.candidates
         .filter((node) => node.name)
         .slice(0, 15)
         .map((node) => JSON.stringify(node.name));
+      if (choices.length === 0) {
+        const notes = list.notes.slice(0, 3).map((note) => JSON.stringify(note));
+        return {
+          ok: false,
+          kind: "error",
+          summary:
+            notes.length > 0 || list.expanded === "true"
+              ? `${label} lists no option matching ${JSON.stringify(wanted)}`
+              : `${label} did not open a list of options for ${JSON.stringify(wanted)}`,
+          extra:
+            notes.length > 0
+              ? `the list says: ${notes.join(", ")}`
+              : list.expanded === "true"
+                ? "type less of the option's text, or snapshot to see what the list offers"
+                : "click it to open the list, then snapshot and click the option; or type part of the option and look at the suggestions",
+        };
+      }
       return {
         ok: false,
         kind: "error",
         summary: `opened ${label} but found no option matching ${JSON.stringify(wanted)}`,
-        ...(visible.length > 0 ? { extra: `visible choices: ${visible.join(", ")}` } : {}),
+        extra: `its choices: ${choices.join(", ")}`,
       };
     }
     const clicked = await clickRef(ctx, option.ref);
