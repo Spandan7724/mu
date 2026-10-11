@@ -2,6 +2,7 @@ import { bashTool } from "@mu/profile-coding";
 import { type AgentEvent, customMessage, type MarkdownCommandRun, readAuthFile } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { transcriptExportCommand } from "./export-command.ts";
+import type { ModelCatalog } from "./model-catalog.ts";
 import { modelPickerItems } from "./model-picker.ts";
 import { linesFrom, runRpc } from "./rpc.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -45,7 +46,11 @@ export interface AgentWorkerIo {
   stderr?: (message: string) => void;
 }
 
-export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): Promise<number> {
+export async function runAgentWorker(
+  args: ParsedArgs,
+  io: AgentWorkerIo = {},
+  modelCatalog?: ModelCatalog,
+): Promise<number> {
   const stderr = io.stderr ?? ((message: string) => process.stderr.write(message));
   if (!args.workerSessionId && !args.resumeSessionId) {
     stderr("mu: managed worker requires --session-id or --resume\n");
@@ -71,6 +76,9 @@ export async function runAgentWorker(args: ParsedArgs, io: AgentWorkerIo = {}): 
     onDiagnostic: (message) => stderr(`mu: ${message}\n`),
   });
   const { agent } = runtime;
+  void modelCatalog?.ensureFresh().then((refresh) => {
+    if (refresh.ok) agent.refreshModelInfo();
+  });
   const auth = await readAuthFile().catch((error: unknown) => {
     stderr(
       `mu: could not read saved authentication for /model: ${error instanceof Error ? error.message : String(error)}\n`,

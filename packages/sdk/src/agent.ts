@@ -413,6 +413,24 @@ export class Agent {
     this.options.extensions?.emitLifecycle({ type: "model_select", model: this.modelRef });
   }
 
+  // Adopts newer catalog metadata for the current model (context window, output
+  // limit, thinking levels) once discovery replaces what the session started
+  // from. It is the same model, so nothing is recorded in the session.
+  refreshModelInfo(): boolean {
+    if (this.model === this.options.model) return false;
+    const found = this.options.extensions?.findModel(this.modelRef) ?? findModel(this.modelRef);
+    if (!found || JSON.stringify(found) === JSON.stringify(this.model)) return false;
+    this.model = found;
+    this.provider = this.providerFor(found);
+    const nextThinking = thinkingLevelForModel(found, this.currentThinking);
+    if (nextThinking !== this.currentThinking) {
+      this.currentThinking = nextThinking;
+      this.tree.append({ type: "settings-change", thinkingLevel: nextThinking });
+    }
+    this.refreshContextAccounting();
+    return true;
+  }
+
   setThinking(level: ThinkingLevel): void {
     const next = thinkingLevelForModel(this.model, level);
     if (next === this.currentThinking) return;

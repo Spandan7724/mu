@@ -161,7 +161,7 @@ async function main(): Promise<number> {
       case "agents-supervisor":
         return runAgentSupervisor(args);
       case "agents-worker":
-        return runAgentWorker(args);
+        return runAgentWorker(args, {}, modelCatalog);
       case "rpc": {
         const runtime = await createCliSessionRuntime({
           cwd: process.cwd(),

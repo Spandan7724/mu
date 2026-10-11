@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { registerModels } from "@mu/ai";
 import {
   type AgentEvent,
   type AnyTool,
@@ -937,6 +938,28 @@ describe("runtime model and thinking changes", () => {
     const result = await agent.run("two");
     const assistants = result.messages.filter((m) => m.role === "assistant");
     expect(assistants.at(-1)?.role === "assistant" && assistants.at(-1)?.model).toBe("fake/fake-2");
+  });
+
+  test("refreshModelInfo adopts newer catalog metadata without recording a model change", () => {
+    const listed = { ...fakeModel, provider: "refresh-test", id: "m1", contextWindow: 272_000 };
+    registerModels([listed]);
+    const agent = new Agent({ provider: new FakeProvider([]), model: "refresh-test/m1" });
+    const entries = agent.session.toJsonl().length;
+    expect(agent.refreshModelInfo()).toBe(false);
+
+    registerModels([{ ...listed, contextWindow: 1_000_000 }]);
+    expect(agent.refreshModelInfo()).toBe(true);
+    expect(agent.modelRef).toBe("refresh-test/m1");
+    expect(agent.contextWindow).toBe(1_000_000);
+    expect(agent.session.toJsonl().length).toBe(entries);
+  });
+
+  test("refreshModelInfo leaves an explicitly supplied model alone", () => {
+    const supplied = { ...fakeModel, provider: "refresh-test", id: "m2" };
+    registerModels([{ ...supplied, contextWindow: 1_000_000 }]);
+    const agent = new Agent({ provider: new FakeProvider([]), model: supplied });
+    expect(agent.refreshModelInfo()).toBe(false);
+    expect(agent.contextWindow).toBe(supplied.contextWindow);
   });
 
   test("setThinking is applied to the next request", async () => {

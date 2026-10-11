@@ -1157,6 +1157,18 @@ export async function runInteractive(
 
   let loginInProgress = false;
 
+  function adoptRefreshedModels(): void {
+    const targets = [
+      ["main", agent],
+      ["side", sideConversation?.agent],
+    ] as const;
+    for (const [source, target] of targets) {
+      if (!target?.refreshModelInfo()) continue;
+      app.setModel(target.modelRef, target.contextWindow, source);
+      app.setThinking(target.thinking, target.thinkingLevels, source);
+    }
+  }
+
   async function refreshCatalogAfterLogin(): Promise<void> {
     if (!modelCatalog) return;
     commitLines(["  refreshing model catalog…"]);
@@ -1177,6 +1189,7 @@ export async function runInteractive(
       commitLines([`  model discovery warning · ${warning}`]);
     }
     if (result.cacheWarning) commitLines([`  ${result.cacheWarning}`]);
+    adoptRefreshedModels();
   }
 
   async function signInWithAccount(provider: AccountLoginProvider): Promise<void> {
@@ -1347,7 +1360,10 @@ export async function runInteractive(
     commitLines(runtime.warnings.map((warning) => `  ${warning}`));
   }
   void modelCatalog?.ensureFresh().then((refresh) => {
-    if (exiting || !refresh.ok || !refresh.warnings?.length) return;
+    if (exiting || !refresh.ok) return;
+    adoptRefreshedModels();
+    paint();
+    if (!refresh.warnings?.length) return;
     commitLines(refresh.warnings.map((warning) => `  model discovery warning · ${warning}`));
     paint();
   });
