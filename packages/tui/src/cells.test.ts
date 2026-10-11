@@ -207,6 +207,14 @@ describe("transcript cells (golden lines)", () => {
     expect(lines[0]).toContain("thinking · First I should check the client.");
   });
 
+  test("thinking summary drops markdown markers from the heading", () => {
+    const lines = visible(thinkingCell("**Checking `arithmetic`**\n\nThe user asked…", plain));
+    expect(lines).toEqual(["  │ thinking · Checking arithmetic"]);
+    expect(visible(thinkingCell("## Planning reply", plain))[0]).toBe(
+      "  │ thinking · Planning reply",
+    );
+  });
+
   test("thinking expands behind the rule", () => {
     const lines = visible(thinkingCell("one\ntwo", plain, true));
     expect(lines).toEqual(["  │ one", "  │ two"]);

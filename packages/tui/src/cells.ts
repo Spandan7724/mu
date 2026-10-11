@@ -65,13 +65,23 @@ export function agentCell(text: string, ctx: RenderContext): string[] {
   );
 }
 
+// Reasoning summaries open with a markdown heading such as `**Planning**`; the
+// one-line summary is not rendered as markdown, so the markers would show.
+function plainSummary(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1");
+}
+
 // Thinking is dim and behind the rule; collapsed to one line unless expanded.
 export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
   const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const safe = sanitizeUntrusted(text);
   if (!expanded) {
     const first = safe.trim().split("\n")[0] ?? "";
-    const summary = truncateToWidth(first, body(ctx) - 12);
+    const summary = truncateToWidth(plainSummary(first), body(ctx) - 12);
     return [MARGIN + rule + dim(`thinking ${GLYPHS.separator} ${summary}`, ctx.depth)];
   }
   return wrapText(safe, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
