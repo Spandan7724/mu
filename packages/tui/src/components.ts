@@ -608,9 +608,7 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
   return [MARGIN + dim(location, depth), MARGIN + stats];
 }
 
-const COMPOSER_GUTTER = " ";
-
-const composerOuterWidth = (width: number) => Math.max(4, width - COMPOSER_GUTTER.length * 2);
+const composerOuterWidth = (width: number) => Math.max(4, width - MARGIN.length * 2);
 
 export function composerRule(width: number, depth: ColorDepth): string {
   return MARGIN + dim("─".repeat(Math.max(0, width - MARGIN.length * 2)), depth);
@@ -622,7 +620,7 @@ export function composerContentWidth(width: number): number {
 
 export function composerBoxBottom(width: number, _depth: ColorDepth): string {
   const outerWidth = composerOuterWidth(width);
-  return `${COMPOSER_GUTTER}╰${"─".repeat(outerWidth - 2)}╯`;
+  return `${MARGIN}╰${"─".repeat(outerWidth - 2)}╯`;
 }
 
 export function composerBox(
@@ -635,14 +633,14 @@ export function composerBox(
   const contentWidth = outerWidth - 2;
   const label = title ? truncateToWidth(title, Math.max(0, contentWidth - 3)) : "";
   const top = label
-    ? `${COMPOSER_GUTTER}╭─ ${label} ${"─".repeat(Math.max(0, contentWidth - stringWidth(label) - 3))}╮`
-    : `${COMPOSER_GUTTER}╭${"─".repeat(contentWidth)}╮`;
+    ? `${MARGIN}╭─ ${label} ${"─".repeat(Math.max(0, contentWidth - stringWidth(label) - 3))}╮`
+    : `${MARGIN}╭${"─".repeat(contentWidth)}╮`;
   const body = lines.map((line) => {
     const physical = line.replace(/[\r\n]/g, " ");
     const inset = physical.startsWith(MARGIN) ? physical.slice(1) : physical;
     const clipped = truncateToWidth(inset, contentWidth);
     const padding = " ".repeat(Math.max(0, contentWidth - stringWidth(clipped)));
-    return `${COMPOSER_GUTTER}│${clipped}${padding}│`;
+    return `${MARGIN}│${clipped}${padding}│`;
   });
   return [top, ...body, composerBoxBottom(width, depth)];
 }

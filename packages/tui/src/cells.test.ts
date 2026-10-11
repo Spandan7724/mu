@@ -571,28 +571,24 @@ describe("components", () => {
 
   test("composer content is enclosed by a width-safe box", () => {
     const width = 20;
-    expect(composerContentWidth(width)).toBe(16);
+    expect(composerContentWidth(width)).toBe(14);
     expect(composerBox(["  ▸ draft"], width, "none")).toEqual([
-      " ╭────────────────╮",
-      " │ ▸ draft        │",
-      " ╰────────────────╯",
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
     ]);
     expect(composerBox(["  ▸ draft"], width, "truecolor")).toEqual([
-      " ╭────────────────╮",
-      " │ ▸ draft        │",
-      " ╰────────────────╯",
+      "  ╭──────────────╮",
+      "  │ ▸ draft      │",
+      "  ╰──────────────╯",
     ]);
     expect(composerBox(["  $ test"], width, "none", "shell")).toEqual([
-      " ╭─ shell ────────╮",
-      " │ $ test         │",
-      " ╰────────────────╯",
+      "  ╭─ shell ──────╮",
+      "  │ $ test       │",
+      "  ╰──────────────╯",
     ]);
     const multiline = composerBox(["  first\nsecond"], width, "none");
-    expect(multiline).toEqual([
-      " ╭────────────────╮",
-      " │ first second   │",
-      " ╰────────────────╯",
-    ]);
+    expect(multiline).toEqual(["  ╭──────────────╮", "  │ first second │", "  ╰──────────────╯"]);
     for (const line of multiline) {
       expect(line).not.toContain("\n");
       expect(stringWidth(line)).toBeLessThanOrEqual(width);

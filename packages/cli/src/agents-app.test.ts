@@ -295,8 +295,8 @@ describe("AgentsApp", () => {
     app.setDispatchModels([{ label: "openai/gpt-5.6-terra" }], "openai/gpt-5.6-terra");
 
     const lines = app.render().map(stripAnsi);
-    expect(lines.some((line) => line.startsWith(" ╭") && line.endsWith("╮"))).toBe(true);
-    expect(lines.some((line) => line.startsWith(" ╰") && line.endsWith("╯"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("  ╭") && line.endsWith("╮"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("  ╰") && line.endsWith("╯"))).toBe(true);
     expect(lines.at(-2)).toBe("  ~/code/mu");
     expect(lines.at(-1)).toContain("openai/gpt-5.6-terra · enter dispatch/attach");
     expect(lines.at(-1)).not.toContain("0.0%/0");
