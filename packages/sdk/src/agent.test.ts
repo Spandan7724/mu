@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { registerModels } from "@mu/ai";
 import {
   type AgentEvent,
   type AnyTool,
   customMessage,
+  ExtensionHost,
   MemorySessionStore,
   type PermissionRequest,
   type ProfileRuntime,
@@ -940,26 +940,39 @@ describe("runtime model and thinking changes", () => {
     expect(assistants.at(-1)?.role === "assistant" && assistants.at(-1)?.model).toBe("fake/fake-2");
   });
 
-  test("refreshModelInfo adopts newer catalog metadata without recording a model change", () => {
-    const listed = { ...fakeModel, provider: "refresh-test", id: "m1", contextWindow: 272_000 };
-    registerModels([listed]);
-    const agent = new Agent({ provider: new FakeProvider([]), model: "refresh-test/m1" });
+  test("refreshModelInfo adopts newer catalog metadata without recording a model change", async () => {
+    const listed = { ...fakeModel, id: "fake-listed", contextWindow: 272_000 };
+    const host = new ExtensionHost();
+    const publish = (model: typeof listed) =>
+      host.register({
+        name: `catalog-${model.contextWindow}`,
+        activate: (api) => api.registerModels([model]),
+      });
+    await publish(listed);
+    const agent = new Agent({
+      provider: new FakeProvider([]),
+      model: "fake/fake-listed",
+      extensions: host,
+    });
     const entries = agent.session.toJsonl().length;
     expect(agent.refreshModelInfo()).toBe(false);
 
-    registerModels([{ ...listed, contextWindow: 1_000_000 }]);
+    await publish({ ...listed, contextWindow: 1_000_000 });
     expect(agent.refreshModelInfo()).toBe(true);
-    expect(agent.modelRef).toBe("refresh-test/m1");
+    expect(agent.modelRef).toBe("fake/fake-listed");
     expect(agent.contextWindow).toBe(1_000_000);
     expect(agent.session.toJsonl().length).toBe(entries);
   });
 
-  test("refreshModelInfo leaves an explicitly supplied model alone", () => {
-    const supplied = { ...fakeModel, provider: "refresh-test", id: "m2" };
-    registerModels([{ ...supplied, contextWindow: 1_000_000 }]);
-    const agent = new Agent({ provider: new FakeProvider([]), model: supplied });
+  test("refreshModelInfo leaves an explicitly supplied model alone", async () => {
+    const host = new ExtensionHost();
+    await host.register({
+      name: "catalog",
+      activate: (api) => api.registerModels([{ ...fakeModel, contextWindow: 1_000_000 }]),
+    });
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel, extensions: host });
     expect(agent.refreshModelInfo()).toBe(false);
-    expect(agent.contextWindow).toBe(supplied.contextWindow);
+    expect(agent.contextWindow).toBe(fakeModel.contextWindow);
   });
 
   test("setThinking is applied to the next request", async () => {
