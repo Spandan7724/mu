@@ -2,8 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveApiKey } from "mu";
-import { loadUserConfig, resolveCliModel, saveDefaultModel, userConfigPath } from "./config.ts";
+import { type ModelInfo, saveApiKey, type ThinkingLevel } from "mu";
+import {
+  applySavedThinking,
+  loadUserConfig,
+  resolveCliModel,
+  saveDefaultModel,
+  saveThinkingLevel,
+  userConfigPath,
+} from "./config.ts";
 
 describe("user model configuration", () => {
   test("the user config lives under ~/.mu", () => {
@@ -156,5 +163,62 @@ describe("user model configuration", () => {
     expect(warnings).toHaveLength(1);
     await expect(saveDefaultModel("openai/gpt-5.1", file)).rejects.toThrow();
     expect(await readFile(file, "utf8")).toBe("{ broken");
+  });
+});
+
+describe("saved thinking levels", () => {
+  const model = (id: string, levels: string[], fallback: string): ModelInfo => ({
+    provider: "openai-codex",
+    id,
+    contextWindow: 272_000,
+    maxOutput: 128_000,
+    modalities: ["text"],
+    thinking: true,
+    thinkingLevels: levels,
+    defaultThinkingLevel: fallback,
+    pricing: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+  const agentFor = (modelInfo: ModelInfo) => {
+    const agent = {
+      modelInfo,
+      thinking: "" as ThinkingLevel,
+      setThinking(level: ThinkingLevel) {
+        agent.thinking = level;
+      },
+    };
+    return agent;
+  };
+
+  test("each model keeps its own level alongside the saved model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-thinking-"));
+    const file = join(root, "config.json");
+    await saveDefaultModel("openai-codex/gpt-6-luna", file);
+    await saveThinkingLevel("openai-codex/gpt-6-luna", "high", file);
+    await saveThinkingLevel("openai-codex/gpt-6.1-sol", "low", file);
+    await saveThinkingLevel("openai-codex/gpt-6-luna", "max", file);
+
+    expect(await loadUserConfig(file)).toEqual({
+      model: "openai-codex/gpt-6-luna",
+      thinking: { "openai-codex/gpt-6-luna": "max", "openai-codex/gpt-6.1-sol": "low" },
+    });
+  });
+
+  test("switching models restores the saved level, or the model's own default", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-thinking-apply-"));
+    const file = join(root, "config.json");
+    await saveThinkingLevel("openai-codex/gpt-6-luna", "high", file);
+    await saveThinkingLevel("openai-codex/gpt-6-astra", "ultra", file);
+
+    const luna = agentFor(model("gpt-6-luna", ["low", "medium", "high", "max"], "medium"));
+    applySavedThinking(luna, file);
+    expect(luna.thinking).toBe("high");
+
+    const sol = agentFor(model("gpt-6.1-sol", ["low", "medium", "high", "ultra"], "low"));
+    applySavedThinking(sol, file);
+    expect(sol.thinking).toBe("low");
+
+    const astra = agentFor(model("gpt-6-astra", ["low", "medium", "high"], "medium"));
+    applySavedThinking(astra, file);
+    expect(astra.thinking).toBe("medium");
   });
 });

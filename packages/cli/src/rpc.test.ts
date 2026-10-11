@@ -104,6 +104,19 @@ describe("runRpc", () => {
     for (const line of written) expect(() => JSON.parse(line)).not.toThrow();
   });
 
+  test("a thinking op changes the level and reports the change", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const { io } = harness([
+      JSON.stringify({ type: "thinking", level: "high" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    const changed: string[] = [];
+
+    await runRpc(io, { agent, onThinkingChange: () => changed.push(agent.thinking) });
+
+    expect(changed).toEqual(["high"]);
+  });
+
   test("a full session: input, steering, permission reply and abort", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "toolCall", id: "c1", name: "gated", arguments: {} }], delayMs: 15 },

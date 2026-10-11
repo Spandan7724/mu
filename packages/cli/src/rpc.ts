@@ -81,6 +81,7 @@ export interface RpcDeps {
   abortAuxiliary?: () => void;
   cyclePermissionMode?: () => string | undefined;
   setPermissionMode?: (id: string) => string | undefined;
+  onThinkingChange?: () => void;
   ready?: RpcRuntimeMetadata;
   snapshot?: () => RpcSnapshot;
 }
@@ -380,6 +381,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         case "thinking":
           try {
             deps.agent.setThinking(op.level);
+            deps.onThinkingChange?.();
             accept(op);
           } catch (error) {
             reject(op, error instanceof Error ? error.message : String(error));

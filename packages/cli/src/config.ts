@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -5,17 +6,27 @@ import {
   defaultAuthFile,
   defaultModelRef,
   findModel,
+  type ModelInfo,
   providerHasCredentials,
   readAuthFile,
+  type ThinkingLevel,
+  thinkingLevelForModel,
 } from "mu";
 import { z } from "zod";
 
 export interface UserConfig {
   model?: string;
+  // Last thinking level chosen per model ref.
+  thinking?: Record<string, string>;
   [key: string]: unknown;
 }
 
-const userConfigSchema = z.object({ model: z.string().min(1).optional() }).loose();
+const userConfigSchema = z
+  .object({
+    model: z.string().min(1).optional(),
+    thinking: z.record(z.string().min(1), z.string().min(1)).optional(),
+  })
+  .loose();
 
 export function userConfigPath(home = homedir()): string {
   return join(home, ".mu", "config.json");
@@ -30,8 +41,12 @@ function parseConfig(raw: string, file: string): UserConfig {
       .join("; ");
     throw new Error(`Invalid user config at ${file}: ${issues}`);
   }
-  const { model, ...rest } = result.data;
-  return { ...rest, ...(model !== undefined ? { model } : {}) };
+  const { model, thinking, ...rest } = result.data;
+  return {
+    ...rest,
+    ...(model !== undefined ? { model } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
+  };
 }
 
 async function readUserConfig(file: string): Promise<UserConfig> {
@@ -106,4 +121,44 @@ export async function saveDefaultModel(model: string, file = userConfigPath()): 
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+export async function saveThinkingLevel(
+  model: string,
+  level: string,
+  file = userConfigPath(),
+): Promise<void> {
+  const config = await readUserConfig(file);
+  await mkdir(dirname(file), { recursive: true });
+  const thinking = { ...config.thinking, [model]: level };
+  await writeFile(file, `${JSON.stringify({ ...config, thinking }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+export function savedThinkingLevel(
+  config: UserConfig,
+  model: ModelInfo,
+): ThinkingLevel | undefined {
+  const saved = config.thinking?.[`${model.provider}/${model.id}`];
+  return saved ? thinkingLevelForModel(model, saved) : undefined;
+}
+
+// A model without a saved level starts at its own default rather than
+// inheriting the previous model's level.
+export function applySavedThinking(
+  agent: { readonly modelInfo: ModelInfo; setThinking(level: ThinkingLevel): void },
+  file = userConfigPath(),
+): void {
+  let config: UserConfig = {};
+  try {
+    config = parseConfig(readFileSync(file, "utf8"), file);
+  } catch {
+    // A missing or invalid config means no saved levels; startup already warns.
+  }
+  agent.setThinking(
+    savedThinkingLevel(config, agent.modelInfo) ??
+      thinkingLevelForModel(agent.modelInfo, undefined),
+  );
 }

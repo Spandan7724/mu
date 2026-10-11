@@ -3,6 +3,7 @@ import {
   type AgentOptions,
   type CommandRegistry,
   ExtensionHost,
+  findModel,
   loadMarkdownCommands,
   optionsFromProfile,
   type PermissionMode,
@@ -14,7 +15,7 @@ import {
   toCommand,
 } from "mu";
 import { withStoredCredentials } from "./auth.ts";
-import { resolveCliModel } from "./config.ts";
+import { loadUserConfig, resolveCliModel, savedThinkingLevel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
 import {
@@ -113,8 +114,15 @@ export async function createCliSessionRuntime(
     string,
     { request: PermissionRequest; resolve: (outcome: "allow" | "deny") => void }
   >();
+  const modelInfo = typeof model === "string" ? findModel(model) : model;
+  const thinkingLevel =
+    resolved.thinkingLevel ??
+    (useBuiltIns && modelInfo
+      ? savedThinkingLevel(await loadUserConfig(undefined, () => {}), modelInfo)
+      : undefined);
   const agent = new Agent({
     ...resolved,
+    ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(model ? { model } : {}),
     extensions: loaded.host,
     ...(options.maxTurns !== undefined || options.maxCostUsd !== undefined

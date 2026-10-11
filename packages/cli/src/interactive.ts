@@ -48,7 +48,7 @@ import {
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
-import { saveDefaultModel } from "./config.ts";
+import { applySavedThinking, saveDefaultModel, saveThinkingLevel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { observeGitBranch } from "./git-branch.ts";
 import {
@@ -404,7 +404,16 @@ export async function runInteractive(
         void runCommand(text);
       },
       onMentionQuery: (query) => mentionCandidates(query),
-      onThinkingChange: (level) => activeAgent().setThinking(level as ThinkingLevel),
+      onThinkingChange: (level) => {
+        const target = activeAgent();
+        target.setThinking(level as ThinkingLevel);
+        void saveThinkingLevel(target.modelRef, target.thinking).catch((error: unknown) => {
+          commitLines([
+            `  could not save thinking level: ${error instanceof Error ? error.message : String(error)}`,
+          ]);
+          paint();
+        });
+      },
       onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember, source) => {
         if (source === "side") {
@@ -482,6 +491,7 @@ export async function runInteractive(
         items,
         onChoose: async (label) => {
           target.setModel(label);
+          applySavedThinking(target);
           app.setModel(label, target.contextWindow, source);
           app.setThinking(target.thinking, target.thinkingLevels, source);
           if (source === "side") {
@@ -1084,6 +1094,7 @@ export async function runInteractive(
     if (!model) return;
     const ref = `${model.provider}/${model.id}`;
     agent.setModel(ref);
+    applySavedThinking(agent);
     app.setModel(ref, agent.contextWindow);
     app.setThinking(agent.thinking, agent.thinkingLevels);
     try {

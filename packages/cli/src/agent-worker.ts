@@ -1,6 +1,7 @@
 import { bashTool } from "@mu/profile-coding";
 import { type AgentEvent, customMessage, type MarkdownCommandRun, readAuthFile } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { applySavedThinking, saveThinkingLevel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import type { ModelCatalog } from "./model-catalog.ts";
 import { modelPickerItems } from "./model-picker.ts";
@@ -136,6 +137,13 @@ export async function runAgentWorker(
       },
       {
         agent,
+        onThinkingChange: () => {
+          void saveThinkingLevel(agent.modelRef, agent.thinking).catch((error: unknown) => {
+            stderr(
+              `mu: could not save thinking level: ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+          });
+        },
         ready: {
           sessionId: agent.sessionId,
           model: agent.modelRef,
@@ -214,7 +222,10 @@ export async function runAgentWorker(
             },
             print: (output) => printed.push(output),
             getModel: () => agent.modelRef,
-            setModel: (ref) => agent.setModel(ref),
+            setModel: (ref) => {
+              agent.setModel(ref);
+              applySavedThinking(agent);
+            },
           });
           const message = [...printed, ...(result.message ? [result.message] : [])].join("\n");
           const complete = { ...result, ...(message ? { message } : {}) };
