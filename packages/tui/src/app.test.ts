@@ -582,7 +582,7 @@ describe("fake-agent session", () => {
     expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun test");
     const live = app.renderBottom().map(stripAnsi).join("\n");
     expect(live).toContain("┌ background · 1\n  │ running bun test · task_1 bg");
-    expect(live).toContain("\n  └\n\n  ╭");
+    expect(live).toContain("\n  └\n\n ╭");
     expect(live).toContain("running bun test · task_1 bg");
     expect(live).toContain("five");
     expect(live).toContain("seven");
@@ -614,7 +614,7 @@ describe("fake-agent session", () => {
     expect(live.slice(first + 1, second)).toContain("  │");
     expect(close).toBeGreaterThan(second);
     expect(live[close + 1]).toBe("");
-    expect(live[close + 2]).toStartWith("  ╭");
+    expect(live[close + 2]).toStartWith(" ╭");
   });
 
   test("a running background task is selectable and expandable in activity mode", () => {
@@ -630,7 +630,7 @@ describe("fake-agent session", () => {
     feed(app, "\u000f");
     expect(app.currentMode).toBe("activity");
     let reviewRows = app.renderScreen().map(stripAnsi);
-    const composer = reviewRows.findIndex((line) => line.startsWith("  ╭"));
+    const composer = reviewRows.findIndex((line) => line.startsWith(" ╭"));
     expect(reviewRows[composer - 1]).toBe("");
     let review = reviewRows.join("\n");
     expect(review).toContain("❯ running bun test · task_1 bg");
@@ -1339,7 +1339,7 @@ describe("approval overlay", () => {
     const rendered = h.app.renderBottom().map(stripAnsi);
     for (const commandLine of ["python3 - <<'PY'", "print('hello')", "PY"]) {
       const row = rendered.find((line) => line.includes(commandLine));
-      expect(row).toStartWith("  │ ");
+      expect(row).toStartWith(" │ ");
       expect(row).toEndWith("│");
     }
     for (const line of rendered) {
