@@ -18,3 +18,4 @@ scripts/palette-preview.ts
 AGENTS.md
 scripts/preview-tui.ts
 scripts/browser-tui-preview.ts
+scripts/preview/
