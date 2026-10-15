@@ -3651,6 +3651,20 @@ describe("credential prompts", () => {
 });
 
 describe("error reporting", () => {
+  test("a thinking level the model does not offer is noted in the transcript", () => {
+    const { app } = harness();
+    const lines = app.handleEvent({
+      type: "thinking_adjusted",
+      model: "openai/guessed",
+      requested: "xhigh",
+      level: "high",
+      inferredModel: true,
+    });
+    expect(lines.map(stripAnsi).join("\n")).toBe(
+      "  thinking · openai/guessed does not offer xhigh (not in mu's model catalog); using high",
+    );
+  });
+
   test("the real provider error is shown, not a generic line", () => {
     const { app } = harness();
     app.handleEvent({ type: "agent_start" });
