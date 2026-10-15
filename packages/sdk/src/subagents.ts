@@ -174,7 +174,7 @@ interface BackgroundJob {
   endedAt?: number;
   state: BackgroundState;
   controller: AbortController;
-  stopRequested: boolean;
+  stoppedBy?: "model" | "user" | "session" | undefined;
   child?: Agent | undefined;
   messages: AgentMessage[];
   answer: string;
@@ -347,7 +347,6 @@ class SubagentManager {
       startedAt: Date.now(),
       state: "running",
       controller: new AbortController(),
-      stopRequested: false,
       messages: [],
       answer: "",
       reported: 0,
@@ -413,7 +412,14 @@ class SubagentManager {
         });
         await this.deliver(job, outcome, status).catch(() => {});
       });
-    parent.trackBackground({ label: id, done, stop: () => job.controller.abort() });
+    parent.trackBackground({
+      label: id,
+      done,
+      stop: (reason) => {
+        job.stoppedBy ??= reason;
+        job.controller.abort();
+      },
+    });
     return {
       content: [
         {
@@ -498,7 +504,7 @@ class SubagentManager {
     const job = this.job(id);
     if (!job) return errorResult(`No such background subagent: ${id}`);
     if (job.state !== "running") return textResult(`Subagent ${id} had already ${job.state}.`);
-    job.stopRequested = true;
+    job.stoppedBy ??= "model";
     job.controller.abort();
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
@@ -540,8 +546,8 @@ class SubagentManager {
   }
 
   // A result reaches the session that started the job even if the user has
-  // since moved to another one; a stop the model asked for is recorded
-  // without waking another turn.
+  // since moved to another one; a stopped job is recorded without waking
+  // another turn, and the model reads the record with its next input.
   private async deliver(
     job: BackgroundJob,
     outcome: SubagentOutcome,
@@ -568,7 +574,7 @@ class SubagentManager {
       return;
     }
     if (outcome.usage) parent.chargeUsage(outcome.usage);
-    if (job.stopRequested || parent.isStopping) await parent.recordMessage(record);
+    if (job.stoppedBy || parent.isStopping) await parent.recordMessage(record);
     else {
       job.queued = record;
       parent.followUp(record);
@@ -715,7 +721,13 @@ function outcomeText(job: BackgroundJob): string {
 }
 
 function notificationText(job: BackgroundJob): string {
-  const header = `Background subagent ${job.id} (${job.description}) ${job.state} after ${formatElapsed((job.endedAt ?? Date.now()) - job.startedAt)}.`;
+  const by =
+    job.stoppedBy === "user"
+      ? " by the user"
+      : job.stoppedBy === "session"
+        ? " when its session ended"
+        : "";
+  const header = `Background subagent ${job.id} (${job.description}) ${job.state}${by} after ${formatElapsed((job.endedAt ?? Date.now()) - job.startedAt)}.`;
   if (job.resultRead) return `${header} Its result was already returned to you.`;
   return `${header}\n\n${outcomeText(job)}`;
 }

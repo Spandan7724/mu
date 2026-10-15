@@ -839,6 +839,47 @@ describe("fake-agent session", () => {
     expect(app.hasRunningSubagents).toBe(false);
   });
 
+  test("x twice in transcript review stops the selected background subagent", () => {
+    const stopped: string[] = [];
+    const { app } = harness({ onStopSubagent: (id) => void stopped.push(id) });
+    const args = { description: "port the parser", prompt: "Port it", run_in_background: true };
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "bg-call",
+      toolName: "task",
+      args,
+    });
+    app.handleEvent({
+      type: "subagent_started",
+      subagentId: "sa-abc123",
+      toolCallId: "bg-call",
+      kind: "task",
+      description: "port the parser",
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "bg-call",
+      result: backgroundStart(),
+    });
+    const key = (name: string, text?: string) =>
+      app.handleInput({
+        type: "key",
+        key: { name, ctrl: name === "o", alt: false, shift: false, ...(text ? { text } : {}) },
+      });
+    const hint = () => stripAnsi(app.renderBottom().join("\n"));
+
+    key("o");
+    expect(hint()).toContain("x stop");
+    key("x", "x");
+    expect(stopped).toEqual([]);
+    expect(hint()).toContain("x again to stop");
+    key("right");
+    key("x", "x");
+    expect(stopped).toEqual([]);
+    key("x", "x");
+    expect(stopped).toEqual(["sa-abc123"]);
+  });
+
   test("a resumed background subagent shows the result its record carried", () => {
     const { app } = harness();
     const call: AgentMessage = {

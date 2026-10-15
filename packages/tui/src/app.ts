@@ -98,6 +98,8 @@ export interface AppCallbacks {
   // Supplies file paths for the `@` mention popup.
   onMentionQuery?: (query: string) => { label: string; description?: string }[];
   onAbort: () => void;
+  // Stops one background subagent selected in transcript review.
+  onStopSubagent?: (subagentId: string) => void;
   onExit: () => void;
   // Present only for a conversation attached from agent view. Plain mu omits
   // it, so Left remains ordinary editor navigation there.
@@ -548,6 +550,8 @@ export class App {
     | undefined;
   private backgroundTasks = new Map<string, LiveTask>();
   private backgroundSubagents = new Map<string, LiveSubagent>();
+  // A first `x` on a running background subagent arms its stop; the second sends it.
+  private stopArmedFor: string | undefined;
   private ctrlCArmedAt = 0;
   private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
@@ -1758,7 +1762,9 @@ export class App {
         ? "type query · enter search · esc cancel"
         : search?.showing
           ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
-          : `↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
+          : this.stopArmedFor
+            ? `x again to stop ${GLYPHS.separator} other keys cancel`
+            : `${this.stoppableSubagent() && this.options.callbacks.onStopSubagent ? `x stop ${GLYPHS.separator} ` : ""}↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
@@ -1862,6 +1868,15 @@ export class App {
     const tasks = [...this.backgroundTasks.values()].filter((task) => !task.exit).length;
     const subagents = [...this.backgroundSubagents.values()].filter((live) => !live.ended).length;
     this.footerData = { ...this.footerData, backgroundTasks: tasks + subagents };
+  }
+
+  private stoppableSubagent(): string | undefined {
+    if (this.mode !== "activity") return undefined;
+    const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
+    const subagentId = node && "pending" in node ? node.pending.subagentId : undefined;
+    if (!subagentId) return undefined;
+    const live = this.backgroundSubagents.get(subagentId);
+    return live && !live.ended ? subagentId : undefined;
   }
 
   private subagentOwner(subagentId: string): PendingTool | undefined {
@@ -2506,6 +2521,15 @@ export class App {
     const nodes = this.activityNodes();
     let index = nodes.findIndex((node) => node.id === this.activitySelection);
     if (index < 0) index = Math.max(0, nodes.length - 1);
+    const armed = this.stopArmedFor;
+    this.stopArmedFor = undefined;
+    if (key.text === "x" && !key.ctrl && !key.alt) {
+      const subagentId = this.stoppableSubagent();
+      if (!subagentId || !this.options.callbacks.onStopSubagent) return;
+      if (armed === subagentId) this.options.callbacks.onStopSubagent(subagentId);
+      else this.stopArmedFor = subagentId;
+      return;
+    }
     if (["up", "down", "pageup", "pagedown"].includes(key.name)) {
       const page = Math.max(1, (this.options.height ?? 24) - 6);
       const offset =

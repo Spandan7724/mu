@@ -395,6 +395,9 @@ export async function runInteractive(
         if (shellController) shellController.abort();
         else activeAgent().abort();
       },
+      onStopSubagent: (subagentId) => {
+        agent.stopBackgroundWork(subagentId);
+      },
       onExit: () => {
         exiting = true;
         shutdown();

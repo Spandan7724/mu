@@ -34,6 +34,10 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
     ],
   },
   {
+    title: "Transcript review",
+    bindings: [{ keys: "x twice", description: "stop the selected background subagent" }],
+  },
+  {
     title: "Composer",
     bindings: [
       {

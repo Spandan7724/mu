@@ -183,7 +183,7 @@ export interface BackgroundWork {
   label: string;
   // Settles once the work's result has been delivered or recorded.
   done: Promise<unknown>;
-  stop: () => void;
+  stop: (reason: "user" | "session") => void;
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -434,7 +434,7 @@ export class Agent {
   // or stopping the session stops it; shutdown waits for it to finish.
   trackBackground(work: BackgroundWork): void {
     if (this.stopping) {
-      work.stop();
+      work.stop("session");
       return;
     }
     const done = work.done.then(
@@ -446,6 +446,16 @@ export class Agent {
       this.background.delete(work);
       this.resolveIdleIfDone();
     });
+  }
+
+  // A user's request to stop one piece of background work by its label.
+  stopBackgroundWork(label: string): boolean {
+    for (const work of this.background.keys()) {
+      if (work.label !== label) continue;
+      work.stop("user");
+      return true;
+    }
+    return false;
   }
 
   // Idle with no background work left: what a one-shot caller waits for before
@@ -2243,7 +2253,7 @@ export class Agent {
   private stopBackground(): void {
     for (const work of this.background.keys()) {
       try {
-        work.stop();
+        work.stop("session");
       } catch {
         // One failing stop must not keep the others running.
       }

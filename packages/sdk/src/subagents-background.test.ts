@@ -227,6 +227,26 @@ describe("background subagents", () => {
     expect((record?.details as BackgroundSubagentResultDetails).status).toBe("stopped");
   });
 
+  test("a user stop is recorded as such without waking another turn", async () => {
+    const { gate, reached } = gateTool();
+    const { parent, parentScript } = await setup(
+      [background(), text("Started.")],
+      [call("gate-1", "gate", {})],
+      { tools: [gate] },
+    );
+
+    await parent.run("delegate");
+    await reached;
+    const [label] = parent.backgroundWork;
+    expect(parent.stopBackgroundWork(label as string)).toBe(true);
+    await parent.waitForSettled();
+
+    expect(parentScript.callCount).toBe(2);
+    const [record] = records(parent.session.messagesAt());
+    expect(JSON.stringify(record?.content)).toContain("stopped by the user");
+    expect(parent.stopBackgroundWork("sa-missing")).toBe(false);
+  });
+
   test("undo, redo and fork wait for background work", async () => {
     const { gate, release, reached } = gateTool();
     const { parent } = await setup([background(), text("Started.")], [call("gate-1", "gate", {})], {
