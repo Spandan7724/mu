@@ -342,6 +342,17 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(ack.text).toContain("Sponsorship: none");
   });
 
+  test("clicks on a scrolled page hit-test where the target is, not a scroll-height above", async () => {
+    await open("scrolled-click");
+    // Less than a screen, so a point a scroll-height off still lands on another button.
+    await run("evaluate", { function: "() => { window.scrollTo(0, 300); return scrollY; }" });
+    await run("snapshot", { scope: "full" });
+    const clicked = await run("click", { ref: refIn(page, "button", "Button 6") });
+    expect(clicked.result.isError).not.toBe(true);
+    const shown = await run("snapshot", { scope: "full" });
+    expect(shown.text).toContain("Clicked: Button 6");
+  });
+
   test("select and fill_form wait for a list that is still loading its search results", async () => {
     await open("async-combobox");
     const school = refIn(page, "combobox", "School");

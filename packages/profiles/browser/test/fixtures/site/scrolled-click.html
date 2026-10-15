@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Long form</title>
+<style>body{font-family:sans-serif;margin:0} button{display:block;width:400px;height:100px;margin:0}</style></head>
+<body>
+<!-- Every spot on the page is another button, so a hit test that misses by the scroll
+     offset reports one of them as covering the target. -->
+<p>Clicked: <span id="clicked">none</span></p>
+<div id="buttons"></div>
+<script>
+const host = document.getElementById('buttons');
+for (let i = 1; i <= 40; i++) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = 'Button ' + i;
+  button.addEventListener('click', () => { document.getElementById('clicked').textContent = button.textContent; });
+  host.appendChild(button);
+}
+</script>
+</body></html>

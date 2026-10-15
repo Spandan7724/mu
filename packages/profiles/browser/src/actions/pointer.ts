@@ -173,10 +173,19 @@ export async function hitTest(
 ): Promise<{ ok: true } | { ok: false; occluder: Occluder }> {
   const refFor = (backendNodeId: number | undefined) =>
     backendNodeId === undefined ? undefined : refOf(target.frameId, backendNodeId);
+  // getNodeForLocation takes document coordinates, the point is in the viewport:
+  // on a scrolled page it would otherwise test whatever sits a scroll-height above.
+  const metrics = await target.session
+    .send("Page.getLayoutMetrics", undefined, { signal, timeoutMs: 3_000 })
+    .catch(() => undefined);
   const location = await target.session
     .send(
       "DOM.getNodeForLocation",
-      { x: Math.round(point.x), y: Math.round(point.y), includeUserAgentShadowDOM: false },
+      {
+        x: Math.round(point.x + (metrics?.cssVisualViewport.pageX ?? 0)),
+        y: Math.round(point.y + (metrics?.cssVisualViewport.pageY ?? 0)),
+        includeUserAgentShadowDOM: false,
+      },
       { signal, timeoutMs: 3_000 },
     )
     .catch(() => undefined);
