@@ -1,17 +1,25 @@
+import { randomUUID } from "node:crypto";
 import {
   defaultThinkingLevel,
   type ModelInfo,
   supportedThinkingLevels,
+  type TextContent,
   type ThinkingLevel,
   type Usage,
 } from "@mu/ai";
-import type {
-  AgentMessage,
-  AnyTool,
-  Extension,
-  PermissionRule,
-  ProfileSubagents,
-  TaskSubagentSession,
+import {
+  type AgentEvent,
+  type AgentMessage,
+  type AnyTool,
+  type CustomMessage,
+  customMessage,
+  type Extension,
+  errorResult,
+  type PermissionRule,
+  type ProfileSubagents,
+  type TaskSubagentSession,
+  type ToolResult,
+  textResult,
 } from "@mu/core";
 import { z } from "zod";
 import type { Agent, HaltReason } from "./agent.ts";
@@ -44,6 +52,24 @@ export interface SubagentProgressUpdate {
     | { type: "message"; message: AgentMessage };
 }
 
+// What a `task` call started with run_in_background returns in place of a result.
+export interface BackgroundSubagentDetails {
+  type: "subagent-background";
+  subagentId: string;
+  kind: SubagentKind;
+  description: string;
+}
+
+// Carried by the custom message that reports a background subagent's end.
+export interface BackgroundSubagentResultDetails {
+  type: "subagent-background-result";
+  subagentId: string;
+  toolCallId: string;
+  status: "done" | "error" | "stopped";
+  content: TextContent[];
+  result?: SubagentDetails;
+}
+
 interface SubagentExtensionBaseOptions {
   parent: () => Agent;
   // A profile's per-child resources for task subagents (any profile, not only coding).
@@ -59,8 +85,18 @@ export type SubagentExtensionOptions = SubagentExtensionBaseOptions &
     | { coding?: undefined; inspectionPermissions?: PermissionRule[] }
   );
 
-const DELEGATION_TOOLS = new Set(["task", "search", "counsel", "recall"]);
+const DELEGATION_TOOLS = new Set([
+  "task",
+  "search",
+  "counsel",
+  "recall",
+  "subagent_status",
+  "subagent_send",
+  "subagent_stop",
+]);
 const PROGRESS_INTERVAL_MS = 80;
+const STOP_WAIT_MS = 15_000;
+const MAX_WAIT_SECONDS = 600;
 
 const TASK_PROMPT = `You are a task subagent responsible for one substantial, self-contained work unit delegated by a parent agent. Own that unit from investigation through completion; do not merely suggest what the parent should do.
 
@@ -112,8 +148,48 @@ Operating contract:
 
 Return: the recommendation first, followed by the decisive evidence, tradeoffs or failure sequence, and the reversal condition or unresolved question. Cite exact paths and line ranges when repository evidence is involved. Do not implement changes, edit files, provide routine reassurance, delegate to another agent, or create subagents.`;
 
+interface SubagentOutcome {
+  content: TextContent[];
+  details?: SubagentDetails;
+  usage?: Usage;
+  isError?: boolean;
+  directResponse?: string;
+}
+
+interface RunHooks {
+  child?: (child: Agent) => void;
+  delivered?: (text: string) => void;
+  permissionLabel?: string;
+}
+
+type FinalState = BackgroundSubagentResultDetails["status"];
+type BackgroundState = "running" | FinalState;
+
+interface BackgroundJob {
+  id: string;
+  description: string;
+  sessionId: string;
+  toolCallId: string;
+  startedAt: number;
+  endedAt?: number;
+  state: BackgroundState;
+  controller: AbortController;
+  stopRequested: boolean;
+  child?: Agent | undefined;
+  messages: AgentMessage[];
+  answer: string;
+  reported: number;
+  undelivered: string[];
+  outcome?: SubagentOutcome;
+  // The completion record while it waits in the parent's follow-up queue.
+  queued?: CustomMessage | undefined;
+  resultRead: boolean;
+  ended: Promise<void>;
+}
+
 class SubagentManager {
   private readonly active = new Set<Agent>();
+  private readonly jobs = new Map<string, BackgroundJob>();
 
   constructor(private readonly options: SubagentExtensionOptions) {}
 
@@ -123,7 +199,8 @@ class SubagentManager {
     prompt: string,
     signal: AbortSignal,
     update: (text: string, details?: unknown) => void,
-  ) {
+    hooks: RunHooks = {},
+  ): Promise<SubagentOutcome> {
     if (signal.aborted) throw new Error("Subagent cancelled");
     let child: Agent | undefined;
     let session: TaskSubagentSession | undefined;
@@ -142,6 +219,7 @@ class SubagentManager {
         systemPrompt: [this.promptFor(kind), session?.prompt?.trim()].filter(Boolean).join("\n\n"),
         tools,
         ...(session?.refreshContext ? { refreshContext: session.refreshContext } : {}),
+        ...(hooks.permissionLabel ? { permissionLabel: hooks.permissionLabel } : {}),
         ...(kind === "recall"
           ? {
               inheritContext: false,
@@ -155,7 +233,7 @@ class SubagentManager {
               ],
             }
           : kind === "task"
-            ? { permissions: parent.permissions }
+            ? {}
             : {
                 permissions: [
                   ...(this.options.inspectionPermissions ?? []),
@@ -165,8 +243,10 @@ class SubagentManager {
               }),
       });
       this.active.add(child);
+      hooks.child?.(child);
       abort = () => child?.stop();
       signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) child.stop();
       const startedAt = Date.now();
       const progress = (event: SubagentProgressUpdate["event"]) =>
         update("", {
@@ -201,6 +281,13 @@ class SubagentManager {
           progress({ type: "assistant_start" });
         } else if (event.type === "message_update" && event.delta.kind === "text_delta") {
           scheduleText(event.delta.text);
+        } else if (event.type === "message_end" && event.message.role === "user") {
+          hooks.delivered?.(
+            event.message.content
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join(""),
+          );
         } else if (
           event.type === "message_end" &&
           (event.message.role === "assistant" || event.message.role === "toolResult")
@@ -244,7 +331,248 @@ class SubagentManager {
   }
 
   stopAll(): void {
+    for (const job of this.jobs.values()) job.controller.abort();
     for (const child of this.active) child.stop();
+  }
+
+  startBackground(description: string, prompt: string, toolCallId: string): ToolResult {
+    const parent = this.options.parent();
+    const id = `sa-${randomUUID().slice(0, 6)}`;
+    let markEnded: () => void = () => {};
+    const job: BackgroundJob = {
+      id,
+      description,
+      sessionId: parent.sessionId,
+      toolCallId,
+      startedAt: Date.now(),
+      state: "running",
+      controller: new AbortController(),
+      stopRequested: false,
+      messages: [],
+      answer: "",
+      reported: 0,
+      undelivered: [],
+      resultRead: false,
+      ended: new Promise((resolve) => {
+        markEnded = resolve;
+      }),
+    };
+    this.jobs.set(id, job);
+    const emit = (event: AgentEvent) => this.options.parent().emitTaskEvent(event);
+    emit({ type: "subagent_started", subagentId: id, toolCallId, kind: "task", description });
+    const progress = (_text: string, details?: unknown) => {
+      const update = details as SubagentProgressUpdate | undefined;
+      if (update?.type !== "subagent-progress") return;
+      if (update.event.type === "assistant_start") job.answer = "";
+      else if (update.event.type === "text_delta") job.answer += update.event.text;
+      else {
+        job.messages.push(update.event.message);
+        if (update.event.message.role === "assistant")
+          job.answer = messageText(update.event.message);
+      }
+      emit({ type: "subagent_progress", subagentId: id, details: update });
+    };
+    const done = this.run("task", description, prompt, job.controller.signal, progress, {
+      child: (child) => {
+        job.child = child;
+      },
+      delivered: (text) => {
+        const index = job.undelivered.indexOf(text);
+        if (index !== -1) job.undelivered.splice(index, 1);
+      },
+      permissionLabel: id,
+    })
+      .catch(
+        (error: unknown): SubagentOutcome => ({
+          content: [
+            {
+              type: "text",
+              text: `Subagent failed: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+        }),
+      )
+      .then(async (outcome) => {
+        job.outcome = outcome;
+        job.endedAt = Date.now();
+        const status: FinalState = job.controller.signal.aborted
+          ? "stopped"
+          : outcome.isError
+            ? "error"
+            : "done";
+        job.state = status;
+        job.child = undefined;
+        markEnded();
+        emit({
+          type: "subagent_ended",
+          subagentId: id,
+          status,
+          content: outcome.content,
+          ...(outcome.details ? { details: outcome.details } : {}),
+        });
+        await this.deliver(job, outcome, status).catch(() => {});
+      });
+    parent.trackBackground({ label: id, done, stop: () => job.controller.abort() });
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Started background subagent ${id}. You will be notified when it finishes; use subagent_status, subagent_send, or subagent_stop with this id to manage it.`,
+        },
+      ],
+      details: {
+        type: "subagent-background",
+        subagentId: id,
+        kind: "task",
+        description,
+      } satisfies BackgroundSubagentDetails,
+    };
+  }
+
+  status(id: string | undefined): ToolResult {
+    if (id === undefined) {
+      const jobs = this.sessionJobs();
+      if (jobs.length === 0) return textResult("No background subagents.");
+      return textResult(jobs.map((job) => `${jobSummary(job)} · ${job.description}`).join("\n"));
+    }
+    const job = this.job(id);
+    if (!job) return errorResult(`No such background subagent: ${id}`);
+    if (job.state !== "running") {
+      this.markRead(job);
+      const resultText = outcomeText(job);
+      return {
+        content: [{ type: "text", text: `${jobSummary(job)}\n\n${resultText}` }],
+        details: { subagentId: job.id, status: job.state },
+        ...(job.state === "done" ? {} : { isError: job.state === "error" }),
+      };
+    }
+    const fresh = job.messages.slice(job.reported);
+    job.reported = job.messages.length;
+    const activity = activityLines(fresh);
+    const answer = job.answer.trim();
+    const sections = [
+      jobSummary(job),
+      activity.length > 0
+        ? `New activity since the last check:\n${activity.join("\n")}`
+        : "No new activity since the last check.",
+      ...(answer ? [`Latest response:\n${clip(answer, 2_000)}`] : []),
+    ];
+    return {
+      content: [{ type: "text", text: sections.join("\n\n") }],
+      details: { subagentId: job.id, status: job.state },
+    };
+  }
+
+  async wait(id: string | undefined, seconds: number, signal: AbortSignal): Promise<void> {
+    const running = (id === undefined ? this.sessionJobs() : [this.job(id)]).filter(
+      (job): job is BackgroundJob => job?.state === "running",
+    );
+    if (running.length === 0 || seconds <= 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    await Promise.race([
+      ...running.map((job) => job.ended),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, seconds * 1000);
+        onAbort = () => resolve();
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+
+  send(id: string, message: string): ToolResult {
+    const job = this.job(id);
+    if (!job) return errorResult(`No such background subagent: ${id}`);
+    if (job.state !== "running" || !job.child?.isRunning) {
+      return errorResult(`Subagent ${id} is not running a turn that can receive messages.`);
+    }
+    job.undelivered.push(message);
+    job.child.send(message);
+    return textResult(`Sent to ${id}; it is delivered before the subagent's next model call.`);
+  }
+
+  async stop(id: string): Promise<ToolResult> {
+    const job = this.job(id);
+    if (!job) return errorResult(`No such background subagent: ${id}`);
+    if (job.state !== "running") return textResult(`Subagent ${id} had already ${job.state}.`);
+    job.stopRequested = true;
+    job.controller.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      job.ended,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, STOP_WAIT_MS);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (job.state === "running") return textResult(`Stopping ${id}; it has not finished yet.`);
+    this.markRead(job);
+    return textResult(`Stopped ${id}.\n\n${outcomeText(job)}`);
+  }
+
+  // A result the model has just read must not wake another turn to repeat it;
+  // its queued record is kept in the session without the result text.
+  private markRead(job: BackgroundJob): void {
+    job.resultRead = true;
+    const record = job.queued;
+    const parent = this.options.parent();
+    if (!record || !parent.withdrawFollowUp(record)) return;
+    job.queued = undefined;
+    record.content = [{ type: "text", text: notificationText(job) }];
+    parent.trackBackground({
+      label: job.id,
+      done: parent.recordMessage(record),
+      stop: () => {},
+    });
+  }
+
+  private job(id: string): BackgroundJob | undefined {
+    const job = this.jobs.get(id);
+    return job && job.sessionId === this.options.parent().sessionId ? job : undefined;
+  }
+
+  private sessionJobs(): BackgroundJob[] {
+    const sessionId = this.options.parent().sessionId;
+    return [...this.jobs.values()].filter((job) => job.sessionId === sessionId);
+  }
+
+  // A result reaches the session that started the job even if the user has
+  // since moved to another one; a stop the model asked for is recorded
+  // without waking another turn.
+  private async deliver(
+    job: BackgroundJob,
+    outcome: SubagentOutcome,
+    status: FinalState,
+  ): Promise<void> {
+    const record: CustomMessage = {
+      ...customMessage("background_subagent", notificationText(job)),
+      details: {
+        type: "subagent-background-result",
+        subagentId: job.id,
+        toolCallId: job.toolCallId,
+        status,
+        content: outcome.content,
+        ...(outcome.details ? { result: outcome.details } : {}),
+      } satisfies BackgroundSubagentResultDetails,
+      ...(outcome.usage ? { usage: outcome.usage } : {}),
+    };
+    const parent = this.options.parent();
+    if (parent.sessionId !== job.sessionId) {
+      const tree = await parent.sessionStore.load(job.sessionId);
+      if (!tree) return;
+      tree.appendMessage(record);
+      await parent.sessionStore.save(job.sessionId, tree);
+      return;
+    }
+    if (outcome.usage) parent.chargeUsage(outcome.usage);
+    if (job.stopRequested || parent.isStopping) await parent.recordMessage(record);
+    else {
+      job.queued = record;
+      parent.followUp(record);
+    }
   }
 
   private toolsFor(kind: SubagentKind, parent: Agent): AnyTool[] {
@@ -321,6 +649,77 @@ function visibleProgressMessage(message: AgentMessage): AgentMessage {
   };
 }
 
+function messageText(message: AgentMessage): string {
+  if (message.role === "custom" || message.role === "toolResult") return "";
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
+}
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+function actionCount(messages: AgentMessage[]): number {
+  return messages.reduce(
+    (count, message) =>
+      message.role === "assistant"
+        ? count + message.content.filter((block) => block.type === "toolCall").length
+        : count,
+    0,
+  );
+}
+
+function jobSummary(job: BackgroundJob): string {
+  const actions = actionCount(job.outcome?.details?.messages ?? job.messages);
+  return [
+    job.id,
+    job.state,
+    formatElapsed((job.endedAt ?? Date.now()) - job.startedAt),
+    ...(actions > 0 ? [`${actions} action${actions === 1 ? "" : "s"}`] : []),
+  ].join(" · ");
+}
+
+function activityLines(messages: AgentMessage[]): string[] {
+  return messages.flatMap((message) => {
+    if (message.role === "toolResult")
+      return message.isError ? [`  ${message.toolName} failed`] : [];
+    if (message.role !== "assistant") return [];
+    return message.content.flatMap((block) =>
+      block.type === "toolCall"
+        ? [`- ${block.name} ${clip(JSON.stringify(block.arguments), 160)}`]
+        : [],
+    );
+  });
+}
+
+function outcomeText(job: BackgroundJob): string {
+  const text = (job.outcome?.content ?? [])
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  const undelivered =
+    job.undelivered.length > 0
+      ? `\n\nMessages sent after the subagent stopped taking turns were not delivered:\n${job.undelivered.map((message) => `- ${clip(message, 200)}`).join("\n")}`
+      : "";
+  return `${text || "(no result)"}${undelivered}`;
+}
+
+function notificationText(job: BackgroundJob): string {
+  const header = `Background subagent ${job.id} (${job.description}) ${job.state} after ${formatElapsed((job.endedAt ?? Date.now()) - job.startedAt)}.`;
+  if (job.resultRead) return `${header} Its result was already returned to you.`;
+  return `${header}\n\n${outcomeText(job)}`;
+}
+
 function refs(provider: string, ids: string[]): string[] {
   return ids.map((id) => `${provider}/${id}`);
 }
@@ -352,25 +751,76 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
   return {
     name: "subagents",
     activate(api) {
-      if (!excluded.has("task"))
+      if (!excluded.has("task")) {
         api.registerTool(
           tool({
             name: "task",
             description:
-              "Delegate a substantial, self-contained work unit to a subagent. Use for independently owned implementation or verification work, especially when several workstreams can proceed concurrently. Do not use for trivial edits or work that depends on another unfinished task. Multiple calls in one turn run concurrently.",
+              "Delegate a substantial, self-contained work unit to a subagent. Use for independently owned implementation or verification work, especially when several workstreams can proceed concurrently. Do not use for trivial edits or work that depends on another unfinished task. Multiple calls in one turn run concurrently, and a normal call returns only when the subagent has finished. Set run_in_background to keep working while it runs: the call returns a subagent id at once, you are notified when it finishes, and subagent_status, subagent_send, and subagent_stop manage it. Run in the background only work that does not touch what you will do meanwhile.",
             inputSchema: z.object({
               description: z.string().min(1).describe("A short activity label"),
               prompt: z
                 .string()
                 .min(1)
                 .describe("Complete task, context, constraints, and verification"),
+              run_in_background: z
+                .boolean()
+                .optional()
+                .describe("Return immediately and report the result when the subagent finishes"),
             }),
             isConcurrencySafe: () => true,
             changesState: true,
-            execute: ({ description, prompt }, { signal, update }) =>
-              manager.run("task", description, prompt, signal, update),
+            execute: (
+              { description, prompt, run_in_background },
+              { toolCallId, signal, update },
+            ) =>
+              run_in_background
+                ? manager.startBackground(description, prompt, toolCallId)
+                : manager.run("task", description, prompt, signal, update),
           }),
         );
+        if (!excluded.has("subagent_status"))
+          api.registerTool(
+            tool({
+              name: "subagent_status",
+              description:
+                "Check background subagents. Without subagentId, lists them. With subagentId, reports its state and the actions it took since the last check, or its full result once it has finished. waitSeconds blocks up to that long for it (or, without an id, any running subagent) to finish; wait only when you have nothing else to do.",
+              inputSchema: z.object({
+                subagentId: z.string().optional(),
+                waitSeconds: z.number().min(0).max(MAX_WAIT_SECONDS).optional(),
+              }),
+              isConcurrencySafe: () => true,
+              changesState: false,
+              execute: async ({ subagentId, waitSeconds }, { signal }) => {
+                await manager.wait(subagentId, waitSeconds ?? 0, signal);
+                return manager.status(subagentId);
+              },
+            }),
+          );
+        if (!excluded.has("subagent_send"))
+          api.registerTool(
+            tool({
+              name: "subagent_send",
+              description:
+                "Send an additional instruction or correction to a running background subagent. It is delivered before the subagent's next model call.",
+              inputSchema: z.object({ subagentId: z.string(), message: z.string().min(1) }),
+              isConcurrencySafe: () => true,
+              changesState: true,
+              execute: ({ subagentId, message }) => manager.send(subagentId, message),
+            }),
+          );
+        if (!excluded.has("subagent_stop"))
+          api.registerTool(
+            tool({
+              name: "subagent_stop",
+              description: "Stop a running background subagent and return what it produced so far.",
+              inputSchema: z.object({ subagentId: z.string() }),
+              isConcurrencySafe: () => true,
+              changesState: false,
+              execute: ({ subagentId }) => manager.stop(subagentId),
+            }),
+          );
+      }
       if (options.coding && !excluded.has("search"))
         api.registerTool(
           tool({

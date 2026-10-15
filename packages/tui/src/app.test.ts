@@ -1,7 +1,7 @@
 // Integration: a scripted fake-agent event stream drives the whole UI with
 // zero network, exactly as the milestone requires.
 import { describe, expect, spyOn, test } from "bun:test";
-import type { AgentEvent, AgentMessage } from "@mu/core";
+import type { AgentEvent, AgentMessage, ToolResultMessage } from "@mu/core";
 import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { InputDecoder } from "./input.ts";
 import {
@@ -708,6 +708,180 @@ describe("fake-agent session", () => {
     });
     expect(committed.map(stripAnsi).join("\n")).toContain("ran true · ✓ task_fast bg");
     expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("task_fast");
+  });
+
+  const subagentUsage = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+  };
+  const backgroundStart = (id = "bg-call", subagentId = "sa-abc123"): ToolResultMessage => ({
+    role: "toolResult",
+    toolCallId: id,
+    toolName: "task",
+    content: [{ type: "text", text: `Started background subagent ${subagentId}.` }],
+    details: {
+      type: "subagent-background",
+      subagentId,
+      kind: "task",
+      description: "port the parser",
+    },
+    isError: false,
+    timestamp: Date.now(),
+  });
+  const finishedChild = {
+    type: "subagent",
+    kind: "task",
+    description: "port the parser",
+    model: "fake/fake-1",
+    thinkingLevel: "medium",
+    durationMs: 65_000,
+    messages: [],
+    usage: subagentUsage,
+    reason: "done",
+  };
+
+  test("a background subagent stays live under its task row until it ends", () => {
+    const { app } = harness();
+    const args = { description: "port the parser", prompt: "Port it", run_in_background: true };
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "bg-call",
+      toolName: "task",
+      args,
+    });
+    app.handleEvent({
+      type: "subagent_started",
+      subagentId: "sa-abc123",
+      toolCallId: "bg-call",
+      kind: "task",
+      description: "port the parser",
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "bg-call",
+      result: backgroundStart(),
+    });
+    app.handleEvent({
+      type: "subagent_progress",
+      subagentId: "sa-abc123",
+      details: {
+        type: "subagent-progress",
+        kind: "task",
+        description: "port the parser",
+        model: "fake/fake-1",
+        thinkingLevel: "medium",
+        event: { type: "text_delta", text: "reading" },
+      },
+    });
+
+    const live = app.renderBottom().map(stripAnsi).join("\n");
+    expect(live).toContain("background");
+    expect(live).toContain("port the parser");
+    expect(live).toContain("1 bg");
+
+    const committed = app.handleEvent({
+      type: "subagent_ended",
+      subagentId: "sa-abc123",
+      status: "done",
+      content: [{ type: "text", text: "Ported." }],
+      details: finishedChild,
+    });
+    expect(committed.map(stripAnsi).join("\n")).toContain("port the parser");
+    expect(committed.map(stripAnsi).join("\n")).toContain("1m 5s");
+    const after = app.renderBottom().map(stripAnsi).join("\n");
+    expect(after).not.toContain("port the parser");
+    expect(after).not.toContain("1 bg");
+  });
+
+  test("a background subagent row keeps animating while the main agent is idle", () => {
+    const { app } = harness();
+    const args = { description: "port the parser", prompt: "Port it", run_in_background: true };
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "bg-call",
+      toolName: "task",
+      args,
+    });
+    app.handleEvent({
+      type: "subagent_started",
+      subagentId: "sa-abc123",
+      toolCallId: "bg-call",
+      kind: "task",
+      description: "port the parser",
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "bg-call",
+      result: backgroundStart(),
+    });
+    app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
+
+    expect(app.isRunning).toBe(false);
+    expect(app.hasRunningSubagents).toBe(true);
+    const row = () =>
+      app
+        .renderBottom()
+        .map(stripAnsi)
+        .find((line) => line.includes("port the parser"));
+    const before = row();
+    app.tickSpinner();
+    expect(row()).not.toBe(before);
+
+    app.handleEvent({
+      type: "subagent_ended",
+      subagentId: "sa-abc123",
+      status: "done",
+      content: [{ type: "text", text: "Ported." }],
+      details: finishedChild,
+    });
+    expect(app.hasRunningSubagents).toBe(false);
+  });
+
+  test("a resumed background subagent shows the result its record carried", () => {
+    const { app } = harness();
+    const call: AgentMessage = {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "bg-call",
+          name: "task",
+          arguments: { description: "port the parser", prompt: "Port it", run_in_background: true },
+        },
+      ],
+      usage: subagentUsage,
+      model: "fake/fake-1",
+      stopReason: "toolUse",
+      timestamp: Date.now(),
+    };
+    app.replaceTranscript([call, backgroundStart()]);
+    expect(app.renderTranscript("main").map(stripAnsi).join("\n")).toContain(
+      "✓ port the parser · background",
+    );
+
+    app.replaceTranscript([
+      call,
+      backgroundStart(),
+      {
+        role: "custom",
+        customType: "background_subagent",
+        content: [{ type: "text", text: "Background subagent sa-abc123 done." }],
+        details: {
+          type: "subagent-background-result",
+          subagentId: "sa-abc123",
+          toolCallId: "bg-call",
+          status: "done",
+          content: [{ type: "text", text: "Ported." }],
+          result: finishedChild,
+        },
+        timestamp: Date.now(),
+      },
+    ]);
+    const restored = app.renderTranscript("main").map(stripAnsi).join("\n");
+    expect(restored).toContain("1m 5s");
+    expect(restored).not.toContain("background");
   });
 
   test("an attached running task reclaims its persisted bash row", () => {

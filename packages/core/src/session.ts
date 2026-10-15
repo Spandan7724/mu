@@ -204,6 +204,7 @@ function validMessage(value: unknown): boolean {
         value.retention,
         (candidate) => record(candidate) && nonEmptyString(candidate.key),
       ) &&
+      optional(value.usage, validUsage) &&
       value.content.every((block) => validContent(block, ["text", "image"]))
     );
   }

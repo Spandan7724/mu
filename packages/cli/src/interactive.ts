@@ -150,6 +150,10 @@ const SUBAGENT_NAME_STYLES: Record<string, Style> = {
   recall: { toolRead: true },
 };
 
+export function stoppedBackgroundNotice(stopped: string[]): string {
+  return `stopped background work ${stopped.join(", ")}; its result is kept in the previous session`;
+}
+
 export function formatSubagentsOutput(message: string, depth: ColorDepth): string[] {
   return [
     ...message
@@ -713,12 +717,17 @@ export async function runInteractive(
                   paint();
                   return;
                 }
+                const stopped = agent.backgroundWork;
                 agent.resume(tree);
                 sessionResumable = true;
                 app.setModel(agent.modelRef, agent.contextWindow);
                 app.setThinking(agent.thinking, agent.thinkingLevels);
                 app.replaceTranscript(tree.messagesAt(), app.banner());
-                commitLines([`  resumed ${sessionId}`, ""]);
+                commitLines([
+                  `  resumed ${sessionId}`,
+                  ...(stopped.length > 0 ? [`  ${stoppedBackgroundNotice(stopped)}`] : []),
+                  "",
+                ]);
               } catch (error) {
                 commitLines([
                   `  Could not resume ${sessionId}: ${
@@ -786,9 +795,12 @@ export async function runInteractive(
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot start a new chat during a run." };
       }
+      const stopped = agent.backgroundWork;
       startNewInteractiveSession(agent, app, renderer);
       sessionResumable = false;
-      return { handled: true };
+      return stopped.length > 0
+        ? { handled: true, message: stoppedBackgroundNotice(stopped) }
+        : { handled: true };
     },
   });
   commands.register({
@@ -1386,7 +1398,7 @@ export async function runInteractive(
   agent.resize(terminal.columns, terminal.rows);
 
   const spinnerTimer = setInterval(() => {
-    if (app.isRunning) {
+    if (app.isRunning || app.hasRunningSubagents) {
       app.tickSpinner();
       paint();
     }

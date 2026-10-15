@@ -788,6 +788,22 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
       GLYPHS.subagentSpinner[spinnerFrame % GLYPHS.subagentSpinner.length] ??
       GLYPHS.subagentSpinner[0];
     const name = details ? action.completed : `${spinner} ${action.running}`;
+    if (kind === "task" && !details && !info.running && info.result) {
+      const backgrounded = (info.result.details as { type?: unknown } | undefined)?.type;
+      return toolCell(
+        {
+          name: description,
+          tone: action.tone,
+          summary:
+            backgrounded === "subagent-background"
+              ? "background"
+              : truncateToWidth(resultText(info.result).split("\n")[0] ?? "", 60),
+          statusFirst: true,
+          ...(info.result.isError ? { isError: true, summaryError: true } : { isSuccess: true }),
+        },
+        ctx,
+      );
+    }
     if (kind === "task") {
       const step =
         !details && !info.expanded && progress && registry

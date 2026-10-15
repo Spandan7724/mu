@@ -13,6 +13,9 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "task_list", pattern: "*", action: "allow" },
   { permission: "bash:inspect", pattern: "*", action: "allow" },
   { permission: "task", pattern: "*", action: "allow" },
+  { permission: "subagent_status", pattern: "*", action: "allow" },
+  { permission: "subagent_send", pattern: "*", action: "allow" },
+  { permission: "subagent_stop", pattern: "*", action: "allow" },
   { permission: "search", pattern: "*", action: "allow" },
   { permission: "counsel", pattern: "*", action: "allow" },
 ];

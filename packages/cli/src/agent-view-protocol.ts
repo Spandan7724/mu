@@ -320,6 +320,27 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("subagent_started"),
+      subagentId: eventId,
+      toolCallId: eventId,
+      kind: z.string().min(1).max(256),
+      description: eventString,
+    })
+    .strict(),
+  z
+    .object({ type: z.literal("subagent_progress"), subagentId: eventId, details: z.unknown() })
+    .strict(),
+  z
+    .object({
+      type: z.literal("subagent_ended"),
+      subagentId: eventId,
+      status: z.enum(["done", "error", "stopped"]),
+      content: z.array(z.unknown()).max(100_000),
+      details: z.unknown().optional(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("usage_updated"),
       sessionTotals: usageSchema,
       contextTokens: z.number().nonnegative(),

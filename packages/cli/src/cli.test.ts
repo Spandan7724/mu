@@ -218,6 +218,45 @@ describe("runHeadless", () => {
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
   });
 
+  test("waits for a background subagent and its follow-up turn before exiting", async () => {
+    const parent = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "bg",
+            name: "task",
+            arguments: { description: "slow work", prompt: "Work", run_in_background: true },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "started it" }] },
+      { content: [{ type: "text", text: "child reported back" }] },
+    ]);
+    const child = new FakeProvider([
+      { content: [{ type: "text", text: "child result" }], delayMs: 30 },
+    ]);
+    const provider = {
+      id: "fake",
+      stream: (...args: Parameters<FakeProvider["stream"]>) =>
+        (args[1].systemPrompt ?? []).some((section) => section.text.includes("task subagent"))
+          ? child.stream(...args)
+          : parent.stream(...args),
+    };
+    const { out, io: sink } = io();
+
+    const code = await runHeadless(
+      parseArgs(["-p", "delegate"]),
+      { provider, model: fakeModel, tools: [] },
+      sink,
+    );
+
+    expect(code).toBe(EXIT.done);
+    expect(out.join("")).toContain("started it");
+    expect(out.join("")).toContain("child reported back");
+    expect(JSON.stringify(parent.requests[2]?.messages)).toContain("child result");
+  });
+
   test("built-in commands run headlessly without calling the provider", async () => {
     const provider = new FakeProvider([]);
     const { out, io: sink } = io();

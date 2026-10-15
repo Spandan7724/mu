@@ -100,6 +100,24 @@ export type AgentEvent =
       exitCode: number | null;
       status?: "exited" | "killed";
     }
+  // A child agent that runs in the background after the tool call that started
+  // it has returned. `details` are the same progress/result shapes the
+  // delegation tool reports for a foreground child.
+  | {
+      type: "subagent_started";
+      subagentId: string;
+      toolCallId: string;
+      kind: string;
+      description: string;
+    }
+  | { type: "subagent_progress"; subagentId: string; details: unknown }
+  | {
+      type: "subagent_ended";
+      subagentId: string;
+      status: "done" | "error" | "stopped";
+      content: ToolResultContent[];
+      details?: unknown;
+    }
   | {
       type: "usage_updated";
       sessionTotals: Usage;

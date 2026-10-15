@@ -60,6 +60,7 @@ const SUBAGENTS_HELP = [
   "Subagents — ask mu in plain language:",
   "",
   "  task (general) — Independent implementation or checks. Say “Delegate X or use subagents to do X.”",
+  "    Add “in the background” to keep working meanwhile; ask for its status, or to redirect or stop it.",
   "  search — Read-only code investigation. Say “Use Search to trace X.”",
   "  counsel — Second opinion on hard decisions. Say “Ask Counsel about X.”",
   "  recall — Past sessions, not current files. Must say “Ask Recall about X.”",

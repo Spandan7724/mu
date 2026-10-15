@@ -40,6 +40,9 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule("todo", "allow"),
   // Parallel sub-tasks: starting one asks nothing; each of its actions is gated as usual.
   rule("task", "allow"),
+  rule("subagent_status", "allow"),
+  rule("subagent_send", "allow"),
+  rule("subagent_stop", "allow"),
   // Files in the agent's own folder: reading is free, changing them asks, except
   // its own progress records under progress/.
   rule("ls", "allow"),

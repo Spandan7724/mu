@@ -4,6 +4,7 @@ import type {
   ImageContent,
   TextContent,
   ToolResultMessage,
+  Usage,
   UserMessage,
 } from "@mu/ai";
 
@@ -34,6 +35,10 @@ export interface CustomMessage {
   display?: boolean; // whether a UI shows it
   // Keep the latest snapshot with this key verbatim across compaction.
   retention?: { key: string };
+  // Renderer/session-visible only; never sent to the model.
+  details?: unknown;
+  // Provider usage this message accounts for (work finished outside a tool call).
+  usage?: Usage;
   timestamp: number;
 }
 

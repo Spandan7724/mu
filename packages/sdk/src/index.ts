@@ -67,6 +67,7 @@ export {
 export type {
   AgentOptions,
   AgentRunOptions,
+  BackgroundWork,
   CheckpointActionData,
   CheckpointActionResult,
   ChildAgentOptions,
@@ -152,6 +153,7 @@ export {
   structuredOutputTool,
 } from "./structured-output.ts";
 export type {
+  BackgroundSubagentDetails,
   SubagentDetails,
   SubagentExtensionOptions,
   SubagentKind,

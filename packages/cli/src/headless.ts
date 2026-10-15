@@ -107,15 +107,31 @@ export async function runHeadless(
 
     // Capture the provider's own message so a failure is actionable rather
     // than a bare "an error occurred".
+    // Background subagents report back through follow-up turns; a one-shot
+    // run ends only once those have been delivered and answered.
+    let laterRuns = 0;
+    let laterReason: HaltReason | undefined;
+    let mainDone = false;
+    const stopWatching = agent.subscribe((event) => {
+      if (!mainDone) return;
+      if (event.type === "agent_start") laterRuns++;
+      if (event.type !== "agent_end" || event.reason === "done") return;
+      laterReason = event.reason === "budget" ? "maxCostUsd" : event.reason;
+    });
     const result = await agent.run(args.prompt);
+    mainDone = true;
     if (!args.json) io.stdout("\n");
+    await agent.waitForSettled();
+    stopWatching();
+    if (laterRuns > 0 && !args.json) io.stdout("\n");
+    const reason = result.reason === "done" ? (laterReason ?? "done") : result.reason;
 
-    if (result.reason === "error") {
+    if (reason === "error") {
       io.stderr(`mu: ${failure ?? "the provider returned an error"}\n`);
-    } else if (result.reason !== "done" && result.reason !== "aborted") {
-      io.stderr(`mu: halted early (${result.reason})\n`);
+    } else if (reason !== "done" && reason !== "aborted") {
+      io.stderr(`mu: halted early (${reason})\n`);
     }
-    return EXIT[result.reason];
+    return EXIT[reason];
   } catch (error) {
     io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
     return EXIT.error;

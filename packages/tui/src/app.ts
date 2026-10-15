@@ -45,6 +45,7 @@ import {
   type ActivityKind,
   EXPANDED_OUTPUT_LINES,
   RendererRegistry,
+  type SubagentProgressState,
   type ToolRenderInfo,
   updateSubagentProgress,
 } from "./registry.ts";
@@ -189,6 +190,19 @@ function backgroundTaskDetails(details: unknown): { taskId: string } | undefined
   const record = details as { background?: unknown; taskId?: unknown; exitCode?: unknown };
   if (record.background !== true || typeof record.taskId !== "string") return undefined;
   return record.exitCode === undefined ? { taskId: record.taskId } : undefined;
+}
+
+function backgroundSubagentDetails(details: unknown): { subagentId: string } | undefined {
+  if (typeof details !== "object" || details === null) return undefined;
+  const record = details as { type?: unknown; subagentId?: unknown };
+  return record.type === "subagent-background" && typeof record.subagentId === "string"
+    ? { subagentId: record.subagentId }
+    : undefined;
+}
+
+interface LiveSubagent {
+  progress?: SubagentProgressState;
+  ended?: Extract<AgentEvent, { type: "subagent_ended" }>;
 }
 
 // Guardrails against a runaway process, independent of core's much tighter
@@ -346,6 +360,8 @@ type PendingTool = Omit<ToolRenderInfo, "expanded"> & {
   // but the row it owns stays live until the task itself exits, so its output
   // lands under the command that produced it instead of floating on its own.
   taskId?: string;
+  // The same for a subagent started with run_in_background.
+  subagentId?: string;
 };
 interface ActivityTool {
   id: string;
@@ -531,6 +547,7 @@ export class App {
     | "finished"
     | undefined;
   private backgroundTasks = new Map<string, LiveTask>();
+  private backgroundSubagents = new Map<string, LiveSubagent>();
   private ctrlCArmedAt = 0;
   private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
@@ -1058,6 +1075,15 @@ export class App {
           pending.running = true;
           return this.completeBackgroundTask(started.taskId) ?? [];
         }
+        const delegated = backgroundSubagentDetails(event.result.details);
+        if (pending && delegated) {
+          pending.result = event.result;
+          pending.subagentId = delegated.subagentId;
+          pending.running = true;
+          const live = this.backgroundSubagents.get(delegated.subagentId);
+          if (live?.progress) pending.progress = live.progress;
+          return this.completeBackgroundSubagent(delegated.subagentId) ?? [];
+        }
         this.pendingTools.delete(event.toolCallId);
         const info: ToolRenderInfo = {
           toolName: pending?.toolName ?? event.result.toolName,
@@ -1202,10 +1228,7 @@ export class App {
         };
         this.backgroundTasks.set(event.taskId, task);
         this.adoptRestoredBackgroundOwner(event.taskId);
-        this.footerData = {
-          ...this.footerData,
-          backgroundTasks: this.runningBackgroundTaskCount(),
-        };
+        this.syncBackgroundCount();
         return [];
       }
 
@@ -1220,11 +1243,34 @@ export class App {
         const task = this.backgroundTasks.get(event.taskId);
         if (!task) return [];
         task.exit = event;
-        this.footerData = {
-          ...this.footerData,
-          backgroundTasks: this.runningBackgroundTaskCount(),
-        };
+        this.syncBackgroundCount();
         return this.completeBackgroundTask(event.taskId) ?? [];
+      }
+
+      case "subagent_started": {
+        this.backgroundSubagents.set(event.subagentId, {});
+        this.adoptRestoredSubagentOwner(event.subagentId);
+        this.syncBackgroundCount();
+        return [];
+      }
+
+      case "subagent_progress": {
+        const live = this.backgroundSubagents.get(event.subagentId);
+        if (!live) return [];
+        const progress = updateSubagentProgress(live.progress, event.details);
+        if (!progress) return [];
+        live.progress = progress;
+        const owner = this.subagentOwner(event.subagentId);
+        if (owner) owner.progress = progress;
+        return [];
+      }
+
+      case "subagent_ended": {
+        const live = this.backgroundSubagents.get(event.subagentId);
+        if (!live) return [];
+        live.ended = event;
+        this.syncBackgroundCount();
+        return this.completeBackgroundSubagent(event.subagentId) ?? [];
       }
 
       default:
@@ -1255,6 +1301,11 @@ export class App {
       ...wrapText(affordances, width - MARGIN.length).map((line) => MARGIN + line),
       "",
     ];
+  }
+
+  // Subagent rows animate and count elapsed time while the main agent is idle.
+  get hasRunningSubagents(): boolean {
+    return [...this.backgroundSubagents.values()].some((live) => !live.ended);
   }
 
   tickSpinner(): void {
@@ -1301,6 +1352,8 @@ export class App {
     this.transcriptVersion++;
     this.transcriptCache = undefined;
     this.pendingTools.clear();
+    this.backgroundSubagents.clear();
+    this.syncBackgroundCount();
     this.pendingInputs = [];
     this.webSearchBoundaryPending = false;
     this.streaming = undefined;
@@ -1341,7 +1394,9 @@ export class App {
         };
         this.pushTool(message.toolCallId, info);
         calls.delete(message.toolCallId);
+        continue;
       }
+      if (message.customType === "background_subagent") this.restoreSubagentResult(message.details);
     }
     this.editor.replaceHistory(history);
   }
@@ -1547,8 +1602,9 @@ export class App {
       if (this.mode === "activity" && this.isPendingActivity(pending)) {
         continue;
       }
-      if (pending.taskId !== undefined) backgroundPending.push(pending);
-      else {
+      if (pending.taskId !== undefined || pending.subagentId !== undefined) {
+        backgroundPending.push(pending);
+      } else {
         const liveSubagent = SUBAGENT_TOOL_NAMES.has(pending.toolName);
         if (liveSubagent && !previousWasLiveSubagent && lines.at(-1) !== "") lines.push("");
         if (liveSubagent) hasLiveSubagent = true;
@@ -1802,8 +1858,118 @@ export class App {
     return rows;
   }
 
-  private runningBackgroundTaskCount(): number {
-    return [...this.backgroundTasks.values()].filter((task) => task.exit === undefined).length;
+  private syncBackgroundCount(): void {
+    const tasks = [...this.backgroundTasks.values()].filter((task) => !task.exit).length;
+    const subagents = [...this.backgroundSubagents.values()].filter((live) => !live.ended).length;
+    this.footerData = { ...this.footerData, backgroundTasks: tasks + subagents };
+  }
+
+  private subagentOwner(subagentId: string): PendingTool | undefined {
+    return [...this.pendingTools.values()].find((candidate) => candidate.subagentId === subagentId);
+  }
+
+  // An attachment replays a running subagent after the transcript already
+  // holds its completed start row; that row becomes live again.
+  private adoptRestoredSubagentOwner(subagentId: string): void {
+    if (this.subagentOwner(subagentId)) return;
+    const owns = (info: ToolRenderInfo) =>
+      backgroundSubagentDetails(info.result?.details)?.subagentId === subagentId;
+    for (let index = this.transcript.length - 1; index >= 0; index--) {
+      const item = this.transcript[index];
+      let tool: { id: string; info: ToolRenderInfo; expanded: boolean } | undefined;
+      if (item?.kind === "tool" && owns(item.info)) {
+        this.transcript.splice(index, 1);
+        tool = item;
+      } else if (item?.kind === "activity") {
+        const toolIndex = item.tools.findIndex((candidate) => owns(candidate.info));
+        if (toolIndex === -1) continue;
+        [tool] = item.tools.splice(toolIndex, 1);
+        if (item.tools.length === 0) this.transcript.splice(index, 1);
+      } else continue;
+      if (!tool) return;
+      this.pendingTools.set(tool.id, {
+        id: tool.id,
+        ...tool.info,
+        running: true,
+        expanded: tool.expanded,
+        output: new LiveToolOutput(),
+        subagentId,
+        startedAt: Date.now(),
+      });
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+      return;
+    }
+  }
+
+  // A resumed transcript shows a background subagent's start row with the
+  // result its completion record carried, as the live view had shown it.
+  private restoreSubagentResult(details: unknown): void {
+    if (typeof details !== "object" || details === null) return;
+    const record = details as {
+      type?: unknown;
+      toolCallId?: unknown;
+      status?: unknown;
+      content?: unknown;
+      result?: unknown;
+    };
+    if (
+      record.type !== "subagent-background-result" ||
+      typeof record.toolCallId !== "string" ||
+      !Array.isArray(record.content)
+    ) {
+      return;
+    }
+    const upgrade = (info: ToolRenderInfo): ToolRenderInfo | undefined =>
+      info.result && backgroundSubagentDetails(info.result.details)
+        ? {
+            ...info,
+            result: {
+              ...info.result,
+              content: record.content as NonNullable<ToolRenderInfo["result"]>["content"],
+              isError: record.status !== "done",
+              ...(record.result !== undefined ? { details: record.result } : {}),
+            },
+          }
+        : undefined;
+    for (const item of this.transcript) {
+      if (item.kind === "tool" && item.id === record.toolCallId) {
+        const info = upgrade(item.info);
+        if (!info) return;
+        item.info = info;
+        delete item.rendered;
+      } else if (item.kind === "activity") {
+        const tool = item.tools.find((candidate) => candidate.id === record.toolCallId);
+        const info = tool && upgrade(tool.info);
+        if (!tool || !info) continue;
+        tool.info = info;
+        delete tool.rendered;
+      } else continue;
+      this.transcriptVersion++;
+      this.transcriptCache = undefined;
+      return;
+    }
+  }
+
+  private completeBackgroundSubagent(subagentId: string): string[] | undefined {
+    const event = this.backgroundSubagents.get(subagentId)?.ended;
+    const owner = this.subagentOwner(subagentId);
+    if (!event || !owner?.result) return undefined;
+    this.backgroundSubagents.delete(subagentId);
+    this.pendingTools.delete(owner.id);
+    const info: ToolRenderInfo = {
+      toolName: owner.toolName,
+      args: owner.args,
+      result: {
+        ...owner.result,
+        content: event.content,
+        isError: event.status !== "done",
+        ...(event.details !== undefined ? { details: event.details } : {}),
+      },
+    };
+    const lines = this.registry.render(info, this.ctx);
+    this.pushTool(owner.id, info, lines, owner.expanded ? true : undefined);
+    return lines;
   }
 
   private adoptRestoredBackgroundOwner(taskId: string): void {

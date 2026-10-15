@@ -12,7 +12,12 @@ describe("public SDK factory", () => {
     const agent = await createAgent({ provider, model: fakeModel });
 
     expect(agent).toBeInstanceOf(Agent);
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual([
+      "task",
+      "subagent_status",
+      "subagent_send",
+      "subagent_stop",
+    ]);
     expect((await agent.run("hi")).text).toBe("hello");
   });
 
@@ -101,6 +106,11 @@ describe("public SDK factory", () => {
       model: fakeModel,
     });
 
-    expect(agent.tools.map((candidate) => candidate.name)).toEqual(["task"]);
+    expect(agent.tools.map((candidate) => candidate.name)).toEqual([
+      "task",
+      "subagent_status",
+      "subagent_send",
+      "subagent_stop",
+    ]);
   });
 });

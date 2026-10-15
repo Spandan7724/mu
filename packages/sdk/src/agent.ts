@@ -55,7 +55,7 @@ import {
   userMessage,
 } from "@mu/core";
 import type { z } from "zod";
-import { type Budget, checkBudget, totalTokens } from "./budget.ts";
+import { type Budget, type BudgetBreach, checkBudget, totalTokens } from "./budget.ts";
 import {
   STRUCTURED_OUTPUT_TOOL,
   structuredOutputPrompt,
@@ -175,6 +175,15 @@ export interface ChildAgentOptions {
   inheritContext?: boolean;
   // Replaces the inherited context refresh (a profile's per-child context).
   refreshContext?: AgentOptions["refreshContext"];
+  // Names the child in the permission requests it raises through the parent.
+  permissionLabel?: string;
+}
+
+export interface BackgroundWork {
+  label: string;
+  // Settles once the work's result has been delivered or recorded.
+  done: Promise<unknown>;
+  stop: () => void;
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -243,6 +252,12 @@ export class Agent {
   private shutdownPromise: Promise<void> | undefined;
   private sessionStarted = false;
   private permissionRules: PermissionRule[];
+  private parentAgent: Agent | undefined;
+  // A child created without its own rules follows the parent's current rules,
+  // so a live permission-mode change also governs work already delegated.
+  private inheritsPermissions = false;
+  private readonly children = new Set<Agent>();
+  private readonly background = new Map<BackgroundWork, Promise<void>>();
 
   constructor(options: AgentOptions = {}) {
     this.options = options;
@@ -310,8 +325,16 @@ export class Agent {
     return this.compacting;
   }
 
+  get isStopping(): boolean {
+    return this.stopping;
+  }
+
   get permissions(): PermissionRule[] {
-    return [...this.permissionRules];
+    return [...this.effectivePermissionRules()];
+  }
+
+  get backgroundWork(): string[] {
+    return [...this.background.keys()].map((work) => work.label);
   }
 
   get tools(): AnyTool[] {
@@ -342,7 +365,7 @@ export class Agent {
       );
     }
     const hasChildBudget = Object.values(childBudget).some((value) => value !== undefined);
-    return new Agent({
+    const child = new Agent({
       model,
       provider: this.providerFor(model),
       systemPrompt: [
@@ -357,7 +380,12 @@ export class Agent {
         ? { imageBudgetTokens: this.options.imageBudgetTokens }
         : {}),
       permissions: options.permissions ?? this.permissions,
-      onPermission: (request) => this.resolveChildPermission(request),
+      onPermission: (request) =>
+        this.resolveChildPermission(
+          options.permissionLabel
+            ? { ...request, description: `${options.permissionLabel} · ${request.description}` }
+            : request,
+        ),
       ...(hasChildBudget ? { budget: childBudget } : {}),
       session: new MemorySessionStore(),
       ...(this.options.sessionProfile ? { sessionProfile: this.options.sessionProfile } : {}),
@@ -373,14 +401,69 @@ export class Agent {
           ? { refreshContext: this.options.refreshContext }
           : {}),
     });
+    child.parentAgent = this;
+    child.inheritsPermissions = options.permissions === undefined;
+    this.children.add(child);
+    return child;
   }
 
   setPermissions(rules: PermissionRule[]): void {
     this.permissionRules = [...rules];
+    this.inheritsPermissions = false;
   }
 
   addPermissionRule(rule: PermissionRule): void {
+    if (this.inheritsPermissions) this.setPermissions(this.effectivePermissionRules());
     this.permissionRules.push(rule);
+  }
+
+  // Provider usage incurred on this Agent's behalf outside its own model turns
+  // and tool results, such as a background child that finished between runs.
+  chargeUsage(usage: Usage): void {
+    this.totals = addUsage(this.totals, usage);
+    this.claimChildUsage(usage);
+    this.publishEvent({
+      type: "usage_updated",
+      sessionTotals: this.totals,
+      contextTokens: this.lastContextTokens,
+      contextPercent: this.lastContextPercent,
+    });
+  }
+
+  // Session-owned work that outlives the tool call that started it. Changing
+  // or stopping the session stops it; shutdown waits for it to finish.
+  trackBackground(work: BackgroundWork): void {
+    if (this.stopping) {
+      work.stop();
+      return;
+    }
+    const done = work.done.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.background.set(work, done);
+    void done.finally(() => {
+      this.background.delete(work);
+      this.resolveIdleIfDone();
+    });
+  }
+
+  // Idle with no background work left: what a one-shot caller waits for before
+  // exiting so that background results are delivered rather than abandoned.
+  async waitForSettled(): Promise<void> {
+    for (;;) {
+      await this.waitForIdle();
+      if (this.background.size === 0) return;
+      await Promise.race(this.background.values());
+    }
+  }
+
+  // Appends a custom message at the session head once no run owns the
+  // transcript, for results that arrive after the session stopped taking turns.
+  async recordMessage(message: CustomMessage): Promise<void> {
+    while (this.activeExecution) await this.activeExecution.catch(() => {});
+    this.tree.appendMessage(message);
+    await this.store.save(this._sessionId, this.tree);
   }
 
   // Switching model also switches provider — they travel together.
@@ -442,6 +525,7 @@ export class Agent {
   // than starting a fresh transcript.
   resume(tree: SessionTree): void {
     if (this.running) throw new Error("Cannot resume a session while a run is active.");
+    this.stopBackground();
     let candidate: SessionTree;
     try {
       candidate = SessionTree.fromJsonl(tree.toJsonl());
@@ -466,6 +550,12 @@ export class Agent {
       } else if (
         entry.type === "message" &&
         entry.message.role === "toolResult" &&
+        entry.message.usage
+      ) {
+        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+      } else if (
+        entry.type === "message" &&
+        entry.message.role === "custom" &&
         entry.message.usage
       ) {
         restoredTotals = addUsage(restoredTotals, entry.message.usage);
@@ -517,6 +607,7 @@ export class Agent {
   // tools, permissions, model, thinking level, runtime, and subscribers.
   newSession(sessionId = createSessionId()): void {
     if (this.running) throw new Error("Cannot start a new session while a run is active.");
+    this.stopBackground();
     this._sessionId = sessionId;
     this.tree = new SessionTree({
       type: "session",
@@ -562,6 +653,15 @@ export class Agent {
     if (this.stopping) return;
     this.followUps.push(typeof message === "string" ? userMessage(message) : message);
     if (!this.running) this.scheduleAutonomousRun();
+  }
+
+  // Withdraws a queued follow-up by identity before the loop delivers it.
+  withdrawFollowUp(message: AgentMessage): boolean {
+    const index = this.followUps.indexOf(message);
+    if (index === -1) return false;
+    this.followUps.splice(index, 1);
+    this.resolveIdleIfDone();
+    return true;
   }
 
   // Removes a specific message while it is still waiting in an agent queue.
@@ -623,6 +723,7 @@ export class Agent {
     this.followUps = [];
     this.manualCompactionQueued = false;
     this.queuedManualCompactionFocus = undefined;
+    this.stopBackground();
     try {
       this.options.runtime?.stop?.();
     } catch {
@@ -637,6 +738,7 @@ export class Agent {
     this.stop();
     this.shutdownPromise = (async () => {
       await this.activeExecution?.catch(() => {});
+      await Promise.all(this.background.values());
       this.options.extensions?.emitLifecycle({
         type: "session_shutdown",
         sessionId: this._sessionId,
@@ -770,7 +872,7 @@ export class Agent {
         provider: compactor.provider,
         model: compactor.model,
         contextTokens: this.compactionContextTokens(this.model),
-        canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
+        canContinue: (usage) => !this.budgetBreach(addUsage(this.totals, usage)),
         keepRecentTokens: Math.min(
           DEFAULT_KEEP_RECENT_TOKENS,
           Math.max(2, Math.floor(this.model.contextWindow * 0.2)),
@@ -982,6 +1084,8 @@ export class Agent {
   // alone would leave the session lying about its own state.
   async undo(turnCount = 1): Promise<CheckpointActionResult> {
     if (this.running) return { ok: false, message: "Cannot undo while a run is active." };
+    const busy = this.backgroundBlocker("undo");
+    if (busy) return { ok: false, message: busy };
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support undo." };
     if (!Number.isInteger(turnCount) || turnCount < 1) {
@@ -1097,6 +1201,8 @@ export class Agent {
 
   async redo(): Promise<CheckpointActionResult> {
     if (this.running) return { ok: false, message: "Cannot redo while a run is active." };
+    const busy = this.backgroundBlocker("redo");
+    if (busy) return { ok: false, message: busy };
     const provider = this.options.checkpointProvider;
     if (!provider) return { ok: false, message: "This profile does not support redo." };
     const step = this.checkpoints.peekRedo();
@@ -1219,6 +1325,8 @@ export class Agent {
 
   async fork(entryId: string): Promise<{ ok: boolean; message: string }> {
     if (this.running) return { ok: false, message: "Cannot fork while a run is active." };
+    const busy = this.backgroundBlocker("fork");
+    if (busy) return { ok: false, message: busy };
     if (!this.tree.get(entryId)) {
       return { ok: false, message: `Could not fork: unknown entry ${entryId}.` };
     }
@@ -1647,7 +1755,7 @@ export class Agent {
         contextTokens: state.tokens,
         contextPercent: state.percent,
       });
-      const breach = checkBudget(this.options.budget, this.totals);
+      const breach = this.budgetBreach();
       if (breach) budgetHalt = breach;
       return breach;
     };
@@ -1710,7 +1818,7 @@ export class Agent {
           permission === info.toolCall.name
             ? [info.toolCall.name]
             : [info.toolCall.name, permission];
-        const action = evaluate(this.permissionRules, permissionTargets, pattern);
+        const action = evaluate(this.effectivePermissionRules(), permissionTargets, pattern);
         const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
         if (action === "allow") {
           return rewritten;
@@ -1863,7 +1971,7 @@ export class Agent {
             provider: compactor.provider,
             model: compactor.model,
             contextTokens: this.compactionContextTokens(runModel, tools, requestOverhead),
-            canContinue: (usage) => !checkBudget(this.options.budget, addUsage(this.totals, usage)),
+            canContinue: (usage) => !this.budgetBreach(addUsage(this.totals, usage)),
             keepRecentTokens: Math.min(
               DEFAULT_KEEP_RECENT_TOKENS,
               Math.max(2, Math.floor(runModel.contextWindow * 0.2)),
@@ -2029,8 +2137,12 @@ export class Agent {
       shouldStopAfterTurn: async (turn: TurnInfo) => {
         this.recoveryAttempted = false;
         for (const result of turn.toolResults) {
-          if (result.usage) this.totals = addUsage(this.totals, result.usage);
+          if (!result.usage) continue;
+          this.totals = addUsage(this.totals, result.usage);
+          this.claimChildUsage(result.usage);
         }
+        // A finished child whose usage no result carried has nothing left to count.
+        for (const child of this.children) if (!child.running) this.children.delete(child);
         const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);
         if (breach) {
           return true;
@@ -2111,6 +2223,64 @@ export class Agent {
       this.options.provider ??
       this.options.extensions?.providers.get(model.provider) ??
       getProvider(model.provider)
+    );
+  }
+
+  // Background work edits the workspace on its own schedule, so a checkpoint
+  // pair cannot attribute its changes to a turn; branch moves wait for it.
+  private backgroundBlocker(action: string): string | undefined {
+    const labels = this.backgroundWork;
+    if (labels.length === 0) return undefined;
+    return `Cannot ${action} while background work is running (${labels.join(", ")}). Stop it or wait for it to finish.`;
+  }
+
+  private effectivePermissionRules(): PermissionRule[] {
+    return this.inheritsPermissions && this.parentAgent
+      ? this.parentAgent.effectivePermissionRules()
+      : this.permissionRules;
+  }
+
+  private stopBackground(): void {
+    for (const work of this.background.keys()) {
+      try {
+        work.stop();
+      } catch {
+        // One failing stop must not keep the others running.
+      }
+    }
+  }
+
+  // Children spend from the same budget, so concurrent children cannot each
+  // consume the whole remainder that existed when they were created. A child
+  // counts until its usage reaches these totals through a result or a charge.
+  private combinedUsage(own: Usage = this.totals): Usage {
+    let total = own;
+    for (const child of this.children) total = addUsage(total, child.combinedUsage());
+    return total;
+  }
+
+  private claimChildUsage(usage: Usage): void {
+    for (const child of this.children) {
+      if (!child.running && child.totals === usage) this.children.delete(child);
+    }
+  }
+
+  private budgetBreach(own: Usage = this.totals): BudgetBreach | undefined {
+    const combined = this.combinedUsage(own);
+    return (
+      checkBudget(this.options.budget, combined) ??
+      this.parentAgent?.budgetBreachWithChild(this, combined)
+    );
+  }
+
+  private budgetBreachWithChild(child: Agent, childUsage: Usage): BudgetBreach | undefined {
+    let total = addUsage(this.totals, childUsage);
+    for (const other of this.children) {
+      if (other !== child) total = addUsage(total, other.combinedUsage());
+    }
+    return (
+      checkBudget(this.options.budget, total) ??
+      this.parentAgent?.budgetBreachWithChild(this, total)
     );
   }
 

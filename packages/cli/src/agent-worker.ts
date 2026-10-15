@@ -11,11 +11,25 @@ import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
 const MAX_TASK_SNAPSHOT_CHARS = 100_000;
+const MAX_SUBAGENT_SNAPSHOT_EVENTS = 500;
 
 interface LiveTaskSnapshot {
   start: Extract<AgentEvent, { type: "task_started" }>;
   output: string;
   omittedChars: number;
+}
+
+interface LiveSubagentSnapshot {
+  start: Extract<AgentEvent, { type: "subagent_started" }>;
+  progress: Extract<AgentEvent, { type: "subagent_progress" }>[];
+}
+
+// Streamed text is superseded by the completed message that follows it, so an
+// attachment replays only whole messages.
+function isTextDelta(details: unknown): boolean {
+  if (typeof details !== "object" || details === null) return false;
+  const event = (details as { event?: { type?: unknown } }).event;
+  return event?.type === "text_delta";
 }
 
 function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
@@ -104,6 +118,7 @@ export async function runAgentWorker(
     }),
   );
   const liveTasks = new Map<string, LiveTaskSnapshot>();
+  const liveSubagents = new Map<string, LiveSubagentSnapshot>();
   const stopTaskTracking = agent.subscribe((event) => {
     if (event.type === "task_started") {
       liveTasks.set(event.taskId, { start: event, output: "", omittedChars: 0 });
@@ -117,6 +132,16 @@ export async function runAgentWorker(
       }
     } else if (event.type === "task_exited") {
       liveTasks.delete(event.taskId);
+    } else if (event.type === "subagent_started") {
+      liveSubagents.set(event.subagentId, { start: event, progress: [] });
+    } else if (event.type === "subagent_progress" && !isTextDelta(event.details)) {
+      const subagent = liveSubagents.get(event.subagentId);
+      if (subagent) {
+        subagent.progress.push(event);
+        if (subagent.progress.length > MAX_SUBAGENT_SNAPSHOT_EVENTS) subagent.progress.shift();
+      }
+    } else if (event.type === "subagent_ended") {
+      liveSubagents.delete(event.subagentId);
     }
   });
   const shellTool =
@@ -161,21 +186,27 @@ export async function runAgentWorker(
           usage: agent.usage,
           contextPercent: agent.contextPercent,
           isRunning: agent.isRunning,
-          events: [...liveTasks.values()].flatMap((task) => [
-            task.start,
-            ...(task.output
-              ? ([
-                  {
-                    type: "task_output",
-                    taskId: task.start.taskId,
-                    chunk:
-                      task.omittedChars > 0
-                        ? `… ${task.omittedChars.toLocaleString()} earlier characters omitted from attachment snapshot …\n${task.output}`
-                        : task.output,
-                  },
-                ] as const)
-              : []),
-          ]),
+          events: [
+            ...[...liveSubagents.values()].flatMap((subagent) => [
+              subagent.start,
+              ...subagent.progress,
+            ]),
+            ...[...liveTasks.values()].flatMap((task) => [
+              task.start,
+              ...(task.output
+                ? ([
+                    {
+                      type: "task_output",
+                      taskId: task.start.taskId,
+                      chunk:
+                        task.omittedChars > 0
+                          ? `… ${task.omittedChars.toLocaleString()} earlier characters omitted from attachment snapshot …\n${task.output}`
+                          : task.output,
+                    },
+                  ] as const)
+                : []),
+            ]),
+          ],
           models: selectableModels,
           permissionModes: runtime.permissionModes.map((mode) => ({
             id: mode.id,
