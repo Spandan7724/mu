@@ -15,7 +15,7 @@ import {
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { z } from "zod";
 import { Agent } from "./agent.ts";
-import { STRUCTURED_OUTPUT_TOOL } from "./structured-output.ts";
+import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from "./structured-output.ts";
 import { tool } from "./tool.ts";
 
 function agentWith(provider: FakeProvider, options = {}) {
@@ -50,6 +50,15 @@ describe("tool adapter", () => {
 });
 
 describe("Agent", () => {
+  test("a provider error's message is on the run result", async () => {
+    const provider = new FakeProvider([
+      { content: [], stopReason: "error", errorMessage: "invalid api key" },
+    ]);
+    const result = await agentWith(provider).run("hi");
+    expect(result.reason).toBe("error");
+    expect(result.error).toBe("invalid api key");
+  });
+
   test("run returns the assistant text and totals usage", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "hello there" }] }]);
     const result = await agentWith(provider).run("hi");
@@ -225,11 +234,57 @@ describe("structured output", () => {
     expect(errors.length).toBe(1);
   });
 
-  test("throws rather than returning undefined when the model never reports", async () => {
-    const provider = new FakeProvider([{ content: [{ type: "text", text: "I'd rather chat" }] }]);
-    await expect(agentWith(provider).run("describe Paris", { output: schema })).rejects.toThrow(
-      "never produced a valid one",
-    );
+  test("reminds the model to report when it ends with prose instead", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "Paris has about 2.1 million people." }] },
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: STRUCTURED_OUTPUT_TOOL,
+            arguments: { city: "Paris", population: 2100000 },
+          },
+        ],
+      },
+    ]);
+    const result = await agentWith(provider).run("describe Paris", { output: schema });
+    expect(result.output).toEqual({ city: "Paris", population: 2100000 });
+    expect(provider.callCount).toBe(2);
+    const reminder = result.messages.find((m) => m.role === "custom");
+    expect(reminder?.role === "custom" && reminder.customType).toBe("system-reminder");
+  });
+
+  test("throws with the run attached when the model never reports despite reminders", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "I'd rather chat" }] },
+      { content: [{ type: "text", text: "still chatting" }] },
+      { content: [{ type: "text", text: "no" }] },
+      { content: [{ type: "text", text: "unreachable" }] },
+    ]);
+    const error = await agentWith(provider)
+      .run("describe Paris", { output: schema })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StructuredOutputError);
+    const failure = error as StructuredOutputError;
+    expect(failure.message).toContain("never produced a valid one");
+    expect(failure.message).toContain("after 2 reminders");
+    expect(provider.callCount).toBe(3);
+    expect(failure.result.text).toBe("no");
+    expect(failure.result.messages.length).toBeGreaterThan(0);
+  });
+
+  test("a provider error is reported, not retried, and its reason survives", async () => {
+    const provider = new FakeProvider([
+      { content: [], stopReason: "error", errorMessage: "429 rate limited" },
+    ]);
+    const error = await agentWith(provider)
+      .run("describe Paris", { output: schema })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StructuredOutputError);
+    expect((error as Error).message).toContain("run ended: error — 429 rate limited");
+    expect((error as StructuredOutputError).result.error).toBe("429 rate limited");
+    expect(provider.callCount).toBe(1);
   });
 });
 

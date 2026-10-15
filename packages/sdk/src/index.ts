@@ -149,6 +149,7 @@ export {
 } from "./skills.ts";
 export {
   STRUCTURED_OUTPUT_TOOL,
+  StructuredOutputError,
   structuredOutputPrompt,
   structuredOutputTool,
 } from "./structured-output.ts";

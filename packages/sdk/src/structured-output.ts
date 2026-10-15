@@ -1,5 +1,6 @@
-import type { AnyTool } from "@mu/core";
+import { type AnyTool, type CustomMessage, customMessage } from "@mu/core";
 import { z } from "zod";
+import type { RunResult } from "./agent.ts";
 
 export const STRUCTURED_OUTPUT_TOOL = "structured_output";
 
@@ -37,4 +38,25 @@ export function structuredOutputTool<Schema extends z.ZodType>(
 
 export function structuredOutputPrompt(): string {
   return `When you have the final answer, call the ${STRUCTURED_OUTPUT_TOOL} tool with it. That call ends the task.`;
+}
+
+export const STRUCTURED_OUTPUT_REMINDERS = 2;
+
+export function structuredOutputReminder(): CustomMessage {
+  return customMessage(
+    "system-reminder",
+    `You ended without calling ${STRUCTURED_OUTPUT_TOOL}. The task is not finished until you call it: call ${STRUCTURED_OUTPUT_TOOL} now with the final answer.`,
+    true,
+  );
+}
+
+// Carries the run that failed to report, so callers keep its transcript, text and usage.
+export class StructuredOutputError extends Error {
+  constructor(
+    message: string,
+    readonly result: RunResult,
+  ) {
+    super(message);
+    this.name = "StructuredOutputError";
+  }
 }

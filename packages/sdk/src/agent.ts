@@ -57,8 +57,11 @@ import {
 import type { z } from "zod";
 import { type Budget, type BudgetBreach, checkBudget, totalTokens } from "./budget.ts";
 import {
+  STRUCTURED_OUTPUT_REMINDERS,
   STRUCTURED_OUTPUT_TOOL,
+  StructuredOutputError,
   structuredOutputPrompt,
+  structuredOutputReminder,
   structuredOutputTool,
 } from "./structured-output.ts";
 import { resolveWebSearchBackend } from "./web-search.ts";
@@ -124,6 +127,8 @@ export interface RunResult {
   usage: Usage;
   reason: HaltReason;
   sessionId: string;
+  // The provider's explanation when reason is "error".
+  error?: string;
 }
 
 export interface CheckpointActionData {
@@ -210,6 +215,16 @@ function lastText(messages: AgentMessage[]): string {
     if (text.trim().length > 0) return text;
   }
   return "";
+}
+
+function lastError(messages: AgentMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role === "assistant" && message.stopReason === "error") {
+      return message.errorMessage ?? "the provider returned an error";
+    }
+  }
+  return undefined;
 }
 
 function createSessionId(): string {
@@ -1669,6 +1684,7 @@ export class Agent {
           : effectivePrompt;
 
     let captured: T | undefined;
+    let reminders = 0;
     let tools: AnyTool[] = [
       ...(this.options.tools ?? []),
       ...(host ? [...host.tools.values()] : []),
@@ -1792,7 +1808,18 @@ export class Agent {
       },
       getFollowUpMessages: () => {
         const next = this.followUps.shift();
-        return next ? [next] : [];
+        if (next) return [next];
+        // Ending with prose instead of the tool would throw away the whole run.
+        if (
+          opts?.output &&
+          captured === undefined &&
+          !this.stopping &&
+          reminders < STRUCTURED_OUTPUT_REMINDERS
+        ) {
+          reminders++;
+          return [structuredOutputReminder()];
+        }
+        return [];
       },
       beforeToolCall: async (info) => {
         // The structured-output tool is internal plumbing, never gated.
@@ -2200,12 +2227,19 @@ export class Agent {
       reason,
       sessionId: this._sessionId,
     };
+    const error = reason === "error" ? lastError(result.messages) : undefined;
+    if (error) runResult.error = error;
 
     if (!opts?.output) return runResult;
     if (captured === undefined) {
       // Better to fail loudly than to hand back an undefined typed as T.
-      throw new Error(
-        `Structured output was requested but the model never produced a valid one (run ended: ${reason}).`,
+      const why =
+        reason === "done"
+          ? `the model ended without calling ${STRUCTURED_OUTPUT_TOOL} after ${reminders} reminder${reminders === 1 ? "" : "s"}`
+          : `run ended: ${reason}${error ? ` — ${error}` : ""}`;
+      throw new StructuredOutputError(
+        `Structured output was requested but the model never produced a valid one (${why}).`,
+        runResult,
       );
     }
     return { ...runResult, output: captured };
