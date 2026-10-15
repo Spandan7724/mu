@@ -142,6 +142,8 @@ export interface TypeOptions {
   keystrokes?: boolean;
   // Skip settling (fill_form settles once at the end).
   settle?: boolean;
+  // The caller picks an option itself, so the result does not tell the model to.
+  choosing?: boolean;
 }
 
 // While text goes in, the field's document refuses form submission: typing must never
@@ -191,6 +193,9 @@ export async function typeText(
   // (Enter, Shift+Enter, inserted "\n") submits its form.
   const typed = info.tag === "input" ? text.replace(/\r\n?|\n/g, " ") : text;
   const notices = typed === text ? [] : ["line breaks became spaces (the field holds one line)"];
+  // List comboboxes (react-select) ignore inserted text and open only on key events.
+  const keystrokes =
+    options.keystrokes ?? (info.combobox && info.editable === "value" && typed.length <= 200);
   const watcher =
     options.settle === false ? undefined : watchSettle(tab, info.combobox ? "typing" : "in-page");
   let actual: string;
@@ -235,7 +240,7 @@ export async function typeText(
       await call(target, SUBMIT_GUARD, [], signal).catch(() => {});
       let blocked = 0;
       try {
-        if (options.keystrokes) {
+        if (keystrokes) {
           await typeKeystrokes(tab.session, typed, signal);
         } else if (info.editable === "rich") {
           // Shift+Enter is a line break in every rich editor; a bare Enter sends in chat
@@ -296,22 +301,35 @@ export async function typeText(
   if (info.combobox && !settle?.navigated) {
     const expanded = await resolveRef(tab, ref, signal)
       .then((fresh) =>
-        call<boolean>(
+        call<{ open: boolean; options: number }>(
           fresh,
           `function () {
-            if (this.getAttribute("aria-expanded") === "true") return true;
             var id = this.getAttribute("aria-controls") || this.getAttribute("aria-owns");
             var list = id && document.getElementById(id);
-            return !!(list && list.offsetParent !== null && list.children.length > 0);
+            var open = this.getAttribute("aria-expanded") === "true" ||
+              !!(list && list.offsetParent !== null && list.children.length > 0);
+            var visible = function (el) { return el.getClientRects().length > 0; };
+            var options = Array.prototype.filter.call((list || document).querySelectorAll("[role=option]"), visible).length;
+            return { open: open, options: options };
           }`,
           [],
           signal,
         ),
       )
-      .catch(() => false);
-    suggestions = expanded
-      ? " → suggestions appeared (new options are marked * below)"
-      : " (no suggestions shown yet)";
+      .catch(() => ({ open: false, options: 0 }));
+    // Typed text in a list combobox looks like its value but is not a choice.
+    const hint = options.choosing
+      ? ""
+      : !expanded.open
+        ? "; if it must be one of a list's options, use select"
+        : expanded.options > 0
+          ? "; nothing is chosen until you click one (or use select)"
+          : "; nothing is chosen: type fewer words of the name, or use select";
+    suggestions = !expanded.open
+      ? ` (no suggestions shown yet${hint})`
+      : expanded.options > 0
+        ? ` → suggestions appeared (new options are marked * below)${hint}`
+        : ` → its list opened with no options${hint}`;
   }
   const submitted = options.submit ? " and pressed Enter" : "";
   const mismatchNote = mismatch
@@ -722,7 +740,7 @@ export async function selectOptions(
     );
     // Real keystrokes: many comboboxes (react-select) open their list only on key events.
     const opened = typeable
-      ? await typeText(ctx, ref, wanted, { keystrokes: true })
+      ? await typeText(ctx, ref, wanted, { keystrokes: true, choosing: true })
       : await clickRef(ctx, ref);
     if (opened.ok === false) return opened;
     let list = await openedList(ctx, target, before);
@@ -738,7 +756,7 @@ export async function selectOptions(
     // when the option reads "India +91": retry with the words before the punctuation.
     const shorter = wanted.split(/[^\p{L}\p{N}\s]/u)[0]?.trim() ?? "";
     if (!option && typeable && shorter && shorter !== wanted.trim()) {
-      const retyped = await typeText(ctx, ref, shorter, { keystrokes: true });
+      const retyped = await typeText(ctx, ref, shorter, { keystrokes: true, choosing: true });
       if (retyped.ok === false) return retyped;
       ({ list, option } = await awaitOption(
         ctx,
@@ -900,7 +918,7 @@ async function fillCombobox(
   const before = shown(
     await ctx.stopwatch.time("snapshotMs", () => capturePage(tab, { scope: "full", signal })),
   );
-  const typed = await typeText(ctx, target.ref, value, { keystrokes: true });
+  const typed = await typeText(ctx, target.ref, value, { keystrokes: true, choosing: true });
   if (typed.ok === false) return typed;
   // Free text is fine here, so only a list that says it is still loading is waited on.
   const { option: suggestion } = await awaitOption(

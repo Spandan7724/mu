@@ -353,6 +353,18 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(shown.text).toContain("Clicked: Button 6");
   });
 
+  test("type opens a key-driven list and says typed text is not a choice", async () => {
+    await open("keyed-combobox");
+    const typed = await run("type", { ref: refIn(page, "combobox", "Country"), text: "Ind" });
+    expect(typed.text).toContain("suggestions appeared");
+    expect(typed.text).toContain("nothing is chosen until you click one (or use select)");
+    expect(typed.text).toMatch(/option "India \+91"/);
+    const none = await run("type", { ref: refIn(page, "combobox", "Country"), text: "Atlantis" });
+    expect(none.text).toContain(
+      "its list opened with no options; nothing is chosen: type fewer words of the name, or use select",
+    );
+  });
+
   test("select and fill_form wait for a list that is still loading its search results", async () => {
     await open("async-combobox");
     const school = refIn(page, "combobox", "School");
