@@ -342,6 +342,22 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(ack.text).toContain("Sponsorship: none");
   });
 
+  test("select and fill_form wait for a list that is still loading its search results", async () => {
+    await open("async-combobox");
+    const school = refIn(page, "combobox", "School");
+    const picked = await run("select", {
+      ref: school,
+      options: ["University of California, Berkeley"],
+    });
+    expect(picked.text).toStartWith('selected "University of California, Berkeley"');
+    expect(picked.text).toContain("School: University of California, Berkeley");
+    await open("async-combobox");
+    const filled = await run("fill_form", {
+      fields: [{ ref: refIn(page, "combobox", "School"), value: "Stanford" }],
+    });
+    expect(filled.text).toContain('picked suggestion "Stanford University"');
+  });
+
   test("fill_form picks from key-driven lists and never reports dropped text as filled", async () => {
     await open("keyed-combobox");
     const country = refIn(page, "combobox", "Country");

@@ -72,6 +72,17 @@ export function startFixtureSite(): FixtureSite {
       const all = ["Amsterdam", "Athens", "Austin", "Berlin", "Boston", "Barcelona", "Paris"];
       return Response.json(all.filter((city) => city.toLowerCase().startsWith(query)));
     }
+    if (path === "/api/schools") {
+      const query = (url.searchParams.get("q") ?? "").toLowerCase();
+      await Bun.sleep(Number(url.searchParams.get("delay") ?? 1_000));
+      const all = [
+        "University of California, Berkeley",
+        "University of California, Los Angeles",
+        "University of Cambridge",
+        "Stanford University",
+      ];
+      return Response.json(all.filter((school) => school.toLowerCase().includes(query)));
+    }
     if (path === "/redirect") {
       return Response.redirect(url.searchParams.get("to") ?? "/", 302);
     }

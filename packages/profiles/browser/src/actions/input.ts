@@ -577,6 +577,65 @@ async function openedList(
   };
 }
 
+// Resolves true at the page's next structural change, false after `cap` ms.
+const NEXT_CHANGE = `function (cap) {
+  return new Promise(function (resolve) {
+    var timer;
+    var observer = new MutationObserver(function (records) {
+      for (var i = 0; i < records.length; i++) {
+        if (records[i].type !== "attributes" || records[i].attributeName !== "style") {
+          observer.disconnect(); clearTimeout(timer); resolve(true);
+          return;
+        }
+      }
+    });
+    observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+    timer = setTimeout(function () { observer.disconnect(); resolve(false); }, cap);
+  });
+}`;
+const LIST_WAIT_MS = 4_000;
+const LIST_CHANGE_MS = 1_000;
+const LOADING_NOTE = /\b(loading|searching|fetching)\b/i;
+
+// Suggestions a search fetches (a school list) can arrive after typing has settled,
+// so an open list without the option is read again each time the page changes.
+async function awaitOption(
+  ctx: ActionContext,
+  target: ResolvedRef,
+  before: Set<string>,
+  wanted: string,
+  initial: OpenedList,
+  options: { loosest?: "contains" | "starts"; onlyWhileLoading?: boolean } = {},
+): Promise<{ list: OpenedList; option: PageNode | undefined }> {
+  let list = initial;
+  let option = pickOption(list.candidates, wanted, options.loosest);
+  const deadline = performance.now() + LIST_WAIT_MS;
+  while (!option && list.expanded !== "false") {
+    const loading = list.notes.some((note) => LOADING_NOTE.test(note));
+    const open =
+      loading || list.expanded === "true" || list.candidates.length > 0 || list.notes.length > 0;
+    if (!open || (options.onlyWhileLoading && !loading)) break;
+    const left = deadline - performance.now();
+    if (left <= 0) break;
+    const watcher = watchSettle(ctx.tab, "in-page");
+    const changed = await call<boolean>(
+      target,
+      NEXT_CHANGE,
+      // A pending search leaves "Loading..." unchanged until its results arrive.
+      [loading ? left : Math.min(left, LIST_CHANGE_MS)],
+      ctx.signal,
+    ).catch(() => false);
+    if (!changed) {
+      watcher.dispose();
+      break;
+    }
+    await ctx.stopwatch.time("settleMs", () => watcher.settle(ctx.signal));
+    list = await openedList(ctx, target, before);
+    option = pickOption(list.candidates, wanted, options.loosest);
+  }
+  return { list, option };
+}
+
 function shownKey(node: PageNode): string {
   return node.ref ?? `${node.frameId} ${node.backendNodeId ?? ""} ${node.role} ${node.name}`;
 }
@@ -673,15 +732,21 @@ export async function selectOptions(
       await ctx.stopwatch.time("settleMs", () => watcher.settle(signal));
       list = await openedList(ctx, target, before);
     }
-    let option = pickOption(list.candidates, wanted);
+    let option: PageNode | undefined;
+    ({ list, option } = await awaitOption(ctx, target, before, wanted, list));
     // A filter that matches the option's text verbatim finds nothing for "India (+91)"
     // when the option reads "India +91": retry with the words before the punctuation.
     const shorter = wanted.split(/[^\p{L}\p{N}\s]/u)[0]?.trim() ?? "";
     if (!option && typeable && shorter && shorter !== wanted.trim()) {
       const retyped = await typeText(ctx, ref, shorter, { keystrokes: true });
       if (retyped.ok === false) return retyped;
-      list = await openedList(ctx, target, before);
-      option = pickOption(list.candidates, wanted);
+      ({ list, option } = await awaitOption(
+        ctx,
+        target,
+        before,
+        wanted,
+        await openedList(ctx, target, before),
+      ));
     }
     if (!option?.ref) {
       const choices = list.candidates
@@ -837,8 +902,15 @@ async function fillCombobox(
   );
   const typed = await typeText(ctx, target.ref, value, { keystrokes: true });
   if (typed.ok === false) return typed;
-  const list = await openedList(ctx, target, before);
-  const suggestion = pickOption(list.candidates, value, "starts");
+  // Free text is fine here, so only a list that says it is still loading is waited on.
+  const { option: suggestion } = await awaitOption(
+    ctx,
+    target,
+    before,
+    value,
+    await openedList(ctx, target, before),
+    { loosest: "starts", onlyWhileLoading: true },
+  );
   if (suggestion?.ref) {
     const clicked = await clickRef(ctx, suggestion.ref);
     if (clicked.ok === false) return clicked;
