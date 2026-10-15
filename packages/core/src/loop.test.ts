@@ -309,6 +309,62 @@ describe("agent loop", () => {
   });
 });
 
+describe("cycle detection", () => {
+  const alternating = (count: number, text: (i: number) => string) =>
+    new FakeProvider(
+      Array.from({ length: count }, (_, i) => ({
+        content: [
+          {
+            type: "toolCall" as const,
+            id: `c${i}`,
+            name: i % 2 === 0 ? "echo" : "other",
+            arguments: { text: text(i) },
+          },
+        ],
+      })),
+    );
+  const reminders = (messages: AgentMessage[]) =>
+    messages.filter((m) => m.role === "custom" && m.customType === "system-reminder");
+
+  test("an alternating pair of calls with repeating results is nudged", async () => {
+    const { emit } = collector();
+    const tools = [echoTool(), echoTool({ name: "other" })];
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx(tools),
+      baseConfig(
+        alternating(6, (i) => (i % 2 === 0 ? "a" : "b")),
+        { maxTurns: 6 },
+      ),
+      emit,
+    );
+    const nudges = reminders(result.messages);
+    expect(nudges.length).toBe(1);
+    const nudge = nudges[0];
+    expect(
+      nudge?.role === "custom" && nudge.content[0]?.type === "text" && nudge.content[0].text,
+    ).toContain("same 2 calls (echo → other) 3 times");
+  });
+
+  test("the same sequence over changing results is left alone", async () => {
+    const { emit } = collector();
+    const tools = [
+      echoTool(),
+      echoTool({ name: "other", execute: async () => textResult(`page ${Math.random()}`) }),
+    ];
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx(tools),
+      baseConfig(
+        alternating(6, (i) => (i % 2 === 0 ? "a" : "b")),
+        { maxTurns: 6 },
+      ),
+      emit,
+    );
+    expect(reminders(result.messages)).toEqual([]);
+  });
+});
+
 describe("control hooks", () => {
   test("beforeToolCall can block a call", async () => {
     let executed = false;

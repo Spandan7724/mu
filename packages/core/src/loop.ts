@@ -18,6 +18,8 @@ import { type AnyTool, concurrencySafe, errorResult, type ToolResult } from "./t
 
 const PARALLEL_LIMIT = 10;
 const DOOM_LOOP_THRESHOLD = 3;
+const CYCLE_REPEATS = 3;
+const MAX_CYCLE_LENGTH = 3;
 
 export interface AgentContext {
   systemPrompt?: LlmContext["systemPrompt"];
@@ -153,6 +155,7 @@ export async function runLoop(
   let currentConfig = config;
   let turns = 0;
   const recentCalls: string[] = [];
+  const recentSteps: CycleStep[] = [];
 
   const finish = async (reason: AgentEndReason): Promise<AgentRunResult> => {
     await emit({ type: "agent_end", messages: newMessages, reason });
@@ -255,7 +258,14 @@ export async function runLoop(
           hasMoreToolCalls = false;
         }
 
-        const nudge = directResponse === undefined ? detectDoomLoop(calls, recentCalls) : undefined;
+        const nudge =
+          directResponse === undefined
+            ? (detectDoomLoop(calls, recentCalls) ?? detectCycle(calls, batch.results, recentSteps))
+            : undefined;
+        if (nudge) {
+          recentCalls.length = 0;
+          recentSteps.length = 0;
+        }
         if (nudge) {
           currentContext.messages.push(nudge);
           newMessages.push(nudge);
@@ -330,6 +340,50 @@ function detectDoomLoop(calls: ToolCallContent[], recent: string[]): AgentMessag
     display: true,
     timestamp: Date.now(),
   };
+}
+
+interface CycleStep {
+  key: string;
+  name: string;
+}
+
+// Catches a repeating sequence (A, B, A, B, ...) that an identical-call streak
+// misses. Results must repeat too, so paging through new content never fires.
+function detectCycle(
+  calls: ToolCallContent[],
+  results: ToolResultMessage[],
+  history: CycleStep[],
+): AgentMessage | undefined {
+  for (const call of calls) {
+    const result = results.find((candidate) => candidate.toolCallId === call.id);
+    history.push({
+      key: `${toolCallFingerprint(call)}\u0000${result?.isError === true}\u0000${JSON.stringify(result?.content ?? null)}`,
+      name: call.name,
+    });
+  }
+  const keep = MAX_CYCLE_LENGTH * CYCLE_REPEATS;
+  if (history.length > keep) history.splice(0, history.length - keep);
+  for (let period = 2; period <= MAX_CYCLE_LENGTH; period++) {
+    const span = period * CYCLE_REPEATS;
+    if (history.length < span) continue;
+    const tail = history.slice(-span);
+    const block = tail.slice(0, period);
+    if (block.every((step) => step.key === block[0]?.key)) continue;
+    if (!tail.every((step, index) => step.key === block[index % period]?.key)) continue;
+    return {
+      role: "custom",
+      customType: "system-reminder",
+      content: [
+        {
+          type: "text",
+          text: `You have repeated the same ${period} calls (${block.map((step) => step.name).join(" → ")}) ${CYCLE_REPEATS} times in a row and got the same results each time. Stop repeating them — try a different approach, or explain what is blocking you.`,
+        },
+      ],
+      display: true,
+      timestamp: Date.now(),
+    };
+  }
+  return undefined;
 }
 
 function providerDelta(event: {
