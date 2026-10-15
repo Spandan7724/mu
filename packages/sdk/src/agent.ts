@@ -256,6 +256,9 @@ export class Agent {
   private reactiveRecoveryPending = false;
   private pendingCheckpoint: { beforeEntryId: string | null; beforeRef: string } | undefined;
   private currentThinking: ThinkingLevel;
+  // What the caller selected, before reconciling it with the model's levels.
+  private requestedThinking: ThinkingLevel | undefined;
+  private readonly thinkingNotices = new Set<string>();
   private running = false;
   private stopping = false;
   private activeEmit: ((event: AgentEvent) => void) | undefined;
@@ -278,6 +281,7 @@ export class Agent {
     this.options = options;
     this.permissionRules = [...(options.permissions ?? DEFAULT_PERMISSIONS)];
     this.model = resolveModel(options.model, options.extensions);
+    this.requestedThinking = options.thinkingLevel;
     this.currentThinking = thinkingLevelForModel(this.model, options.thinkingLevel);
     this.provider = this.providerFor(this.model);
     this.store = options.session ?? new MemorySessionStore();
@@ -540,6 +544,7 @@ export class Agent {
   }
 
   setThinking(level: ThinkingLevel): void {
+    this.requestedThinking = level;
     const next = thinkingLevelForModel(this.model, level);
     if (next === this.currentThinking) return;
     this.currentThinking = next;
@@ -623,6 +628,7 @@ export class Agent {
         this.currentThinking = entry.thinkingLevel;
       }
     }
+    this.requestedThinking = this.currentThinking;
     this.currentThinking = thinkingLevelForModel(this.model, this.currentThinking);
     this.rebuildCheckpointHistory();
     this.refreshContextAccounting();
@@ -1705,6 +1711,22 @@ export class Agent {
       tools = tools.filter((tool) => allowed.has(tool.name));
     }
     const runThinking = thinkingLevelForModel(runModel, this.currentThinking);
+    const requestedThinking = this.requestedThinking;
+    const runModelRef = `${runModel.provider}/${runModel.id}`;
+    const noticeKey = `${runModelRef} ${requestedThinking}`;
+    const thinkingNotice: AgentEvent | undefined =
+      requestedThinking !== undefined &&
+      requestedThinking !== runThinking &&
+      !this.thinkingNotices.has(noticeKey)
+        ? {
+            type: "thinking_adjusted",
+            model: runModelRef,
+            requested: requestedThinking,
+            level: runThinking,
+            ...(runModel.inferred ? { inferredModel: true } : {}),
+          }
+        : undefined;
+    if (thinkingNotice) this.thinkingNotices.add(noticeKey);
     let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
@@ -2196,6 +2218,7 @@ export class Agent {
           config,
           async (event) => {
             emit(event);
+            if (event.type === "agent_start" && thinkingNotice) emit(thinkingNotice);
             if (event.type === "message_end") this.tree.appendMessage(event.message);
             // The initiating prompt is durable before the provider is called,
             // and each complete assistant/tool turn is durable before another

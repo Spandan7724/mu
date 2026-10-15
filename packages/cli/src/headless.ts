@@ -68,6 +68,11 @@ export async function runHeadless(
     ) {
       failure = event.message.errorMessage;
     }
+    if (event.type === "thinking_adjusted" && !args.json) {
+      io.stderr(
+        `mu: ${event.model} does not offer thinking ${event.requested}${event.inferredModel ? " (not in mu's model catalog)" : ""}; using ${event.level}\n`,
+      );
+    }
     if (event.type === "permission_asked" && !args.json) {
       const unrestricted = runtime.permissionModes.find((mode) => mode.tone === "unrestricted");
       io.stderr(

@@ -153,6 +153,8 @@ export interface ModelInfo {
   // Anthropic: "adaptive" (effort-based, 4.6+) vs "budget" (budget_tokens, older).
   thinkingMode?: "adaptive" | "budget";
   pricing: ModelPricing;
+  // Not in any catalog: limits, levels and pricing are guesses.
+  inferred?: boolean;
 }
 
 export type ThinkingLevel =

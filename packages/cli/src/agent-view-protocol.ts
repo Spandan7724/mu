@@ -323,6 +323,15 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("thinking_adjusted"),
+      model: z.string().min(1).max(1024),
+      requested: z.string().min(1).max(128),
+      level: z.string().min(1).max(128),
+      inferredModel: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("subagent_started"),
       subagentId: eventId,
       toolCallId: eventId,

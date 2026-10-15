@@ -100,6 +100,15 @@ export type AgentEvent =
       exitCode: number | null;
       status?: "exited" | "killed";
     }
+  // The model does not offer the selected thinking level, so requests use
+  // `level` instead. Emitted once per model and selection.
+  | {
+      type: "thinking_adjusted";
+      model: string;
+      requested: string;
+      level: string;
+      inferredModel?: boolean;
+    }
   // A child agent that runs in the background after the tool call that started
   // it has returned. `details` are the same progress/result shapes the
   // delegation tool reports for a foreground child.

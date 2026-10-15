@@ -1248,6 +1248,20 @@ export class App {
         return [];
       }
 
+      case "thinking_adjusted": {
+        const reason = event.inferredModel ? " (not in mu's model catalog)" : "";
+        const lines = [
+          MARGIN +
+            styleText(
+              `thinking · ${event.model} does not offer ${event.requested}${reason}; using ${event.level}`,
+              { dim: true },
+              this.ctx.depth,
+            ),
+        ];
+        this.appendTranscript(lines);
+        return lines;
+      }
+
       case "task_output": {
         const task = this.backgroundTasks.get(event.taskId);
         if (!task) return [];

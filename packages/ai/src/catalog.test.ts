@@ -36,6 +36,12 @@ describe("catalog", () => {
     expect(findModel("gemini-2.5-pro")?.provider).toBe("google");
   });
 
+  test("an unlisted id on a known provider is a guessed entry marked inferred", () => {
+    const guessed = findModel("anthropic/claude-not-a-real-model");
+    expect(guessed?.inferred).toBe(true);
+    expect(findModel("anthropic/claude-opus-5")?.inferred).toBeUndefined();
+  });
+
   test("unknown ref yields undefined", () => {
     expect(findModel("nope/nothing")).toBeUndefined();
   });

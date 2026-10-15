@@ -1059,6 +1059,37 @@ describe("runtime model and thinking changes", () => {
     expect(provider.streamOptions[0]?.thinkingLevel).toBe("low");
   });
 
+  test("a run warns once when the model does not offer the selected thinking level", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "one" }] },
+      { content: [{ type: "text", text: "two" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: { ...fakeModel, inferred: true },
+      thinkingLevel: "xhigh",
+    });
+    const notices: AgentEvent[] = [];
+    agent.subscribe((event) => {
+      if (event.type === "thinking_adjusted") notices.push(event);
+    });
+
+    await agent.run("first");
+    await agent.run("second");
+
+    expect(agent.thinking).toBe("high");
+    expect(provider.streamOptions[0]?.thinkingLevel).toBe("high");
+    expect(notices).toEqual([
+      {
+        type: "thinking_adjusted",
+        model: "fake/fake-1",
+        requested: "xhigh",
+        level: "high",
+        inferredModel: true,
+      },
+    ]);
+  });
+
   test("model switches replace an unsupported effort with the new model's default", () => {
     const provider = new FakeProvider([]);
     const agent = new Agent({
