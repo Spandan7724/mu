@@ -29,7 +29,7 @@ function completionFetch(capture: {
       [
         'data: {"choices":[{"delta":{"reasoning_content":"think"},"finish_reason":null}]}',
         'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}',
-        'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":2}}}',
+        'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}',
         "data: [DONE]",
         "",
       ].join("\n\n"),
@@ -144,8 +144,9 @@ describe("built-in LLM providers", () => {
       { type: "text", text: "hello" },
     ]);
     expect(result.usage).toMatchObject({
-      inputTokens: 10,
+      inputTokens: 6,
       cacheReadTokens: 2,
+      cacheWriteTokens: 4,
       outputTokens: 3,
     });
   });

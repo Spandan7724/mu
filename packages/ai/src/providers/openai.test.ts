@@ -303,6 +303,25 @@ describe("streamOpenAI", () => {
     });
   });
 
+  test("cache writes are split out of input and priced at the cache-write rate", async () => {
+    const cassette = JSON.parse(
+      JSON.stringify(textCassette).replace(
+        '\\"cached_tokens\\":40',
+        '\\"cache_write_tokens\\":30,\\"cached_tokens\\":40',
+      ),
+    ) as typeof textCassette;
+    expect(JSON.stringify(cassette)).toContain("cache_write_tokens");
+    const priced = { ...model, pricing: { input: 1, output: 0, cacheRead: 0, cacheWrite: 2 } };
+    const result = await streamOpenAI(priced, ctx, {
+      apiKey: "test",
+      fetch: replayFetch(cassette).fetch,
+    }).result();
+    expect(result.usage.inputTokens).toBe(50); // 120 total - 40 cached - 30 written
+    expect(result.usage.cacheReadTokens).toBe(40);
+    expect(result.usage.cacheWriteTokens).toBe(30);
+    expect(result.usage.costUsd).toBeCloseTo((50 * 1 + 30 * 2) / 1_000_000);
+  });
+
   test("streams reasoning + text with usage split into cached/uncached", async () => {
     const replay = replayFetch(textCassette);
     const events: ProviderStreamEvent[] = [];

@@ -226,8 +226,10 @@ export function streamOpenAICompletions(
       if (usage) {
         const promptDetails = usage.prompt_tokens_details as Json | undefined;
         const cached = usageNumber(promptDetails?.cached_tokens);
-        output.usage.inputTokens = Math.max(0, usageNumber(usage.prompt_tokens) - cached);
+        const written = usageNumber(promptDetails?.cache_write_tokens);
+        output.usage.inputTokens = Math.max(0, usageNumber(usage.prompt_tokens) - cached - written);
         output.usage.cacheReadTokens = cached;
+        output.usage.cacheWriteTokens = written;
         output.usage.outputTokens = usageNumber(usage.completion_tokens);
         updateCost(model, output);
       }

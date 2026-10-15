@@ -586,8 +586,14 @@ export function streamOpenAI(
         if (usage) {
           const details = usage.input_tokens_details as Json | undefined;
           const cached = (details?.cached_tokens as number) ?? 0;
-          output.usage.inputTokens = ((usage.input_tokens as number) ?? 0) - cached;
+          const written = (details?.cache_write_tokens as number) ?? 0;
+          // Both details are subsets of input_tokens, billed at their own rates.
+          output.usage.inputTokens = Math.max(
+            0,
+            ((usage.input_tokens as number) ?? 0) - cached - written,
+          );
           output.usage.cacheReadTokens = cached;
+          output.usage.cacheWriteTokens = written;
           output.usage.outputTokens = (usage.output_tokens as number) ?? 0;
           updateCost(model, output);
         }
