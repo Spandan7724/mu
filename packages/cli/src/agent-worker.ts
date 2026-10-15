@@ -212,6 +212,7 @@ export async function runAgentWorker(
             id: mode.id,
             label: mode.label,
             description: mode.description,
+            ...(mode.tone ? { tone: mode.tone } : {}),
           })),
           ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.id } : {}),
           commands: runtime.commands

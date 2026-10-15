@@ -7,6 +7,7 @@ import type {
   AgentRunOptions,
   CommandResult,
   MarkdownCommandRun,
+  PermissionModeTone,
   Usage,
 } from "mu";
 import { z } from "zod";
@@ -31,6 +32,7 @@ export type RpcOp = (
   | { type: "resize"; cols: number; rows: number }
   | { type: "thinking"; level: string }
   | { type: "abort" }
+  | { type: "stop_subagent"; subagentId: string }
   | { type: "shutdown" }
 ) & { operationId?: string | undefined };
 
@@ -49,7 +51,12 @@ export interface RpcSnapshot extends RpcRuntimeMetadata {
   isRunning: boolean;
   events?: AgentEvent[];
   models?: { label: string; description?: string }[];
-  permissionModes?: { id: string; label: string; description: string }[];
+  permissionModes?: {
+    id: string;
+    label: string;
+    description: string;
+    tone?: PermissionModeTone | undefined;
+  }[];
   permissionMode?: string;
   commands?: { label: string; description?: string }[];
 }
@@ -124,6 +131,7 @@ const rpcOpSchema = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
   z.object({ type: z.literal("abort") }).strict(),
+  z.object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) }).strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
 ]);
 
@@ -348,6 +356,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
             send({
               type: "command_result",
               message: `Permissions set to ${label}.`,
+              data: { kind: "permission-mode", label },
               ...(runtime ? { runtime } : {}),
             });
             accept(op);
@@ -359,7 +368,11 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           const label = deps.setPermissionMode?.(op.id);
           if (!label) reject(op, `unknown permission mode: ${op.id}`);
           else {
-            send({ type: "command_result", message: `Permissions set to ${label}.` });
+            send({
+              type: "command_result",
+              message: `Permissions set to ${label}.`,
+              data: { kind: "permission-mode", label },
+            });
             accept(op);
           }
           break;
@@ -393,6 +406,11 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           deps.abortAuxiliary?.();
           deps.agent.abort();
           accept(op);
+          break;
+
+        case "stop_subagent":
+          if (deps.agent.stopBackgroundWork(op.subagentId)) accept(op);
+          else reject(op, `no running background subagent ${op.subagentId}`);
           break;
 
         case "shutdown":

@@ -15,6 +15,7 @@ import {
   formatKeybindings,
   hyperlink,
   InputDecoder,
+  PERMISSION_TONE_STYLES,
   type PickerRequest,
   type RenderFrame,
   type Style,
@@ -34,7 +35,6 @@ import {
   type MarkdownCommandRun,
   type ModelInfo,
   type PermissionMode,
-  type PermissionModeTone,
   providerConfig,
   readAuthFile,
   removeStoredCredential,
@@ -168,12 +168,6 @@ export function formatSubagentsOutput(message: string, depth: ColorDepth): strin
     "",
   ];
 }
-
-const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
-  restrictive: { link: true },
-  permissive: { permissive: true },
-  unrestricted: { red: true },
-};
 
 // A trailing blank, not a leading one: shift+tab commits one of these per press,
 // and the composer sits flush against the transcript, so one line below each
@@ -899,6 +893,7 @@ export async function runInteractive(
     target.setPermissions(rulesForPermissionMode(basePermissions, mode));
     if (source === "side") sidePermissionMode = mode;
     else activePermissionMode = mode;
+    app.setPermissionMode(mode, source);
     commitLines(formatPermissionMode(mode, depth), source);
   }
 
@@ -969,6 +964,7 @@ export async function runInteractive(
         conversation.agent.thinkingLevels,
       );
       app.setThinking(conversation.agent.thinking, conversation.agent.thinkingLevels, "side");
+      app.setPermissionMode(sidePermissionMode, "side");
       paint();
       if (question) beginRun(question);
     } catch (error) {
@@ -1369,6 +1365,7 @@ export async function runInteractive(
   });
   app.setModel(agent.modelRef, agent.contextWindow);
   app.setThinking(agent.thinking, agent.thinkingLevels);
+  app.setPermissionMode(activePermissionMode, "main");
   if (args.resumeSessionId) {
     app.replaceTranscript(agent.session.messagesAt(), app.banner());
     // Startup resume happens before the event subscription exists, so the

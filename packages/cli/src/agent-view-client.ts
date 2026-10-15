@@ -172,6 +172,7 @@ export class AgentViewClient {
           remember?: boolean | undefined;
         }
       | { type: "abort" }
+      | { type: "stop_subagent"; subagentId: string }
       | { type: "thinking"; level: string },
   ): Promise<void> {
     await this.request({ type: "session_op", id: crypto.randomUUID(), sessionId, op });

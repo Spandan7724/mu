@@ -536,6 +536,24 @@ describe("fake-agent session", () => {
     expect(rendered).toContain("4 tool outputs cleared");
   });
 
+  test("the footer names the permission mode where the thinking shortcut was", () => {
+    const { app } = harness();
+    app.setSize(100, 30);
+    const footerRow = () => stripAnsi(app.renderBottom().at(-1) ?? "");
+    expect(footerRow()).toContain("ctrl+t");
+
+    app.setPermissionMode({ label: "accept edits", tone: "permissive" });
+    expect(footerRow()).toContain("think");
+    expect(footerRow()).toContain("accept edits");
+    expect(footerRow()).not.toContain("ctrl+t");
+
+    const colored = harness({}, { depth: "truecolor" }).app;
+    colored.setSize(100, 30);
+    colored.setPermissionMode({ label: "full access", tone: "unrestricted" });
+    const raw = colored.renderBottom().at(-1) ?? "";
+    expect(raw).toContain(styleText("full access", { red: true }, "truecolor"));
+  });
+
   test("background task count reaches the footer", () => {
     const { app } = harness();
     app.handleEvent({ type: "task_started", taskId: "t1", command: "bun dev", background: true });

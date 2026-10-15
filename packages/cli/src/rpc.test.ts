@@ -188,6 +188,59 @@ describe("runRpc", () => {
     expect(errors[0]?.type === "error" && errors[0].message).toContain("unknown permission");
   });
 
+  test("permission mode changes report the new mode for attached footers", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({ type: "cycle_permission_mode" }),
+      JSON.stringify({ type: "permission_mode", id: "yolo" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, {
+      agent,
+      cyclePermissionMode: () => "accept edits",
+      setPermissionMode: () => "full access",
+    });
+
+    const results = parsed(written).filter((out) => out.type === "command_result");
+    expect(results.map((out) => out.type === "command_result" && out.data)).toEqual([
+      { kind: "permission-mode", label: "accept edits" },
+      { kind: "permission-mode", label: "full access" },
+    ]);
+  });
+
+  test("stop_subagent stops the named background work and rejects an unknown id", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+    const stops: string[] = [];
+    let finish: () => void = () => {};
+    agent.trackBackground({
+      label: "sa-abc123",
+      done: new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+      stop: (reason) => {
+        stops.push(reason);
+        finish();
+      },
+    });
+    const { io, written } = harness([
+      JSON.stringify({ type: "stop_subagent", subagentId: "sa-abc123", operationId: "op-1" }),
+      JSON.stringify({ type: "stop_subagent", subagentId: "sa-none", operationId: "op-2" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+    await runRpc(io, { agent });
+
+    expect(stops).toEqual(["user"]);
+    expect(parsed(written).filter((out) => out.type === "op_result")).toEqual([
+      { type: "op_result", operationId: "op-1", ok: true },
+      {
+        type: "op_result",
+        operationId: "op-2",
+        ok: false,
+        message: "no running background subagent sa-none",
+      },
+    ]);
+  });
+
   test("a correlated operation receives one explicit rejection instead of an ambient error", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "x" }] }]);
     const agent = new Agent({ provider, model: fakeModel });

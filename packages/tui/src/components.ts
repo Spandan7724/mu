@@ -1,6 +1,7 @@
 // Components return styled lines at a width — not React, no virtual DOM.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { PermissionModeTone } from "@mu/core";
 import { type DiffFile, diffCell } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
@@ -504,7 +505,14 @@ export interface FooterData {
   // Present only while rendering an ephemeral side conversation.
   side?: string;
   hint?: string;
+  permissionMode?: { label: string; tone?: PermissionModeTone | undefined };
 }
+
+export const PERMISSION_TONE_STYLES: Record<PermissionModeTone, Style> = {
+  restrictive: { link: true },
+  permissive: { permissive: true },
+  unrestricted: { red: true },
+};
 
 export function formatTokens(count: number): string {
   if (!Number.isFinite(count) || count <= 0) return "0";
@@ -586,6 +594,13 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
     parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
   }
   if (data.hint) parts.push({ text: data.hint, style: quiet });
+  if (data.permissionMode) {
+    const tone = data.permissionMode.tone;
+    parts.push({
+      text: data.permissionMode.label,
+      style: tone ? PERMISSION_TONE_STYLES[tone] : quiet,
+    });
+  }
   const maxWidth = Math.max(0, width - MARGIN.length);
   const safeCwd = sanitizeUntrusted(data.cwd);
   const safeStatus = sanitizeUntrusted(data.status ?? "");

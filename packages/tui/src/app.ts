@@ -7,6 +7,7 @@ import type {
   AssistantMessage,
   CheckpointDiffFile,
   CompactionProgress,
+  PermissionModeTone,
   PermissionRequest,
 } from "@mu/core";
 import {
@@ -490,6 +491,7 @@ interface ConversationView {
   footerData: FooterData;
   thinkingLevel: string;
   thinkingLevels: string[];
+  permissionMode: { label: string; tone?: PermissionModeTone | undefined } | undefined;
   activitySelection: string | undefined;
   activitySearch: ActivitySearch | undefined;
 }
@@ -521,6 +523,7 @@ function conversationView(
     footerData,
     thinkingLevel: thinkingLevels[0] ?? "off",
     thinkingLevels: [...thinkingLevels],
+    permissionMode: undefined,
     activitySelection: undefined,
     activitySearch: undefined,
   };
@@ -805,6 +808,15 @@ export class App {
     };
     update(this.main);
     if (this.side) update(this.side);
+  }
+
+  // Shown in place of the thinking shortcut so the footer names what mu may do.
+  setPermissionMode(
+    mode: { label: string; tone?: PermissionModeTone | undefined } | undefined,
+    source: ConversationSource = this.activeSource,
+  ): void {
+    const view = source === "side" ? this.side : this.main;
+    if (view) view.permissionMode = mode;
   }
 
   setThinking(
@@ -1796,8 +1808,20 @@ export class App {
             ? "press ctrl+c again to exit"
             : this.isShellMode
               ? `enter run ${GLYPHS.separator} esc cancel`
-              : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel} ${GLYPHS.separator} ctrl+t`;
-    lines.push(...footer({ ...this.footerData, ...(hint ? { hint } : {}) }, width, depth));
+              : `${toolHint} ${GLYPHS.separator} think ${this.thinkingLevel}${this.view.permissionMode ? "" : ` ${GLYPHS.separator} ctrl+t`}`;
+    lines.push(
+      ...footer(
+        {
+          ...this.footerData,
+          ...(hint ? { hint } : {}),
+          ...(this.mode !== "activity" && this.view.permissionMode
+            ? { permissionMode: this.view.permissionMode }
+            : {}),
+        },
+        width,
+        depth,
+      ),
+    );
     return lines;
   }
 

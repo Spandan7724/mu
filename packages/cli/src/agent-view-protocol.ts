@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMessage, PermissionRequest, Usage } from "mu";
+import type { AgentEvent, AgentMessage, PermissionModeTone, PermissionRequest, Usage } from "mu";
 import { builtinProviderConfigs } from "mu";
 import { z } from "zod";
 import {
@@ -100,6 +100,9 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
           })
           .strict(),
         z.object({ type: z.literal("abort") }).strict(),
+        z
+          .object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) })
+          .strict(),
         z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
       ]),
     })
@@ -361,7 +364,12 @@ export interface AgentViewAttachment {
   isRunning: boolean;
   events?: AgentEvent[];
   models?: { label: string; description?: string }[];
-  permissionModes?: { id: string; label: string; description: string }[];
+  permissionModes?: {
+    id: string;
+    label: string;
+    description: string;
+    tone?: PermissionModeTone | undefined;
+  }[];
   permissionMode?: string;
   pendingRequest?: PermissionRequest;
   commands?: { label: string; description?: string }[];
@@ -407,6 +415,7 @@ export const attachmentSchema = z
             id: z.string().min(1).max(128),
             label: z.string().min(1).max(128),
             description: z.string().max(512),
+            tone: z.enum(["restrictive", "permissive", "unrestricted"]).optional(),
           })
           .strict(),
       )

@@ -36,7 +36,7 @@ import {
 import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
-import type { AgentViewResponse } from "./agent-view-protocol.ts";
+import type { AgentViewAttachment, AgentViewResponse } from "./agent-view-protocol.ts";
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
@@ -558,6 +558,8 @@ export class AgentsApp {
 interface ActiveConversation {
   sessionId: string;
   app: App;
+  // The attached worker's mode list and current mode, kept current as it changes.
+  snapshot: AgentViewAttachment;
   disposePresentation?: () => Promise<void>;
 }
 
@@ -684,6 +686,10 @@ export async function runAgentView(
             void client.sessionOp(sessionId, { type: "shell", command }).catch(showError),
           onMentionQuery: (query) => mentionCandidates(cwd, query),
           onAbort: () => void client.sessionOp(sessionId, { type: "abort" }).catch(showError),
+          onStopSubagent: (subagentId) =>
+            void client
+              .sessionOp(sessionId, { type: "stop_subagent", subagentId })
+              .catch(showError),
           onExit: () => void detach(),
           onDetach: () => void detach(),
           onCommand: (text) => {
@@ -729,6 +735,9 @@ export async function runAgentView(
         },
       });
       conversation.setThinking(snapshot.thinking, snapshot.thinkingLevels);
+      conversation.setPermissionMode(
+        snapshot.permissionModes?.find((mode) => mode.id === snapshot.permissionMode),
+      );
       conversation.setCommands([
         ...(snapshot.commands ?? []),
         ...(snapshot.permissionModes?.length
@@ -747,7 +756,7 @@ export async function runAgentView(
         contextTokens: Math.round(snapshot.contextPercent * snapshot.contextWindow),
         contextPercent: snapshot.contextPercent,
       });
-      active = { sessionId, app: conversation, disposePresentation };
+      active = { sessionId, app: conversation, snapshot, disposePresentation };
       disposePresentation = undefined;
       terminal.setTitle(`mu - ${basename(cwd) || cwd}`);
       renderer.clear();
@@ -810,7 +819,13 @@ export async function runAgentView(
         | UndoPointsCommandData
         | { kind: "fork-points"; points: { id: string; description: string }[] }
         | { kind: "compaction"; status: string }
+        | { kind: "permission-mode"; label: string }
         | undefined;
+      if (data?.kind === "permission-mode") {
+        const mode = active.snapshot.permissionModes?.find((item) => item.label === data.label);
+        if (mode) active.snapshot.permissionMode = mode.id;
+        active.app.setPermissionMode(mode ?? { label: data.label });
+      }
       if (data?.kind === "checkpoint") {
         if (data.action === "undo" && data.prompt !== undefined) {
           active.app.editor.setText(data.prompt);
