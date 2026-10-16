@@ -134,6 +134,7 @@ export function shellSpawner(root: string): Spawner {
 export function taskTools(manager: ProcessManager) {
   const taskOutput = tool({
     name: "task_output",
+    changesState: false,
     description:
       "Read output from a background task. Returns only what is new since the last read unless full is set.",
     inputSchema: z.object({
@@ -200,6 +201,7 @@ export function taskTools(manager: ProcessManager) {
 
   const taskList = tool({
     name: "task_list",
+    changesState: false,
     description: "List background tasks started in this session.",
     inputSchema: z.object({}),
     isConcurrencySafe: () => true,

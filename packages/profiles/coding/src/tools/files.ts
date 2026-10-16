@@ -130,6 +130,7 @@ export function filePermissionDiff(
 export function readTool(deps: ToolDeps) {
   return tool({
     name: "read",
+    changesState: false,
     description:
       "Read a file from the filesystem. Returns contents with line numbers for grounded path:line citations. Read a file before editing it.",
     inputSchema: z.object({
@@ -543,6 +544,7 @@ export function editTool(deps: ToolDeps) {
 export function lsTool(deps: ToolDeps) {
   return tool({
     name: "ls",
+    changesState: false,
     description: "List the entries of a directory.",
     inputSchema: z.object({
       path: z.string().optional().describe("Directory to list; defaults to the session root"),

@@ -730,6 +730,24 @@ describe("where checkpoints run", () => {
   });
 });
 
+describe("which coding tools need an after-turn checkpoint", () => {
+  test("reading tools and inspection commands are read-only; writers and other commands are not", async () => {
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
+    const changes = (name: string, args: unknown = {}) => {
+      const flag = profile.toolset.find((tool) => tool.name === name)?.changesState;
+      return typeof flag === "function" ? flag(args) : flag;
+    };
+    for (const name of ["read", "ls", "todo", "task_output", "task_list"]) {
+      expect(changes(name)).toBe(false);
+    }
+    expect(changes("write")).toBe(true);
+    expect(changes("edit")).toBe(true);
+    expect(changes("bash", { command: "rg --files" })).toBe(false);
+    expect(changes("bash", { command: "npm install" })).toBe(true);
+    expect(changes("task_kill")).toBeUndefined();
+  });
+});
+
 describe("turn-level agent undo", () => {
   test("one undo removes everything created by a write-then-verify turn", async () => {
     const root = await workspace();

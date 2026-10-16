@@ -4,6 +4,7 @@ import {
   CheckpointHistory,
   type CheckpointProvider,
   MemorySessionStore,
+  type ProfileRuntime,
   type SessionTree,
 } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
@@ -240,6 +241,108 @@ describe("one checkpoint per user turn", () => {
     await agent.run("go");
 
     expect(sawCapture).toEqual([true]);
+  });
+
+  describe("the after-turn capture is skipped only when nothing can have changed", () => {
+    function counting() {
+      const labels: string[] = [];
+      const checkpoints: CheckpointProvider = {
+        snapshot: async (label) => {
+          labels.push(label ?? "");
+          return `ref-${labels.length}`;
+        },
+        restore: async () => {},
+        diff: async () => [],
+      };
+      return { labels, checkpoints };
+    }
+    const lookup = (changesState?: boolean) =>
+      tool({
+        name: "lookup",
+        description: "reads something",
+        inputSchema: z.object({}),
+        ...(changesState === undefined ? {} : { changesState }),
+        execute: () => "found",
+      });
+    const callingLookup = () =>
+      new FakeProvider([
+        { content: [{ type: "toolCall", id: "c1", name: "lookup", arguments: {} }] },
+        { content: [{ type: "text", text: "done" }] },
+      ]);
+
+    test("a turn of read-only tools reuses the before-turn reference", async () => {
+      const { labels, checkpoints } = counting();
+      const agent = new Agent({
+        provider: callingLookup(),
+        model: fakeModel,
+        tools: [lookup(false)],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("look");
+      expect(labels).toEqual(["before user turn"]);
+      const [entry] = agent.checkpointHistory.all();
+      expect(entry?.afterRef).toBe(entry?.beforeRef);
+    });
+
+    test("a chat-only turn takes one capture", async () => {
+      const { labels, checkpoints } = counting();
+      const agent = new Agent({
+        provider: new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]),
+        model: fakeModel,
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("hello");
+      expect(labels).toEqual(["before user turn"]);
+    });
+
+    test("a tool that does not declare itself read-only is assumed to change state", async () => {
+      const { labels, checkpoints } = counting();
+      const agent = new Agent({
+        provider: callingLookup(),
+        model: fakeModel,
+        tools: [lookup()],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("look");
+      expect(labels).toEqual(["before user turn", "after user turn"]);
+    });
+
+    test("a running background task forces the capture", async () => {
+      const { labels, checkpoints } = counting();
+      let host: Parameters<ProfileRuntime["attach"]>[0] | undefined;
+      const agent = new Agent({
+        provider: callingLookup(),
+        model: fakeModel,
+        tools: [lookup(false)],
+        checkpointProvider: checkpoints,
+        runtime: {
+          attach: (attached) => {
+            host = attached;
+          },
+        },
+      });
+      host?.emit({ type: "task_started", taskId: "t1", command: "npm run dev", background: true });
+      await agent.run("look");
+      expect(labels).toEqual(["before user turn", "after user turn"]);
+
+      host?.emit({ type: "task_exited", taskId: "t1", exitCode: 0, status: "exited" });
+      labels.length = 0;
+      await agent.run("look again");
+      expect(labels).toEqual(["before user turn"]);
+    });
+
+    test("a denied state-changing call changes nothing", async () => {
+      const { labels, checkpoints } = counting();
+      const agent = new Agent({
+        provider: callingLookup(),
+        model: fakeModel,
+        tools: [lookup(true)],
+        checkpointProvider: checkpoints,
+        permissions: [{ permission: "lookup", pattern: "*", action: "deny" }],
+      });
+      await agent.run("look");
+      expect(labels).toEqual(["before user turn"]);
+    });
   });
 
   test("a read-only turn is still undoable as conversation", async () => {

@@ -35,6 +35,7 @@ export function renderTodos(items: TodoItem[]): string {
 export function todoTool(store: TodoStore) {
   return tool({
     name: "todo",
+    changesState: false,
     description:
       "Record and update the task list for multi-step work. Send the complete list every time; it replaces the previous one. Mark exactly one task in_progress while you work on it.",
     inputSchema: z.object({

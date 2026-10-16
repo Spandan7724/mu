@@ -233,6 +233,19 @@ function createSessionId(): string {
   return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
 
+// Tools that do not say, and classifiers that fail, count as changing state:
+// a skipped capture would make the turn's undo silently incomplete.
+function mayChangeState(tool: AnyTool | undefined, args: unknown): boolean {
+  const flag = tool?.changesState;
+  if (flag === undefined) return true;
+  if (typeof flag === "boolean") return flag;
+  try {
+    return flag(args) !== false;
+  } catch {
+    return true;
+  }
+}
+
 export class Agent {
   private readonly options: AgentOptions;
   private model: ModelInfo;
@@ -257,6 +270,8 @@ export class Agent {
   private recoveryAttempted = false;
   private reactiveRecoveryPending = false;
   private pendingCheckpoint: { beforeEntryId: string | null; beforeRef: string } | undefined;
+  // Profile-runtime tasks still running; they may change state outside any tool call.
+  private readonly runningTasks = new Set<string>();
   private currentThinking: ThinkingLevel;
   // What the caller selected, before reconciling it with the model's levels.
   private requestedThinking: ThinkingLevel | undefined;
@@ -725,6 +740,8 @@ export class Agent {
   // them immediately; persistent subscribers also see them while the Agent is
   // idle, rather than receiving a stale event on some later user turn.
   emitTaskEvent(event: AgentEvent): void {
+    if (event.type === "task_started") this.runningTasks.add(event.taskId);
+    if (event.type === "task_exited") this.runningTasks.delete(event.taskId);
     this.publishEvent(event);
   }
 
@@ -1476,13 +1493,18 @@ export class Agent {
     } catch {}
   }
 
-  private async finishCheckpoint(): Promise<void> {
+  private async finishCheckpoint(mayHaveChanged: boolean): Promise<void> {
     const pending = this.pendingCheckpoint;
     const provider = this.options.checkpointProvider;
     this.pendingCheckpoint = undefined;
     if (!pending || !provider) return;
 
-    const afterRef = await provider.snapshot("after user turn").catch(() => undefined);
+    // A turn whose tools all declared themselves read-only, with nothing running
+    // in the background, ends in the state it started in.
+    const unchanged = !mayHaveChanged && this.runningTasks.size === 0 && this.background.size === 0;
+    const afterRef = unchanged
+      ? pending.beforeRef
+      : await provider.snapshot("after user turn").catch(() => undefined);
     if (!afterRef) return;
     const entry = this.tree.append({
       type: "checkpoint",
@@ -1828,6 +1850,88 @@ export class Agent {
       return breach;
     };
 
+    let turnMayChangeState = false;
+    const gateToolCall = async (
+      info: Parameters<NonNullable<LoopConfig["beforeToolCall"]>>[0],
+    ): Promise<Awaited<ReturnType<NonNullable<LoopConfig["beforeToolCall"]>>>> => {
+      // The structured-output tool is internal plumbing, never gated.
+      if (info.toolCall.name === STRUCTURED_OUTPUT_TOOL) return undefined;
+      await checkpointReady;
+
+      let args = info.args;
+      if (host) {
+        const directive = await host.runToolCallHooks({
+          toolName: info.toolCall.name,
+          toolCallId: info.toolCall.id,
+          args,
+        });
+        if (directive?.block) {
+          return { block: true, reason: directive.reason ?? "Blocked by an extension" };
+        }
+        if (directive?.args) args = directive.args;
+      }
+
+      const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
+      let permission = info.toolCall.name;
+      try {
+        permission = selectedTool?.permissionScope?.(args) ?? permission;
+      } catch {
+        // A broken profile classifier must fall back to the concrete tool.
+      }
+      let pattern = JSON.stringify(args);
+      try {
+        pattern = selectedTool?.permissionPattern?.(args) ?? pattern;
+      } catch {
+        // A broken profile projection must not bypass the generic permission rules.
+      }
+      const permissionTargets =
+        permission === info.toolCall.name ? [info.toolCall.name] : [info.toolCall.name, permission];
+      const action = evaluate(this.effectivePermissionRules(), permissionTargets, pattern);
+      const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
+      if (action === "allow") {
+        return rewritten;
+      }
+      if (action === "deny") {
+        return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
+      }
+      const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
+        () => undefined,
+      );
+      const request: PermissionRequest = {
+        id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        toolCallId: info.toolCall.id,
+        toolName: info.toolCall.name,
+        permission,
+        pattern,
+        description: details?.description ?? `Run ${info.toolCall.name}`,
+        ...(details?.preview ? { preview: details.preview } : {}),
+      };
+      emit({ type: "permission_asked", request });
+      // Default DENY: never hang an unattended process on an unanswered ask.
+      let outcome: "allow" | "deny" = "deny";
+      if (this.options.onPermission && !this.controller.signal.aborted) {
+        const signal = this.controller.signal;
+        let onAbort: (() => void) | undefined;
+        const aborted = new Promise<"deny">((resolve) => {
+          onAbort = () => resolve("deny");
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        try {
+          outcome = await Promise.race([this.options.onPermission(request), aborted]);
+        } finally {
+          if (onAbort) signal.removeEventListener("abort", onAbort);
+        }
+      }
+      emit({ type: "permission_resolved", requestId: request.id, outcome });
+      if (outcome === "allow") {
+        return rewritten;
+      }
+      return {
+        block: true,
+        reason: `Permission denied for ${info.toolCall.name}`,
+      };
+    };
+
     const credentialResolver = this.options.getCredentials;
     const config: LoopConfig = {
       provider: runProvider,
@@ -1864,84 +1968,14 @@ export class Agent {
         return [];
       },
       beforeToolCall: async (info) => {
-        // The structured-output tool is internal plumbing, never gated.
-        if (info.toolCall.name === STRUCTURED_OUTPUT_TOOL) return undefined;
-        await checkpointReady;
-
-        let args = info.args;
-        if (host) {
-          const directive = await host.runToolCallHooks({
-            toolName: info.toolCall.name,
-            toolCallId: info.toolCall.id,
-            args,
-          });
-          if (directive?.block) {
-            return { block: true, reason: directive.reason ?? "Blocked by an extension" };
-          }
-          if (directive?.args) args = directive.args;
-        }
-
-        const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
-        let permission = info.toolCall.name;
-        try {
-          permission = selectedTool?.permissionScope?.(args) ?? permission;
-        } catch {
-          // A broken profile classifier must fall back to the concrete tool.
-        }
-        let pattern = JSON.stringify(args);
-        try {
-          pattern = selectedTool?.permissionPattern?.(args) ?? pattern;
-        } catch {
-          // A broken profile projection must not bypass the generic permission rules.
-        }
-        const permissionTargets =
-          permission === info.toolCall.name
-            ? [info.toolCall.name]
-            : [info.toolCall.name, permission];
-        const action = evaluate(this.effectivePermissionRules(), permissionTargets, pattern);
-        const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
-        if (action === "allow") {
-          return rewritten;
-        }
-        if (action === "deny") {
-          return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
-        }
-        const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
-          () => undefined,
-        );
-        const request: PermissionRequest = {
-          id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-          toolCallId: info.toolCall.id,
-          toolName: info.toolCall.name,
-          permission,
-          pattern,
-          description: details?.description ?? `Run ${info.toolCall.name}`,
-          ...(details?.preview ? { preview: details.preview } : {}),
-        };
-        emit({ type: "permission_asked", request });
-        // Default DENY: never hang an unattended process on an unanswered ask.
-        let outcome: "allow" | "deny" = "deny";
-        if (this.options.onPermission && !this.controller.signal.aborted) {
-          const signal = this.controller.signal;
-          let onAbort: (() => void) | undefined;
-          const aborted = new Promise<"deny">((resolve) => {
-            onAbort = () => resolve("deny");
-            signal.addEventListener("abort", onAbort, { once: true });
-          });
-          try {
-            outcome = await Promise.race([this.options.onPermission(request), aborted]);
-          } finally {
-            if (onAbort) signal.removeEventListener("abort", onAbort);
+        const directive = await gateToolCall(info);
+        if (!directive?.block && info.toolCall.name !== STRUCTURED_OUTPUT_TOOL) {
+          const selected = tools.find((candidate) => candidate.name === info.toolCall.name);
+          if (mayChangeState(selected, directive?.rewrittenArgs ?? info.args)) {
+            turnMayChangeState = true;
           }
         }
-        emit({ type: "permission_resolved", requestId: request.id, outcome });
-        if (outcome === "allow") {
-          return rewritten;
-        }
-        return {
-          block: true,
-          reason: `Permission denied for ${info.toolCall.name}`,
-        };
+        return directive;
       },
       prepareContext: async (messages) => {
         const prepared = (next: AgentMessage[], stop = false) => {
@@ -2256,7 +2290,7 @@ export class Agent {
         );
       } finally {
         await checkpointReady;
-        await this.finishCheckpoint();
+        await this.finishCheckpoint(turnMayChangeState);
       }
     })();
 
