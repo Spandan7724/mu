@@ -522,6 +522,43 @@ describe("shadow checkpoints", () => {
     await expect(second.snapshot()).rejects.toThrow("belongs to");
   });
 
+  test("a store written by another release keeps its checkpoints", async () => {
+    for (const version of ["2", "3"]) {
+      const root = await workspace();
+      await writeFile(join(root, "a.txt"), "before\n");
+      const shadowDir = join(tmpdir(), `mu-shadow-version-${process.pid}-${shadowCounter++}`);
+      const before = await new ShadowCheckpointProvider({ root, shadowDir }).snapshot();
+      await writeFile(join(shadowDir, "mu-checkpoint-version"), `${version}\n`);
+
+      await writeFile(join(root, "a.txt"), "after\n");
+      const reopened = new ShadowCheckpointProvider({ root, shadowDir });
+      expect((await reopened.diff(before as string)).map((file) => file.path)).toEqual(["a.txt"]);
+      await reopened.restoreResources(before as string, ["a.txt"]);
+      expect(await readFile(join(root, "a.txt"), "utf8")).toBe("before\n");
+      // Releases that only know version 2 would otherwise rebuild the store.
+      expect(await readFile(join(shadowDir, "mu-checkpoint-version"), "utf8")).toBe("2\n");
+    }
+  });
+
+  test("a checkpoint missing from the store is reported plainly", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "1\n");
+    const p = provider(root);
+    const ref = (await p.snapshot()) as string;
+    await rm(p.directory, { recursive: true, force: true });
+
+    const fresh = provider(root);
+    for (const attempt of [
+      () => fresh.diff(ref),
+      () => fresh.diff(ref, ref),
+      () => fresh.restore(ref),
+      () => fresh.restoreResources(ref, ["a.txt"]),
+    ]) {
+      await expect(attempt()).rejects.toThrow("is no longer in");
+    }
+    expect(await readFile(join(root, "a.txt"), "utf8")).toBe("1\n");
+  });
+
   test("an older shadow-store format is rebuilt without touching the workspace", async () => {
     const root = await workspace();
     await writeFile(join(root, "source.txt"), "workspace state\n");

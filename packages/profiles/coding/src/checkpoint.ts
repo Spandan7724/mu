@@ -125,9 +125,12 @@ function workspaceKey(root: string, scope?: string): string {
   return `${readable}-${hash}`;
 }
 
-// Version 2 force-tracked ignored files; version 3 records what the
-// workspace repository does not ignore.
-const SHADOW_STORE_VERSION = "3";
+// Bumped only when existing checkpoints can no longer be read: a rebuild deletes
+// every saved checkpoint, and older releases rebuild any version they do not know.
+// What gets staged may change without a bump. "3" was written by unreleased
+// builds with the same format.
+const SHADOW_STORE_VERSION = "2";
+const SAME_FORMAT_VERSIONS = new Set([SHADOW_STORE_VERSION, "3"]);
 const LOCK_WAIT_MS = 30_000;
 const INCOMPLETE_LOCK_GRACE_MS = 1_000;
 // Mu's own project state. A permission grant ("always allow") or a model
@@ -354,7 +357,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
         throw error;
       });
-      if (version?.trim() !== SHADOW_STORE_VERSION) {
+      if (!SAME_FORMAT_VERSIONS.has(version?.trim() ?? "")) {
         // Version 1 force-tracked ignored dependency trees. Rebuild only Mu's
         // shadow repository; the user's worktree is outside this directory.
         await rm(this.shadowDir, { recursive: true, force: true });
@@ -510,9 +513,23 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
 
   // Files the workspace repository ignores, and large untracked files, are
   // outside checkpoints: restore neither brings them back nor removes them.
+  // Checkpoints vanish when the store is deleted or rebuilt; say so instead of
+  // surfacing Git's "bad object".
+  private async requireCheckpoints(...refs: string[]): Promise<void> {
+    for (const ref of refs) {
+      const found = await this.git("cat-file", "-e", `${ref}^{commit}`);
+      if (found.exitCode !== 0) {
+        throw new Error(
+          `checkpoint ${ref.slice(0, 12)} is no longer in ${this.shadowDir}; the store was deleted or rebuilt.`,
+        );
+      }
+    }
+  }
+
   async restore(ref: string): Promise<void> {
     await this.locked(async () => {
       await this.ensure();
+      await this.requireCheckpoints(ref);
 
       const readTree = await this.git("read-tree", "--reset", "-u", ref);
       if (readTree.exitCode !== 0) {
@@ -546,6 +563,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async restoreResources(ref: string, resources: string[]): Promise<void> {
     await this.locked(async () => {
       await this.ensure();
+      await this.requireCheckpoints(ref);
       const paths = [
         ...new Set(
           resources.map((resource) => {
@@ -597,6 +615,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     return this.locked(async () => {
       await this.ensure();
+      await this.requireCheckpoints(fromRef, ...(toRef ? [toRef] : []));
       if (!toRef) await this.stage();
       const args = toRef
         ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]

@@ -711,6 +711,17 @@ describe("commands", () => {
     });
   });
 
+  test("/diff reports a failed diff instead of throwing", async () => {
+    const registry = registryWithCoreCommands({
+      diff: async () => {
+        throw new Error("checkpoint abc is no longer in the store");
+      },
+    });
+    expect((await registry.execute("/diff", ctx().ctx)).message).toBe(
+      "Could not show the diff: checkpoint abc is no longer in the store",
+    );
+  });
+
   test("/diff with no changes says so", async () => {
     const registry = registryWithCoreCommands({ diff: async () => [] });
     expect((await registry.execute("/diff", ctx().ctx)).message).toBe("No changes yet.");

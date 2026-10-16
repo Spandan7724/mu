@@ -28,6 +28,7 @@ import {
   type AgentOptions,
   type AgentRunOptions,
   type CheckpointActionData,
+  type CommandResult,
   customMessage,
   type DiffCommandData,
   defaultModelId,
@@ -1276,17 +1277,29 @@ export async function runInteractive(
       commitLines([`  /${parsed?.name} is not available in a side conversation.`], source);
       return;
     }
-    const result = await commands.execute(text, {
-      inject: (message) => {
-        if (message.role === "custom" && message.content[0]?.type === "text") {
-          target.followUp(message.content[0].text);
-        }
-      },
-      print: (output) => commitLines([`  ${output}`], source),
-      getModel: () => target.modelRef,
-      setModel: () => {},
-      isRunning: () => Boolean((source === "side" ? sideRun : activeRun) || target.isRunning),
-    });
+    let result: CommandResult;
+    try {
+      result = await commands.execute(text, {
+        inject: (message) => {
+          if (message.role === "custom" && message.content[0]?.type === "text") {
+            target.followUp(message.content[0].text);
+          }
+        },
+        print: (output) => commitLines([`  ${output}`], source),
+        getModel: () => target.modelRef,
+        setModel: () => {},
+        isRunning: () => Boolean((source === "side" ? sideRun : activeRun) || target.isRunning),
+      });
+    } catch (error) {
+      commitLines(
+        [
+          `  /${parsed?.name ?? "command"} failed: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+        source,
+      );
+      paint();
+      return;
+    }
     const data = result.data as
       | CheckpointActionData
       | DiffCommandData

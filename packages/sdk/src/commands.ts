@@ -165,7 +165,15 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
         if (hooks.checkpointUnavailable)
           return { handled: true, message: hooks.checkpointUnavailable };
         if (!hooks.diff) return { handled: true, message: "Diff is not available here." };
-        const files = await hooks.diff();
+        let files: CheckpointDiffFile[];
+        try {
+          files = await hooks.diff();
+        } catch (error) {
+          return {
+            handled: true,
+            message: `Could not show the diff: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
         if (files.length === 0) return { handled: true, message: "No changes yet." };
         return { handled: true, data: { kind: "diff", files } satisfies DiffCommandData };
       },
