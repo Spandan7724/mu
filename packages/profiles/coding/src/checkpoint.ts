@@ -588,12 +588,17 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
 
   // Every checkpoint is a descendant of the previous HEAD, which keeps all of
   // them reachable for maintenance pruning.
-  private async commit(tree: string, label?: string): Promise<string | undefined> {
-    const parent = await this.git("rev-parse", "--verify", "--quiet", "HEAD");
+  // `head` is HEAD when the caller already read it under the lock (null: none).
+  private async commit(
+    tree: string,
+    label?: string,
+    head?: string | null,
+  ): Promise<string | undefined> {
+    const parent = head === undefined ? await this.head() : head;
     const commit = await this.git(
       "commit-tree",
       tree,
-      ...(parent.exitCode === 0 ? ["-p", parent.stdout.trim()] : []),
+      ...(parent ? ["-p", parent] : []),
       "-m",
       label ?? `checkpoint ${new Date().toISOString()}`,
     );
@@ -619,17 +624,22 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     label?: string,
   ): Promise<string | undefined> {
     await this.ensure();
-    const base = await this.git(
-      "rev-parse",
-      "--verify",
-      "--quiet",
-      `${baseRef ?? "HEAD"}^{commit}`,
-    );
-    if (base.exitCode !== 0 && baseRef !== undefined) return undefined;
-    const baseCommit = base.exitCode === 0 ? base.stdout.trim() : undefined;
-    if (baseCommit && resources.length === 0) return baseCommit;
-    const tree = await this.buildTree(baseCommit, resources);
-    return tree ? this.commit(tree, label) : undefined;
+    if (resources.length === 0 || baseRef === undefined) {
+      const base = await this.git(
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `${baseRef ?? "HEAD"}^{commit}`,
+      );
+      if (base.exitCode !== 0 && baseRef !== undefined) return undefined;
+      const baseCommit = base.exitCode === 0 ? base.stdout.trim() : undefined;
+      if (baseCommit && resources.length === 0) return baseCommit;
+      const tree = await this.buildTree(baseCommit, resources);
+      return tree ? this.commit(tree, label, baseCommit ?? null) : undefined;
+    }
+    // Spawns dominate this path, so independent Git calls run together.
+    const [tree, head] = await Promise.all([this.buildTree(baseRef, resources), this.head()]);
+    return tree ? this.commit(tree, label, head ?? null) : undefined;
   }
 
   // Builds on the base tree (or an empty one) in a private index, so the cost
@@ -646,18 +656,16 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         continue;
       if (!this.isExcluded(path)) paths.add(path);
     }
-    const scope = await this.resourceScope([...paths]);
-    if (!scope) return undefined;
-
     const index = join(this.shadowDir, `${TEMPORARY_INDEX_PREFIX}${randomUUID()}`);
     const env = { ...this.env(), GIT_INDEX_FILE: index };
     const indexGit = (args: string[], stdin?: string) =>
       this.run(args, env, this.root, stdin === undefined ? {} : { stdin });
     try {
-      const read = await indexGit(
-        baseCommit ? ["read-tree", baseCommit] : ["read-tree", "--empty"],
-      );
-      if (read.exitCode !== 0) return undefined;
+      const [scope, read] = await Promise.all([
+        this.resourceScope([...paths]),
+        indexGit(baseCommit ? ["read-tree", baseCommit] : ["read-tree", "--empty"]),
+      ]);
+      if (!scope || read.exitCode !== 0) return undefined;
       for (const [flags, list] of [
         [["--force-remove"], scope.dropped],
         [["--add", "--remove", "--replace"], scope.recorded],
