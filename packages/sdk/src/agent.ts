@@ -1777,7 +1777,9 @@ export class Agent {
         ? { hostedTools: [webSearch.tool] }
         : {}),
     };
-    await this.beginCheckpoint(this.tree.head, this.controller.signal);
+    // Nothing changes state before a tool runs, so the capture overlaps the
+    // provider request and only tool calls wait for it.
+    const checkpointReady = this.beginCheckpoint(this.tree.head, this.controller.signal);
 
     let budgetHalt: HaltReason | undefined;
 
@@ -1864,6 +1866,7 @@ export class Agent {
       beforeToolCall: async (info) => {
         // The structured-output tool is internal plumbing, never gated.
         if (info.toolCall.name === STRUCTURED_OUTPUT_TOOL) return undefined;
+        await checkpointReady;
 
         let args = info.args;
         if (host) {
@@ -2252,6 +2255,7 @@ export class Agent {
           this.controller.signal,
         );
       } finally {
+        await checkpointReady;
         await this.finishCheckpoint();
       }
     })();

@@ -149,7 +149,7 @@ describe("one checkpoint per user turn", () => {
     expect(checkpoints.state).toBe("v2");
   });
 
-  test("aborting during the before-turn capture cancels it and skips the turn", async () => {
+  test("aborting during the before-turn capture cancels it and records no checkpoint", async () => {
     const labels: string[] = [];
     let started!: () => void;
     const capturing = new Promise<void>((resolve) => {
@@ -174,9 +174,72 @@ describe("one checkpoint per user turn", () => {
     const result = await run;
 
     expect(result.reason).toBe("aborted");
-    expect(provider.requests).toEqual([]);
     expect(labels).toEqual(["before user turn"]);
     expect(agent.checkpointHistory.all()).toEqual([]);
+  });
+
+  test("the provider request does not wait for the before-turn capture", async () => {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const checkpoints: CheckpointProvider = {
+      snapshot: async (label) => {
+        if (label === "before user turn") await released;
+        return label ?? "ref";
+      },
+      restore: async () => {},
+      diff: async () => [],
+    };
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
+    const agent = new Agent({ provider, model: fakeModel, checkpointProvider: checkpoints });
+    const run = agent.run("hello");
+    while (provider.requests.length === 0) await Bun.sleep(1);
+    release();
+    await run;
+
+    expect(agent.checkpointHistory.all().map((entry) => entry.beforeRef)).toEqual([
+      "before user turn",
+    ]);
+  });
+
+  test("a tool call waits for the before-turn capture", async () => {
+    let captured = false;
+    const checkpoints: CheckpointProvider = {
+      snapshot: async (label) => {
+        if (label === "before user turn") {
+          await Bun.sleep(30);
+          captured = true;
+        }
+        return label ?? "ref";
+      },
+      restore: async () => {},
+      diff: async () => [],
+    };
+    const sawCapture: boolean[] = [];
+    const probe = tool({
+      name: "probe",
+      description: "records whether the capture finished",
+      inputSchema: z.object({}),
+      changesState: true,
+      execute: () => {
+        sawCapture.push(captured);
+        return "ok";
+      },
+    });
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "probe", arguments: {} }] },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [probe],
+      checkpointProvider: checkpoints,
+    });
+    await agent.run("go");
+
+    expect(sawCapture).toEqual([true]);
   });
 
   test("a read-only turn is still undoable as conversation", async () => {
