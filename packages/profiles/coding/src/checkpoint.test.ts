@@ -14,6 +14,13 @@ async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mu-ckpt-"));
 }
 
+// Checkpoints only run inside a repository, which supplies the ignore rules.
+async function workspace(): Promise<string> {
+  const root = await scratch();
+  await git(root, "init", "--quiet");
+  return root;
+}
+
 // Production puts the shadow repo under ~/.mu, i.e. entirely outside the
 // session root. Mirror that here (in a temp dir) so tests never touch ~/.mu.
 let shadowCounter = 0;
@@ -34,7 +41,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 
 describe("shadow checkpoints", () => {
   test("two coding workers checkpoint concurrently in one workspace", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await git(root, "init", "--quiet");
     const home = await scratch();
     const gate = join(root, "start-workers");
@@ -78,7 +85,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("snapshot then restore brings a modified file back", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "original\n");
 
     const p = provider(root);
@@ -92,7 +99,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("restore removes files created after the snapshot", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "keep.txt"), "keep\n");
     const p = provider(root);
     const ref = await p.snapshot();
@@ -107,7 +114,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("restore handles an empty snapshot", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const p = provider(root);
     const empty = await p.snapshot("empty");
     await writeFile(join(root, "created.txt"), "created\n");
@@ -115,11 +122,11 @@ describe("shadow checkpoints", () => {
 
     await p.restore(empty as string);
 
-    expect(await readdir(root)).toEqual([]);
+    expect(await readdir(root)).toEqual([".git"]);
   });
 
   test("scoped restore removes a created file without touching unrelated later work", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const p = provider(root);
     const before = await p.snapshot("before turn");
     await writeFile(join(root, "agent.txt"), "agent\n");
@@ -133,7 +140,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("scoped restore recovers only requested files", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "agent.txt"), "before\n");
     await writeFile(join(root, "user.txt"), "before\n");
     const p = provider(root);
@@ -149,7 +156,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("scoped restore treats odd filenames literally", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const odd = "odd\tname\n[1].txt";
     const p = provider(root);
     const before = await p.snapshot("before turn");
@@ -163,7 +170,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("diff expands renames so scoped restore sees both paths", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "before.txt"), "same\n");
     const p = provider(root);
     const before = await p.snapshot("before rename");
@@ -182,7 +189,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("restore brings back a file that was deleted", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "deleted.txt"), "here\n");
     const p = provider(root);
     const ref = await p.snapshot();
@@ -193,8 +200,8 @@ describe("shadow checkpoints", () => {
     expect(await readFile(join(root, "deleted.txt"), "utf8")).toBe("here\n");
   });
 
-  test("restore recovers existing ignored files and removes new ignored files", async () => {
-    const root = await scratch();
+  test("restore neither reverts nor removes files the repository ignores", async () => {
+    const root = await workspace();
     await writeFile(join(root, ".gitignore"), "*.secret\n");
     await writeFile(join(root, "user.secret"), "user state\n");
     const p = provider(root);
@@ -204,25 +211,25 @@ describe("shadow checkpoints", () => {
     await writeFile(join(root, "created.secret"), "new\n");
     await p.restore(ref as string);
 
-    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("user state\n");
-    await expect(access(join(root, "created.secret"))).rejects.toThrow();
+    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("overwritten\n");
+    expect(await readFile(join(root, "created.secret"), "utf8")).toBe("new\n");
   });
 
   test("ignored dependency and cache directories are preserved but not checkpointed", async () => {
-    const root = await scratch();
-    await writeFile(join(root, ".gitignore"), ".venv/\nnode_modules/\n*.secret\n");
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), ".venv/\nnode_modules/\n");
     await mkdir(join(root, ".venv", "bin"), { recursive: true });
     await writeFile(join(root, ".venv", "bin", "python"), "original environment\n");
-    await writeFile(join(root, "user.secret"), "original user state\n");
+    await writeFile(join(root, "app.py"), "original\n");
     const p = provider(root);
     const ref = await p.snapshot();
 
     await writeFile(join(root, ".venv", "bin", "python"), "updated environment\n");
     await mkdir(join(root, "node_modules", "example"), { recursive: true });
     await writeFile(join(root, "node_modules", "example", "index.js"), "generated\n");
-    await writeFile(join(root, "user.secret"), "updated user state\n");
+    await writeFile(join(root, "app.py"), "updated\n");
 
-    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["user.secret"]);
+    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["app.py"]);
     await p.restore(ref as string);
 
     expect(await readFile(join(root, ".venv", "bin", "python"), "utf8")).toBe(
@@ -231,11 +238,56 @@ describe("shadow checkpoints", () => {
     expect(await readFile(join(root, "node_modules", "example", "index.js"), "utf8")).toBe(
       "generated\n",
     );
-    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("original user state\n");
+    expect(await readFile(join(root, "app.py"), "utf8")).toBe("original\n");
+  });
+
+  test("ignore rules above a subdirectory root still apply", async () => {
+    const repo = await workspace();
+    await writeFile(join(repo, ".gitignore"), "build/\n");
+    const root = join(repo, "packages", "app");
+    await mkdir(join(root, "build"), { recursive: true });
+    await writeFile(join(root, "main.ts"), "one\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, "main.ts"), "two\n");
+    await writeFile(join(root, "build", "out.js"), "generated\n");
+    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["main.ts"]);
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, "main.ts"), "utf8")).toBe("one\n");
+    expect(await readFile(join(root, "build", "out.js"), "utf8")).toBe("generated\n");
+  });
+
+  test("a large untracked file is neither recorded nor removed", async () => {
+    const root = await workspace();
+    const p = provider(root);
+    const ref = await p.snapshot();
+    await writeFile(join(root, "dump.bin"), Buffer.alloc(3 * 1024 * 1024));
+    await writeFile(join(root, "small.txt"), "small\n");
+
+    expect((await p.diff(ref as string)).map((file) => file.path)).toEqual(["small.txt"]);
+    await p.restore(ref as string);
+
+    expect((await readFile(join(root, "dump.bin"))).length).toBe(3 * 1024 * 1024);
+    await expect(access(join(root, "small.txt"))).rejects.toThrow();
+  });
+
+  test("restore removes directories left empty by the files it removes", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "keep.txt"), "keep\n");
+    const p = provider(root);
+    const ref = await p.snapshot();
+    await mkdir(join(root, "src", "deep"), { recursive: true });
+    await writeFile(join(root, "src", "deep", "new.ts"), "new\n");
+
+    await p.restore(ref as string);
+
+    expect((await readdir(root)).sort()).toEqual([".git", "keep.txt"]);
   });
 
   test("a dependency-named directory is checkpointed when it is not ignored", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await mkdir(join(root, "venv"), { recursive: true });
     await writeFile(join(root, "venv", "source.txt"), "original\n");
     const p = provider(root);
@@ -248,7 +300,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("mu's own project state is never checkpointed, restored or cleaned away", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await mkdir(join(root, ".mu"), { recursive: true });
     await writeFile(join(root, ".mu", "config.json"), '{"permissions":[]}\n');
     await writeFile(join(root, "source.txt"), "original\n");
@@ -270,7 +322,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("project state created after a snapshot is not removed by restore", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "source.txt"), "original\n");
     const p = provider(root);
     const ref = await p.snapshot();
@@ -285,7 +337,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("diff reports per-file added and removed counts", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "one\ntwo\n");
     const p = provider(root);
     const first = await p.snapshot();
@@ -302,7 +354,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("an aborted snapshot kills its Git process and leaves the store usable", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "1\n");
     const shadowDir = join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`);
     const controller = new AbortController();
@@ -310,11 +362,13 @@ describe("shadow checkpoints", () => {
     const slow = new ShadowCheckpointProvider({
       root,
       shadowDir,
-      run: async (args, env, cwd, signal) => {
-        if (args[0] !== "add") {
+      run: async (args, env, cwd, options) => {
+        const signal = options?.signal;
+        if (args[0] !== "update-index") {
           const proc = Bun.spawn(["git", ...args], {
             cwd,
             env: { ...process.env, ...env },
+            stdin: options?.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -339,7 +393,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("an already aborted snapshot runs no Git at all", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
@@ -356,7 +410,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("an index lock left by a killed Git does not block later snapshots", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "1\n");
     const p = provider(root);
     await p.snapshot();
@@ -370,7 +424,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("successive snapshots produce distinct references", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "1\n");
     const p = provider(root);
     const first = await p.snapshot();
@@ -379,8 +433,8 @@ describe("shadow checkpoints", () => {
     expect(first).not.toBe(second);
   });
 
-  test("diff includes newly created, ignored and odd-named files before another snapshot", async () => {
-    const root = await scratch();
+  test("diff includes newly created and odd-named files, not ignored ones, before another snapshot", async () => {
+    const root = await workspace();
     await writeFile(join(root, ".gitignore"), "*.secret\n");
     await writeFile(join(root, "base.txt"), "base\n");
     const p = provider(root);
@@ -391,9 +445,7 @@ describe("shadow checkpoints", () => {
     await writeFile(join(root, "odd\tname\n.txt"), "odd\n");
 
     const files = await p.diff(first as string);
-    expect(new Set(files.map((file) => file.path))).toEqual(
-      new Set(["new.ts", "cache.secret", "odd\tname\n.txt"]),
-    );
+    expect(new Set(files.map((file) => file.path))).toEqual(new Set(["new.ts", "odd\tname\n.txt"]));
     expect(files.find((file) => file.path === "new.ts")?.hunks.join("\n")).toContain(
       "+export const value = 1;",
     );
@@ -413,8 +465,8 @@ describe("shadow checkpoints", () => {
   });
 
   test("an explicitly reused store refuses a different workspace", async () => {
-    const firstRoot = await scratch();
-    const secondRoot = await scratch();
+    const firstRoot = await workspace();
+    const secondRoot = await workspace();
     const shadowDir = join(tmpdir(), `mu-shadow-owner-${process.pid}-${shadowCounter++}`);
     const first = new ShadowCheckpointProvider({ root: firstRoot, shadowDir });
     await first.snapshot();
@@ -424,7 +476,7 @@ describe("shadow checkpoints", () => {
   });
 
   test("an older shadow-store format is rebuilt without touching the workspace", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "source.txt"), "workspace state\n");
     const shadowDir = join(tmpdir(), `mu-shadow-version-${process.pid}-${shadowCounter++}`);
     const first = new ShadowCheckpointProvider({ root, shadowDir });
@@ -445,7 +497,7 @@ describe("shadow checkpoints", () => {
 
 describe("the user's own repository is never touched", () => {
   test("no commits, refs or objects are added to the user's repo", async () => {
-    const root = await scratch();
+    const root = await workspace();
     // A real user repo with its own history.
     await git(root, "init", "--quiet");
     await git(root, "config", "user.email", "user@example.com");
@@ -473,7 +525,7 @@ describe("the user's own repository is never touched", () => {
   });
 
   test("the user's uncommitted changes survive a snapshot", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await git(root, "init", "--quiet");
     await git(root, "config", "user.email", "user@example.com");
     await git(root, "config", "user.name", "Real User");
@@ -498,7 +550,7 @@ describe("the user's own repository is never touched", () => {
   });
 
   test("restoring recovers the user's dirty state, not just committed state", async () => {
-    const root = await scratch();
+    const root = await workspace();
     await git(root, "init", "--quiet");
     await git(root, "config", "user.email", "u@e.com");
     await git(root, "config", "user.name", "U");
@@ -517,7 +569,7 @@ describe("the user's own repository is never touched", () => {
   });
 
   test("the shadow repo lives entirely outside the session root", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const p = provider(root);
     await p.snapshot();
     expect(p.directory.startsWith(root)).toBe(false);
@@ -528,7 +580,7 @@ describe("the user's own repository is never touched", () => {
 
   test("a shadow repo placed inside the root excludes itself", async () => {
     // Not the default layout, but it must not corrupt snapshots if configured.
-    const root = await scratch();
+    const root = await workspace();
     await writeFile(join(root, "a.txt"), "content\n");
     const inside = new ShadowCheckpointProvider({ root, shadowDir: join(root, ".shadow-git") });
     const first = await inside.snapshot();
@@ -539,16 +591,10 @@ describe("the user's own repository is never touched", () => {
     expect(files.map((f) => f.path)).toEqual(["a.txt"]);
   });
 
-  test("checkpoints work in a directory that is not a repository at all", async () => {
+  test("a directory outside any repository is refused rather than walked", async () => {
     const root = await scratch();
     await writeFile(join(root, "plain.txt"), "no repo here\n");
-    const p = provider(root);
-    const ref = await p.snapshot();
-    expect(ref).toBeDefined();
-
-    await writeFile(join(root, "plain.txt"), "changed\n");
-    await p.restore(ref as string);
-    expect(await readFile(join(root, "plain.txt"), "utf8")).toBe("no repo here\n");
+    await expect(provider(root).snapshot()).rejects.toThrow("Could not list checkpoint paths");
     // And we did not turn their directory into a repo.
     await expect(readdir(join(root, ".git"))).rejects.toThrow();
   });
@@ -602,7 +648,7 @@ describe("where checkpoints run", () => {
 
 describe("turn-level agent undo", () => {
   test("one undo removes everything created by a write-then-verify turn", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const profile = await codingProfile({ root });
     const checkpoints = provider(root);
     const prompt = "create fibonacci.py and verify it";
@@ -651,7 +697,7 @@ describe("turn-level agent undo", () => {
   });
 
   test("a permission granted mid-turn survives undo of that turn", async () => {
-    const root = await scratch();
+    const root = await workspace();
     const profile = await codingProfile({ root });
     const checkpoints = provider(root);
     // Stands in for the user answering "always allow" while the turn is running.

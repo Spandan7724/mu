@@ -4,7 +4,17 @@
 // are involved.
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
@@ -17,26 +27,31 @@ export interface ShadowCheckpointOptions {
   run?: GitRunner;
 }
 
+export interface GitRunOptions {
+  signal?: AbortSignal;
+  stdin?: string;
+}
+
 export type GitRunner = (
   args: string[],
   env: Record<string, string>,
   cwd: string,
-  signal?: AbortSignal,
+  options?: GitRunOptions,
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
 export function gitConfigNullDevice(platform: NodeJS.Platform = process.platform): string {
   return platform === "win32" ? "NUL" : "/dev/null";
 }
 
-const defaultRun: GitRunner = async (args, env, cwd, signal) => {
+const defaultRun: GitRunner = async (args, env, cwd, options = {}) => {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
     env: { ...process.env, ...env },
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "ignore",
+    stdin: options.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
     windowsHide: true,
-    ...(signal ? { signal } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -108,36 +123,21 @@ function workspaceKey(root: string, scope?: string): string {
   return `${readable}-${hash}`;
 }
 
-const DISPOSABLE_IGNORED_DIRECTORIES = new Set([
-  ".venv",
-  "venv",
-  "node_modules",
-  "__pycache__",
-  ".pytest_cache",
-  ".mypy_cache",
-  ".ruff_cache",
-  ".next",
-  ".nuxt",
-  ".cache",
-  "coverage",
-]);
-const SHADOW_STORE_VERSION = "2";
+// Version 2 force-tracked ignored files; version 3 records what the
+// workspace repository does not ignore.
+const SHADOW_STORE_VERSION = "3";
 const LOCK_WAIT_MS = 30_000;
 const INCOMPLETE_LOCK_GRACE_MS = 1_000;
 // Mu's own project state. A permission grant ("always allow") or a model
 // choice is written here mid-turn, so snapshotting it would make undo revoke
 // decisions the user made deliberately — state the turn did not author.
 const STATE_DIRECTORY = ".mu";
+// Untracked files above this size are left out, like ignored files.
+const MAXIMUM_UNTRACKED_FILE_BYTES = 2 * 1024 * 1024;
+const GITLINK_MODE = "160000";
 
-function disposableDirectoryFor(path: string): string | undefined {
-  const parts = path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "").split("/");
-  const disposableIndex = parts.findIndex((part) => DISPOSABLE_IGNORED_DIRECTORIES.has(part));
-  if (disposableIndex === -1) return undefined;
-  return parts.slice(0, disposableIndex + 1).join("/");
-}
-
-function cleanExcludePattern(path: string): string {
-  return `/${path.replaceAll("\\", "\\\\").replace(/[?*[#]/g, "\\$&")}/`;
+function nulSeparated(output: string): string[] {
+  return output.split("\0").filter((entry) => entry.length > 0);
 }
 
 export class ShadowCheckpointProvider implements CheckpointProvider {
@@ -145,7 +145,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly shadowDir: string;
   private readonly run: GitRunner;
   private readonly lockDir: string;
-  private readonly excludedPathspecs: string[];
+  private readonly excludedPrefixes: string[];
   private initialized = false;
 
   constructor(options: ShadowCheckpointOptions) {
@@ -156,20 +156,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     // removed and rebuilt while locked, and that must not remove the lock too.
     this.lockDir = `${this.shadowDir}.lock`;
     this.run = options.run ?? defaultRun;
-    const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
-    const lockInside = relative(this.root, this.lockDir).replaceAll("\\", "/");
-    this.excludedPathspecs = [
-      ":(exclude,literal).git",
-      ":(exclude,glob).git/**",
-      `:(exclude,literal)${STATE_DIRECTORY}`,
-      `:(exclude,glob)${STATE_DIRECTORY}/**`,
-      ...(inside.length > 0 && !inside.startsWith("..")
-        ? [`:(exclude,literal)${inside}`, `:(exclude,glob)${inside}/**`]
-        : []),
-      ...(lockInside.length > 0 && !lockInside.startsWith("..")
-        ? [`:(exclude,literal)${lockInside}`, `:(exclude,glob)${lockInside}/**`]
-        : []),
-    ];
+    this.excludedPrefixes = [".git", STATE_DIRECTORY, this.shadowDir, this.lockDir]
+      .map((path) => relative(this.root, resolve(this.root, path)).replaceAll("\\", "/"))
+      .filter((path) => path.length > 0 && !path.startsWith("..") && !isAbsolute(path));
   }
 
   get directory(): string {
@@ -200,7 +189,20 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     signal: AbortSignal | undefined,
     ...args: string[]
   ): Promise<{ stdout: string; exitCode: number; stderr: string }> {
-    return this.run(args, this.env(), this.root, signal);
+    return this.run(args, this.env(), this.root, signal ? { signal } : {});
+  }
+
+  // Runs against the user's repository, read-only, so its own ignore rules
+  // (ancestor .gitignore files, info/exclude, global excludes) apply.
+  private async workspaceGit(
+    signal: AbortSignal | undefined,
+    ...args: string[]
+  ): Promise<{ stdout: string; exitCode: number; stderr: string }> {
+    return this.run(args, {}, this.root, signal ? { signal } : {});
+  }
+
+  private isExcluded(path: string): boolean {
+    return this.excludedPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
   }
 
   private async acquireLock(signal?: AbortSignal): Promise<() => Promise<void>> {
@@ -334,55 +336,94 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     }
     await writeFile(versionFile, `${SHADOW_STORE_VERSION}\n`, "utf8");
 
-    // The shadow repository must never snapshot itself. This matters whenever
-    // it is placed inside the session root — otherwise every snapshot grows by
-    // its own history, and the directory shows up as junk in the user's
-    // `git status`.
-    const inside = relative(this.root, this.shadowDir).replaceAll("\\", "/");
-    if (inside.length > 0 && !inside.startsWith("..")) {
-      const lockInside = relative(this.root, this.lockDir).replaceAll("\\", "/");
-      await mkdir(join(this.shadowDir, "info"), { recursive: true });
-      await writeFile(
-        join(this.shadowDir, "info", "exclude"),
-        `/${inside}/\n${lockInside.length > 0 && !lockInside.startsWith("..") ? `/${lockInside}/\n` : ""}`,
-        "utf8",
-      );
-    }
     this.initialized = true;
   }
 
-  private async ignoredDisposableDirectories(signal?: AbortSignal): Promise<string[]> {
-    // Include cached paths so a directory that became ignored after an older
-    // checkpoint is still recognized. --directory lets Git collapse ignored,
-    // untracked trees instead of enumerating dependencies and cache contents.
-    const ignored = await this.cancellableGit(
-      signal,
-      "ls-files",
-      "--cached",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--directory",
-      "-z",
-    );
-    if (ignored.exitCode !== 0) {
-      throw new Error(`Could not enumerate ignored checkpoint paths: ${ignored.stderr.trim()}`);
+  // Everything the user's repository tracks or would show as untracked, minus
+  // large untracked files. Undefined when aborted.
+  private async workspacePaths(signal?: AbortSignal): Promise<Set<string> | undefined> {
+    const [tracked, untracked] = await Promise.all([
+      this.workspaceGit(signal, "ls-files", "-z", "--cached", "--stage", "--", "."),
+      this.workspaceGit(signal, "ls-files", "-z", "--others", "--exclude-standard", "--", "."),
+    ]);
+    if (signal?.aborted) return undefined;
+    for (const result of [tracked, untracked]) {
+      if (result.exitCode !== 0) {
+        throw new Error(`Could not list checkpoint paths: ${result.stderr.trim()}`);
+      }
     }
 
-    const directories = new Set<string>();
-    for (const path of ignored.stdout.split("\0")) {
-      if (path.length === 0) continue;
-      const directory = disposableDirectoryFor(path);
-      if (directory) directories.add(directory);
+    const paths = new Set<string>();
+    for (const record of nulSeparated(tracked.stdout)) {
+      const tab = record.indexOf("\t");
+      const path = record.slice(tab + 1);
+      if (tab === -1 || record.startsWith(GITLINK_MODE) || this.isExcluded(path)) continue;
+      paths.add(path);
     }
-    return [...directories].sort();
+    // A trailing slash marks an embedded repository, which is not ours to record.
+    const candidates = nulSeparated(untracked.stdout).filter(
+      (path) => !path.endsWith("/") && !this.isExcluded(path) && !paths.has(path),
+    );
+    const sizes = await Promise.all(
+      candidates.map((path) =>
+        lstat(join(this.root, path)).then(
+          (info) => info.size,
+          () => 0,
+        ),
+      ),
+    );
+    candidates.forEach((path, index) => {
+      if ((sizes[index] ?? 0) <= MAXIMUM_UNTRACKED_FILE_BYTES) paths.add(path);
+    });
+    return paths;
   }
 
-  private checkpointPathspecs(directories: string[]): string[] {
-    return [
-      ...this.excludedPathspecs,
-      ...directories.map((directory) => `:(exclude,literal)${directory}`),
-    ];
+  private async updateIndex(flags: string[], paths: string[], signal?: AbortSignal): Promise<void> {
+    if (paths.length === 0) return;
+    // update-index takes literal paths, so a long list avoids add's pathspec matching.
+    const result = await this.run(
+      ["update-index", ...flags, "-z", "--stdin"],
+      this.env(),
+      this.root,
+      {
+        stdin: `${paths.join("\0")}\0`,
+        ...(signal ? { signal } : {}),
+      },
+    );
+    if (result.exitCode !== 0 && !signal?.aborted) {
+      throw new Error(`Could not stage checkpoint: ${result.stderr.trim()}`);
+    }
+  }
+
+  // Makes the shadow index match the workspace, rehashing only paths that are
+  // new or whose stat data changed. Returns false when aborted.
+  private async stage(signal?: AbortSignal): Promise<boolean> {
+    const wanted = await this.workspacePaths(signal);
+    if (!wanted) return false;
+    const [indexed, modified] = await Promise.all([
+      this.cancellableGit(signal, "ls-files", "-z"),
+      this.cancellableGit(signal, "diff-files", "--name-only", "-z"),
+    ]);
+    if (signal?.aborted) return false;
+    for (const result of [indexed, modified]) {
+      if (result.exitCode !== 0) {
+        throw new Error(`Could not compare checkpoint index: ${result.stderr.trim()}`);
+      }
+    }
+    const current = new Set(nulSeparated(indexed.stdout));
+    const changed = new Set(nulSeparated(modified.stdout));
+    await this.updateIndex(
+      ["--force-remove"],
+      [...current].filter((path) => !wanted.has(path)),
+      signal,
+    );
+    if (signal?.aborted) return false;
+    await this.updateIndex(
+      ["--add", "--remove", "--replace"],
+      [...wanted].filter((path) => !current.has(path) || changed.has(path)),
+      signal,
+    );
+    return !signal?.aborted;
   }
 
   async snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined> {
@@ -395,36 +436,30 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     }
   }
 
+  // Plumbing rather than `git commit`, which would collect status by walking
+  // the work tree without the user's ignore rules.
   private async capture(label?: string, signal?: AbortSignal): Promise<string | undefined> {
     await this.ensure();
-    const disposable = await this.ignoredDisposableDirectories(signal);
-    if (signal?.aborted) return undefined;
-    const add = await this.cancellableGit(
-      signal,
-      "add",
-      "-A",
-      "--force",
-      "--",
-      ".",
-      ...this.checkpointPathspecs(disposable),
-    );
-    if (add.exitCode !== 0 || signal?.aborted) return undefined;
+    if (!(await this.stage(signal))) return undefined;
 
+    const tree = await this.git("write-tree");
+    if (tree.exitCode !== 0) return undefined;
+    const parent = await this.git("rev-parse", "--verify", "--quiet", "HEAD");
     const commit = await this.git(
-      "commit",
-      "--quiet",
-      "--allow-empty",
-      "--no-verify",
+      "commit-tree",
+      tree.stdout.trim(),
+      ...(parent.exitCode === 0 ? ["-p", parent.stdout.trim()] : []),
       "-m",
       label ?? `checkpoint ${new Date().toISOString()}`,
     );
-    if (commit.exitCode !== 0) return undefined;
-
-    const head = await this.git("rev-parse", "HEAD");
-    const ref = head.stdout.trim();
-    return ref.length > 0 ? ref : undefined;
+    const ref = commit.stdout.trim();
+    if (commit.exitCode !== 0 || ref.length === 0) return undefined;
+    const update = await this.git("update-ref", "HEAD", ref);
+    return update.exitCode === 0 ? ref : undefined;
   }
 
+  // Files the workspace repository ignores, and large untracked files, are
+  // outside checkpoints: restore neither brings them back nor removes them.
   async restore(ref: string): Promise<void> {
     await this.locked(async () => {
       await this.ensure();
@@ -433,29 +468,29 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       if (readTree.exitCode !== 0) {
         throw new Error(`Could not restore checkpoint ${ref}: ${readTree.stderr.trim()}`);
       }
-      const disposable = await this.ignoredDisposableDirectories();
-      const clean = await this.git(
-        "clean",
-        "--force",
-        "-d",
-        "-x",
-        "--quiet",
-        "-e",
-        ".git",
-        "-e",
-        cleanExcludePattern(STATE_DIRECTORY),
-        ...(relative(this.root, this.shadowDir).startsWith("..")
-          ? []
-          : ["-e", relative(this.root, this.shadowDir).replaceAll("\\", "/")]),
-        ...(relative(this.root, this.lockDir).startsWith("..")
-          ? []
-          : ["-e", relative(this.root, this.lockDir).replaceAll("\\", "/")]),
-        ...disposable.flatMap((directory) => ["-e", cleanExcludePattern(directory)]),
-      );
-      if (clean.exitCode !== 0) {
-        throw new Error(`Could not clean checkpoint ${ref}: ${clean.stderr.trim()}`);
+      const tree = await this.git("ls-tree", "-r", "-z", "--name-only", ref);
+      if (tree.exitCode !== 0) {
+        throw new Error(`Could not inspect checkpoint ${ref}: ${tree.stderr.trim()}`);
       }
+      const kept = new Set(nulSeparated(tree.stdout));
+      const created = [...((await this.workspacePaths()) ?? [])].filter((path) => !kept.has(path));
+      await Promise.all(created.map((path) => rm(join(this.root, path), { force: true })));
+      await this.removeEmptyParents(created);
     });
+  }
+
+  private async removeEmptyParents(paths: string[]): Promise<void> {
+    const directories = new Set<string>();
+    for (const path of paths) {
+      for (let directory = dirname(path); directory !== "." && directory !== ""; ) {
+        directories.add(directory);
+        directory = dirname(directory);
+      }
+    }
+    // Deepest first, so a parent is tried only after its children.
+    for (const directory of [...directories].sort((a, b) => b.length - a.length)) {
+      await rmdir(join(this.root, directory)).catch(() => {});
+    }
   }
 
   async restoreResources(ref: string, resources: string[]): Promise<void> {
@@ -512,20 +547,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     return this.locked(async () => {
       await this.ensure();
-      if (!toRef) {
-        const disposable = await this.ignoredDisposableDirectories();
-        const add = await this.git(
-          "add",
-          "-A",
-          "--force",
-          "--",
-          ".",
-          ...this.checkpointPathspecs(disposable),
-        );
-        if (add.exitCode !== 0) {
-          throw new Error(`Could not stage workspace for checkpoint diff: ${add.stderr.trim()}`);
-        }
-      }
+      if (!toRef) await this.stage();
       const args = toRef
         ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
         : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];

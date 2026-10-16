@@ -56,6 +56,7 @@ describe("Windows portability", () => {
 
   test("shadow checkpoints work with platform-native Git configuration", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-native-checkpoint-root-"));
+    await git(root, "init", "--quiet");
     const shadowDir = await mkdtemp(join(tmpdir(), "mu-native-checkpoint-store-"));
     const provider = new ShadowCheckpointProvider({ root, shadowDir });
     await writeFile(join(root, "state.txt"), "before\n");
