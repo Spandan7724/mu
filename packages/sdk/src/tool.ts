@@ -15,6 +15,7 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   isConcurrencySafe?: (args: z.infer<Schema>) => boolean;
   executionMode?: "sequential";
   changesState?: boolean | ((args: z.infer<Schema>) => boolean);
+  changedResources?: (args: z.infer<Schema>) => string[];
   permissionScope?: (args: z.infer<Schema>) => string;
   permissionPattern?: (args: z.infer<Schema>) => string;
   permissionDetails?: (
@@ -57,6 +58,7 @@ export function tool<Schema extends z.ZodType>(
   };
   const concurrencyCheck = definition.isConcurrencySafe;
   const stateChangeCheck = definition.changesState;
+  const resourceCheck = definition.changedResources;
 
   return {
     name: definition.name,
@@ -90,6 +92,15 @@ export function tool<Schema extends z.ZodType>(
                   }
                 }
               : stateChangeCheck,
+        }
+      : {}),
+    ...(resourceCheck
+      ? {
+          changedResources: (rawArgs: unknown) => {
+            const parsed = parseArgs(rawArgs);
+            if (!parsed.success) throw new Error(`Invalid arguments for ${definition.name}`);
+            return resourceCheck(parsed.data);
+          },
         }
       : {}),
     ...(definition.permissionScope

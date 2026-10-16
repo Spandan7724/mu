@@ -8,6 +8,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  readdir,
   readFile,
   rename,
   rm,
@@ -166,6 +167,7 @@ const PACK_LIMIT = 16;
 // Untracked files above this size are left out, like ignored files.
 const MAXIMUM_UNTRACKED_FILE_BYTES = 2 * 1024 * 1024;
 const GITLINK_MODE = "160000";
+const TEMPORARY_INDEX_PREFIX = "index.mu-";
 
 function nulSeparated(output: string): string[] {
   return output.split("\0").filter((entry) => entry.length > 0);
@@ -357,6 +359,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       // Every Git call on this store runs under the lock, so an index lock
       // seen now was left by a Git process killed mid-write.
       await rm(join(this.shadowDir, "index.lock"), { force: true });
+      const leftovers = await readdir(this.shadowDir).catch(() => []);
+      await Promise.all(
+        leftovers
+          .filter((name) => name.startsWith(TEMPORARY_INDEX_PREFIX))
+          .map((name) => rm(join(this.shadowDir, name), { force: true })),
+      );
       return await operation();
     } finally {
       await release();
@@ -562,10 +570,16 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
 
     const tree = await this.git("write-tree");
     if (tree.exitCode !== 0) return undefined;
+    return this.commit(tree.stdout.trim(), label);
+  }
+
+  // Every checkpoint is a descendant of the previous HEAD, which keeps all of
+  // them reachable for maintenance pruning.
+  private async commit(tree: string, label?: string): Promise<string | undefined> {
     const parent = await this.git("rev-parse", "--verify", "--quiet", "HEAD");
     const commit = await this.git(
       "commit-tree",
-      tree.stdout.trim(),
+      tree,
       ...(parent.exitCode === 0 ? ["-p", parent.stdout.trim()] : []),
       "-m",
       label ?? `checkpoint ${new Date().toISOString()}`,
@@ -574,6 +588,138 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     if (commit.exitCode !== 0 || ref.length === 0) return undefined;
     const update = await this.git("update-ref", "HEAD", ref);
     return update.exitCode === 0 ? ref : undefined;
+  }
+
+  async snapshotResources(
+    baseRef: string,
+    resources: string[],
+    label?: string,
+  ): Promise<string | undefined> {
+    const ref = await this.locked(() => this.captureResources(baseRef, resources, label));
+    if (ref) this.startMaintenance();
+    return ref;
+  }
+
+  // Builds on the base tree in a private index, so the cost follows the named
+  // paths rather than the workspace and the main index is left for the next
+  // full stage() to reconcile.
+  private async captureResources(
+    baseRef: string,
+    resources: string[],
+    label?: string,
+  ): Promise<string | undefined> {
+    await this.ensure();
+    const base = await this.git("rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`);
+    if (base.exitCode !== 0) return undefined;
+    const paths = new Set<string>();
+    for (const resource of resources) {
+      const path = relative(this.root, resolve(this.root, resource)).replaceAll("\\", "/");
+      if (path.length === 0 || path === ".." || path.startsWith("../") || isAbsolute(path))
+        continue;
+      if (!this.isExcluded(path)) paths.add(path);
+    }
+    const scope = await this.resourceScope([...paths]);
+    if (!scope) return undefined;
+
+    const index = join(this.shadowDir, `${TEMPORARY_INDEX_PREFIX}${randomUUID()}`);
+    const env = { ...this.env(), GIT_INDEX_FILE: index };
+    const indexGit = (args: string[], stdin?: string) =>
+      this.run(args, env, this.root, stdin === undefined ? {} : { stdin });
+    try {
+      const read = await indexGit(["read-tree", baseRef]);
+      if (read.exitCode !== 0) return undefined;
+      for (const [flags, list] of [
+        [["--force-remove"], scope.dropped],
+        [["--add", "--remove", "--replace"], scope.recorded],
+      ] as const) {
+        if (list.length === 0) continue;
+        const update = await indexGit(
+          ["update-index", ...flags, "-z", "--stdin"],
+          `${list.join("\0")}\0`,
+        );
+        if (update.exitCode !== 0) {
+          throw new Error(`Could not stage checkpoint: ${update.stderr.trim()}`);
+        }
+      }
+      const tree = await indexGit(["write-tree"]);
+      if (tree.exitCode !== 0) return undefined;
+      return await this.commit(tree.stdout.trim(), label);
+    } finally {
+      await rm(index, { force: true });
+      await rm(`${index}.lock`, { force: true });
+    }
+  }
+
+  // Splits paths into those a full snapshot would record now and those it
+  // would leave out, asking the user's repository about only these paths.
+  // Undefined when a path cannot be classified (a directory, or Git refuses).
+  private async resourceScope(
+    paths: string[],
+  ): Promise<{ recorded: string[]; dropped: string[] } | undefined> {
+    const recorded: string[] = [];
+    const dropped: string[] = [];
+    const present: { path: string; size: number }[] = [];
+    for (const path of paths) {
+      const info = await lstat(join(this.root, path)).catch(() => undefined);
+      if (!info) dropped.push(path);
+      else if (info.isDirectory()) return undefined;
+      else present.push({ path, size: info.size });
+    }
+    if (present.length === 0) return { recorded, dropped };
+
+    const pathspecs = (list: { path: string }[]) => list.map(({ path }) => `:(literal)${path}`);
+    const included = present.filter(({ path }) => this.isIncluded(path));
+    const [tracked, untracked, ignored] = await Promise.all([
+      this.workspaceGit(
+        undefined,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--stage",
+        "--",
+        ...pathspecs(present),
+      ),
+      this.workspaceGit(
+        undefined,
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        "--",
+        ...pathspecs(present),
+      ),
+      included.length > 0
+        ? this.workspaceGit(
+            undefined,
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--",
+            ...pathspecs(included),
+          )
+        : Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
+    ]);
+    if ([tracked, untracked, ignored].some((result) => result.exitCode !== 0)) return undefined;
+    const trackedPaths = new Map<string, boolean>();
+    for (const record of nulSeparated(tracked.stdout)) {
+      const tab = record.indexOf("\t");
+      if (tab !== -1) trackedPaths.set(record.slice(tab + 1), record.startsWith(GITLINK_MODE));
+    }
+    const untrackedPaths = new Set(nulSeparated(untracked.stdout));
+    const ignoredPaths = new Set(nulSeparated(ignored.stdout));
+    for (const { path, size } of present) {
+      const gitlink = trackedPaths.get(path);
+      const keep =
+        gitlink === false ||
+        (gitlink === undefined &&
+          ((untrackedPaths.has(path) &&
+            (size <= MAXIMUM_UNTRACKED_FILE_BYTES || this.isIncluded(path))) ||
+            ignoredPaths.has(path)));
+      (keep ? recorded : dropped).push(path);
+    }
+    return { recorded, dropped };
   }
 
   // Files the workspace repository ignores, and large untracked files, are

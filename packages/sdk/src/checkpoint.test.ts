@@ -345,6 +345,145 @@ describe("one checkpoint per user turn", () => {
     });
   });
 
+  describe("a turn whose changes are all declared records only those resources", () => {
+    function recording(resourceRef: (base: string) => string | undefined = (base) => `${base}+`) {
+      const calls: string[] = [];
+      const checkpoints: CheckpointProvider = {
+        snapshot: async (label) => {
+          calls.push(`snapshot ${label ?? ""}`);
+          return `ref-${calls.length}`;
+        },
+        snapshotResources: async (base, resources, label) => {
+          calls.push(`resources ${base} [${resources.join(",")}] ${label ?? ""}`);
+          return resourceRef(base);
+        },
+        restore: async () => {},
+        diff: async () => [],
+      };
+      return { calls, checkpoints };
+    }
+    const named = (name: string, declare?: (args: { target: string }) => string[]) =>
+      tool({
+        name,
+        description: "changes one named thing",
+        inputSchema: z.object({ target: z.string() }),
+        changesState: true,
+        ...(declare ? { changedResources: declare } : {}),
+        execute: ({ target }) => `changed ${target}`,
+      });
+    const calling = (...calls: [string, string][]) =>
+      new FakeProvider([
+        {
+          content: calls.map(([name, target], index) => ({
+            type: "toolCall" as const,
+            id: `c${index}`,
+            name,
+            arguments: { target },
+          })),
+        },
+        { content: [{ type: "text", text: "done" }] },
+      ]);
+
+    test("the after-turn capture covers the union of declared resources", async () => {
+      const { calls, checkpoints } = recording();
+      const agent = new Agent({
+        provider: calling(["change", "a"], ["change", "b"], ["change", "a"]),
+        model: fakeModel,
+        tools: [named("change", ({ target }) => [target])],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change things");
+      expect(calls).toEqual(["snapshot before user turn", "resources ref-1 [a,b] after user turn"]);
+      const [entry] = agent.checkpointHistory.all();
+      expect(entry).toMatchObject({ beforeRef: "ref-1", afterRef: "ref-1+" });
+    });
+
+    test("one undeclared change in the turn forces the full capture", async () => {
+      const { calls, checkpoints } = recording();
+      const agent = new Agent({
+        provider: calling(["change", "a"], ["other", "b"]),
+        model: fakeModel,
+        tools: [named("change", ({ target }) => [target]), named("other")],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change things");
+      expect(calls).toEqual(["snapshot before user turn", "snapshot after user turn"]);
+    });
+
+    test("a classifier that throws counts as an undeclared change", async () => {
+      const { calls, checkpoints } = recording();
+      const agent = new Agent({
+        provider: calling(["change", "a"]),
+        model: fakeModel,
+        tools: [
+          named("change", () => {
+            throw new Error("cannot tell");
+          }),
+        ],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change things");
+      expect(calls).toEqual(["snapshot before user turn", "snapshot after user turn"]);
+    });
+
+    test("a provider that cannot capture the resources falls back to the full capture", async () => {
+      const { calls, checkpoints } = recording(() => undefined);
+      const agent = new Agent({
+        provider: calling(["change", "a"]),
+        model: fakeModel,
+        tools: [named("change", ({ target }) => [target])],
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change things");
+      expect(calls).toEqual([
+        "snapshot before user turn",
+        "resources ref-1 [a] after user turn",
+        "snapshot after user turn",
+      ]);
+      expect(agent.checkpointHistory.all()[0]?.afterRef).toBe("ref-3");
+    });
+
+    test("a running background task forces the full capture", async () => {
+      const { calls, checkpoints } = recording();
+      let host: Parameters<ProfileRuntime["attach"]>[0] | undefined;
+      const agent = new Agent({
+        provider: calling(["change", "a"]),
+        model: fakeModel,
+        tools: [named("change", ({ target }) => [target])],
+        checkpointProvider: checkpoints,
+        runtime: {
+          attach: (attached) => {
+            host = attached;
+          },
+        },
+      });
+      host?.emit({ type: "task_started", taskId: "t1", command: "watch", background: true });
+      await agent.run("change things");
+      expect(calls).toEqual(["snapshot before user turn", "snapshot after user turn"]);
+    });
+
+    test("a denied declared call is not recorded", async () => {
+      const { calls, checkpoints } = recording();
+      const agent = new Agent({
+        provider: calling(["change", "a"]),
+        model: fakeModel,
+        tools: [named("change", ({ target }) => [target])],
+        checkpointProvider: checkpoints,
+        permissions: [{ permission: "change", pattern: "*", action: "deny" }],
+      });
+      await agent.run("change things");
+      expect(calls).toEqual(["snapshot before user turn"]);
+    });
+
+    test("tool() validates arguments before asking which resources change", () => {
+      const declared = named("change", ({ target }) => [`item:${target}`]);
+      expect(declared.changedResources?.({ target: "a" })).toEqual(["item:a"]);
+      expect(() =>
+        declared.changedResources?.({ target: 1 } as unknown as { target: string }),
+      ).toThrow();
+    });
+  });
+
   test("a read-only turn is still undoable as conversation", async () => {
     const checkpoints = new MemoryCheckpoints();
     const reader = tool({

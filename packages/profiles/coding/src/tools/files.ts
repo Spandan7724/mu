@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
@@ -67,6 +68,30 @@ export async function resolveForWriteInRoot(root: string, path: string): Promise
       cursor = parent;
     }
   }
+}
+
+// The file a write to `path` lands in, relative to the canonical root with
+// forward slashes, which is how checkpoints name it. Symbolic links are
+// followed, so the named resource is the file that actually changes.
+export function checkpointResource(root: string, path: string): string {
+  const canonicalRoot = realpathSync.native(resolve(root));
+  const missing: string[] = [];
+  let cursor = resolveInRoot(root, path);
+  let target: string;
+  for (;;) {
+    try {
+      target = resolve(realpathSync.native(cursor), ...missing.toReversed());
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw error;
+      missing.push(basename(cursor));
+      cursor = parent;
+    }
+  }
+  assertCanonicalInRoot(canonicalRoot, target, path);
+  return relative(canonicalRoot, target).split(sep).join("/");
 }
 
 function display(root: string, path: string): string {
@@ -199,6 +224,7 @@ export function writeTool(deps: ToolDeps) {
   return tool({
     name: "write",
     changesState: true,
+    changedResources: ({ path }) => [checkpointResource(deps.root, path)],
     description:
       "Write a complete file, creating it or replacing its contents. To change part of an existing file, prefer edit.",
     inputSchema: z.object({
@@ -449,6 +475,7 @@ export function editTool(deps: ToolDeps) {
   return tool({
     name: "edit",
     changesState: true,
+    changedResources: ({ path }) => [checkpointResource(deps.root, path)],
     description:
       "Replace exact strings in a file. Each oldString must appear exactly once unless that edit sets replaceAll. Pass several edits to change one file in a single call. Read the file first.",
     inputSchema: z.object({

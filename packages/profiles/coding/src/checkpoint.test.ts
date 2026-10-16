@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
-import type { Tool } from "@mu/core";
+import { type CheckpointProvider, MemorySessionStore, type SessionTree, type Tool } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "mu";
 import { checkpointUnavailableReason, ShadowCheckpointProvider } from "./checkpoint.ts";
@@ -894,5 +894,358 @@ describe("turn-level agent undo", () => {
     expect(await loadProjectConfig(root)).toMatchObject({
       permissions: [{ permission: "bash", pattern: "npm test*", action: "allow" }],
     });
+  });
+});
+
+describe("capturing only named files", () => {
+  const tree = async (p: ShadowCheckpointProvider, ref: string) =>
+    (await git(p.directory, `--git-dir=${p.directory}`, "ls-tree", "-r", "--name-only", ref))
+      .split("\n")
+      .filter(Boolean);
+  const show = (p: ShadowCheckpointProvider, ref: string, path: string) =>
+    git(p.directory, `--git-dir=${p.directory}`, "show", `${ref}:${path}`);
+
+  test("named files take their current state and every other file keeps the base", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "named.txt"), "before\n");
+    await writeFile(join(root, "other.txt"), "before\n");
+    await writeFile(join(root, "gone.txt"), "before\n");
+    const p = provider(root);
+    const base = (await p.snapshot()) as string;
+    await writeFile(join(root, "named.txt"), "after\n");
+    await writeFile(join(root, "other.txt"), "after\n");
+    await writeFile(join(root, "created.txt"), "new\n");
+    await rm(join(root, "gone.txt"));
+
+    const ref = (await p.snapshotResources(base, [
+      "named.txt",
+      "created.txt",
+      "gone.txt",
+    ])) as string;
+
+    expect(await tree(p, ref)).toEqual(["created.txt", "named.txt", "other.txt"]);
+    expect(await show(p, ref, "named.txt")).toBe("after\n");
+    expect(await show(p, ref, "other.txt")).toBe("before\n");
+    expect((await p.diff(base, ref)).map((file) => file.path)).toEqual([
+      "created.txt",
+      "gone.txt",
+      "named.txt",
+    ]);
+    expect(await git(p.directory, `--git-dir=${p.directory}`, "rev-parse", "HEAD")).toBe(
+      `${ref}\n`,
+    );
+    expect((await readdir(p.directory)).filter((name) => name.startsWith("index.mu-"))).toEqual([]);
+  });
+
+  test("named files outside what a full snapshot records are left out", async () => {
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), "*.log\n*.secret\n");
+    await writeFile(join(root, "kept.secret"), "before\n");
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      include: ["kept.secret"],
+    });
+    const base = (await p.snapshot()) as string;
+    await writeFile(join(root, "debug.log"), "ignored\n");
+    await writeFile(join(root, "kept.secret"), "after\n");
+    await writeFile(join(root, "dump.bin"), Buffer.alloc(3 * 1024 * 1024));
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(join(root, ".mu", "config.json"), "{}\n");
+
+    const ref = (await p.snapshotResources(base, [
+      "debug.log",
+      "kept.secret",
+      "dump.bin",
+      ".mu/config.json",
+      "../outside.txt",
+    ])) as string;
+
+    expect((await p.diff(base, ref)).map((file) => file.path)).toEqual(["kept.secret"]);
+  });
+
+  test("a named directory or an unknown base cannot be captured this way", async () => {
+    const root = await workspace();
+    await mkdir(join(root, "folder"));
+    await writeFile(join(root, "folder", "a.txt"), "a\n");
+    const p = provider(root);
+    const base = (await p.snapshot()) as string;
+    expect(await p.snapshotResources(base, ["folder"])).toBeUndefined();
+    expect(await p.snapshotResources("0".repeat(40), ["folder/a.txt"])).toBeUndefined();
+  });
+
+  test("a full snapshot after a named capture still sees every change", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "one\n");
+    await writeFile(join(root, "b.txt"), "one\n");
+    const p = provider(root);
+    const base = (await p.snapshot()) as string;
+    await writeFile(join(root, "a.txt"), "two\n");
+    await p.snapshotResources(base, ["a.txt"]);
+    await writeFile(join(root, "b.txt"), "two\n");
+    const full = (await p.snapshot()) as string;
+
+    expect(await show(p, full, "a.txt")).toBe("two\n");
+    expect(await show(p, full, "b.txt")).toBe("two\n");
+  });
+});
+
+describe("turns that only edit files capture only those files", () => {
+  type Call = [name: string, args: Record<string, unknown>];
+  function scripted(...turns: Call[][]): FakeProvider {
+    let id = 0;
+    return new FakeProvider(
+      turns.flatMap((calls) => [
+        ...calls.map(([name, args]) => ({
+          content: [{ type: "toolCall" as const, id: `call-${id++}`, name, arguments: args }],
+        })),
+        { content: [{ type: "text" as const, text: "done" }] },
+      ]),
+    );
+  }
+
+  function counted(p: ShadowCheckpointProvider) {
+    const calls: string[] = [];
+    const checkpoints = {
+      snapshot: (label?: string, signal?: AbortSignal) => {
+        calls.push("full");
+        return p.snapshot(label, signal);
+      },
+      snapshotResources: (base: string, resources: string[], label?: string) => {
+        calls.push(`resources ${resources.join(",")}`);
+        return p.snapshotResources(base, resources, label);
+      },
+      restore: (ref: string) => p.restore(ref),
+      restoreResources: (ref: string, paths: string[]) => p.restoreResources(ref, paths),
+      diff: (from: string, to?: string) => p.diff(from, to),
+    };
+    return { calls, checkpoints };
+  }
+
+  async function agentFor(
+    root: string,
+    provider: FakeProvider,
+    checkpoints: CheckpointProvider,
+    extraTools: Tool[] = [],
+    session?: MemorySessionStore,
+  ) {
+    const profile = await codingProfile({
+      root,
+      home: await scratch(),
+      instructions: { enabled: false },
+    });
+    return new Agent({
+      provider,
+      model: fakeModel,
+      tools: [...profile.toolset, ...extraTools],
+      checkpointProvider: checkpoints,
+      permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+      ...(session ? { session } : {}),
+    });
+  }
+
+  const read = (path: string): Call => ["read", { path }];
+  const write = (path: string, content: string): Call => ["write", { path, content }];
+  const edit = (path: string, oldString: string, newString: string): Call => [
+    "edit",
+    { path, edits: [{ oldString, newString }] },
+  ];
+  const text = (root: string, path: string) => readFile(join(root, path), "utf8");
+
+  test("undo of an edit-only turn restores the edited file and nothing else", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "agent.txt"), "before\n");
+    await writeFile(join(root, "user.txt"), "before\n");
+    const { calls, checkpoints } = counted(provider(root));
+    // Stands in for the user saving a file in an editor while the turn runs.
+    const userEdit: Tool = {
+      name: "user_edit",
+      description: "the user edits a file",
+      inputSchema: { type: "object", properties: {} },
+      changesState: false,
+      execute: async () => {
+        await writeFile(join(root, "user.txt"), "user edit\n");
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+    };
+    const agent = await agentFor(
+      root,
+      scripted([read("agent.txt"), ["user_edit", {}], edit("agent.txt", "before", "after")]),
+      checkpoints,
+      [userEdit],
+    );
+
+    await agent.run("edit agent.txt");
+    expect(calls).toEqual(["full", "resources agent.txt"]);
+    const undone = await agent.undo();
+    expect(undone.data?.files.map((file) => file.path)).toEqual(["agent.txt"]);
+    expect(await text(root, "agent.txt")).toBe("before\n");
+    expect(await text(root, "user.txt")).toBe("user edit\n");
+  });
+
+  test("an edit followed by a shell command takes a full capture", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const { calls, checkpoints } = counted(provider(root));
+    const agent = await agentFor(
+      root,
+      scripted([
+        read("a.txt"),
+        edit("a.txt", "before", "after"),
+        ["bash", { command: "echo made > made.txt" }],
+      ]),
+      checkpoints,
+    );
+
+    await agent.run("edit and build");
+    expect(calls).toEqual(["full", "full"]);
+    expect(await text(root, "made.txt")).toBe("made\n");
+    expect((await agent.undo()).data?.files.map((file) => file.path)).toEqual([
+      "a.txt",
+      "made.txt",
+    ]);
+    expect(await text(root, "a.txt")).toBe("before\n");
+    await expect(access(join(root, "made.txt"))).rejects.toThrow();
+  });
+
+  test("a written ignored file is neither restored nor deleted by undo", async () => {
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), "*.log\n");
+    const { calls, checkpoints } = counted(provider(root));
+    const agent = await agentFor(root, scripted([write("debug.log", "trace\n")]), checkpoints);
+
+    await agent.run("write a log");
+    expect(calls).toEqual(["full", "resources debug.log"]);
+    const undone = await agent.undo();
+    expect(undone.ok).toBe(true);
+    expect(undone.data?.files).toEqual([]);
+    expect(await text(root, "debug.log")).toBe("trace\n");
+  });
+
+  test("an edited ignored file that /track includes is restored", async () => {
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), "*.secret\n");
+    await writeFile(join(root, "app.secret"), "original\n");
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      include: ["app.secret"],
+    });
+    const { calls, checkpoints } = counted(p);
+    const agent = await agentFor(
+      root,
+      scripted([read("app.secret"), edit("app.secret", "original", "changed")]),
+      checkpoints,
+    );
+
+    await agent.run("edit the secret");
+    expect(calls).toEqual(["full", "resources app.secret"]);
+    expect((await agent.undo()).data?.files.map((file) => file.path)).toEqual(["app.secret"]);
+    expect(await text(root, "app.secret")).toBe("original\n");
+  });
+
+  test("a created file is removed by undo and brought back by redo", async () => {
+    const root = await workspace();
+    const { calls, checkpoints } = counted(provider(root));
+    const agent = await agentFor(
+      root,
+      scripted([write("src/new.ts", "export {};\n")]),
+      checkpoints,
+    );
+
+    await agent.run("create a file");
+    expect(calls).toEqual(["full", "resources src/new.ts"]);
+    expect((await agent.undo()).data?.files.map((file) => file.path)).toEqual(["src/new.ts"]);
+    await expect(access(join(root, "src", "new.ts"))).rejects.toThrow();
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "src/new.ts")).toBe("export {};\n");
+  });
+
+  test("a failed edit records no change", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const { checkpoints } = counted(provider(root));
+    const agent = await agentFor(
+      root,
+      scripted([read("a.txt"), edit("a.txt", "missing", "after")]),
+      checkpoints,
+    );
+
+    await agent.run("edit");
+    const [entry] = agent.checkpointHistory.all();
+    expect(await checkpoints.diff(entry?.beforeRef as string, entry?.afterRef)).toEqual([]);
+    expect((await agent.undo()).data?.files).toEqual([]);
+    expect(await text(root, "a.txt")).toBe("before\n");
+  });
+
+  test("undo and redo span turns captured by name and in full", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "v0\n");
+    const { calls, checkpoints } = counted(provider(root));
+    const agent = await agentFor(
+      root,
+      scripted(
+        [write("x.txt", "x1\n")],
+        [read("a.txt"), edit("a.txt", "v0", "v1"), ["bash", { command: "echo y > y.txt" }]],
+        [read("x.txt"), edit("x.txt", "x1", "x2"), read("a.txt"), edit("a.txt", "v1", "v2")],
+      ),
+      checkpoints,
+    );
+    await agent.run("one");
+    await agent.run("two");
+    await agent.run("three");
+    expect(calls).toEqual([
+      "full",
+      "resources x.txt",
+      "full",
+      "full",
+      "full",
+      "resources x.txt,a.txt",
+    ]);
+
+    const diff = await agent.sessionDiff();
+    expect(diff.map((file) => file.path)).toEqual(["a.txt", "x.txt", "y.txt"]);
+
+    expect((await agent.undo(3)).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("v0\n");
+    await expect(access(join(root, "x.txt"))).rejects.toThrow();
+    await expect(access(join(root, "y.txt"))).rejects.toThrow();
+
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "x.txt")).toBe("x1\n");
+    await expect(access(join(root, "y.txt"))).rejects.toThrow();
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("v1\n");
+    expect(await text(root, "y.txt")).toBe("y\n");
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("v2\n");
+    expect(await text(root, "x.txt")).toBe("x2\n");
+  });
+
+  test("a resumed session undoes a turn captured by name", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const shadowDir = join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`);
+    const session = new MemorySessionStore();
+    const first = await agentFor(
+      root,
+      scripted([read("a.txt"), edit("a.txt", "before", "after")]),
+      new ShadowCheckpointProvider({ root, shadowDir }),
+      [],
+      session,
+    );
+    await first.run("edit");
+    await first.shutdown();
+
+    const second = await agentFor(
+      root,
+      scripted(),
+      new ShadowCheckpointProvider({ root, shadowDir }),
+      [],
+      session,
+    );
+    second.resume((await session.load(first.sessionId)) as SessionTree);
+    expect((await second.undo()).data?.files.map((file) => file.path)).toEqual(["a.txt"]);
+    expect(await text(root, "a.txt")).toBe("before\n");
   });
 });

@@ -15,6 +15,13 @@ export interface CheckpointProvider {
   // there was nothing to capture. An aborted signal abandons the capture and
   // resolves undefined.
   snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined>;
+  // A checkpoint equal to baseRef except the named resources, which take their
+  // current state. Undefined when it cannot be taken this way.
+  snapshotResources?(
+    baseRef: string,
+    resources: string[],
+    label?: string,
+  ): Promise<string | undefined>;
   // Restores state to a previous reference.
   restore(ref: string): Promise<void>;
   // Restores only the named resources when the provider can do so safely.

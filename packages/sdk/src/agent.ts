@@ -246,6 +246,27 @@ function mayChangeState(tool: AnyTool | undefined, args: unknown): boolean {
   }
 }
 
+// What a state-changing call declares it changes; undefined when it cannot say.
+function declaredResources(tool: AnyTool | undefined, args: unknown): string[] | undefined {
+  const declare = tool?.changedResources;
+  if (!declare) return undefined;
+  try {
+    const resources: unknown = declare(args);
+    return Array.isArray(resources) && resources.every((item) => typeof item === "string")
+      ? resources
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// What a turn's allowed tool calls may have changed. `unknown` is set by a call
+// that may change state without naming every resource it changes.
+interface TurnChanges {
+  resources: Set<string>;
+  unknown: boolean;
+}
+
 export class Agent {
   private readonly options: AgentOptions;
   private model: ModelInfo;
@@ -1493,18 +1514,24 @@ export class Agent {
     } catch {}
   }
 
-  private async finishCheckpoint(mayHaveChanged: boolean): Promise<void> {
+  private async finishCheckpoint(changes: TurnChanges): Promise<void> {
     const pending = this.pendingCheckpoint;
     const provider = this.options.checkpointProvider;
     this.pendingCheckpoint = undefined;
     if (!pending || !provider) return;
 
-    // A turn whose tools all declared themselves read-only, with nothing running
-    // in the background, ends in the state it started in.
-    const unchanged = !mayHaveChanged && this.runningTasks.size === 0 && this.background.size === 0;
-    const afterRef = unchanged
-      ? pending.beforeRef
-      : await provider.snapshot("after user turn").catch(() => undefined);
+    // Without undeclared changes or background work, the turn changed at most
+    // the resources its tools named.
+    const known = !changes.unknown && this.runningTasks.size === 0 && this.background.size === 0;
+    const resources = [...changes.resources];
+    let afterRef: string | undefined;
+    if (known && resources.length === 0) afterRef = pending.beforeRef;
+    else if (known && provider.snapshotResources) {
+      afterRef = await provider
+        .snapshotResources(pending.beforeRef, resources, "after user turn")
+        .catch(() => undefined);
+    }
+    afterRef ??= await provider.snapshot("after user turn").catch(() => undefined);
     if (!afterRef) return;
     const entry = this.tree.append({
       type: "checkpoint",
@@ -1850,7 +1877,7 @@ export class Agent {
       return breach;
     };
 
-    let turnMayChangeState = false;
+    const turnChanges: TurnChanges = { resources: new Set(), unknown: false };
     const gateToolCall = async (
       info: Parameters<NonNullable<LoopConfig["beforeToolCall"]>>[0],
     ): Promise<Awaited<ReturnType<NonNullable<LoopConfig["beforeToolCall"]>>>> => {
@@ -1971,8 +1998,11 @@ export class Agent {
         const directive = await gateToolCall(info);
         if (!directive?.block && info.toolCall.name !== STRUCTURED_OUTPUT_TOOL) {
           const selected = tools.find((candidate) => candidate.name === info.toolCall.name);
-          if (mayChangeState(selected, directive?.rewrittenArgs ?? info.args)) {
-            turnMayChangeState = true;
+          const args = directive?.rewrittenArgs ?? info.args;
+          if (mayChangeState(selected, args)) {
+            const resources = declaredResources(selected, args);
+            if (resources) for (const resource of resources) turnChanges.resources.add(resource);
+            else turnChanges.unknown = true;
           }
         }
         return directive;
@@ -2290,7 +2320,7 @@ export class Agent {
         );
       } finally {
         await checkpointReady;
-        await this.finishCheckpoint(turnMayChangeState);
+        await this.finishCheckpoint(turnChanges);
       }
     })();
 

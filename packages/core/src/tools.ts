@@ -24,6 +24,10 @@ export interface Tool<Args = Record<string, unknown>> {
   isConcurrencySafe?: (args: Args) => boolean;
   executionMode?: "sequential"; // hard override: never parallel with anything
   changesState?: boolean | ((args: Args) => boolean);
+  // Every opaque checkpoint resource this call may change, when the tool can
+  // name all of them, so the turn's checkpoint records only those. A throw
+  // means unknown.
+  changedResources?: (args: Args) => string[];
   // Profile-owned permission category derived from validated arguments. The
   // concrete tool name remains an additional match target, so broad rules such
   // as `bash: deny` still govern narrower scopes such as `bash:inspect`.
