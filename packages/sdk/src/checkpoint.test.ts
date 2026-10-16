@@ -346,7 +346,9 @@ describe("one checkpoint per user turn", () => {
   });
 
   describe("a turn whose changes are all declared records only those resources", () => {
-    function recording(resourceRef: (base: string) => string | undefined = (base) => `${base}+`) {
+    function recording(
+      resourceRef: (base: string | undefined) => string | undefined = (base) => `${base}+`,
+    ) {
       const calls: string[] = [];
       const checkpoints: CheckpointProvider = {
         snapshot: async (label) => {
@@ -481,6 +483,146 @@ describe("one checkpoint per user turn", () => {
       expect(() =>
         declared.changedResources?.({ target: 1 } as unknown as { target: string }),
       ).toThrow();
+    });
+  });
+
+  describe("declared coverage records each resource just before it first changes", () => {
+    function declared(failBefore = false) {
+      const state = new Map<string, string>([["a", "a0"]]);
+      const refs = new Map<string, Map<string, string>>();
+      const calls: string[] = [];
+      let counter = 0;
+      const checkpoints: CheckpointProvider = {
+        coverage: "declared",
+        snapshot: async () => {
+          calls.push("snapshot");
+          return undefined;
+        },
+        snapshotResources: async (base, resources, label) => {
+          calls.push(
+            `${label} [${resources.join(",")}] ${resources.map((r) => state.get(r)).join(",")}`,
+          );
+          if (failBefore && label === "before change") throw new Error("cannot read");
+          const tree = new Map(base ? refs.get(base) : undefined);
+          for (const resource of resources) {
+            const value = state.get(resource);
+            if (value === undefined) tree.delete(resource);
+            else tree.set(resource, value);
+          }
+          const ref = `r${counter++}`;
+          refs.set(ref, tree);
+          return ref;
+        },
+        restore: async () => {},
+        restoreResources: async (ref, resources) => {
+          for (const resource of resources) {
+            const value = refs.get(ref)?.get(resource);
+            if (value === undefined) state.delete(resource);
+            else state.set(resource, value);
+          }
+        },
+        diff: async (from, to) => {
+          const a = refs.get(from) ?? new Map();
+          const b = (to ? refs.get(to) : state) ?? new Map();
+          return [...new Set([...a.keys(), ...b.keys()])]
+            .filter((key) => a.get(key) !== b.get(key))
+            .sort()
+            .map((path) => ({ path, added: 1, removed: 1, hunks: [] }));
+        },
+      };
+      const setter = tool({
+        name: "set",
+        description: "sets a value",
+        inputSchema: z.object({ key: z.string(), value: z.string() }),
+        changesState: true,
+        changedResources: ({ key }) => [key],
+        execute: ({ key, value }) => {
+          state.set(key, value);
+          return "set";
+        },
+      });
+      const shell = tool({
+        name: "shell",
+        description: "changes something unnamed",
+        inputSchema: z.object({}),
+        execute: () => {
+          state.set("unnamed", "x");
+          return "ran";
+        },
+      });
+      return { state, calls, checkpoints, tools: [setter, shell] };
+    }
+    const turn = (...calls: [string, Record<string, unknown>][]) => [
+      ...calls.map(([name, args], index) => ({
+        content: [{ type: "toolCall" as const, id: `c${index}`, name, arguments: args }],
+      })),
+      { content: [{ type: "text" as const, text: "done" }] },
+    ];
+
+    test("prior state is taken once per resource, before the call runs", async () => {
+      const { state, calls, checkpoints, tools } = declared();
+      const agent = new Agent({
+        provider: new FakeProvider(
+          turn(
+            ["set", { key: "a", value: "a1" }],
+            ["set", { key: "a", value: "a2" }],
+            ["set", { key: "b", value: "b1" }],
+            ["shell", {}],
+          ),
+        ),
+        model: fakeModel,
+        tools,
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change");
+      expect(calls).toEqual([
+        "before user turn [] ",
+        "before change [a] a0",
+        "before change [b] ",
+        "after user turn [a,b] a2,b1",
+      ]);
+      expect((await agent.undo()).data?.files.map((file) => file.path)).toEqual(["a", "b"]);
+      expect([...state.entries()].sort()).toEqual([
+        ["a", "a0"],
+        ["unnamed", "x"],
+      ]);
+    });
+
+    test("a resource whose prior state could not be taken is left out of the turn", async () => {
+      const { state, calls, checkpoints, tools } = declared(true);
+      const agent = new Agent({
+        provider: new FakeProvider(turn(["set", { key: "a", value: "a1" }])),
+        model: fakeModel,
+        tools,
+        checkpointProvider: checkpoints,
+      });
+      await agent.run("change");
+      expect(calls).toEqual(["before user turn [] ", "before change [a] a0"]);
+      expect(agent.checkpointHistory.all()).toHaveLength(1);
+      expect((await agent.undo()).data?.files).toEqual([]);
+      expect(state.get("a")).toBe("a1");
+    });
+
+    test("a denied call takes no prior state", async () => {
+      const { calls, checkpoints, tools } = declared();
+      const agent = new Agent({
+        provider: new FakeProvider(turn(["set", { key: "a", value: "a1" }])),
+        model: fakeModel,
+        tools,
+        checkpointProvider: checkpoints,
+        permissions: [{ permission: "set", pattern: "*", action: "deny" }],
+      });
+      await agent.run("change");
+      expect(calls).toEqual(["before user turn [] "]);
+    });
+
+    test("the notice is reported only with a provider", () => {
+      const { checkpoints } = declared();
+      expect(
+        new Agent({ checkpointProvider: checkpoints, checkpointNotice: "partial" })
+          .checkpointNotice,
+      ).toBe("partial");
+      expect(new Agent({ checkpointNotice: "partial" }).checkpointNotice).toBeUndefined();
     });
   });
 

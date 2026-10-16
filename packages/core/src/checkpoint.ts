@@ -11,14 +11,20 @@ export interface CheckpointDiffFile {
 }
 
 export interface CheckpointProvider {
+  // "declared": only resources that tools name in changedResources can be
+  // recorded, so the Agent captures each one just before the first call that
+  // changes it, and snapshot() re-captures only resources already recorded.
+  // Requires snapshotResources. Default "full": snapshot() captures all state.
+  readonly coverage?: "full" | "declared";
   // Captures current state and returns an opaque reference, or undefined when
   // there was nothing to capture. An aborted signal abandons the capture and
   // resolves undefined.
   snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined>;
   // A checkpoint equal to baseRef except the named resources, which take their
-  // current state. Undefined when it cannot be taken this way.
+  // current state. An undefined baseRef means the most recent checkpoint, or
+  // empty state when there is none. Undefined when it cannot be taken this way.
   snapshotResources?(
-    baseRef: string,
+    baseRef: string | undefined,
     resources: string[],
     label?: string,
   ): Promise<string | undefined>;

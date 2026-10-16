@@ -52,6 +52,15 @@ describe("optionsFromProfile", () => {
     expect(options.checkpointUnavailable).toBeUndefined();
   });
 
+  test("a profile's partial-checkpoint notice travels with its own provider only", async () => {
+    const partial: Profile = { ...profile(provider("profile")), checkpointNotice: "partial here" };
+    expect((await optionsFromProfile(partial, "fake/model")).checkpointNotice).toBe("partial here");
+    const options = await optionsFromProfile(partial, "fake/model", {
+      checkpointProvider: provider("override"),
+    });
+    expect(options.checkpointNotice).toBeUndefined();
+  });
+
   test("an explicit checkpoint provider overrides the profile", async () => {
     const profileProvider = provider("profile");
     const override = provider("override");

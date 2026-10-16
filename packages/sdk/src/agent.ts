@@ -115,6 +115,8 @@ export interface AgentOptions {
   checkpointProvider?: CheckpointProvider;
   // Why there is no checkpointProvider here, reported by undo and redo.
   checkpointUnavailable?: string;
+  // Why the checkpointProvider records only part of what can change here.
+  checkpointNotice?: string;
   // Session-owned resources supplied by a profile (background processes,
   // browser sessions, etc.). The Agent owns their event and cleanup lifecycle.
   runtime?: ProfileRuntime;
@@ -261,10 +263,14 @@ function declaredResources(tool: AnyTool | undefined, args: unknown): string[] |
 }
 
 // What a turn's allowed tool calls may have changed. `unknown` is set by a call
-// that may change state without naming every resource it changes.
+// that may change state without naming every resource it changes. With
+// declared coverage, `uncaptured` holds resources whose prior state could not
+// be recorded, and `capture` serializes those pre-change captures.
 interface TurnChanges {
   resources: Set<string>;
   unknown: boolean;
+  uncaptured: Set<string>;
+  capture: Promise<void>;
 }
 
 export class Agent {
@@ -344,6 +350,10 @@ export class Agent {
 
   get checkpointUnavailable(): string | undefined {
     return this.options.checkpointProvider ? undefined : this.options.checkpointUnavailable;
+  }
+
+  get checkpointNotice(): string | undefined {
+    return this.options.checkpointProvider ? this.options.checkpointNotice : undefined;
   }
 
   get usage(): Usage {
@@ -1185,9 +1195,14 @@ export class Agent {
       return { ok: false, message: "Could not undo: the conversation checkpoint is missing." };
     }
 
+    // Declared coverage records a resource only in turns that change it, so
+    // each one is restored from the earliest selected turn that does.
+    const declared = provider.coverage === "declared";
     const filesByPath = new Map<string, CheckpointDiffFile>();
+    const sources = new Map<string, CheckpointDiffFile[]>();
     try {
       for (const selectedStep of selected) {
+        const source = declared ? selectedStep.beforeRef : step.beforeRef;
         for (const file of await provider.diff(selectedStep.beforeRef, selectedStep.afterRef)) {
           const existing = filesByPath.get(file.path);
           if (existing) {
@@ -1195,7 +1210,11 @@ export class Agent {
             existing.removed += file.removed;
             existing.hunks.push(...file.hunks);
           } else {
-            filesByPath.set(file.path, { ...file, hunks: [...file.hunks] });
+            const merged = { ...file, hunks: [...file.hunks] };
+            filesByPath.set(file.path, merged);
+            const group = sources.get(source);
+            if (group) group.push(merged);
+            else sources.set(source, [merged]);
           }
         }
       }
@@ -1209,7 +1228,10 @@ export class Agent {
 
     let rollbackRef: string | undefined;
     try {
-      rollbackRef = await provider.snapshot(
+      rollbackRef = await this.captureCurrent(
+        provider,
+        (selected.at(-1) as CheckpointEntry).afterRef,
+        files,
         turnCount === 1 ? "before undo of last turn" : `before undo of ${turnCount} turns`,
       );
     } catch (error) {
@@ -1222,7 +1244,9 @@ export class Agent {
       return { ok: false, message: "Could not undo: failed to capture current state." };
 
     try {
-      await this.restoreCheckpointResources(provider, step.beforeRef, files);
+      for (const [source, sourceFiles] of sources) {
+        await this.restoreCheckpointResources(provider, source, sourceFiles);
+      }
     } catch (error) {
       const rollbackError = await this.restoreCheckpointResources(provider, rollbackRef, files)
         .then(() => undefined)
@@ -1308,7 +1332,12 @@ export class Agent {
 
     let rollbackRef: string | undefined;
     try {
-      rollbackRef = await provider.snapshot("before redo of last turn");
+      rollbackRef = await this.captureCurrent(
+        provider,
+        step.afterRef,
+        files,
+        "before redo of last turn",
+      );
     } catch (error) {
       return {
         ok: false,
@@ -1373,12 +1402,35 @@ export class Agent {
     };
   }
 
-  // Aggregate diff for the session: first checkpoint → now.
+  // Aggregate diff for the session: first checkpoint → now. With declared
+  // coverage, each resource from before the first turn that changed it to
+  // after the last one.
   async sessionDiff(): Promise<Awaited<ReturnType<CheckpointProvider["diff"]>>> {
     const provider = this.options.checkpointProvider;
     const first = this.checkpoints.first();
     if (!provider || !first) return [];
-    return provider.diff(first.beforeRef);
+    if (provider.coverage !== "declared") return provider.diff(first.beforeRef);
+    const spans = new Map<string, { from: string; to: string }>();
+    for (const step of this.checkpoints.all()) {
+      for (const file of await provider.diff(step.beforeRef, step.afterRef)) {
+        spans.set(file.path, {
+          from: spans.get(file.path)?.from ?? step.beforeRef,
+          to: step.afterRef,
+        });
+      }
+    }
+    const pairs = new Map<string, { from: string; to: string; paths: Set<string> }>();
+    for (const [path, { from, to }] of spans) {
+      const key = `${from}\0${to}`;
+      const pair = pairs.get(key) ?? { from, to, paths: new Set<string>() };
+      pair.paths.add(path);
+      pairs.set(key, pair);
+    }
+    const files: CheckpointDiffFile[] = [];
+    for (const { from, to, paths } of pairs.values()) {
+      files.push(...(await provider.diff(from, to)).filter((file) => paths.has(file.path)));
+    }
+    return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
   forkPoints(): { id: string; description: string }[] {
@@ -1504,7 +1556,12 @@ export class Agent {
     this.pendingCheckpoint = undefined;
     if (!provider) return;
     try {
-      const ref = await provider.snapshot("before user turn", signal);
+      // Declared coverage records each resource just before it first changes,
+      // on top of the latest checkpoint.
+      const ref =
+        provider.coverage === "declared"
+          ? await provider.snapshotResources?.(undefined, [], "before user turn")
+          : await provider.snapshot("before user turn", signal);
       if (ref) {
         this.pendingCheckpoint = {
           beforeEntryId,
@@ -1520,10 +1577,15 @@ export class Agent {
     this.pendingCheckpoint = undefined;
     if (!pending || !provider) return;
 
+    await changes.capture;
+    const declared = provider.coverage === "declared";
     // Without undeclared changes or background work, the turn changed at most
-    // the resources its tools named.
-    const known = !changes.unknown && this.runningTasks.size === 0 && this.background.size === 0;
-    const resources = [...changes.resources];
+    // the resources its tools named. Declared coverage cannot record the rest.
+    const known =
+      declared || (!changes.unknown && this.runningTasks.size === 0 && this.background.size === 0);
+    const resources = [...changes.resources].filter(
+      (resource) => !changes.uncaptured.has(resource),
+    );
     let afterRef: string | undefined;
     if (known && resources.length === 0) afterRef = pending.beforeRef;
     else if (known && provider.snapshotResources) {
@@ -1531,7 +1593,7 @@ export class Agent {
         .snapshotResources(pending.beforeRef, resources, "after user turn")
         .catch(() => undefined);
     }
-    afterRef ??= await provider.snapshot("after user turn").catch(() => undefined);
+    if (!declared) afterRef ??= await provider.snapshot("after user turn").catch(() => undefined);
     if (!afterRef) return;
     const entry = this.tree.append({
       type: "checkpoint",
@@ -1569,6 +1631,22 @@ export class Agent {
         undone: undone.map(encode),
       },
     });
+  }
+
+  // The exact current state of `files`, for redo and rollback. Declared
+  // coverage records only those; a full snapshot records everything.
+  private async captureCurrent(
+    provider: CheckpointProvider,
+    baseRef: string,
+    files: CheckpointDiffFile[],
+    label: string,
+  ): Promise<string | undefined> {
+    if (provider.coverage !== "declared") return provider.snapshot(label);
+    return provider.snapshotResources?.(
+      baseRef,
+      files.map((file) => file.path),
+      label,
+    );
   }
 
   private async restoreCheckpointResources(
@@ -1877,7 +1955,37 @@ export class Agent {
       return breach;
     };
 
-    const turnChanges: TurnChanges = { resources: new Set(), unknown: false };
+    const turnChanges: TurnChanges = {
+      resources: new Set(),
+      unknown: false,
+      uncaptured: new Set(),
+      capture: Promise.resolve(),
+    };
+    // A resource's state before its first change in the turn joins the
+    // before-turn checkpoint. Taken after the permission decision, so a denied
+    // call records nothing.
+    const captureBeforeChange = async (resources: string[]) => {
+      const provider = this.options.checkpointProvider;
+      if (provider?.coverage !== "declared" || !provider.snapshotResources) return;
+      const snapshotResources = provider.snapshotResources.bind(provider);
+      const fresh = [...new Set(resources)].filter(
+        (resource) => !turnChanges.resources.has(resource),
+      );
+      for (const resource of fresh) turnChanges.resources.add(resource);
+      if (fresh.length === 0) return;
+      turnChanges.capture = turnChanges.capture.then(async () => {
+        const pending = this.pendingCheckpoint;
+        const ref = pending
+          ? await snapshotResources(pending.beforeRef, fresh, "before change").catch(
+              () => undefined,
+            )
+          : undefined;
+        if (pending && ref) pending.beforeRef = ref;
+        // Its change would read as a creation, and undo would delete it.
+        else for (const resource of fresh) turnChanges.uncaptured.add(resource);
+      });
+      await turnChanges.capture;
+    };
     const gateToolCall = async (
       info: Parameters<NonNullable<LoopConfig["beforeToolCall"]>>[0],
     ): Promise<Awaited<ReturnType<NonNullable<LoopConfig["beforeToolCall"]>>>> => {
@@ -2001,8 +2109,11 @@ export class Agent {
           const args = directive?.rewrittenArgs ?? info.args;
           if (mayChangeState(selected, args)) {
             const resources = declaredResources(selected, args);
-            if (resources) for (const resource of resources) turnChanges.resources.add(resource);
-            else turnChanges.unknown = true;
+            if (!resources) turnChanges.unknown = true;
+            else {
+              await captureBeforeChange(resources);
+              for (const resource of resources) turnChanges.resources.add(resource);
+            }
           }
         }
         return directive;

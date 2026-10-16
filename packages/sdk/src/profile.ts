@@ -28,13 +28,24 @@ export async function optionsFromProfile(
     ...((overrides.runtime ?? profile.runtime)
       ? { runtime: overrides.runtime ?? profile.runtime }
       : {}),
-    ...((overrides.checkpointProvider ?? profile.checkpointProvider)
-      ? { checkpointProvider: overrides.checkpointProvider ?? profile.checkpointProvider }
-      : (overrides.checkpointUnavailable ?? profile.checkpointUnavailable)
+    ...(overrides.checkpointProvider
+      ? {
+          checkpointProvider: overrides.checkpointProvider,
+          ...(overrides.checkpointNotice ? { checkpointNotice: overrides.checkpointNotice } : {}),
+        }
+      : profile.checkpointProvider
         ? {
-            checkpointUnavailable: overrides.checkpointUnavailable ?? profile.checkpointUnavailable,
+            checkpointProvider: profile.checkpointProvider,
+            ...((overrides.checkpointNotice ?? profile.checkpointNotice)
+              ? { checkpointNotice: overrides.checkpointNotice ?? profile.checkpointNotice }
+              : {}),
           }
-        : {}),
+        : (overrides.checkpointUnavailable ?? profile.checkpointUnavailable)
+          ? {
+              checkpointUnavailable:
+                overrides.checkpointUnavailable ?? profile.checkpointUnavailable,
+            }
+          : {}),
   } as AgentOptions;
 }
 

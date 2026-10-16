@@ -234,7 +234,7 @@ describe("exit wakes an idle agent", () => {
   });
 
   test("the coding profile publishes task events and resumes an idle Agent", async () => {
-    const profile = await codingProfile({ root: await scratch() });
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
     const provider = new FakeProvider([
       {
         content: [

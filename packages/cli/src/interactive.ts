@@ -1396,7 +1396,8 @@ export async function runInteractive(
   if (runtime.warnings.length > 0) {
     commitLines(runtime.warnings.map((warning) => `  ${warning}`));
   }
-  if (agent.checkpointUnavailable) commitLines([`  ${agent.checkpointUnavailable}`]);
+  const checkpointNotice = agent.checkpointUnavailable ?? agent.checkpointNotice;
+  if (checkpointNotice) commitLines([`  ${checkpointNotice}`]);
   void modelCatalog?.ensureFresh().then((refresh) => {
     if (exiting || !refresh.ok) return;
     adoptRefreshedModels();

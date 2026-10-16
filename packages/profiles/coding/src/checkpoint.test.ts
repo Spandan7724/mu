@@ -6,7 +6,7 @@ import { join, parse } from "node:path";
 import { type CheckpointProvider, MemorySessionStore, type SessionTree, type Tool } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "mu";
-import { checkpointUnavailableReason, ShadowCheckpointProvider } from "./checkpoint.ts";
+import { partialCheckpointNotice, ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingProfile } from "./index.ts";
 import { loadProjectConfig } from "./permissions.ts";
 
@@ -738,22 +738,27 @@ describe("where checkpoints run", () => {
     const home = await scratch();
     await git(root, "init", "--quiet");
     await mkdir(join(root, "packages", "app"), { recursive: true });
-    expect(await checkpointUnavailableReason(root, home)).toBeUndefined();
-    expect(await checkpointUnavailableReason(join(root, "packages", "app"), home)).toBeUndefined();
+    expect(await partialCheckpointNotice(root, home)).toBeUndefined();
+    expect(await partialCheckpointNotice(join(root, "packages", "app"), home)).toBeUndefined();
     const profile = await codingProfile({ root, home });
-    expect(profile.checkpointProvider).toBeDefined();
+    expect(profile.checkpointProvider?.coverage).toBe("full");
+    expect(profile.checkpointNotice).toBeUndefined();
     expect(profile.checkpointUnavailable).toBeUndefined();
   });
 
-  test("a directory outside any repository has none and says why", async () => {
+  test("a directory outside any repository records only named files and says so", async () => {
     const root = await scratch();
     const home = await scratch();
-    const reason = await checkpointUnavailableReason(root, home);
-    expect(reason).toContain("outside a git repository");
-    expect(reason).toContain("/undo");
+    const notice = await partialCheckpointNotice(root, home);
+    expect(notice).toContain("outside a git repository");
+    expect(notice).toContain("shell commands");
     const profile = await codingProfile({ root, home });
-    expect(profile.checkpointProvider).toBeUndefined();
-    expect(profile.checkpointUnavailable).toBe(reason);
+    expect(profile.checkpointProvider?.coverage).toBe("declared");
+    expect(profile.checkpointNotice).toBe(notice);
+    expect(profile.checkpointUnavailable).toBeUndefined();
+    expect((profile.checkpointProvider as ShadowCheckpointProvider).directory).toStartWith(
+      join(home, ".mu", "checkpoints"),
+    );
   });
 
   test("the home directory and its ancestors never get checkpoints, even as a repository", async () => {
@@ -762,11 +767,9 @@ describe("where checkpoints run", () => {
     await mkdir(home);
     await git(home, "init", "--quiet");
     await git(parent, "init", "--quiet");
-    expect(await checkpointUnavailableReason(home, home)).toContain("home directory");
-    expect(await checkpointUnavailableReason(parent, home)).toContain("home directory");
-    expect(await checkpointUnavailableReason(parse(parent).root, home)).toContain(
-      "filesystem root",
-    );
+    expect(await partialCheckpointNotice(home, home)).toContain("home directory");
+    expect(await partialCheckpointNotice(parent, home)).toContain("home directory");
+    expect(await partialCheckpointNotice(parse(parent).root, home)).toContain("filesystem root");
   });
 
   test("a project below the home directory is unaffected by the home guard", async () => {
@@ -774,7 +777,7 @@ describe("where checkpoints run", () => {
     const root = join(home, "code", "project");
     await mkdir(root, { recursive: true });
     await git(root, "init", "--quiet");
-    expect(await checkpointUnavailableReason(root, home)).toBeUndefined();
+    expect(await partialCheckpointNotice(root, home)).toBeUndefined();
   });
 });
 
@@ -990,68 +993,69 @@ describe("capturing only named files", () => {
   });
 });
 
+type Call = [name: string, args: Record<string, unknown>];
+function scripted(...turns: Call[][]): FakeProvider {
+  let id = 0;
+  return new FakeProvider(
+    turns.flatMap((calls) => [
+      ...calls.map(([name, args]) => ({
+        content: [{ type: "toolCall" as const, id: `call-${id++}`, name, arguments: args }],
+      })),
+      { content: [{ type: "text" as const, text: "done" }] },
+    ]),
+  );
+}
+
+function counted(p: ShadowCheckpointProvider) {
+  const calls: string[] = [];
+  const checkpoints = {
+    coverage: p.coverage,
+    snapshot: (label?: string, signal?: AbortSignal) => {
+      calls.push("full");
+      return p.snapshot(label, signal);
+    },
+    snapshotResources: (base: string | undefined, resources: string[], label?: string) => {
+      calls.push(`resources ${resources.join(",")}`);
+      return p.snapshotResources(base, resources, label);
+    },
+    restore: (ref: string) => p.restore(ref),
+    restoreResources: (ref: string, paths: string[]) => p.restoreResources(ref, paths),
+    diff: (from: string, to?: string) => p.diff(from, to),
+  };
+  return { calls, checkpoints };
+}
+
+async function agentFor(
+  root: string,
+  provider: FakeProvider,
+  checkpoints: CheckpointProvider,
+  extraTools: Tool[] = [],
+  session?: MemorySessionStore,
+) {
+  const profile = await codingProfile({
+    root,
+    home: await scratch(),
+    instructions: { enabled: false },
+  });
+  return new Agent({
+    provider,
+    model: fakeModel,
+    tools: [...profile.toolset, ...extraTools],
+    checkpointProvider: checkpoints,
+    permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+    ...(session ? { session } : {}),
+  });
+}
+
+const read = (path: string): Call => ["read", { path }];
+const write = (path: string, content: string): Call => ["write", { path, content }];
+const edit = (path: string, oldString: string, newString: string): Call => [
+  "edit",
+  { path, edits: [{ oldString, newString }] },
+];
+const text = (root: string, path: string) => readFile(join(root, path), "utf8");
+
 describe("turns that only edit files capture only those files", () => {
-  type Call = [name: string, args: Record<string, unknown>];
-  function scripted(...turns: Call[][]): FakeProvider {
-    let id = 0;
-    return new FakeProvider(
-      turns.flatMap((calls) => [
-        ...calls.map(([name, args]) => ({
-          content: [{ type: "toolCall" as const, id: `call-${id++}`, name, arguments: args }],
-        })),
-        { content: [{ type: "text" as const, text: "done" }] },
-      ]),
-    );
-  }
-
-  function counted(p: ShadowCheckpointProvider) {
-    const calls: string[] = [];
-    const checkpoints = {
-      snapshot: (label?: string, signal?: AbortSignal) => {
-        calls.push("full");
-        return p.snapshot(label, signal);
-      },
-      snapshotResources: (base: string, resources: string[], label?: string) => {
-        calls.push(`resources ${resources.join(",")}`);
-        return p.snapshotResources(base, resources, label);
-      },
-      restore: (ref: string) => p.restore(ref),
-      restoreResources: (ref: string, paths: string[]) => p.restoreResources(ref, paths),
-      diff: (from: string, to?: string) => p.diff(from, to),
-    };
-    return { calls, checkpoints };
-  }
-
-  async function agentFor(
-    root: string,
-    provider: FakeProvider,
-    checkpoints: CheckpointProvider,
-    extraTools: Tool[] = [],
-    session?: MemorySessionStore,
-  ) {
-    const profile = await codingProfile({
-      root,
-      home: await scratch(),
-      instructions: { enabled: false },
-    });
-    return new Agent({
-      provider,
-      model: fakeModel,
-      tools: [...profile.toolset, ...extraTools],
-      checkpointProvider: checkpoints,
-      permissions: [{ permission: "*", pattern: "*", action: "allow" }],
-      ...(session ? { session } : {}),
-    });
-  }
-
-  const read = (path: string): Call => ["read", { path }];
-  const write = (path: string, content: string): Call => ["write", { path, content }];
-  const edit = (path: string, oldString: string, newString: string): Call => [
-    "edit",
-    { path, edits: [{ oldString, newString }] },
-  ];
-  const text = (root: string, path: string) => readFile(join(root, path), "utf8");
-
   test("undo of an edit-only turn restores the edited file and nothing else", async () => {
     const root = await workspace();
     await writeFile(join(root, "agent.txt"), "before\n");
@@ -1247,5 +1251,213 @@ describe("turns that only edit files capture only those files", () => {
     second.resume((await session.load(first.sessionId)) as SessionTree);
     expect((await second.undo()).data?.files.map((file) => file.path)).toEqual(["a.txt"]);
     expect(await text(root, "a.txt")).toBe("before\n");
+  });
+});
+
+describe("outside a git repository only edits and writes are recorded", () => {
+  function declared(root: string): ShadowCheckpointProvider {
+    return new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      coverage: "declared",
+    });
+  }
+  const files = (p: ShadowCheckpointProvider, ref: string) =>
+    git(p.directory, `--git-dir=${p.directory}`, "ls-tree", "-r", "--name-only", ref).then((out) =>
+      out.split("\n").filter(Boolean),
+    );
+
+  test("named files are recorded without a repository, scan or size cap", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "big.bin"), Buffer.alloc(3 * 1024 * 1024));
+    await writeFile(join(root, "unnamed.txt"), "left alone\n");
+    await mkdir(join(root, ".mu"));
+    await writeFile(join(root, ".mu", "config.json"), "{}\n");
+    const p = declared(root);
+
+    const empty = (await p.snapshotResources(undefined, [])) as string;
+    expect(await files(p, empty)).toEqual([]);
+    const first = (await p.snapshotResources(undefined, ["big.bin", ".mu/config.json"])) as string;
+    expect(await files(p, first)).toEqual(["big.bin"]);
+    await writeFile(join(root, "note.txt"), "note\n");
+    const second = (await p.snapshotResources(undefined, ["note.txt"])) as string;
+    expect(await files(p, second)).toEqual(["big.bin", "note.txt"]);
+    await expect(readdir(join(root, ".git"))).rejects.toThrow();
+  });
+
+  test("a full snapshot, restore and diff cover only recorded files", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "one\n");
+    const p = declared(root);
+    const base = (await p.snapshotResources(undefined, ["a.txt"])) as string;
+    await writeFile(join(root, "a.txt"), "two\n");
+    await writeFile(join(root, "unnamed.txt"), "new\n");
+
+    expect((await p.diff(base)).map((file) => file.path)).toEqual(["a.txt"]);
+    const now = (await p.snapshot()) as string;
+    expect(await files(p, now)).toEqual(["a.txt"]);
+    await p.restore(base);
+    expect(await readFile(join(root, "a.txt"), "utf8")).toBe("one\n");
+    expect(await readFile(join(root, "unnamed.txt"), "utf8")).toBe("new\n");
+  });
+
+  test("an edit and a created file are undone and redone", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const { calls, checkpoints } = counted(declared(root));
+    const agent = await agentFor(
+      root,
+      scripted([read("a.txt"), edit("a.txt", "before", "after"), write("new/b.txt", "b\n")]),
+      checkpoints,
+    );
+
+    await agent.run("edit and create");
+    expect(calls).toEqual([
+      "resources ",
+      "resources a.txt",
+      "resources new/b.txt",
+      "resources a.txt,new/b.txt",
+    ]);
+    const undone = await agent.undo();
+    expect(undone.data?.files.map((file) => file.path)).toEqual(["a.txt", "new/b.txt"]);
+    expect(await text(root, "a.txt")).toBe("before\n");
+    await expect(access(join(root, "new", "b.txt"))).rejects.toThrow();
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("after\n");
+    expect(await text(root, "new/b.txt")).toBe("b\n");
+    expect(calls.some((call) => call === "full")).toBe(false);
+  });
+
+  test("shell command changes are neither undone nor removed", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const { calls, checkpoints } = counted(declared(root));
+    const agent = await agentFor(
+      root,
+      scripted([
+        read("a.txt"),
+        edit("a.txt", "before", "after"),
+        ["bash", { command: "echo made > made.txt" }],
+      ]),
+      checkpoints,
+    );
+
+    await agent.run("edit and build");
+    expect(calls).not.toContain("full");
+    expect((await agent.undo()).data?.files.map((file) => file.path)).toEqual(["a.txt"]);
+    expect(await text(root, "a.txt")).toBe("before\n");
+    expect(await text(root, "made.txt")).toBe("made\n");
+  });
+
+  test("a denied write records nothing", async () => {
+    const root = await scratch();
+    const { calls, checkpoints } = counted(declared(root));
+    const profile = await codingProfile({
+      root,
+      home: await scratch(),
+      instructions: { enabled: false },
+    });
+    const agent = new Agent({
+      provider: scripted([write("a.txt", "a\n")]),
+      model: fakeModel,
+      tools: profile.toolset,
+      checkpointProvider: checkpoints,
+      permissions: [{ permission: "write", pattern: "*", action: "deny" }],
+    });
+    await agent.run("write");
+    expect(calls).toEqual(["resources "]);
+    await expect(access(join(root, "a.txt"))).rejects.toThrow();
+  });
+
+  test("undoing several turns restores a file from before the turn that first changed it", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "a0\n");
+    await writeFile(join(root, "later.txt"), "l0\n");
+    const { checkpoints } = counted(declared(root));
+    const agent = await agentFor(
+      root,
+      scripted(
+        [read("a.txt"), edit("a.txt", "a0", "a1")],
+        [
+          read("later.txt"),
+          edit("later.txt", "l0", "l1"),
+          read("a.txt"),
+          edit("a.txt", "a1", "a2"),
+        ],
+      ),
+      checkpoints,
+    );
+    await agent.run("one");
+    await agent.run("two");
+
+    const diff = await agent.sessionDiff();
+    expect(diff.map((file) => [file.path, file.added, file.removed])).toEqual([
+      ["a.txt", 1, 1],
+      ["later.txt", 1, 1],
+    ]);
+    expect(diff[0]?.hunks).toContain("-a0");
+    expect(diff[0]?.hunks).toContain("+a2");
+
+    expect((await agent.undo(2)).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("a0\n");
+    expect(await text(root, "later.txt")).toBe("l0\n");
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("a1\n");
+    expect(await text(root, "later.txt")).toBe("l0\n");
+    expect((await agent.redo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("a2\n");
+    expect(await text(root, "later.txt")).toBe("l1\n");
+  });
+
+  test("a change made between turns is what undo of the next turn returns to", async () => {
+    const root = await scratch();
+    const { checkpoints } = counted(declared(root));
+    const agent = await agentFor(
+      root,
+      scripted([write("a.txt", "agent\n")], [read("a.txt"), edit("a.txt", "user", "agent again")]),
+      checkpoints,
+    );
+    await agent.run("create");
+    await writeFile(join(root, "a.txt"), "user\n");
+    await agent.run("edit");
+
+    expect((await agent.undo()).ok).toBe(true);
+    expect(await text(root, "a.txt")).toBe("user\n");
+  });
+
+  test("a resumed session undoes its edits", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "before\n");
+    const shadowDir = join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`);
+    const session = new MemorySessionStore();
+    const first = await agentFor(
+      root,
+      scripted([read("a.txt"), edit("a.txt", "before", "after")]),
+      new ShadowCheckpointProvider({ root, shadowDir, coverage: "declared" }),
+      [],
+      session,
+    );
+    await first.run("edit");
+    await first.shutdown();
+
+    const second = await agentFor(
+      root,
+      scripted(),
+      new ShadowCheckpointProvider({ root, shadowDir, coverage: "declared" }),
+      [],
+      session,
+    );
+    second.resume((await session.load(first.sessionId)) as SessionTree);
+    expect((await second.undo()).data?.files.map((file) => file.path)).toEqual(["a.txt"]);
+    expect(await text(root, "a.txt")).toBe("before\n");
+  });
+
+  test("/track explains that it applies only in a git repository", async () => {
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
+    const track = profile.commands?.find((command) => command.name === "track");
+    const result = await track?.run({ args: "x" } as Parameters<
+      NonNullable<typeof track>["run"]
+    >[0]);
+    expect(result).toMatchObject({ message: expect.stringContaining("only in a git repository") });
   });
 });

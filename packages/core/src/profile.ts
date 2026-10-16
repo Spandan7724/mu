@@ -99,6 +99,9 @@ export interface Profile {
   checkpointProvider?: CheckpointProvider;
   // Why checkpoints are off in this context; surfaces show it instead of undo.
   checkpointUnavailable?: string;
+  // Why checkpoints here record only part of what the agent can change;
+  // surfaces show it once at startup.
+  checkpointNotice?: string;
   runtime?: ProfileRuntime;
   // Session scope key, used by file-backed stores to group sessions.
   scope?: () => Promise<string> | string;

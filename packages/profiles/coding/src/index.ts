@@ -11,7 +11,7 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
-import { checkpointUnavailableReason, ShadowCheckpointProvider } from "./checkpoint.ts";
+import { partialCheckpointNotice, ShadowCheckpointProvider } from "./checkpoint.ts";
 import {
   codingEnvironment,
   environmentMessage,
@@ -124,9 +124,13 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...(options.managedInstructionPaths ? { managedPaths: options.managedInstructionPaths } : {}),
   });
   await instructionLoader.reload();
-  const checkpointUnavailable = await checkpointUnavailableReason(root, home);
-  const checkpoints = checkpointUnavailable ? undefined : new ShadowCheckpointProvider({ root });
-  if (checkpoints) {
+  const checkpointNotice = await partialCheckpointNotice(root, home);
+  const checkpoints = new ShadowCheckpointProvider({
+    root,
+    home,
+    ...(checkpointNotice ? { coverage: "declared" as const } : {}),
+  });
+  if (!checkpointNotice) {
     const included: string[] = [];
     for (const path of projectConfig.checkpoints?.include ?? []) {
       try {
@@ -226,8 +230,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     commands: [
       ...trackCommands({
         root,
-        ...(checkpoints ? { checkpoints } : {}),
-        ...(checkpointUnavailable ? { unavailable: checkpointUnavailable } : {}),
+        ...(checkpointNotice
+          ? {
+              unavailable:
+                "/track and /untrack apply only in a git repository; here checkpoints record exactly the files mu edits or writes.",
+            }
+          : { checkpoints }),
       }),
       {
         name: "instructions",
@@ -270,8 +278,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    ...(checkpoints ? { checkpointProvider: checkpoints } : {}),
-    ...(checkpointUnavailable ? { checkpointUnavailable } : {}),
+    checkpointProvider: checkpoints,
+    ...(checkpointNotice ? { checkpointNotice } : {}),
     runtime,
     fileState,
     todos,
@@ -284,8 +292,8 @@ export type { TodoItem } from "mu";
 export { renderTodos, TodoStore, todoTool } from "mu";
 export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
 export {
-  checkpointUnavailableReason,
   gitConfigNullDevice,
+  partialCheckpointNotice,
   ShadowCheckpointProvider,
 } from "./checkpoint.ts";
 export {

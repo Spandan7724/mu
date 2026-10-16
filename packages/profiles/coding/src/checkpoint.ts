@@ -22,12 +22,15 @@ import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
 
 export interface ShadowCheckpointOptions {
   root: string;
-  // Where the shadow repository lives. Default: ~/.mu/checkpoints/<scope>
+  // Where the shadow repository lives. Default: <home>/.mu/checkpoints/<scope>
   shadowDir?: string;
+  home?: string;
   scope?: string;
   run?: GitRunner;
   // Workspace-relative paths recorded even when ignored or large.
   include?: string[];
+  // "declared" records only the files tools name, with no repository needed.
+  coverage?: "full" | "declared";
 }
 
 export interface GitRunOptions {
@@ -105,12 +108,14 @@ function parseNumstat(output: string): CheckpointDiffFile[] {
   return files;
 }
 
-const UNAVAILABLE_SUFFIX = "so /undo, /redo and /diff are unavailable";
+const PARTIAL_SUFFIX = "changes made by shell commands or subagents cannot";
 
-// A snapshot costs a walk of everything Git does not ignore under the root, so
-// checkpoints run only where a repository's ignore rules bound that walk, and
-// never over a home directory or filesystem root even when one is a repository.
-export async function checkpointUnavailableReason(
+// A full snapshot costs a walk of everything Git does not ignore under the
+// root, so full checkpoints run only where a repository's ignore rules bound
+// that walk, and never over a home directory or filesystem root even when one
+// is a repository. Elsewhere checkpoints record only the files mu's own tools
+// name, and this says so.
+export async function partialCheckpointNotice(
   root: string,
   home: string = homedir(),
   run: GitRunner = defaultRun,
@@ -118,16 +123,16 @@ export async function checkpointUnavailableReason(
   const workspace = canonicalRoot(root);
   const homeFromRoot = relative(workspace, canonicalRoot(home));
   if (parse(workspace).root === workspace) {
-    return `Checkpoints are off at the filesystem root, ${UNAVAILABLE_SUFFIX}.`;
+    return `Only edits and writes can be undone at the filesystem root; ${PARTIAL_SUFFIX}.`;
   }
   if (homeFromRoot === "" || (!homeFromRoot.startsWith("..") && !isAbsolute(homeFromRoot))) {
-    return `Checkpoints are off in the home directory, ${UNAVAILABLE_SUFFIX}.`;
+    return `Only edits and writes can be undone in the home directory; ${PARTIAL_SUFFIX}.`;
   }
   const inside = await run(["rev-parse", "--is-inside-work-tree"], {}, workspace).catch(
     () => undefined,
   );
   if (inside?.exitCode !== 0 || inside.stdout.trim() !== "true") {
-    return `Checkpoints are off outside a git repository, ${UNAVAILABLE_SUFFIX} (git init enables them).`;
+    return `Only edits and writes can be undone outside a git repository; ${PARTIAL_SUFFIX} (git init makes them undoable).`;
   }
   return undefined;
 }
@@ -174,6 +179,7 @@ function nulSeparated(output: string): string[] {
 }
 
 export class ShadowCheckpointProvider implements CheckpointProvider {
+  readonly coverage: "full" | "declared";
   private readonly root: string;
   private readonly shadowDir: string;
   private readonly run: GitRunner;
@@ -187,11 +193,13 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   constructor(options: ShadowCheckpointOptions) {
     this.root = canonicalRoot(options.root);
     const scope = workspaceKey(this.root, options.scope);
-    this.shadowDir = options.shadowDir ?? join(homedir(), ".mu", "checkpoints", scope);
+    this.shadowDir =
+      options.shadowDir ?? join(options.home ?? homedir(), ".mu", "checkpoints", scope);
     // The lock deliberately lives beside the repository: an old store may be
     // removed and rebuilt while locked, and that must not remove the lock too.
     this.lockDir = `${this.shadowDir}.lock`;
     this.run = options.run ?? defaultRun;
+    this.coverage = options.coverage ?? "full";
     this.excludedPrefixes = [".git", STATE_DIRECTORY, this.shadowDir, this.lockDir]
       .map((path) => relative(this.root, resolve(this.root, path)).replaceAll("\\", "/"))
       .filter((path) => path.length > 0 && !path.startsWith("..") && !isAbsolute(path));
@@ -518,7 +526,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined> {
     if (signal?.aborted) return undefined;
     try {
-      const ref = await this.locked(() => this.capture(label, signal), signal);
+      const ref = await this.locked(async () => {
+        if (this.coverage === "full") return this.capture(label, signal);
+        await this.ensure();
+        const head = await this.head();
+        return this.captureResources(head, head ? await this.recordedPaths(head) : [], label);
+      }, signal);
       if (ref) this.startMaintenance();
       return ref;
     } catch (error) {
@@ -591,7 +604,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   }
 
   async snapshotResources(
-    baseRef: string,
+    baseRef: string | undefined,
     resources: string[],
     label?: string,
   ): Promise<string | undefined> {
@@ -600,17 +613,32 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     return ref;
   }
 
-  // Builds on the base tree in a private index, so the cost follows the named
-  // paths rather than the workspace and the main index is left for the next
-  // full stage() to reconcile.
   private async captureResources(
-    baseRef: string,
+    baseRef: string | undefined,
     resources: string[],
     label?: string,
   ): Promise<string | undefined> {
     await this.ensure();
-    const base = await this.git("rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`);
-    if (base.exitCode !== 0) return undefined;
+    const base = await this.git(
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${baseRef ?? "HEAD"}^{commit}`,
+    );
+    if (base.exitCode !== 0 && baseRef !== undefined) return undefined;
+    const baseCommit = base.exitCode === 0 ? base.stdout.trim() : undefined;
+    if (baseCommit && resources.length === 0) return baseCommit;
+    const tree = await this.buildTree(baseCommit, resources);
+    return tree ? this.commit(tree, label) : undefined;
+  }
+
+  // Builds on the base tree (or an empty one) in a private index, so the cost
+  // follows the named paths rather than the workspace and the main index is
+  // left for the next full stage() to reconcile.
+  private async buildTree(
+    baseCommit: string | undefined,
+    resources: string[],
+  ): Promise<string | undefined> {
     const paths = new Set<string>();
     for (const resource of resources) {
       const path = relative(this.root, resolve(this.root, resource)).replaceAll("\\", "/");
@@ -626,7 +654,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     const indexGit = (args: string[], stdin?: string) =>
       this.run(args, env, this.root, stdin === undefined ? {} : { stdin });
     try {
-      const read = await indexGit(["read-tree", baseRef]);
+      const read = await indexGit(
+        baseCommit ? ["read-tree", baseCommit] : ["read-tree", "--empty"],
+      );
       if (read.exitCode !== 0) return undefined;
       for (const [flags, list] of [
         [["--force-remove"], scope.dropped],
@@ -642,12 +672,29 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
         }
       }
       const tree = await indexGit(["write-tree"]);
-      if (tree.exitCode !== 0) return undefined;
-      return await this.commit(tree.stdout.trim(), label);
+      return tree.exitCode === 0 ? tree.stdout.trim() : undefined;
     } finally {
       await rm(index, { force: true });
       await rm(`${index}.lock`, { force: true });
     }
+  }
+
+  // Paths recorded in the given checkpoints; declared coverage knows no others.
+  private async recordedPaths(...refs: string[]): Promise<string[]> {
+    const paths = new Set<string>();
+    for (const ref of refs) {
+      const tree = await this.git("ls-tree", "-r", "-z", "--name-only", ref);
+      if (tree.exitCode !== 0) {
+        throw new Error(`Could not inspect checkpoint ${ref}: ${tree.stderr.trim()}`);
+      }
+      for (const path of nulSeparated(tree.stdout)) paths.add(path);
+    }
+    return [...paths];
+  }
+
+  private async head(): Promise<string | undefined> {
+    const head = await this.git("rev-parse", "--verify", "--quiet", "HEAD");
+    return head.exitCode === 0 ? head.stdout.trim() : undefined;
   }
 
   // Splits paths into those a full snapshot would record now and those it
@@ -665,7 +712,11 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       else if (info.isDirectory()) return undefined;
       else present.push({ path, size: info.size });
     }
-    if (present.length === 0) return { recorded, dropped };
+    // Without a repository there are no ignore rules: whatever a tool names
+    // inside the root is recorded, whatever its size.
+    if (present.length === 0 || this.coverage === "declared") {
+      return { recorded: [...recorded, ...present.map(({ path }) => path)], dropped };
+    }
 
     const pathspecs = (list: { path: string }[]) => list.map(({ path }) => `:(literal)${path}`);
     const included = present.filter(({ path }) => this.isIncluded(path));
@@ -738,6 +789,16 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   }
 
   async restore(ref: string): Promise<void> {
+    if (this.coverage === "declared") {
+      const paths = await this.locked(async () => {
+        await this.ensure();
+        await this.requireCheckpoints(ref);
+        const head = await this.head();
+        return this.recordedPaths(ref, ...(head ? [head] : []));
+      });
+      await this.restoreResources(ref, paths);
+      return;
+    }
     await this.locked(async () => {
       await this.ensure();
       await this.requireCheckpoints(ref);
@@ -827,9 +888,18 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     return this.locked(async () => {
       await this.ensure();
       await this.requireCheckpoints(fromRef, ...(toRef ? [toRef] : []));
-      if (!toRef) await this.stage();
-      const args = toRef
-        ? ["diff", "--no-renames", "--numstat", "-z", fromRef, toRef]
+      let target = toRef;
+      if (!target && this.coverage === "declared") {
+        const head = await this.head();
+        target = await this.buildTree(
+          fromRef,
+          await this.recordedPaths(fromRef, ...(head ? [head] : [])),
+        );
+        if (!target) throw new Error("Could not record the current state for the diff.");
+      }
+      if (!target) await this.stage();
+      const args = target
+        ? ["diff", "--no-renames", "--numstat", "-z", fromRef, target]
         : ["diff", "--no-renames", "--cached", "--numstat", "-z", fromRef];
       const result = await this.git(...args);
       if (result.exitCode !== 0) {
@@ -838,8 +908,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       const files = parseNumstat(result.stdout);
 
       for (const file of files) {
-        const patchArgs = toRef
-          ? ["diff", "--no-renames", "--unified=3", fromRef, toRef, "--", file.path]
+        const patchArgs = target
+          ? ["diff", "--no-renames", "--unified=3", fromRef, target, "--", file.path]
           : ["diff", "--no-renames", "--cached", "--unified=3", fromRef, "--", file.path];
         const patch = await this.git(...patchArgs);
         if (patch.exitCode !== 0) {
