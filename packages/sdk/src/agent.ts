@@ -1443,12 +1443,14 @@ export class Agent {
     };
   }
 
-  private async beginCheckpoint(beforeEntryId: string | null): Promise<void> {
+  // Only this capture is cancellable: the after-turn capture must still run for
+  // an aborted turn, or its partial changes could not be undone.
+  private async beginCheckpoint(beforeEntryId: string | null, signal: AbortSignal): Promise<void> {
     const provider = this.options.checkpointProvider;
     this.pendingCheckpoint = undefined;
     if (!provider) return;
     try {
-      const ref = await provider.snapshot("before user turn");
+      const ref = await provider.snapshot("before user turn", signal);
       if (ref) {
         this.pendingCheckpoint = {
           beforeEntryId,
@@ -1759,7 +1761,7 @@ export class Agent {
         ? { hostedTools: [webSearch.tool] }
         : {}),
     };
-    await this.beginCheckpoint(this.tree.head);
+    await this.beginCheckpoint(this.tree.head, this.controller.signal);
 
     let budgetHalt: HaltReason | undefined;
 

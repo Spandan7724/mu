@@ -300,6 +300,74 @@ describe("shadow checkpoints", () => {
     expect(files[0]?.hunks.join("\n")).toContain("+three");
   });
 
+  test("an aborted snapshot kills its Git process and leaves the store usable", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "1\n");
+    const shadowDir = join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`);
+    const controller = new AbortController();
+    let killed = false;
+    const slow = new ShadowCheckpointProvider({
+      root,
+      shadowDir,
+      run: async (args, env, cwd, signal) => {
+        if (args[0] !== "add") {
+          const proc = Bun.spawn(["git", ...args], {
+            cwd,
+            env: { ...process.env, ...env },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+          return { stdout, stderr, exitCode };
+        }
+        const proc = Bun.spawn(["sleep", "30"], signal ? { signal } : {});
+        queueMicrotask(() => controller.abort());
+        const exitCode = await proc.exited;
+        killed = proc.signalCode !== null;
+        return { stdout: "", stderr: "", exitCode };
+      },
+    });
+
+    expect(await slow.snapshot("before", controller.signal)).toBeUndefined();
+    expect(killed).toBe(true);
+    expect(await new ShadowCheckpointProvider({ root, shadowDir }).snapshot()).toBeDefined();
+  });
+
+  test("an already aborted snapshot runs no Git at all", async () => {
+    const root = await scratch();
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      run: async () => {
+        calls++;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    });
+    expect(await p.snapshot("before", controller.signal)).toBeUndefined();
+    expect(calls).toBe(0);
+  });
+
+  test("an index lock left by a killed Git does not block later snapshots", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "a.txt"), "1\n");
+    const p = provider(root);
+    await p.snapshot();
+    await writeFile(join(p.directory, "index.lock"), "");
+    await writeFile(join(root, "a.txt"), "2\n");
+    const ref = await p.snapshot();
+    expect(ref).toBeDefined();
+    await writeFile(join(root, "a.txt"), "3\n");
+    await p.restore(ref as string);
+    expect(await readFile(join(root, "a.txt"), "utf8")).toBe("2\n");
+  });
+
   test("successive snapshots produce distinct references", async () => {
     const root = await scratch();
     await writeFile(join(root, "a.txt"), "1\n");

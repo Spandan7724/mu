@@ -12,8 +12,9 @@ export interface CheckpointDiffFile {
 
 export interface CheckpointProvider {
   // Captures current state and returns an opaque reference, or undefined when
-  // there was nothing to capture.
-  snapshot(label?: string): Promise<string | undefined>;
+  // there was nothing to capture. An aborted signal abandons the capture and
+  // resolves undefined.
+  snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined>;
   // Restores state to a previous reference.
   restore(ref: string): Promise<void>;
   // Restores only the named resources when the provider can do so safely.

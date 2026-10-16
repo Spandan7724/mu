@@ -149,6 +149,36 @@ describe("one checkpoint per user turn", () => {
     expect(checkpoints.state).toBe("v2");
   });
 
+  test("aborting during the before-turn capture cancels it and skips the turn", async () => {
+    const labels: string[] = [];
+    let started!: () => void;
+    const capturing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const checkpoints: CheckpointProvider = {
+      snapshot: (label, signal) => {
+        labels.push(label ?? "");
+        started();
+        return new Promise((resolve) =>
+          signal?.addEventListener("abort", () => resolve(undefined), { once: true }),
+        );
+      },
+      restore: async () => {},
+      diff: async () => [],
+    };
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "never" }] }]);
+    const agent = new Agent({ provider, model: fakeModel, checkpointProvider: checkpoints });
+    const run = agent.run("hello");
+    await capturing;
+    agent.abort();
+    const result = await run;
+
+    expect(result.reason).toBe("aborted");
+    expect(provider.requests).toEqual([]);
+    expect(labels).toEqual(["before user turn"]);
+    expect(agent.checkpointHistory.all()).toEqual([]);
+  });
+
   test("a read-only turn is still undoable as conversation", async () => {
     const checkpoints = new MemoryCheckpoints();
     const reader = tool({

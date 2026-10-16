@@ -21,13 +21,14 @@ export type GitRunner = (
   args: string[],
   env: Record<string, string>,
   cwd: string,
+  signal?: AbortSignal,
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
 export function gitConfigNullDevice(platform: NodeJS.Platform = process.platform): string {
   return platform === "win32" ? "NUL" : "/dev/null";
 }
 
-const defaultRun: GitRunner = async (args, env, cwd) => {
+const defaultRun: GitRunner = async (args, env, cwd, signal) => {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
     env: { ...process.env, ...env },
@@ -35,6 +36,7 @@ const defaultRun: GitRunner = async (args, env, cwd) => {
     stderr: "pipe",
     stdin: "ignore",
     windowsHide: true,
+    ...(signal ? { signal } : {}),
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -167,11 +169,19 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     return this.run(args, this.env(), this.root);
   }
 
-  private async acquireLock(): Promise<() => Promise<void>> {
+  private async cancellableGit(
+    signal: AbortSignal | undefined,
+    ...args: string[]
+  ): Promise<{ stdout: string; exitCode: number; stderr: string }> {
+    return this.run(args, this.env(), this.root, signal);
+  }
+
+  private async acquireLock(signal?: AbortSignal): Promise<() => Promise<void>> {
     await mkdir(dirname(this.lockDir), { recursive: true });
     const token = randomUUID();
     const deadline = Date.now() + LOCK_WAIT_MS;
     while (true) {
+      signal?.throwIfAborted();
       try {
         await mkdir(this.lockDir, { mode: 0o700 });
         const ownerFile = join(this.lockDir, "owner.json");
@@ -247,9 +257,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     }
   }
 
-  private async locked<T>(operation: () => Promise<T>): Promise<T> {
-    const release = await this.acquireLock();
+  private async locked<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const release = await this.acquireLock(signal);
     try {
+      // Every Git call on this store runs under the lock, so an index lock
+      // seen now was left by a Git process killed mid-write.
+      await rm(join(this.shadowDir, "index.lock"), { force: true });
       return await operation();
     } finally {
       await release();
@@ -311,11 +324,12 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     this.initialized = true;
   }
 
-  private async ignoredDisposableDirectories(): Promise<string[]> {
+  private async ignoredDisposableDirectories(signal?: AbortSignal): Promise<string[]> {
     // Include cached paths so a directory that became ignored after an older
     // checkpoint is still recognized. --directory lets Git collapse ignored,
     // untracked trees instead of enumerating dependencies and cache contents.
-    const ignored = await this.git(
+    const ignored = await this.cancellableGit(
+      signal,
       "ls-files",
       "--cached",
       "--others",
@@ -344,34 +358,44 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     ];
   }
 
-  async snapshot(label?: string): Promise<string | undefined> {
-    return this.locked(async () => {
-      await this.ensure();
-      const disposable = await this.ignoredDisposableDirectories();
-      const add = await this.git(
-        "add",
-        "-A",
-        "--force",
-        "--",
-        ".",
-        ...this.checkpointPathspecs(disposable),
-      );
-      if (add.exitCode !== 0) return undefined;
+  async snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined> {
+    if (signal?.aborted) return undefined;
+    try {
+      return await this.locked(() => this.capture(label, signal), signal);
+    } catch (error) {
+      if (signal?.aborted) return undefined;
+      throw error;
+    }
+  }
 
-      const commit = await this.git(
-        "commit",
-        "--quiet",
-        "--allow-empty",
-        "--no-verify",
-        "-m",
-        label ?? `checkpoint ${new Date().toISOString()}`,
-      );
-      if (commit.exitCode !== 0) return undefined;
+  private async capture(label?: string, signal?: AbortSignal): Promise<string | undefined> {
+    await this.ensure();
+    const disposable = await this.ignoredDisposableDirectories(signal);
+    if (signal?.aborted) return undefined;
+    const add = await this.cancellableGit(
+      signal,
+      "add",
+      "-A",
+      "--force",
+      "--",
+      ".",
+      ...this.checkpointPathspecs(disposable),
+    );
+    if (add.exitCode !== 0 || signal?.aborted) return undefined;
 
-      const head = await this.git("rev-parse", "HEAD");
-      const ref = head.stdout.trim();
-      return ref.length > 0 ? ref : undefined;
-    });
+    const commit = await this.git(
+      "commit",
+      "--quiet",
+      "--allow-empty",
+      "--no-verify",
+      "-m",
+      label ?? `checkpoint ${new Date().toISOString()}`,
+    );
+    if (commit.exitCode !== 0) return undefined;
+
+    const head = await this.git("rev-parse", "HEAD");
+    const ref = head.stdout.trim();
+    return ref.length > 0 ? ref : undefined;
   }
 
   async restore(ref: string): Promise<void> {
