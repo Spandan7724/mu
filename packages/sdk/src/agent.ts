@@ -1764,7 +1764,15 @@ export class Agent {
       return Promise.reject(new Error("Agent already has an active run; use send() to steer it."));
     }
     this.running = true;
+    // The loop ends before the after-turn checkpoint and session save, so its
+    // agent_end waits until the run is truly over: whoever reacts to it (undo,
+    // /diff, a new prompt) must find the agent idle and the turn recorded.
+    let heldEnd: AgentEvent | undefined;
     const publish = (event: AgentEvent) => {
+      if (event.type === "agent_end" && this.running) {
+        heldEnd = event;
+        return;
+      }
       emit(event);
       this.publishToSubscribers(event);
       if (event.type === "agent_start" && !this.sessionStarted) {
@@ -1781,6 +1789,7 @@ export class Agent {
       this.running = false;
       this.activeEmit = undefined;
       this.activeExecution = undefined;
+      if (heldEnd) publish(heldEnd);
       if (this.manualCompactionQueued && !this.stopping) this.scheduleManualCompaction();
       else if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
       this.resolveIdleIfDone();

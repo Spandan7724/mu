@@ -626,6 +626,32 @@ describe("one checkpoint per user turn", () => {
     });
   });
 
+  test("agent_end arrives once the turn is recorded and the agent is idle", async () => {
+    const checkpoints = new MemoryCheckpoints();
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v2" } }] },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+    });
+    const seen: { running: boolean; checkpoints: number }[] = [];
+    let undo: Promise<{ ok: boolean }> | undefined;
+    agent.subscribe((event) => {
+      if (event.type !== "agent_end") return;
+      seen.push({ running: agent.isRunning, checkpoints: agent.checkpointHistory.all().length });
+      undo = agent.undo();
+    });
+    await agent.run("change it");
+
+    expect(seen).toEqual([{ running: false, checkpoints: 1 }]);
+    expect((await undo)?.ok).toBe(true);
+    expect(checkpoints.state).toBe("initial");
+  });
+
   test("a read-only turn is still undoable as conversation", async () => {
     const checkpoints = new MemoryCheckpoints();
     const reader = tool({
