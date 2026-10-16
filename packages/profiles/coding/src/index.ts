@@ -11,7 +11,7 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { TodoStore, todoTool } from "mu";
-import { ShadowCheckpointProvider } from "./checkpoint.ts";
+import { checkpointUnavailableReason, ShadowCheckpointProvider } from "./checkpoint.ts";
 import {
   codingEnvironment,
   environmentMessage,
@@ -123,6 +123,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...(options.managedInstructionPaths ? { managedPaths: options.managedInstructionPaths } : {}),
   });
   await instructionLoader.reload();
+  const checkpointUnavailable = await checkpointUnavailableReason(root, home);
   const deps = { root, state: fileState, instructions: instructionLoader };
   const processes = new ProcessManager(
     options.spawner ?? shellSpawner(root),
@@ -249,7 +250,9 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    checkpointProvider: new ShadowCheckpointProvider({ root }),
+    ...(checkpointUnavailable
+      ? { checkpointUnavailable }
+      : { checkpointProvider: new ShadowCheckpointProvider({ root }) }),
     runtime,
     fileState,
     todos,
@@ -261,7 +264,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
 export type { TodoItem } from "mu";
 export { renderTodos, TodoStore, todoTool } from "mu";
 export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
-export { gitConfigNullDevice, ShadowCheckpointProvider } from "./checkpoint.ts";
+export {
+  checkpointUnavailableReason,
+  gitConfigNullDevice,
+  ShadowCheckpointProvider,
+} from "./checkpoint.ts";
 export {
   codingEnvironment,
   contextMessages,

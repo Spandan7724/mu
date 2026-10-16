@@ -537,6 +537,15 @@ describe("undo and redo pair workspace with conversation", () => {
     expect(result.message).toContain("Nothing to undo");
   });
 
+  test("a profile whose checkpoints are off here reports its reason", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
+    const reason = "Checkpoints are off here.";
+    const agent = new Agent({ provider, model: fakeModel, checkpointUnavailable: reason });
+    expect(agent.checkpointUnavailable).toBe(reason);
+    expect((await agent.undo()).message).toBe(reason);
+    expect((await agent.redo()).message).toBe(reason);
+  });
+
   test("a profile without checkpointing reports undo as unsupported", async () => {
     const provider = new FakeProvider([{ content: [{ type: "text", text: "hi" }] }]);
     const agent = new Agent({ provider, model: fakeModel });
@@ -705,6 +714,20 @@ describe("commands", () => {
   test("/diff with no changes says so", async () => {
     const registry = registryWithCoreCommands({ diff: async () => [] });
     expect((await registry.execute("/diff", ctx().ctx)).message).toBe("No changes yet.");
+  });
+
+  test("/undo, /redo and /diff report why checkpoints are off", async () => {
+    const reason = "Checkpoints are off here.";
+    const registry = registryWithCoreCommands({
+      undo: async () => ({ ok: true, message: "undone" }),
+      undoPoints: () => [],
+      redo: async () => ({ ok: true, message: "redone" }),
+      diff: async () => [],
+      checkpointUnavailable: reason,
+    });
+    for (const command of ["/undo", "/undo 1", "/redo", "/diff"]) {
+      expect((await registry.execute(command, ctx().ctx)).message).toBe(reason);
+    }
   });
 
   test("surfaces without checkpointing report unavailability", async () => {

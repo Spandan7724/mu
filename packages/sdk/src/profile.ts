@@ -30,7 +30,11 @@ export async function optionsFromProfile(
       : {}),
     ...((overrides.checkpointProvider ?? profile.checkpointProvider)
       ? { checkpointProvider: overrides.checkpointProvider ?? profile.checkpointProvider }
-      : {}),
+      : (overrides.checkpointUnavailable ?? profile.checkpointUnavailable)
+        ? {
+            checkpointUnavailable: overrides.checkpointUnavailable ?? profile.checkpointUnavailable,
+          }
+        : {}),
   } as AgentOptions;
 }
 

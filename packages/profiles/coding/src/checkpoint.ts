@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { CheckpointDiffFile, CheckpointProvider } from "@mu/core";
 
 export interface ShadowCheckpointOptions {
@@ -64,6 +64,33 @@ function parseNumstat(output: string): CheckpointDiffFile[] {
     });
   }
   return files;
+}
+
+const UNAVAILABLE_SUFFIX = "so /undo, /redo and /diff are unavailable";
+
+// A snapshot costs a walk of everything Git does not ignore under the root, so
+// checkpoints run only where a repository's ignore rules bound that walk, and
+// never over a home directory or filesystem root even when one is a repository.
+export async function checkpointUnavailableReason(
+  root: string,
+  home: string = homedir(),
+  run: GitRunner = defaultRun,
+): Promise<string | undefined> {
+  const workspace = canonicalRoot(root);
+  const homeFromRoot = relative(workspace, canonicalRoot(home));
+  if (parse(workspace).root === workspace) {
+    return `Checkpoints are off at the filesystem root, ${UNAVAILABLE_SUFFIX}.`;
+  }
+  if (homeFromRoot === "" || (!homeFromRoot.startsWith("..") && !isAbsolute(homeFromRoot))) {
+    return `Checkpoints are off in the home directory, ${UNAVAILABLE_SUFFIX}.`;
+  }
+  const inside = await run(["rev-parse", "--is-inside-work-tree"], {}, workspace).catch(
+    () => undefined,
+  );
+  if (inside?.exitCode !== 0 || inside.stdout.trim() !== "true") {
+    return `Checkpoints are off outside a git repository, ${UNAVAILABLE_SUFFIX} (git init enables them).`;
+  }
+  return undefined;
 }
 
 function canonicalRoot(root: string): string {

@@ -41,6 +41,17 @@ describe("optionsFromProfile", () => {
     expect(options.sessionEnvironment).toEqual({ workspace: "/custom", instance: "one" });
   });
 
+  test("a profile's reason for having no checkpoints yields to a supplied provider", async () => {
+    const { checkpointProvider: _, ...base } = profile(provider("profile"));
+    const off: Profile = { ...base, checkpointUnavailable: "off here" };
+    expect((await optionsFromProfile(off, "fake/model")).checkpointUnavailable).toBe("off here");
+
+    const override = provider("override");
+    const options = await optionsFromProfile(off, "fake/model", { checkpointProvider: override });
+    expect(options.checkpointProvider).toBe(override);
+    expect(options.checkpointUnavailable).toBeUndefined();
+  });
+
   test("an explicit checkpoint provider overrides the profile", async () => {
     const profileProvider = provider("profile");
     const override = provider("override");

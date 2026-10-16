@@ -97,6 +97,8 @@ export interface Profile {
   carryoverExtractor?: (messages: AgentMessage[]) => unknown;
   // Snapshot/restore for this domain (coding: a shadow repository).
   checkpointProvider?: CheckpointProvider;
+  // Why checkpoints are off in this context; surfaces show it instead of undo.
+  checkpointUnavailable?: string;
   runtime?: ProfileRuntime;
   // Session scope key, used by file-backed stores to group sessions.
   scope?: () => Promise<string> | string;

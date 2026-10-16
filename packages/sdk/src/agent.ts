@@ -113,6 +113,8 @@ export interface AgentOptions {
   imageBudgetTokens?: number;
   // Snapshot/restore backing for /undo and /redo (profiles supply it).
   checkpointProvider?: CheckpointProvider;
+  // Why there is no checkpointProvider here, reported by undo and redo.
+  checkpointUnavailable?: string;
   // Session-owned resources supplied by a profile (background processes,
   // browser sessions, etc.). The Agent owns their event and cleanup lifecycle.
   runtime?: ProfileRuntime;
@@ -302,6 +304,10 @@ export class Agent {
 
   get sessionId(): string {
     return this._sessionId;
+  }
+
+  get checkpointUnavailable(): string | undefined {
+    return this.options.checkpointProvider ? undefined : this.options.checkpointUnavailable;
   }
 
   get usage(): Usage {
@@ -1118,7 +1124,12 @@ export class Agent {
     const busy = this.backgroundBlocker("undo");
     if (busy) return { ok: false, message: busy };
     const provider = this.options.checkpointProvider;
-    if (!provider) return { ok: false, message: "This profile does not support undo." };
+    if (!provider) {
+      return {
+        ok: false,
+        message: this.options.checkpointUnavailable ?? "This profile does not support undo.",
+      };
+    }
     if (!Number.isInteger(turnCount) || turnCount < 1) {
       return { ok: false, message: "Undo count must be a positive whole number." };
     }
@@ -1235,7 +1246,12 @@ export class Agent {
     const busy = this.backgroundBlocker("redo");
     if (busy) return { ok: false, message: busy };
     const provider = this.options.checkpointProvider;
-    if (!provider) return { ok: false, message: "This profile does not support redo." };
+    if (!provider) {
+      return {
+        ok: false,
+        message: this.options.checkpointUnavailable ?? "This profile does not support redo.",
+      };
+    }
     const step = this.checkpoints.peekRedo();
     if (!step) return { ok: false, message: "Nothing to redo." };
     if (!this.tree.has(step.id)) {

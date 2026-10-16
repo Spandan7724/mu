@@ -178,6 +178,7 @@ export async function createCliSessionRuntime(
     fork: (entryId) => agent.fork(entryId),
     forkPoints: () => agent.forkPoints(),
     diff: () => agent.sessionDiff(),
+    ...(agent.checkpointUnavailable ? { checkpointUnavailable: agent.checkpointUnavailable } : {}),
   });
   for (const command of profile?.commands ?? []) commands.register(command);
   for (const command of loaded.host.commands.list()) commands.register(command);

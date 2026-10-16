@@ -29,6 +29,8 @@ export interface CoreCommandHooks {
   fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
   forkPoints?: () => ForkPoint[];
   diff?: () => Promise<CheckpointDiffFile[]>;
+  // Answers /undo, /redo and /diff when checkpoints are off.
+  checkpointUnavailable?: string;
 }
 
 export function formatUsageBreakdown(usage: Usage & { contextPercent: number }): string {
@@ -97,6 +99,8 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       description: "Choose prompts to revert — both the workspace and the conversation",
       sessionScoped: true,
       run: async (ctx) => {
+        if (hooks.checkpointUnavailable)
+          return { handled: true, message: hooks.checkpointUnavailable };
         if (!hooks.undo) return { handled: true, message: "Undo is not available here." };
         const count = ctx.args.trim();
         if (!count && hooks.undoPoints) {
@@ -123,6 +127,8 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       description: "Re-apply the step that was undone",
       sessionScoped: true,
       run: async () => {
+        if (hooks.checkpointUnavailable)
+          return { handled: true, message: hooks.checkpointUnavailable };
         if (!hooks.redo) return { handled: true, message: "Redo is not available here." };
         const result = await hooks.redo();
         return {
@@ -156,6 +162,8 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
       name: "diff",
       description: "Show everything this session has changed",
       run: async () => {
+        if (hooks.checkpointUnavailable)
+          return { handled: true, message: hooks.checkpointUnavailable };
         if (!hooks.diff) return { handled: true, message: "Diff is not available here." };
         const files = await hooks.diff();
         if (files.length === 0) return { handled: true, message: "No changes yet." };

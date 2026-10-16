@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import type { Tool } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "mu";
-import { ShadowCheckpointProvider } from "./checkpoint.ts";
+import { checkpointUnavailableReason, ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingProfile } from "./index.ts";
 import { loadProjectConfig } from "./permissions.ts";
 
@@ -35,6 +35,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 describe("shadow checkpoints", () => {
   test("two coding workers checkpoint concurrently in one workspace", async () => {
     const root = await scratch();
+    await git(root, "init", "--quiet");
     const home = await scratch();
     const gate = join(root, "start-workers");
     const fixture = join(import.meta.dir, "../testing/concurrent-checkpoint-worker.ts");
@@ -550,6 +551,52 @@ describe("the user's own repository is never touched", () => {
     expect(await readFile(join(root, "plain.txt"), "utf8")).toBe("no repo here\n");
     // And we did not turn their directory into a repo.
     await expect(readdir(join(root, ".git"))).rejects.toThrow();
+  });
+});
+
+describe("where checkpoints run", () => {
+  test("a git repository, or a directory inside one, gets checkpoints", async () => {
+    const root = await scratch();
+    const home = await scratch();
+    await git(root, "init", "--quiet");
+    await mkdir(join(root, "packages", "app"), { recursive: true });
+    expect(await checkpointUnavailableReason(root, home)).toBeUndefined();
+    expect(await checkpointUnavailableReason(join(root, "packages", "app"), home)).toBeUndefined();
+    const profile = await codingProfile({ root, home });
+    expect(profile.checkpointProvider).toBeDefined();
+    expect(profile.checkpointUnavailable).toBeUndefined();
+  });
+
+  test("a directory outside any repository has none and says why", async () => {
+    const root = await scratch();
+    const home = await scratch();
+    const reason = await checkpointUnavailableReason(root, home);
+    expect(reason).toContain("outside a git repository");
+    expect(reason).toContain("/undo");
+    const profile = await codingProfile({ root, home });
+    expect(profile.checkpointProvider).toBeUndefined();
+    expect(profile.checkpointUnavailable).toBe(reason);
+  });
+
+  test("the home directory and its ancestors never get checkpoints, even as a repository", async () => {
+    const parent = await scratch();
+    const home = join(parent, "user");
+    await mkdir(home);
+    await git(home, "init", "--quiet");
+    await git(parent, "init", "--quiet");
+    expect(await checkpointUnavailableReason(home, home)).toContain("home directory");
+    expect(await checkpointUnavailableReason(parent, home)).toContain("home directory");
+    expect(await checkpointUnavailableReason(parse(parent).root, home)).toContain(
+      "filesystem root",
+    );
+  });
+
+  test("a project below the home directory is unaffected by the home guard", async () => {
+    const home = await scratch();
+    const root = join(home, "code", "project");
+    await mkdir(root, { recursive: true });
+    await git(root, "init", "--quiet");
+    expect(await checkpointUnavailableReason(root, home)).toBeUndefined();
   });
 });
 
