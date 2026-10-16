@@ -889,6 +889,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       await Promise.all(
         missing.map((path) => rm(resolve(this.root, path), { recursive: true, force: true })),
       );
+      await this.removeEmptyParents(missing);
     });
   }
 

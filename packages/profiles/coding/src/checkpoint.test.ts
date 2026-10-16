@@ -518,6 +518,24 @@ describe("shadow checkpoints", () => {
     expect(commands).not.toContain("gc");
   });
 
+  test("scoped restore removes folders left empty by the files it removes, and only those", async () => {
+    const root = await workspace();
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "keep.ts"), "keep\n");
+    const p = provider(root);
+    const before = await p.snapshot();
+    await mkdir(join(root, "deep", "nested"), { recursive: true });
+    await writeFile(join(root, "deep", "nested", "notes.txt"), "hello\n");
+    await writeFile(join(root, "src", "new.ts"), "new\n");
+    await p.snapshot();
+
+    await p.restoreResources(before as string, ["deep/nested/notes.txt", "src/new.ts"]);
+
+    await expect(access(join(root, "deep"))).rejects.toThrow();
+    expect(await readFile(join(root, "src", "keep.ts"), "utf8")).toBe("keep\n");
+    await expect(access(join(root, "src", "new.ts"))).rejects.toThrow();
+  });
+
   test("successive snapshots produce distinct references", async () => {
     const root = await workspace();
     await writeFile(join(root, "a.txt"), "1\n");
@@ -1283,6 +1301,19 @@ describe("outside a git repository only edits and writes are recorded", () => {
     const second = (await p.snapshotResources(undefined, ["note.txt"])) as string;
     expect(await files(p, second)).toEqual(["big.bin", "note.txt"]);
     await expect(readdir(join(root, ".git"))).rejects.toThrow();
+  });
+
+  test("undoing a created nested file removes the folders it leaves empty", async () => {
+    const root = await scratch();
+    const p = declared(root);
+    const before = (await p.snapshotResources(undefined, ["deep/nested/notes.txt"])) as string;
+    await mkdir(join(root, "deep", "nested"), { recursive: true });
+    await writeFile(join(root, "deep", "nested", "notes.txt"), "hello\n");
+    await p.snapshotResources(before, ["deep/nested/notes.txt"]);
+
+    await p.restoreResources(before, ["deep/nested/notes.txt"]);
+
+    await expect(access(join(root, "deep"))).rejects.toThrow();
   });
 
   test("a full snapshot, restore and diff cover only recorded files", async () => {
