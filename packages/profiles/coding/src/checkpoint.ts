@@ -32,6 +32,8 @@ export interface ShadowCheckpointOptions {
 export interface GitRunOptions {
   signal?: AbortSignal;
   stdin?: string;
+  // Output is discarded, and the process neither keeps mu alive nor outlives it.
+  background?: boolean;
 }
 
 export type GitRunner = (
@@ -46,6 +48,25 @@ export function gitConfigNullDevice(platform: NodeJS.Platform = process.platform
 }
 
 const defaultRun: GitRunner = async (args, env, cwd, options = {}) => {
+  if (options.background) {
+    const proc = Bun.spawn(["git", ...args], {
+      cwd,
+      env: { ...process.env, ...env },
+      stdout: "ignore",
+      stderr: "ignore",
+      stdin: "ignore",
+      windowsHide: true,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    const kill = () => proc.kill();
+    process.once("exit", kill);
+    proc.unref();
+    try {
+      return { stdout: "", stderr: "", exitCode: await proc.exited };
+    } finally {
+      process.off("exit", kill);
+    }
+  }
   const proc = Bun.spawn(["git", ...args], {
     cwd,
     env: { ...process.env, ...env },
@@ -137,6 +158,11 @@ const INCOMPLETE_LOCK_GRACE_MS = 1_000;
 // choice is written here mid-turn, so snapshotting it would make undo revoke
 // decisions the user made deliberately — state the turn did not author.
 const STATE_DIRECTORY = ".mu";
+// Repacking merges loose objects (one file of at least a disk block each) into
+// delta-compressed packs. Thresholds follow opencode's snapshot store.
+const MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000;
+const LOOSE_OBJECT_LIMIT = 2048;
+const PACK_LIMIT = 16;
 // Untracked files above this size are left out, like ignored files.
 const MAXIMUM_UNTRACKED_FILE_BYTES = 2 * 1024 * 1024;
 const GITLINK_MODE = "160000";
@@ -153,6 +179,8 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly excludedPrefixes: string[];
   private included: string[];
   private initialized = false;
+  private lastMaintenance = Number.NEGATIVE_INFINITY;
+  private maintenance: Promise<void> | undefined;
 
   constructor(options: ShadowCheckpointOptions) {
     this.root = canonicalRoot(options.root);
@@ -482,11 +510,48 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   async snapshot(label?: string, signal?: AbortSignal): Promise<string | undefined> {
     if (signal?.aborted) return undefined;
     try {
-      return await this.locked(() => this.capture(label, signal), signal);
+      const ref = await this.locked(() => this.capture(label, signal), signal);
+      if (ref) this.startMaintenance();
+      return ref;
     } catch (error) {
       if (signal?.aborted) return undefined;
       throw error;
     }
+  }
+
+  // Resolves once background store maintenance, if any, has finished.
+  async settled(): Promise<void> {
+    await this.maintenance;
+  }
+
+  // Only object-store maintenance, never `git gc`: its reflog expiry and ref
+  // packing lock refs, which would make a concurrent capture's update-ref fail.
+  // Repacking and pruning lock nothing a capture uses, prune only removes
+  // unreachable objects older than two weeks, and every checkpoint is reachable
+  // from HEAD. So this needs neither the store lock nor to stop for a snapshot,
+  // and killing it when mu exits is safe.
+  private startMaintenance(): void {
+    if (this.maintenance || Date.now() - this.lastMaintenance < MAINTENANCE_INTERVAL_MS) return;
+    this.maintenance = this.maintain()
+      .catch(() => {})
+      .finally(() => {
+        this.maintenance = undefined;
+      });
+  }
+
+  private async maintain(): Promise<void> {
+    const stats = await this.git("count-objects", "-v");
+    if (stats.exitCode !== 0) return;
+    const count = (key: string) =>
+      Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(stats.stdout)?.[1] ?? 0);
+    const loose = count("count");
+    const packs = count("packs");
+    const background = (...args: string[]) =>
+      this.run(args, this.env(), this.root, { background: true });
+    if (packs >= PACK_LIMIT) await background("repack", "-a", "-d", "-q");
+    else if (loose >= LOOSE_OBJECT_LIMIT) await background("repack", "-d", "-q");
+    if (loose >= LOOSE_OBJECT_LIMIT) await background("prune", "--expire=2.weeks.ago");
+    this.lastMaintenance = Date.now();
   }
 
   // Plumbing rather than `git commit`, which would collect status by walking

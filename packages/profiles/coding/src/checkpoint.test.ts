@@ -470,6 +470,54 @@ describe("shadow checkpoints", () => {
     expect(await readFile(join(root, "a.txt"), "utf8")).toBe("2\n");
   });
 
+  test("a store over the loose-object limit is packed in the background and stays readable", async () => {
+    const root = await workspace();
+    for (let index = 0; index < 2100; index++) {
+      await writeFile(join(root, `file-${index}.txt`), `content ${index}\n`);
+    }
+    const p = provider(root);
+    const ref = await p.snapshot();
+    await p.settled();
+
+    const stats = await git(root, `--git-dir=${p.directory}`, "count-objects", "-v");
+    expect(Number(/^count: (\d+)$/m.exec(stats)?.[1])).toBeLessThan(100);
+    expect(Number(/^packs: (\d+)$/m.exec(stats)?.[1])).toBeGreaterThanOrEqual(1);
+    await writeFile(join(root, "file-0.txt"), "changed\n");
+    await p.restoreResources(ref as string, ["file-0.txt"]);
+    expect(await readFile(join(root, "file-0.txt"), "utf8")).toBe("content 0\n");
+  });
+
+  test("store maintenance runs at most once per interval", async () => {
+    const root = await workspace();
+    const commands: string[] = [];
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      run: async (args, env, cwd, options) => {
+        commands.push(args[0] as string);
+        const proc = Bun.spawn(["git", ...args], {
+          cwd,
+          env: { ...process.env, ...env },
+          stdin: options?.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        return { stdout, stderr, exitCode };
+      },
+    });
+    await p.snapshot();
+    await p.settled();
+    await p.snapshot();
+    await p.settled();
+    expect(commands.filter((command) => command === "count-objects")).toHaveLength(1);
+    expect(commands).not.toContain("gc");
+  });
+
   test("successive snapshots produce distinct references", async () => {
     const root = await workspace();
     await writeFile(join(root, "a.txt"), "1\n");
