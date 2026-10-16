@@ -10,6 +10,8 @@ export interface CommandContext {
   // Read/replace the current session's model reference.
   getModel: () => string;
   setModel: (ref: string) => void;
+  // Whether the session's agent is mid-run; absent means the surface cannot tell.
+  isRunning?: () => boolean;
 }
 
 export interface CommandResult {

@@ -65,6 +65,7 @@ export interface ProjectConfig {
   permissions?: PermissionRule[];
   model?: string;
   instructions?: InstructionSettings;
+  checkpoints?: { include?: string[] | undefined; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -87,6 +88,10 @@ const projectConfigSchema = z
     permissions: z.array(permissionRuleSchema).optional(),
     model: z.string().min(1).optional(),
     instructions: instructionSettingsSchema.optional(),
+    checkpoints: z
+      .object({ include: z.array(z.string().min(1)).optional() })
+      .loose()
+      .optional(),
   })
   .loose();
 
@@ -108,7 +113,7 @@ export async function loadProjectConfig(
         .join("; ");
       throw new Error(`Invalid project config at ${configPath(root)}: ${issues}`);
     }
-    const { permissions, model, instructions, ...rest } = result.data;
+    const { permissions, model, instructions, checkpoints, ...rest } = result.data;
     const normalizedInstructions: InstructionSettings | undefined = instructions
       ? {
           ...(instructions.enabled !== undefined ? { enabled: instructions.enabled } : {}),
@@ -129,6 +134,7 @@ export async function loadProjectConfig(
       ...(permissions !== undefined ? { permissions } : {}),
       ...(model !== undefined ? { model } : {}),
       ...(normalizedInstructions !== undefined ? { instructions: normalizedInstructions } : {}),
+      ...(checkpoints !== undefined ? { checkpoints } : {}),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
@@ -161,4 +167,19 @@ export async function rememberAllow(
 
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify({ ...config, permissions: rules }, null, 2)}\n`, "utf8");
+}
+
+// Paths added with /track: recorded by checkpoints even when ignored.
+export async function saveCheckpointIncludes(root: string, include: string[]): Promise<void> {
+  const path = configPath(root);
+  const config = await loadProjectConfig(root);
+  const { include: _previous, ...checkpoints } = config.checkpoints ?? {};
+  const next = include.length > 0 ? { ...checkpoints, include } : checkpoints;
+  const { checkpoints: _old, ...rest } = config;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify(Object.keys(next).length > 0 ? { ...rest, checkpoints: next } : rest, null, 2)}\n`,
+    "utf8",
+  );
 }

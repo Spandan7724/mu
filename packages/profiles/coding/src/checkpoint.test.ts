@@ -241,6 +241,53 @@ describe("shadow checkpoints", () => {
     expect(await readFile(join(root, "app.py"), "utf8")).toBe("original\n");
   });
 
+  test("an included ignored file is recorded, restored and its later copy removed", async () => {
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), "*.secret\nlocal/\n");
+    await writeFile(join(root, "user.secret"), "original\n");
+    await writeFile(join(root, "other.secret"), "original\n");
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      include: ["user.secret", "local"],
+    });
+    const ref = await p.snapshot();
+
+    await writeFile(join(root, "user.secret"), "changed\n");
+    await writeFile(join(root, "other.secret"), "changed\n");
+    await mkdir(join(root, "local"));
+    await writeFile(join(root, "local", "big.bin"), Buffer.alloc(3 * 1024 * 1024));
+    expect((await p.diff(ref as string)).map((file) => file.path).sort()).toEqual([
+      "local/big.bin",
+      "user.secret",
+    ]);
+    await p.restore(ref as string);
+
+    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("original\n");
+    expect(await readFile(join(root, "other.secret"), "utf8")).toBe("changed\n");
+    await expect(access(join(root, "local"))).rejects.toThrow();
+  });
+
+  test("a path no longer included leaves the checkpoints without touching the file", async () => {
+    const root = await workspace();
+    await writeFile(join(root, ".gitignore"), "*.secret\n");
+    await writeFile(join(root, "user.secret"), "kept\n");
+    const p = new ShadowCheckpointProvider({
+      root,
+      shadowDir: join(tmpdir(), `mu-shadow-${process.pid}-${shadowRun}-${shadowCounter++}`),
+      include: ["user.secret"],
+    });
+    await p.snapshot();
+    p.setIncludedPaths([]);
+    const ref = await p.snapshot();
+
+    await p.restore(ref as string);
+    expect(await readFile(join(root, "user.secret"), "utf8")).toBe("kept\n");
+    expect(
+      await git(root, `--git-dir=${p.directory}`, "ls-tree", "-r", "--name-only", ref as string),
+    ).not.toContain("user.secret");
+  });
+
   test("ignore rules above a subdirectory root still apply", async () => {
     const repo = await workspace();
     await writeFile(join(repo, ".gitignore"), "build/\n");

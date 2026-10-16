@@ -36,6 +36,7 @@ import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import { editTool, lsTool, readTool, writeTool } from "./tools/files.ts";
 import { shellSpawner, taskTools } from "./tools/tasks.ts";
+import { trackCommands } from "./track-commands.ts";
 
 export interface CodingProfileOptions {
   // Directory the session operates in. Defaults to the process's directory.
@@ -124,6 +125,20 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   });
   await instructionLoader.reload();
   const checkpointUnavailable = await checkpointUnavailableReason(root, home);
+  const checkpoints = checkpointUnavailable ? undefined : new ShadowCheckpointProvider({ root });
+  if (checkpoints) {
+    const included: string[] = [];
+    for (const path of projectConfig.checkpoints?.include ?? []) {
+      try {
+        included.push(checkpoints.workspacePath(path));
+      } catch (error) {
+        configDiagnostics.push(
+          `checkpoints.include: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    checkpoints.setIncludedPaths(included);
+  }
   const deps = { root, state: fileState, instructions: instructionLoader };
   const processes = new ProcessManager(
     options.spawner ?? shellSpawner(root),
@@ -209,6 +224,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       ),
     ],
     commands: [
+      ...trackCommands({
+        root,
+        ...(checkpoints ? { checkpoints } : {}),
+        ...(checkpointUnavailable ? { unavailable: checkpointUnavailable } : {}),
+      }),
       {
         name: "instructions",
         description: "Show or reload instruction files",
@@ -250,9 +270,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    ...(checkpointUnavailable
-      ? { checkpointUnavailable }
-      : { checkpointProvider: new ShadowCheckpointProvider({ root }) }),
+    ...(checkpoints ? { checkpointProvider: checkpoints } : {}),
+    ...(checkpointUnavailable ? { checkpointUnavailable } : {}),
     runtime,
     fileState,
     todos,

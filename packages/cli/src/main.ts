@@ -195,6 +195,7 @@ async function main(): Promise<number> {
                   print: () => {},
                   getModel: () => agent.modelRef,
                   setModel: (ref) => agent.setModel(ref),
+                  isRunning: () => agent.isRunning,
                 });
                 return result;
               },

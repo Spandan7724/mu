@@ -1285,6 +1285,7 @@ export async function runInteractive(
       print: (output) => commitLines([`  ${output}`], source),
       getModel: () => target.modelRef,
       setModel: () => {},
+      isRunning: () => Boolean((source === "side" ? sideRun : activeRun) || target.isRunning),
     });
     const data = result.data as
       | CheckpointActionData

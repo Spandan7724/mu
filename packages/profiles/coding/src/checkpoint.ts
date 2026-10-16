@@ -25,6 +25,8 @@ export interface ShadowCheckpointOptions {
   shadowDir?: string;
   scope?: string;
   run?: GitRunner;
+  // Workspace-relative paths recorded even when ignored or large.
+  include?: string[];
 }
 
 export interface GitRunOptions {
@@ -146,6 +148,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   private readonly run: GitRunner;
   private readonly lockDir: string;
   private readonly excludedPrefixes: string[];
+  private included: string[];
   private initialized = false;
 
   constructor(options: ShadowCheckpointOptions) {
@@ -159,10 +162,41 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     this.excludedPrefixes = [".git", STATE_DIRECTORY, this.shadowDir, this.lockDir]
       .map((path) => relative(this.root, resolve(this.root, path)).replaceAll("\\", "/"))
       .filter((path) => path.length > 0 && !path.startsWith("..") && !isAbsolute(path));
+    this.included = [];
+    this.setIncludedPaths(options.include ?? []);
   }
 
   get directory(): string {
     return this.shadowDir;
+  }
+
+  get includedPaths(): string[] {
+    return [...this.included];
+  }
+
+  // Takes effect at the next snapshot, so callers change it only between turns:
+  // a path added mid-turn would read as created by that turn and undo would delete it.
+  setIncludedPaths(paths: string[]): void {
+    this.included = [...new Set(paths.map((path) => this.workspacePath(path)))].sort();
+  }
+
+  // Normalizes a user-supplied path to the workspace-relative form checkpoints use.
+  workspacePath(path: string): string {
+    const relativePath = relative(this.root, resolve(this.root, path))
+      .replaceAll("\\", "/")
+      .replace(/\/+$/, "");
+    if (relativePath.length === 0) throw new Error("The workspace itself is always checkpointed.");
+    if (relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+      throw new Error(`${path} is outside the workspace.`);
+    }
+    if (this.isExcluded(relativePath)) {
+      throw new Error(`${relativePath} is never checkpointed.`);
+    }
+    return relativePath;
+  }
+
+  private isIncluded(path: string): boolean {
+    return this.included.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
   }
 
   private env(): Record<string, string> {
@@ -340,14 +374,28 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
   }
 
   // Everything the user's repository tracks or would show as untracked, minus
-  // large untracked files. Undefined when aborted.
+  // large untracked files, plus explicitly included paths even when ignored.
+  // Undefined when aborted.
   private async workspacePaths(signal?: AbortSignal): Promise<Set<string> | undefined> {
-    const [tracked, untracked] = await Promise.all([
+    const included = this.included.map((path) => `:(literal)${path}`);
+    const [tracked, untracked, ignored] = await Promise.all([
       this.workspaceGit(signal, "ls-files", "-z", "--cached", "--stage", "--", "."),
       this.workspaceGit(signal, "ls-files", "-z", "--others", "--exclude-standard", "--", "."),
+      included.length > 0
+        ? this.workspaceGit(
+            signal,
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--",
+            ...included,
+          )
+        : Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
     ]);
     if (signal?.aborted) return undefined;
-    for (const result of [tracked, untracked]) {
+    for (const result of [tracked, untracked, ignored]) {
       if (result.exitCode !== 0) {
         throw new Error(`Could not list checkpoint paths: ${result.stderr.trim()}`);
       }
@@ -361,7 +409,7 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       paths.add(path);
     }
     // A trailing slash marks an embedded repository, which is not ours to record.
-    const candidates = nulSeparated(untracked.stdout).filter(
+    const candidates = [...nulSeparated(untracked.stdout), ...nulSeparated(ignored.stdout)].filter(
       (path) => !path.endsWith("/") && !this.isExcluded(path) && !paths.has(path),
     );
     const sizes = await Promise.all(
@@ -373,7 +421,9 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
       ),
     );
     candidates.forEach((path, index) => {
-      if ((sizes[index] ?? 0) <= MAXIMUM_UNTRACKED_FILE_BYTES) paths.add(path);
+      if ((sizes[index] ?? 0) <= MAXIMUM_UNTRACKED_FILE_BYTES || this.isIncluded(path)) {
+        paths.add(path);
+      }
     });
     return paths;
   }

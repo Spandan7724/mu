@@ -93,6 +93,7 @@ export async function runHeadless(
       print: (text) => printed.push(text),
       getModel: () => agent.modelRef,
       setModel: (ref) => agent.setModel(ref),
+      isRunning: () => agent.isRunning,
     });
     if (command.handled) {
       const messages = [...printed, ...(command.message ? [command.message] : [])];

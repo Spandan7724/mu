@@ -258,6 +258,7 @@ export async function runAgentWorker(
               agent.setModel(ref);
               applySavedThinking(agent);
             },
+            isRunning: () => agent.isRunning,
           });
           const message = [...printed, ...(result.message ? [result.message] : [])].join("\n");
           const complete = { ...result, ...(message ? { message } : {}) };
