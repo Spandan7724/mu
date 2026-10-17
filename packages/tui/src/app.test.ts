@@ -4359,3 +4359,189 @@ describe("side conversations", () => {
     expect(closed).toBe(1);
   });
 });
+
+describe("moving running calls to the background", () => {
+  const command = "bun test";
+  function started(app: App, id = "bash-1", backgroundable = true) {
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName: "bash",
+      args: { command },
+      ...(backgroundable ? { backgroundable: true as const } : {}),
+    });
+  }
+  const ctrlZ = (app: App) =>
+    app.handleInput({ type: "key", key: { name: "z", ctrl: true, alt: false, shift: false } });
+
+  test("a long-running row offers ctrl+z, which moves every eligible call", () => {
+    const moved: string[][] = [];
+    const { app } = harness({ onBackgroundTools: (ids) => void moved.push(ids) });
+    const spy = spyOn(Date, "now");
+    const now = 1_000_000;
+    try {
+      spy.mockReturnValue(now);
+      started(app);
+      started(app, "bash-2", false);
+      expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("ctrl+z");
+      ctrlZ(app);
+      expect(moved).toEqual([]);
+
+      spy.mockReturnValue(now + 5_000);
+      const rows = app.renderBottom().map(stripAnsi);
+      expect(rows.filter((row) => row.includes("ctrl+z background"))).toHaveLength(1);
+      expect(rows.find((row) => row.includes("ctrl+z"))).toContain("running bun test");
+      ctrlZ(app);
+      expect(moved).toEqual([["bash-1"]]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("no hint without a host that can move calls", () => {
+    const { app } = harness();
+    const spy = spyOn(Date, "now");
+    try {
+      spy.mockReturnValue(1_000);
+      started(app);
+      spy.mockReturnValue(10_000);
+      expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("ctrl+z");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a moved command keeps its output and is timed from when it started", () => {
+    const { app } = harness({ onBackgroundTools: () => {} });
+    const spy = spyOn(Date, "now");
+    try {
+      spy.mockReturnValue(1_000);
+      started(app);
+      app.handleEvent({
+        type: "tool_execution_update",
+        toolCallId: "bash-1",
+        partial: [{ type: "text", text: "(fail) parser\n" }],
+      });
+      spy.mockReturnValue(9_000);
+      app.handleEvent({
+        type: "task_started",
+        taskId: "task_1",
+        command,
+        background: true,
+        startedAt: 1_000,
+      });
+      app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "(fail) parser\n" });
+      app.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: "bash-1",
+        result: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "moved" }],
+          details: { taskId: "task_1", command, background: true },
+          isError: false,
+          timestamp: 9_000,
+        },
+      });
+      const live = app.renderBottom().map(stripAnsi).join("\n");
+      expect(live).toContain("┌ background · 1");
+      expect(live).toContain("(fail) parser");
+      expect(live).not.toContain("ctrl+z");
+
+      spy.mockReturnValue(31_000);
+      const committed = app.handleEvent({
+        type: "task_exited",
+        taskId: "task_1",
+        exitCode: 1,
+        status: "exited",
+      });
+      expect(committed.map(stripAnsi).join("\n")).toContain("30s");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a moved subagent keeps the activity it showed in the foreground", () => {
+    const { app } = harness({ onBackgroundTools: () => {} });
+    const progress = (event: Record<string, unknown>) => ({
+      type: "subagent-progress",
+      kind: "task",
+      description: "port the parser",
+      model: "fake/fake-1",
+      thinkingLevel: "medium",
+      event,
+    });
+    const step = (id: string) =>
+      progress({
+        type: "message",
+        message: {
+          ...assistant(""),
+          content: [{ type: "toolCall", id, name: "read", arguments: { path: `${id}.ts` } }],
+        },
+      });
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: { description: "port the parser", prompt: "Port it" },
+      backgroundable: true,
+    });
+    app.handleEvent({
+      type: "tool_execution_update",
+      toolCallId: "task-1",
+      partial: [],
+      details: step("a"),
+    });
+    app.handleEvent({
+      type: "subagent_started",
+      subagentId: "sa-abc123",
+      toolCallId: "task-1",
+      kind: "task",
+      description: "port the parser",
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "task-1",
+      result: {
+        role: "toolResult",
+        toolCallId: "task-1",
+        toolName: "task",
+        content: [{ type: "text", text: "moved" }],
+        details: {
+          type: "subagent-background",
+          subagentId: "sa-abc123",
+          kind: "task",
+          description: "port the parser",
+        },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    app.handleEvent({ type: "subagent_progress", subagentId: "sa-abc123", details: step("b") });
+
+    const live = app.renderBottom().map(stripAnsi).join("\n");
+    expect(live).toContain("┌ background · 1");
+    expect(live).toContain("2 actions");
+  });
+
+  test("b in review moves only the selected call", () => {
+    const moved: string[][] = [];
+    const { app } = harness({ onBackgroundTools: (ids) => void moved.push(ids) });
+    const spy = spyOn(Date, "now");
+    try {
+      spy.mockReturnValue(1_000);
+      started(app, "bash-1");
+      started(app, "bash-2");
+      spy.mockReturnValue(10_000);
+      feed(app, "\u000f");
+      expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("b background");
+      feed(app, "b");
+      expect(moved).toEqual([["bash-2"]]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

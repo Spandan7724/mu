@@ -52,7 +52,7 @@ import {
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
-import { truncateToWidth } from "./width.ts";
+import { stringWidth, truncateToWidth } from "./width.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
 const COLLAPSE_COMMAND = {
@@ -220,6 +220,8 @@ const TASK_RETAINED_LINE_CHARS = 10_000;
 const TASK_LIVE_TAIL_LINES = 3;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
+// How long a backgroundable call runs before its row offers ctrl+z.
+export const BACKGROUND_HINT_MS = 5_000;
 const PENDING_INPUT_ROWS = 3;
 
 function appendTaskOutput(task: LiveTask, chunk: string): void {
@@ -367,6 +369,8 @@ type PendingTool = Omit<ToolRenderInfo, "expanded"> & {
   taskId?: string;
   // The same for a subagent started with run_in_background.
   subagentId?: string;
+  // The agent can move this running call to the background.
+  backgroundable?: boolean;
 };
 interface ActivityTool {
   id: string;
@@ -1080,6 +1084,7 @@ export class App {
             output: existing?.output ?? new LiveToolOutput(),
             ...(existing?.progress !== undefined ? { progress: existing.progress } : {}),
             startedAt: existing?.startedAt ?? Date.now(),
+            ...(event.backgroundable ? { backgroundable: true } : {}),
           });
         }
         return [];
@@ -1099,7 +1104,10 @@ export class App {
           pending.subagentId = delegated.subagentId;
           pending.running = true;
           const live = this.backgroundSubagents.get(delegated.subagentId);
+          // A call moved mid-run already shows its activity; background progress continues it.
           if (live?.progress) pending.progress = live.progress;
+          else if (live && pending.progress)
+            live.progress = pending.progress as SubagentProgressState;
           return this.completeBackgroundSubagent(delegated.subagentId) ?? [];
         }
         this.pendingTools.delete(event.toolCallId);
@@ -1237,7 +1245,7 @@ export class App {
         const task: LiveTask = {
           taskId: event.taskId,
           command: event.command,
-          startedAt: Date.now(),
+          startedAt: event.startedAt ?? Date.now(),
           tail: [],
           partial: "",
           retainedChars: 0,
@@ -1619,6 +1627,15 @@ export class App {
         },
         this.ctx,
       );
+      if (this.canMoveToBackground(pending) && rendered[0] !== undefined) {
+        const hint = styleText(`${GLYPHS.separator} ctrl+z background`, { dim: true }, depth);
+        const room = width - stringWidth(stripAnsi(hint)) - 1;
+        const header =
+          stringWidth(stripAnsi(rendered[0])) > room
+            ? truncateToWidth(rendered[0], room)
+            : rendered[0];
+        rendered[0] = `${header} ${hint}`;
+      }
       const task = pending.taskId ? this.backgroundTasks.get(pending.taskId) : undefined;
       const output = task
         ? [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])].slice(
@@ -1792,7 +1809,7 @@ export class App {
           ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
           : this.stopArmedFor
             ? `x again to stop ${GLYPHS.separator} other keys cancel`
-            : `${this.stoppableSubagent() && this.options.callbacks.onStopSubagent ? `x stop ${GLYPHS.separator} ` : ""}↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
+            : `${this.selectedBackgroundCandidate() ? `b background ${GLYPHS.separator} ` : ""}${this.stoppableSubagent() && this.options.callbacks.onStopSubagent ? `x stop ${GLYPHS.separator} ` : ""}↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
@@ -1860,9 +1877,13 @@ export class App {
         },
         this.ctx,
       );
+      const lineWidth = Math.max(18, this.options.width - 4);
       if (task && pending.expanded) {
-        const lineWidth = Math.max(18, this.options.width - 4);
         for (const line of expandedTaskOutputLines(task)) {
+          lines.push(...toolOutputCell(truncateToWidth(line, lineWidth), this.ctx));
+        }
+      } else if (pending.expanded && pending.backgroundable && !pending.subagentId) {
+        for (const line of pending.output.display(LIVE_TOOL_OUTPUT_LINES)) {
           lines.push(...toolOutputCell(truncateToWidth(line, lineWidth), this.ctx));
         }
       }
@@ -1874,8 +1895,40 @@ export class App {
   private isPendingActivity(pending: PendingTool): boolean {
     return (
       pending.running === true &&
-      (pending.taskId !== undefined || this.registry.supportsLiveExpansion(pending.toolName))
+      (pending.taskId !== undefined ||
+        pending.backgroundable === true ||
+        this.registry.supportsLiveExpansion(pending.toolName))
     );
+  }
+
+  // A running foreground call the user may move to the background: past the hint
+  // delay, not awaiting approval, and in the main conversation (a side conversation
+  // has no runtime of its own to take it).
+  private canMoveToBackground(pending: PendingTool): boolean {
+    return (
+      pending.backgroundable === true &&
+      pending.running === true &&
+      pending.taskId === undefined &&
+      pending.subagentId === undefined &&
+      this.activeSource === "main" &&
+      this.options.callbacks.onBackgroundTools !== undefined &&
+      Date.now() - (pending.startedAt ?? Date.now()) >= BACKGROUND_HINT_MS &&
+      !this.approvals.some((item) => item.request.toolCallId === pending.id)
+    );
+  }
+
+  private backgroundCandidates(): string[] {
+    return [...this.pendingTools.values()]
+      .filter((pending) => this.canMoveToBackground(pending))
+      .map((pending) => pending.id);
+  }
+
+  private selectedBackgroundCandidate(): string | undefined {
+    if (this.mode !== "activity") return undefined;
+    const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
+    return node && "pending" in node && this.canMoveToBackground(node.pending)
+      ? node.pending.id
+      : undefined;
   }
 
   private streamingRows(): string[] {
@@ -2563,6 +2616,11 @@ export class App {
     if (index < 0) index = Math.max(0, nodes.length - 1);
     const armed = this.stopArmedFor;
     this.stopArmedFor = undefined;
+    if (key.text === "b" && !key.ctrl && !key.alt) {
+      const id = this.selectedBackgroundCandidate();
+      if (id) this.options.callbacks.onBackgroundTools?.([id]);
+      return;
+    }
     if (key.text === "x" && !key.ctrl && !key.alt) {
       const subagentId = this.stoppableSubagent();
       if (!subagentId || !this.options.callbacks.onStopSubagent) return;
@@ -2669,6 +2727,12 @@ export class App {
     if (key.ctrl && key.name === "o") {
       if (this.mode === "activity") this.closeActivity();
       else if (this.mode === "composing") this.openActivity();
+      return;
+    }
+
+    if (key.ctrl && key.name === "z") {
+      const ids = this.backgroundCandidates();
+      if (ids.length > 0) this.options.callbacks.onBackgroundTools?.(ids);
       return;
     }
 
