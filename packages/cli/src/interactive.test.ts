@@ -95,6 +95,14 @@ describe("permission mode notice", () => {
     }
   });
 
+  test("a mode that is remembered for new sessions says so", () => {
+    for (const mode of CODING_PERMISSION_MODES) {
+      expect(formatPermissionMode(mode, "none", true)[0]).toBe(
+        `  permissions set to ${mode.label} · saved for new sessions`,
+      );
+    }
+  });
+
   test("one blank line below keeps a run of mode changes apart", () => {
     // shift+tab commits one of these per press, so without the gap consecutive
     // notices stack into a solid block — and the composer sits flush under the

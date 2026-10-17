@@ -76,6 +76,7 @@ Useful options include:
 --max-turns <n>                set a turn budget
 --max-cost <usd>               set a cost budget
 --permission-mode <mode>       default | accept-edits | plan-readonly | yolo
+                               (the app otherwise starts in the last mode you chose, except yolo)
 --no-instructions              disable instruction loading for this run
 --no-checkpoints               turn off /undo, /redo and /diff for this run
 ```

@@ -17,7 +17,12 @@ import {
 import { withStoredCredentials } from "./auth.ts";
 import { loadUserConfig, resolveCliModel, savedThinkingLevel } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
-import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import {
+  nextPermissionMode,
+  permissionModeFor,
+  rulesForPermissionMode,
+  savedPermissionMode,
+} from "./permissions.ts";
 import {
   type BrowserFlags,
   DEFAULT_PROFILE,
@@ -32,6 +37,8 @@ export interface SessionRuntimeOptions {
   model?: string | undefined;
   permissionMode?: string | undefined;
   allowAll?: boolean | undefined;
+  // Start in the permission mode last chosen in the app when none is given.
+  savedPermissionMode?: boolean | undefined;
   noInstructions?: boolean | undefined;
   noCheckpoints?: boolean | undefined;
   browser?: BrowserFlags | undefined;
@@ -98,7 +105,13 @@ export async function createCliSessionRuntime(
   if (profile) {
     activePermissionMode = options.allowAll
       ? profile.permissionModes?.find((candidate) => candidate.tone === "unrestricted")
-      : permissionModeFor(profile, options.permissionMode);
+      : permissionModeFor(
+          profile,
+          options.permissionMode ??
+            (options.savedPermissionMode
+              ? savedPermissionMode(profile, await loadUserConfig(undefined, () => {}))
+              : undefined),
+        );
     resolved = {
       ...resolved,
       permissions: options.allowAll

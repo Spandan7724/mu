@@ -1,4 +1,5 @@
 import type { PermissionMode, PermissionRule, Profile } from "mu";
+import type { UserConfig } from "./config.ts";
 
 export function permissionModeFor(
   profile: Profile,
@@ -40,4 +41,12 @@ export function nextPermissionMode(
   if (modes.length < 2) return undefined;
   const currentIndex = modes.findIndex((mode) => mode.id === current?.id);
   return modes[(currentIndex + 1) % modes.length];
+}
+
+// Unrestricted modes are never restored: one yolo session must not silently
+// carry over to the next launch, possibly in another repository.
+export function savedPermissionMode(profile: Profile, config: UserConfig): string | undefined {
+  const id = config.permissionMode?.[profile.name];
+  const mode = profile.permissionModes?.find((candidate) => candidate.id === id);
+  return mode && mode.tone !== "unrestricted" ? mode.id : undefined;
 }

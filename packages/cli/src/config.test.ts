@@ -8,6 +8,7 @@ import {
   loadUserConfig,
   resolveCliModel,
   saveDefaultModel,
+  savePermissionMode,
   saveThinkingLevel,
   userConfigPath,
 } from "./config.ts";
@@ -200,6 +201,20 @@ describe("saved thinking levels", () => {
     expect(await loadUserConfig(file)).toEqual({
       model: "openai-codex/gpt-6-luna",
       thinking: { "openai-codex/gpt-6-luna": "max", "openai-codex/gpt-6.1-sol": "low" },
+    });
+  });
+
+  test("the permission mode is saved per profile beside the model and thinking levels", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-permission-mode-"));
+    const file = join(root, "config.json");
+    await saveDefaultModel("openai-codex/gpt-6-luna", file);
+    await savePermissionMode("coding", "accept-edits", file);
+    await savePermissionMode("browser", "supervised", file);
+    await savePermissionMode("coding", "plan-readonly", file);
+
+    expect(await loadUserConfig(file)).toEqual({
+      model: "openai-codex/gpt-6-luna",
+      permissionMode: { coding: "plan-readonly", browser: "supervised" },
     });
   });
 

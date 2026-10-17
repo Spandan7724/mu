@@ -18,6 +18,8 @@ export interface UserConfig {
   model?: string;
   // Last thinking level chosen per model ref.
   thinking?: Record<string, string>;
+  // Last permission mode chosen in the app, per profile name.
+  permissionMode?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -25,6 +27,7 @@ const userConfigSchema = z
   .object({
     model: z.string().min(1).optional(),
     thinking: z.record(z.string().min(1), z.string().min(1)).optional(),
+    permissionMode: z.record(z.string().min(1), z.string().min(1)).optional(),
   })
   .loose();
 
@@ -41,11 +44,12 @@ function parseConfig(raw: string, file: string): UserConfig {
       .join("; ");
     throw new Error(`Invalid user config at ${file}: ${issues}`);
   }
-  const { model, thinking, ...rest } = result.data;
+  const { model, thinking, permissionMode, ...rest } = result.data;
   return {
     ...rest,
     ...(model !== undefined ? { model } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
   };
 }
 
@@ -132,6 +136,20 @@ export async function saveThinkingLevel(
   await mkdir(dirname(file), { recursive: true });
   const thinking = { ...config.thinking, [model]: level };
   await writeFile(file, `${JSON.stringify({ ...config, thinking }, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+export async function savePermissionMode(
+  profile: string,
+  mode: string,
+  file = userConfigPath(),
+): Promise<void> {
+  const config = await readUserConfig(file);
+  await mkdir(dirname(file), { recursive: true });
+  const permissionMode = { ...config.permissionMode, [profile]: mode };
+  await writeFile(file, `${JSON.stringify({ ...config, permissionMode }, null, 2)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });

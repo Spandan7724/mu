@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Profile } from "mu";
-import { nextPermissionMode, permissionModeFor, rulesForPermissionMode } from "./permissions.ts";
+import {
+  nextPermissionMode,
+  permissionModeFor,
+  rulesForPermissionMode,
+  savedPermissionMode,
+} from "./permissions.ts";
 
 const profile: Profile = {
   name: "test",
@@ -25,6 +30,22 @@ const profile: Profile = {
 };
 
 describe("permission modes", () => {
+  test("restores the saved mode for this profile, never an unrestricted or unknown one", () => {
+    const modes = profile.permissionModes ?? [];
+    const withYolo: Profile = {
+      ...profile,
+      permissionModes: [
+        ...modes,
+        { id: "yolo", label: "yolo", description: "all", rules: [], tone: "unrestricted" },
+      ],
+    };
+    expect(savedPermissionMode(withYolo, { permissionMode: { test: "open" } })).toBe("open");
+    expect(savedPermissionMode(withYolo, { permissionMode: { other: "open" } })).toBeUndefined();
+    expect(savedPermissionMode(withYolo, { permissionMode: { test: "yolo" } })).toBeUndefined();
+    expect(savedPermissionMode(withYolo, { permissionMode: { test: "gone" } })).toBeUndefined();
+    expect(savedPermissionMode(withYolo, {})).toBeUndefined();
+  });
+
   test("selects the profile default or an explicit mode", () => {
     expect(permissionModeFor(profile)?.id).toBe("safe");
     expect(permissionModeFor(profile, "open")?.id).toBe("open");

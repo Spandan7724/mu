@@ -49,7 +49,12 @@ import {
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
-import { applySavedThinking, saveDefaultModel, saveThinkingLevel } from "./config.ts";
+import {
+  applySavedThinking,
+  saveDefaultModel,
+  savePermissionMode,
+  saveThinkingLevel,
+} from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { observeGitBranch } from "./git-branch.ts";
 import {
@@ -173,14 +178,22 @@ export function formatSubagentsOutput(message: string, depth: ColorDepth): strin
 // A trailing blank, not a leading one: shift+tab commits one of these per press,
 // and the composer sits flush against the transcript, so one line below each
 // notice separates a run of them from each other and the last from the box.
-export function formatPermissionMode(mode: PermissionMode, depth: ColorDepth): string[] {
+export function formatPermissionMode(
+  mode: PermissionMode,
+  depth: ColorDepth,
+  saved = false,
+): string[] {
   // Bold as well as coloured: the four modes have to stay apart under NO_COLOR
   // and for anyone who does not separate them by hue.
   const style = {
     ...(mode.tone ? PERMISSION_TONE_STYLES[mode.tone] : { accent: true }),
     bold: true,
   };
-  const suffix = styleText(" · this session", { dim: true }, depth);
+  const suffix = styleText(
+    saved ? " · saved for new sessions" : " · this session",
+    { dim: true },
+    depth,
+  );
   return [`  permissions set to ${styleText(mode.label, style, depth)}${suffix}`, ""];
 }
 
@@ -274,6 +287,7 @@ export async function runInteractive(
       model: args.model,
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
+      savedPermissionMode: true,
       noInstructions: args.noInstructions,
       noCheckpoints: args.noCheckpoints,
       browser: browserFlags(args),
@@ -896,7 +910,15 @@ export async function runInteractive(
     if (source === "side") sidePermissionMode = mode;
     else activePermissionMode = mode;
     app.setPermissionMode(mode, source);
-    commitLines(formatPermissionMode(mode, depth), source);
+    const saved = source !== "side" && profile !== undefined && mode.tone !== "unrestricted";
+    commitLines(formatPermissionMode(mode, depth, saved), source);
+    if (!saved || !profile) return;
+    void savePermissionMode(profile.name, mode.id).catch((error: unknown) => {
+      commitLines([
+        `  could not save permission mode: ${error instanceof Error ? error.message : String(error)}`,
+      ]);
+      paint();
+    });
   }
 
   function cyclePermissionMode(): void {
@@ -1394,11 +1416,9 @@ export async function runInteractive(
   } else {
     commitLines(app.banner());
   }
-  if (runtime.warnings.length > 0) {
-    commitLines(runtime.warnings.map((warning) => `  ${warning}`));
-  }
   const checkpointNotice = agent.checkpointUnavailable ?? agent.checkpointNotice;
-  if (checkpointNotice) commitLines([`  ${checkpointNotice}`]);
+  const startupNotices = [...runtime.warnings, ...(checkpointNotice ? [checkpointNotice] : [])];
+  if (startupNotices.length > 0) commitLines([...startupNotices.map((line) => `  ${line}`), ""]);
   void modelCatalog?.ensureFresh().then((refresh) => {
     if (exiting || !refresh.ok) return;
     adoptRefreshedModels();
