@@ -24,6 +24,7 @@ export interface ParsedArgs {
   permissionMode?: string | undefined;
   allowAll: boolean;
   noInstructions: boolean;
+  noCheckpoints: boolean;
   purgeData: boolean;
   browserProfile?: string | undefined;
   cdpUrl?: string | undefined;
@@ -61,6 +62,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     json: false,
     allowAll: false,
     noInstructions: false,
+    noCheckpoints: false,
     purgeData: false,
     errors: [],
   };
@@ -173,6 +175,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--no-instructions":
         parsed.noInstructions = true;
         break;
+      case "--no-checkpoints":
+        parsed.noCheckpoints = true;
+        break;
       case "--permission-mode":
         parsed.permissionMode = argv[++i];
         if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
@@ -243,6 +248,7 @@ Coding agent (default, or --profile coding)
 
   Coding options:
         --no-instructions    skip AGENTS.md and other global/project instruction files
+        --no-checkpoints     turn off /undo, /redo and /diff (no per-turn snapshots)
 
   Coding slash commands:
     /undo [n]        revert the last n prompts, files and conversation together

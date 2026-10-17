@@ -33,6 +33,7 @@ export interface SessionRuntimeOptions {
   permissionMode?: string | undefined;
   allowAll?: boolean | undefined;
   noInstructions?: boolean | undefined;
+  noCheckpoints?: boolean | undefined;
   browser?: BrowserFlags | undefined;
   // Merged over the options derived from flags (tests and embedders).
   profileOptions?: Record<string, unknown> | undefined;
@@ -75,7 +76,11 @@ export async function createCliSessionRuntime(
     const profileName = options.profile ?? DEFAULT_PROFILE;
     profile = await resolveProfile(profileName, {
       ...profileOptionsFromArgs(
-        { noInstructions: options.noInstructions === true, browser: options.browser },
+        {
+          noInstructions: options.noInstructions === true,
+          noCheckpoints: options.noCheckpoints === true,
+          browser: options.browser,
+        },
         profileName,
       ),
       ...(options.profileOptions ?? {}),

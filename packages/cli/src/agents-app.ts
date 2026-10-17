@@ -781,6 +781,7 @@ export async function runAgentView(
           model: model ?? dispatchModel,
           ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
           ...(args.noInstructions ? { noInstructions: true } : {}),
+          ...(args.noCheckpoints ? { noCheckpoints: true } : {}),
           environment: dispatchEnvironment(),
         })
         .catch(showError),

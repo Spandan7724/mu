@@ -170,6 +170,7 @@ async function main(): Promise<number> {
           permissionMode: args.permissionMode,
           allowAll: args.allowAll,
           noInstructions: args.noInstructions,
+          noCheckpoints: args.noCheckpoints,
           browser: browserFlags(args),
           resumeSessionId: args.resumeSessionId,
           maxTurns: args.maxTurns,

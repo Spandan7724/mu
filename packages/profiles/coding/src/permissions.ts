@@ -65,7 +65,11 @@ export interface ProjectConfig {
   permissions?: PermissionRule[];
   model?: string;
   instructions?: InstructionSettings;
-  checkpoints?: { include?: string[] | undefined; [key: string]: unknown };
+  checkpoints?: {
+    enabled?: boolean | undefined;
+    include?: string[] | undefined;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -83,15 +87,16 @@ export const instructionSettingsSchema = z.object({
   claudeRules: z.boolean().optional(),
 });
 
+export const checkpointSettingsSchema = z
+  .object({ enabled: z.boolean().optional(), include: z.array(z.string().min(1)).optional() })
+  .loose();
+
 const projectConfigSchema = z
   .object({
     permissions: z.array(permissionRuleSchema).optional(),
     model: z.string().min(1).optional(),
     instructions: instructionSettingsSchema.optional(),
-    checkpoints: z
-      .object({ include: z.array(z.string().min(1)).optional() })
-      .loose()
-      .optional(),
+    checkpoints: checkpointSettingsSchema.optional(),
   })
   .loose();
 

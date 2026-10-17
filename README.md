@@ -77,6 +77,7 @@ Useful options include:
 --max-cost <usd>               set a cost budget
 --permission-mode <mode>       default | accept-edits | plan-readonly | yolo
 --no-instructions              disable instruction loading for this run
+--no-checkpoints               turn off /undo, /redo and /diff for this run
 ```
 
 Run `mu --help` for the complete CLI reference.
@@ -147,7 +148,9 @@ an “always allow” response stores an exact project rule. `--permission-mode 
 
 Checkpoints are stored separately under `~/.mu/checkpoints`. They include tracked,
 untracked, and ignored workspace files while excluding repository metadata and Mu's own
-`.mu` state.
+`.mu` state. To skip them entirely (lowest latency, no `/undo`, `/redo` or `/diff`), pass
+`--no-checkpoints` or set `"checkpoints": { "enabled": false }` in `.mu/config.json` or
+`~/.mu/config.json`.
 
 ### Sessions and compaction
 

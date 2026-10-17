@@ -50,12 +50,15 @@ export function browserFlags(args: BrowserFlags): BrowserFlags {
 }
 
 export function profileOptionsFromArgs(
-  args: { noInstructions?: boolean; browser?: BrowserFlags | undefined },
+  args: { noInstructions?: boolean; noCheckpoints?: boolean; browser?: BrowserFlags | undefined },
   profile = DEFAULT_PROFILE,
 ): Record<string, unknown> {
   if (profile === "browser")
     return { ...browserFlags(args.browser ?? {}), codingCommand: currentExecutableCommand([]) };
-  return args.noInstructions ? { instructions: { enabled: false } } : {};
+  return {
+    ...(args.noInstructions ? { instructions: { enabled: false } } : {}),
+    ...(args.noCheckpoints ? { checkpoints: false } : {}),
+  };
 }
 
 export async function sessionStoreForProfile(

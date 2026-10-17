@@ -790,6 +790,41 @@ describe("where checkpoints run", () => {
     expect(await partialCheckpointNotice(parse(parent).root, home)).toContain("filesystem root");
   });
 
+  test("checkpoints can be turned off by the flag, project config or user config", async () => {
+    const root = await scratch();
+    const home = await scratch();
+    await git(root, "init", "--quiet");
+    const config = (dir: string, enabled: boolean) =>
+      mkdir(join(dir, ".mu"), { recursive: true }).then(() =>
+        writeFile(join(dir, ".mu", "config.json"), JSON.stringify({ checkpoints: { enabled } })),
+      );
+
+    await config(home, false);
+    const user = await codingProfile({ root, home });
+    expect(user.checkpointProvider).toBeUndefined();
+    expect(user.checkpointUnavailable).toContain(join(home, ".mu", "config.json"));
+
+    await config(root, true);
+    expect((await codingProfile({ root, home })).checkpointProvider).toBeDefined();
+
+    await config(root, false);
+    const project = await codingProfile({ root, home });
+    expect(project.checkpointProvider).toBeUndefined();
+    expect(project.checkpointUnavailable).toContain(join(root, ".mu", "config.json"));
+    expect(
+      (await codingProfile({ root, home, checkpoints: true })).checkpointProvider,
+    ).toBeDefined();
+
+    await config(root, true);
+    const flag = await codingProfile({ root, home, checkpoints: false });
+    expect(flag.checkpointProvider).toBeUndefined();
+    expect(flag.checkpointUnavailable).toContain("--no-checkpoints");
+    const track = flag.commands?.find((command) => command.name === "track");
+    expect(await track?.run({ args: "" } as never)).toMatchObject({
+      message: flag.checkpointUnavailable,
+    });
+  });
+
   test("a project below the home directory is unaffected by the home guard", async () => {
     const home = await scratch();
     const root = join(home, "code", "project");

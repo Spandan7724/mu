@@ -42,6 +42,9 @@ describe("mu browser arguments", () => {
     expect(profileOptionsFromArgs({ noInstructions: true, browser: args }, "coding")).toEqual({
       instructions: { enabled: false },
     });
+    expect(profileOptionsFromArgs({ noCheckpoints: true }, "coding")).toEqual({
+      checkpoints: false,
+    });
   });
 
   test("browser must come first and flags need values", () => {

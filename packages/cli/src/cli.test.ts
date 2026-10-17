@@ -68,6 +68,12 @@ describe("parseArgs", () => {
     expect(HELP_TEXT).toContain("--no-instructions");
   });
 
+  test("checkpoints can be turned off for one invocation", () => {
+    expect(parseArgs(["--no-checkpoints"]).noCheckpoints).toBe(true);
+    expect(parseArgs([]).noCheckpoints).toBe(false);
+    expect(HELP_TEXT).toContain("--no-checkpoints");
+  });
+
   test("help separates the coding and browser agents with their modes and commands", () => {
     const coding = HELP_TEXT.slice(
       HELP_TEXT.indexOf("Coding agent ("),
@@ -355,6 +361,7 @@ describe("runHeadless", () => {
         json: false,
         allowAll: false,
         noInstructions: false,
+        noCheckpoints: false,
         purgeData: false,
         errors: [],
       },

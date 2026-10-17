@@ -21,6 +21,8 @@ import {
 import {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
+  checkpointSettingsSchema,
+  configPath,
   instructionSettingsSchema,
   layerPermissions,
   loadProjectConfig,
@@ -48,6 +50,8 @@ export interface CodingProfileOptions {
   home?: string;
   instructions?: InstructionSettings;
   managedInstructionPaths?: string[];
+  // Overrides checkpoints.enabled from project and user config.
+  checkpoints?: boolean;
 }
 
 export interface CodingProfile extends Profile {
@@ -68,35 +72,26 @@ const SUBAGENTS_HELP = [
   "",
 ].join("\n");
 
-async function userInstructionSettings(
+interface UserConfig {
+  instructions: InstructionSettings;
+  checkpoints?: boolean;
+}
+
+async function loadUserConfig(
   home: string,
   onWarning: (message: string) => void,
-): Promise<InstructionSettings> {
+): Promise<UserConfig> {
   const path = join(home, ".mu", "config.json");
   try {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       onWarning(`Invalid user config at ${path}: config must be an object`);
-      return {};
+      return { instructions: {} };
     }
-    const instructions = (parsed as Record<string, unknown>).instructions;
-    if (instructions === undefined) return {};
-    const result = instructionSettingsSchema.safeParse(instructions);
-    if (!result.success) {
-      onWarning(
-        `Invalid user config at ${path}: ${result.error.issues
-          .map((issue) => `instructions.${issue.path.join(".")}: ${issue.message}`)
-          .join("; ")}`,
-      );
-      return {};
-    }
-    const { enabled, fallbackFilenames, projectRootMarkers, imports, claudeRules } = result.data;
+    const config = parsed as Record<string, unknown>;
     return {
-      ...(enabled !== undefined ? { enabled } : {}),
-      ...(fallbackFilenames !== undefined ? { fallbackFilenames } : {}),
-      ...(projectRootMarkers !== undefined ? { projectRootMarkers } : {}),
-      ...(imports !== undefined ? { imports } : {}),
-      ...(claudeRules !== undefined ? { claudeRules } : {}),
+      instructions: userInstructionSettings(path, config.instructions, onWarning),
+      ...userCheckpoints(path, config.checkpoints, onWarning),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -104,8 +99,67 @@ async function userInstructionSettings(
         `Invalid user config at ${path}: ${error instanceof Error ? error.message : error}`,
       );
     }
+    return { instructions: {} };
+  }
+}
+
+function userInstructionSettings(
+  path: string,
+  instructions: unknown,
+  onWarning: (message: string) => void,
+): InstructionSettings {
+  if (instructions === undefined) return {};
+  const result = instructionSettingsSchema.safeParse(instructions);
+  if (!result.success) {
+    onWarning(
+      `Invalid user config at ${path}: ${result.error.issues
+        .map((issue) => `instructions.${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
     return {};
   }
+  const { enabled, fallbackFilenames, projectRootMarkers, imports, claudeRules } = result.data;
+  return {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(fallbackFilenames !== undefined ? { fallbackFilenames } : {}),
+    ...(projectRootMarkers !== undefined ? { projectRootMarkers } : {}),
+    ...(imports !== undefined ? { imports } : {}),
+    ...(claudeRules !== undefined ? { claudeRules } : {}),
+  };
+}
+
+function userCheckpoints(
+  path: string,
+  checkpoints: unknown,
+  onWarning: (message: string) => void,
+): { checkpoints?: boolean } {
+  if (checkpoints === undefined) return {};
+  const result = checkpointSettingsSchema.safeParse(checkpoints);
+  if (!result.success) {
+    onWarning(
+      `Invalid user config at ${path}: ${result.error.issues
+        .map((issue) => `checkpoints.${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+    return {};
+  }
+  return result.data.enabled !== undefined ? { checkpoints: result.data.enabled } : {};
+}
+
+function checkpointsOffReason(
+  flag: boolean | undefined,
+  project: boolean | undefined,
+  user: boolean | undefined,
+  root: string,
+  home: string,
+): string | undefined {
+  if (flag !== undefined)
+    return flag ? undefined : "Undo, redo and /diff are off (--no-checkpoints).";
+  const [enabled, path] =
+    project !== undefined ? [project, configPath(root)] : [user, join(home, ".mu", "config.json")];
+  return enabled === false
+    ? `Undo, redo and /diff are off (checkpoints.enabled is false in ${path}).`
+    : undefined;
 }
 
 export async function codingProfile(options: CodingProfileOptions = {}): Promise<CodingProfile> {
@@ -115,22 +169,34 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   const todos = new TodoStore();
   const configDiagnostics: string[] = [];
   const projectConfig = await loadProjectConfig(root, (message) => configDiagnostics.push(message));
+  const userConfig = await loadUserConfig(home, (message) => configDiagnostics.push(message));
   const instructionLoader = new InstructionLoader({
     root,
     home,
-    ...(await userInstructionSettings(home, (message) => configDiagnostics.push(message))),
+    ...userConfig.instructions,
     ...(projectConfig.instructions ?? {}),
     ...(options.instructions ?? {}),
     ...(options.managedInstructionPaths ? { managedPaths: options.managedInstructionPaths } : {}),
   });
   await instructionLoader.reload();
-  const checkpointNotice = await partialCheckpointNotice(root, home);
-  const checkpoints = new ShadowCheckpointProvider({
+  const checkpointUnavailable = checkpointsOffReason(
+    options.checkpoints,
+    projectConfig.checkpoints?.enabled,
+    userConfig.checkpoints,
     root,
     home,
-    ...(checkpointNotice ? { coverage: "declared" as const } : {}),
-  });
-  if (!checkpointNotice) {
+  );
+  const checkpointNotice = checkpointUnavailable
+    ? undefined
+    : await partialCheckpointNotice(root, home);
+  const checkpoints = checkpointUnavailable
+    ? undefined
+    : new ShadowCheckpointProvider({
+        root,
+        home,
+        ...(checkpointNotice ? { coverage: "declared" as const } : {}),
+      });
+  if (checkpoints && !checkpointNotice) {
     const included: string[] = [];
     for (const path of projectConfig.checkpoints?.include ?? []) {
       try {
@@ -230,12 +296,13 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     commands: [
       ...trackCommands({
         root,
-        ...(checkpointNotice
-          ? {
+        ...(checkpoints && !checkpointNotice
+          ? { checkpoints }
+          : {
               unavailable:
+                checkpointUnavailable ??
                 "/track and /untrack apply only in a git repository; here checkpoints record exactly the files mu edits or writes.",
-            }
-          : { checkpoints }),
+            }),
       }),
       {
         name: "instructions",
@@ -278,7 +345,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
       todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-    checkpointProvider: checkpoints,
+    ...(checkpoints ? { checkpointProvider: checkpoints } : {}),
+    ...(checkpointUnavailable ? { checkpointUnavailable } : {}),
     ...(checkpointNotice ? { checkpointNotice } : {}),
     runtime,
     fileState,

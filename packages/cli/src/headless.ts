@@ -40,6 +40,7 @@ export async function runHeadless(
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
+      noCheckpoints: args.noCheckpoints,
       browser: browserFlags(args),
       resumeSessionId: args.resumeSessionId,
       maxTurns: args.maxTurns,

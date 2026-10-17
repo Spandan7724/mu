@@ -59,6 +59,7 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
       model: z.string().min(1).max(512).optional(),
       permissionMode: z.string().min(1).max(128).optional(),
       noInstructions: z.boolean().optional(),
+      noCheckpoints: z.boolean().optional(),
       environment: z
         .record(z.string(), z.string().max(100_000))
         .refine((value) => Object.keys(value).length <= 64, "environment has too many entries")

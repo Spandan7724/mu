@@ -132,6 +132,7 @@ export class AgentViewClient {
     model?: string;
     permissionMode?: string;
     noInstructions?: boolean;
+    noCheckpoints?: boolean;
     environment?: Record<string, string>;
   }): Promise<void> {
     await this.request({
@@ -143,6 +144,7 @@ export class AgentViewClient {
       ...(options.model ? { model: options.model } : {}),
       ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
       ...(options.noInstructions ? { noInstructions: true } : {}),
+      ...(options.noCheckpoints ? { noCheckpoints: true } : {}),
       ...(options.environment ? { environment: options.environment } : {}),
     });
   }

@@ -533,6 +533,7 @@ export class AgentSupervisor {
           runtime = await this.spawnWorker(record, {
             ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
             ...(request.noInstructions ? { noInstructions: true } : {}),
+            ...(request.noCheckpoints ? { noCheckpoints: true } : {}),
             ...(request.environment ? { environment: request.environment } : {}),
           });
           await runtime.ready;
@@ -756,6 +757,7 @@ export class AgentSupervisor {
       resume?: boolean;
       permissionMode?: string;
       noInstructions?: boolean;
+      noCheckpoints?: boolean;
       environment?: Record<string, string>;
     },
   ): Promise<WorkerRuntime> {
@@ -782,6 +784,7 @@ export class AgentSupervisor {
       ...(record.model ? ["--model", record.model] : []),
       ...(options.permissionMode ? ["--permission-mode", options.permissionMode] : []),
       ...(options.noInstructions ? ["--no-instructions"] : []),
+      ...(options.noCheckpoints ? ["--no-checkpoints"] : []),
     ];
     let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
     try {
