@@ -690,6 +690,10 @@ export async function runAgentView(
             void client
               .sessionOp(sessionId, { type: "stop_subagent", subagentId })
               .catch(showError),
+          onBackgroundTools: (toolCallIds) =>
+            void client
+              .sessionOp(sessionId, { type: "background_tools", toolCallIds })
+              .catch(showError),
           onExit: () => void detach(),
           onDetach: () => void detach(),
           onCommand: (text) => {

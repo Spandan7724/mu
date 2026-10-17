@@ -169,7 +169,10 @@ export function taskTools(manager: ProcessManager) {
       "Write to a background task's stdin — use for REPLs and interactive processes. Include a trailing newline to submit a line.",
     inputSchema: z.object({ taskId: z.string(), data: z.string() }),
     execute: ({ taskId, data }): ToolResult | string => {
-      if (!manager.get(taskId)) return errorResult(`No such task: ${taskId}`);
+      const task = manager.get(taskId);
+      if (!task) return errorResult(`No such task: ${taskId}`);
+      if (task.acceptsInput === false)
+        return errorResult(`Task ${taskId} was started in the foreground and has no input stream.`);
       return manager.writeStdin(taskId, data)
         ? `Wrote ${data.length} characters to ${taskId}.`
         : errorResult(`Task ${taskId} is not running.`);

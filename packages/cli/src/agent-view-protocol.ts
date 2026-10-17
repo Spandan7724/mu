@@ -104,6 +104,12 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
         z
           .object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) })
           .strict(),
+        z
+          .object({
+            type: z.literal("background_tools"),
+            toolCallIds: z.array(z.string().min(1).max(512)).max(256).optional(),
+          })
+          .strict(),
         z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
       ]),
     })
@@ -240,6 +246,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       toolCallId: eventId,
       toolName: z.string().min(1).max(256),
       args: z.unknown(),
+      backgroundable: z.literal(true).optional(),
     })
     .strict(),
   z
@@ -311,6 +318,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       taskId: eventId,
       command: eventString,
       background: z.boolean(),
+      startedAt: z.number().int().nonnegative().optional(),
     })
     .strict(),
   z.object({ type: z.literal("task_output"), taskId: eventId, chunk: eventString }).strict(),

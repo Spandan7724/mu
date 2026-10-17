@@ -21,15 +21,20 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   permissionDetails?: (
     args: z.infer<Schema>,
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
+  canBackground?: (args: z.infer<Schema>) => boolean;
   execute: (
     args: z.infer<Schema>,
     ctx: {
       toolCallId: string;
       signal: AbortSignal;
       update: (text: string, details?: unknown) => void;
+      // Fires when the user moves the running call to the background (canBackground).
+      background: AbortSignal;
     },
   ) => Promise<ToolResult | string> | ToolResult | string;
 }
+
+const NEVER = new AbortController().signal;
 
 function normalize(result: ToolResult | string): ToolResult {
   return typeof result === "string" ? { content: [{ type: "text", text: result }] } : result;
@@ -59,6 +64,7 @@ export function tool<Schema extends z.ZodType>(
   const concurrencyCheck = definition.isConcurrencySafe;
   const stateChangeCheck = definition.changesState;
   const resourceCheck = definition.changedResources;
+  const backgroundCheck = definition.canBackground;
 
   return {
     name: definition.name,
@@ -131,7 +137,15 @@ export function tool<Schema extends z.ZodType>(
           },
         }
       : {}),
-    execute: async (toolCallId, rawArgs, signal, onUpdate) => {
+    ...(backgroundCheck
+      ? {
+          canBackground: (rawArgs: unknown) => {
+            const parsed = parseArgs(rawArgs);
+            return parsed.success && backgroundCheck(parsed.data) === true;
+          },
+        }
+      : {}),
+    execute: async (toolCallId, rawArgs, signal, onUpdate, background) => {
       const parsed = parseArgs(rawArgs);
       if (!parsed.success) {
         const issues = parsed.error.issues
@@ -141,7 +155,14 @@ export function tool<Schema extends z.ZodType>(
       }
       const update = (text: string, details?: unknown) =>
         onUpdate?.(text.length > 0 ? [{ type: "text", text }] : [], details);
-      return normalize(await definition.execute(parsed.data, { toolCallId, signal, update }));
+      return normalize(
+        await definition.execute(parsed.data, {
+          toolCallId,
+          signal,
+          update,
+          background: background ?? NEVER,
+        }),
+      );
     },
   };
 }

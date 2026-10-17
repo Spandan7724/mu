@@ -37,11 +37,15 @@ export interface Tool<Args = Record<string, unknown>> {
   permissionDetails?: (
     args: Args,
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
+  // Whether a running call can be handed to work that outlives it. When `background`
+  // fires, execute resolves at once with a result saying where the work continues.
+  canBackground?: (args: Args) => boolean;
   execute: (
     toolCallId: string,
     args: Args,
     signal: AbortSignal,
     onUpdate?: (partial: ToolResultContent[], details?: unknown) => void,
+    background?: AbortSignal,
   ) => Promise<ToolResult>;
 }
 
@@ -54,6 +58,15 @@ export function errorResult(message: string): ToolResult {
 
 export function textResult(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
+}
+
+export function canBackground(tool: AnyTool, args: unknown): boolean {
+  if (!tool.canBackground) return false;
+  try {
+    return tool.canBackground(args) === true;
+  } catch {
+    return false;
+  }
 }
 
 export function concurrencySafe(tool: AnyTool, args: unknown): boolean {

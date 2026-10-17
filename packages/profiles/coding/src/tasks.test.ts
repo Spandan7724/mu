@@ -331,3 +331,49 @@ describe("killing a task terminates its descendants", () => {
     expect(await readFile(marker, "utf8").catch(() => "")).toBe(first);
   });
 });
+
+describe("moving a running bash command to the background", () => {
+  test("the process becomes a task with its output so far and outlives the call", async () => {
+    const root = await scratch();
+    const exited: number[] = [];
+    const profile = await codingProfile({
+      root,
+      processEvents: { onExited: (task) => exited.push(task.exitCode ?? -1) },
+    });
+    const bash = toolsOf(profile).get("bash") as AnyTool;
+    const background = new AbortController();
+    let printed = "";
+
+    const pending = bash.execute(
+      "t1",
+      { command: "echo first; sleep 1; echo second", timeoutMs: 600 },
+      signal,
+      (partial) => {
+        printed += partial.map((block) => (block.type === "text" ? block.text : "")).join("");
+        if (printed.includes("first")) background.abort();
+      },
+      background.signal,
+    );
+    const result = await pending;
+    const details = result.details as { taskId: string; background: boolean };
+    expect(details.background).toBe(true);
+    expect(textOf(result)).toContain(`moved this command to the background as ${details.taskId}`);
+    expect(textOf(result)).toContain("first");
+
+    const task = await profile.processes.wait(details.taskId);
+    expect(task?.status).toBe("exited");
+    expect(task?.exitCode).toBe(0);
+    expect(task?.acceptsInput).toBe(false);
+    const output = profile.processes.output(details.taskId)?.text ?? "";
+    expect(output).toContain("first");
+    expect(output).toContain("second");
+    expect(exited).toEqual([0]);
+  }, 60_000);
+
+  test("only foreground calls can move", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const bash = toolsOf(profile).get("bash") as AnyTool;
+    expect(bash.canBackground?.({ command: "sleep 5" })).toBe(true);
+    expect(bash.canBackground?.({ command: "sleep 5", run_in_background: true })).toBe(false);
+  });
+});

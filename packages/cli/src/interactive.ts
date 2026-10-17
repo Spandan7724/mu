@@ -408,6 +408,9 @@ export async function runInteractive(
       onStopSubagent: (subagentId) => {
         agent.stopBackgroundWork(subagentId);
       },
+      onBackgroundTools: (toolCallIds) => {
+        agent.backgroundToolCalls(toolCallIds);
+      },
       onExit: () => {
         exiting = true;
         shutdown();

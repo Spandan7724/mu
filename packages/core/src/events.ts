@@ -49,7 +49,14 @@ export type AgentEvent =
   | { type: "message_start"; message: AgentMessage }
   | { type: "message_update"; message: AssistantMessage; delta: StreamDelta }
   | { type: "message_end"; message: AgentMessage }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
+  | {
+      type: "tool_execution_start";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      // The call can be moved to the background while it runs (Agent.backgroundToolCalls).
+      backgroundable?: true;
+    }
   | {
       type: "tool_execution_update";
       toolCallId: string;
@@ -92,7 +99,14 @@ export type AgentEvent =
       keptTokens?: number;
       errorMessage?: string;
     }
-  | { type: "task_started"; taskId: string; command: string; background: boolean }
+  | {
+      type: "task_started";
+      taskId: string;
+      command: string;
+      background: boolean;
+      // Earlier than the event when a running foreground command was moved here.
+      startedAt?: number;
+    }
   | { type: "task_output"; taskId: string; chunk: string }
   | {
       type: "task_exited";

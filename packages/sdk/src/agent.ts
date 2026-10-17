@@ -184,8 +184,9 @@ export interface ChildAgentOptions {
   inheritContext?: boolean;
   // Replaces the inherited context refresh (a profile's per-child context).
   refreshContext?: AgentOptions["refreshContext"];
-  // Names the child in the permission requests it raises through the parent.
-  permissionLabel?: string;
+  // Names the child in the permission requests it raises through the parent; read
+  // per request, since a child moved to the background gains a name mid-run.
+  permissionLabel?: string | (() => string | undefined);
 }
 
 export interface BackgroundWork {
@@ -299,6 +300,7 @@ export class Agent {
   private pendingCheckpoint: { beforeEntryId: string | null; beforeRef: string } | undefined;
   // Profile-runtime tasks still running; they may change state outside any tool call.
   private readonly runningTasks = new Set<string>();
+  private readonly backgroundCalls = new Map<string, AbortController>();
   private currentThinking: ThinkingLevel;
   // What the caller selected, before reconciling it with the model's levels.
   private requestedThinking: ThinkingLevel | undefined;
@@ -451,12 +453,15 @@ export class Agent {
         ? { imageBudgetTokens: this.options.imageBudgetTokens }
         : {}),
       permissions: options.permissions ?? this.permissions,
-      onPermission: (request) =>
-        this.resolveChildPermission(
-          options.permissionLabel
-            ? { ...request, description: `${options.permissionLabel} · ${request.description}` }
-            : request,
-        ),
+      onPermission: (request) => {
+        const label =
+          typeof options.permissionLabel === "function"
+            ? options.permissionLabel()
+            : options.permissionLabel;
+        return this.resolveChildPermission(
+          label ? { ...request, description: `${label} · ${request.description}` } : request,
+        );
+      },
       ...(hasChildBudget ? { budget: childBudget } : {}),
       session: new MemorySessionStore(),
       ...(this.options.sessionProfile ? { sessionProfile: this.options.sessionProfile } : {}),
@@ -839,6 +844,24 @@ export class Agent {
 
   abort(): void {
     this.controller.abort();
+  }
+
+  // Running calls that can move to the background, by tool-call id.
+  get backgroundableCalls(): string[] {
+    return [...this.backgroundCalls.keys()];
+  }
+
+  // Asks each running backgroundable call (all of them without ids) to hand its work
+  // to the background; their calls return at once. Returns the ids asked.
+  backgroundToolCalls(ids?: readonly string[]): string[] {
+    const asked: string[] = [];
+    for (const [id, controller] of this.backgroundCalls) {
+      if (ids && !ids.includes(id)) continue;
+      if (controller.signal.aborted) continue;
+      controller.abort();
+      asked.push(id);
+    }
+    return asked;
   }
 
   // Requests compaction before the next LLM call. Kept for SDK callers that
@@ -2091,6 +2114,7 @@ export class Agent {
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
         : {}),
+      backgroundCalls: this.backgroundCalls,
       getSteeringMessages: () => {
         const pending = this.steering;
         this.steering = [];

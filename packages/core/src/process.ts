@@ -4,6 +4,8 @@
 
 export interface ManagedProcessHandle {
   write: (data: string) => void;
+  // False for a process spawned without an input stream (a moved foreground command).
+  acceptsInput?: boolean;
   resize: (cols: number, rows: number) => void;
   detach: () => void;
   // Must terminate the whole process tree: a shell that started a server
@@ -34,6 +36,7 @@ export interface TaskInfo {
   outputBytes: number;
   truncated: boolean;
   detached: boolean;
+  acceptsInput?: false;
 }
 
 const HEAD_BYTES = 8_000;
@@ -181,34 +184,59 @@ export class ProcessManager {
   }
 
   start(command: string, size: { cols?: number; rows?: number } = {}): TaskInfo {
+    const prepared = this.prepare(command, Date.now());
+    const handle = this.spawn({
+      command,
+      cols: size.cols ?? 80,
+      rows: size.rows ?? 24,
+      onOutput: prepared.onOutput,
+    });
+    return this.register(prepared, handle);
+  }
+
+  // Takes over a process that is already running, such as a foreground command the
+  // user moved to the background. `output` is what it printed so far; the returned
+  // sink receives everything it prints from now on.
+  adopt(
+    command: string,
+    handle: ManagedProcessHandle,
+    options: { startedAt: number; output?: string },
+  ): { task: TaskInfo; onOutput: (chunk: string) => void } {
+    const prepared = this.prepare(command, options.startedAt);
+    const task = this.register(prepared, handle);
+    if (options.output) prepared.onOutput(options.output);
+    return { task, onOutput: prepared.onOutput };
+  }
+
+  private prepare(command: string, startedAt: number) {
     const id = `task_${++this.counter}`;
     const buffer = new OutputBuffer();
-
     const info: TaskInfo = {
       id,
       command,
       status: "running",
       exitCode: null,
-      startedAt: Date.now(),
+      startedAt,
       outputBytes: 0,
       truncated: false,
       detached: false,
     };
+    const onOutput = (chunk: string) => {
+      buffer.append(chunk);
+      info.outputBytes = buffer.bytes;
+      info.truncated = buffer.truncated;
+      this.events.onOutput?.(id, chunk);
+    };
+    return { info, buffer, onOutput };
+  }
 
-    const handle = this.spawn({
-      command,
-      cols: size.cols ?? 80,
-      rows: size.rows ?? 24,
-      onOutput: (chunk) => {
-        buffer.append(chunk);
-        info.outputBytes = buffer.bytes;
-        info.truncated = buffer.truncated;
-        this.events.onOutput?.(id, chunk);
-      },
-    });
-
+  private register(
+    { info, buffer }: { info: TaskInfo; buffer: OutputBuffer },
+    handle: ManagedProcessHandle,
+  ): TaskInfo {
+    if (handle.acceptsInput === false) info.acceptsInput = false;
     const task: Task = { info, buffer, handle, readOffset: 0, killRequested: false };
-    this.tasks.set(id, task);
+    this.tasks.set(info.id, task);
     this.events.onStarted?.({ ...info });
 
     void handle.exited.then((code) => {
@@ -250,7 +278,7 @@ export class ProcessManager {
 
   writeStdin(id: string, data: string): boolean {
     const task = this.tasks.get(id);
-    if (!task || task.info.status !== "running") return false;
+    if (!task || task.info.status !== "running" || task.info.acceptsInput === false) return false;
     task.handle.write(data);
     return true;
   }

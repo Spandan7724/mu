@@ -235,6 +235,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
             taskId: task.id,
             command: task.command,
             background: true,
+            startedAt: task.startedAt,
           });
         },
         onOutput: (taskId, chunk) => {

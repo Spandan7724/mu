@@ -14,7 +14,13 @@ import {
 import type { AgentEndReason, AgentEvent, EventSink, StreamDelta } from "./events.ts";
 import type { AgentMessage } from "./messages.ts";
 import { toAiMessages } from "./messages.ts";
-import { type AnyTool, concurrencySafe, errorResult, type ToolResult } from "./tools.ts";
+import {
+  type AnyTool,
+  canBackground,
+  concurrencySafe,
+  errorResult,
+  type ToolResult,
+} from "./tools.ts";
 
 const PARALLEL_LIMIT = 10;
 const DOOM_LOOP_THRESHOLD = 3;
@@ -102,6 +108,9 @@ export interface LoopConfig {
   // Request-local transforms (redaction, extension injection) do not replace
   // the loop's transcript.
   transformContext?: (messages: AgentMessage[]) => AgentMessage[] | Promise<AgentMessage[]>;
+  // Running backgroundable calls by tool-call id; aborting one asks its tool to hand
+  // the work to the background and return.
+  backgroundCalls?: Map<string, AbortController>;
 }
 
 export interface AgentRunResult {
@@ -603,10 +612,15 @@ async function runPrepared(
   config: LoopConfig,
   emit: EventSink,
   signal: AbortSignal,
-): Promise<{ result: ToolResult; isError: boolean }> {
+): Promise<{ result: ToolResult; isError: boolean; backgrounded: boolean }> {
   let result: ToolResult;
   let isError: boolean;
   let updateChain = Promise.resolve();
+  const background =
+    config.backgroundCalls && canBackground(prepared.tool, prepared.args)
+      ? new AbortController()
+      : undefined;
+  if (background) config.backgroundCalls?.set(prepared.call.id, background);
   try {
     result = await prepared.tool.execute(
       prepared.call.id,
@@ -622,12 +636,15 @@ async function runPrepared(
           }),
         );
       },
+      background?.signal,
     );
     await updateChain;
     isError = result.isError === true;
   } catch (error) {
     result = errorResult(error instanceof Error ? error.message : String(error));
     isError = true;
+  } finally {
+    if (background) config.backgroundCalls?.delete(prepared.call.id);
   }
 
   if (config.afterToolCall) {
@@ -652,7 +669,7 @@ async function runPrepared(
       isError = true;
     }
   }
-  return { result, isError };
+  return { result, isError, backgrounded: background?.signal.aborted === true };
 }
 
 // Consecutive concurrency-safe calls run in parallel (capped); anything else
@@ -669,22 +686,39 @@ async function executeCalls(
   const terminateFlags: boolean[] = [];
   let directResponse: string | undefined;
   let steering: AgentMessage[] = [];
+  const endedEarly = new Set<string>();
+  const emitEnded = async (message: ToolResultMessage) => {
+    if (endedEarly.has(message.toolCallId)) {
+      await emit({ type: "message_start", message });
+      await emit({ type: "message_end", message });
+    } else await emitResult(message, emit);
+  };
 
   const runOne = async (call: ToolCallContent): Promise<ToolResultMessage> => {
+    const tool = context.tools?.find((t) => t.name === call.name);
     await emit({
       type: "tool_execution_start",
       toolCallId: call.id,
       toolName: call.name,
       args: call.arguments,
+      ...(config.backgroundCalls && tool && canBackground(tool, call.arguments)
+        ? { backgroundable: true as const }
+        : {}),
     });
     const preparation = await prepareCall(call, assistantMessage, context, config, signal);
     const outcome =
       preparation.kind === "immediate"
-        ? { result: preparation.result, isError: true }
+        ? { result: preparation.result, isError: true, backgrounded: false }
         : await runPrepared(preparation.prepared, assistantMessage, context, config, emit, signal);
     terminateFlags.push(outcome.result.terminate === true);
     directResponse ??= outcome.result.directResponse;
-    return resultMessage(call, outcome.result, outcome.isError);
+    const message = resultMessage(call, outcome.result, outcome.isError);
+    // A call moved to the background reports its end now, not when its batch does.
+    if (outcome.backgrounded) {
+      await emit({ type: "tool_execution_end", toolCallId: call.id, result: message });
+      endedEarly.add(call.id);
+    }
+    return message;
   };
 
   let i = 0;
@@ -695,7 +729,7 @@ async function executeCalls(
 
     if (!safe) {
       const message = await runOne(call);
-      await emitResult(message, emit);
+      await emitEnded(message);
       results.push(message);
       i++;
       if (signal.aborted) break;
@@ -715,7 +749,7 @@ async function executeCalls(
     }
     const settled = await Promise.all(batch.map(runOne));
     for (const message of settled) {
-      await emitResult(message, emit);
+      await emitEnded(message);
       results.push(message);
     }
     if (signal.aborted) break;

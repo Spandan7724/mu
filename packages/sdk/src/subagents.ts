@@ -159,7 +159,7 @@ interface SubagentOutcome {
 interface RunHooks {
   child?: (child: Agent) => void;
   delivered?: (text: string) => void;
-  permissionLabel?: string;
+  permissionLabel?: string | (() => string | undefined);
 }
 
 type FinalState = BackgroundSubagentResultDetails["status"];
@@ -167,6 +167,7 @@ type BackgroundState = "running" | FinalState;
 
 interface BackgroundJob {
   id: string;
+  kind: SubagentKind;
   description: string;
   sessionId: string;
   toolCallId: string;
@@ -185,6 +186,7 @@ interface BackgroundJob {
   queued?: CustomMessage | undefined;
   resultRead: boolean;
   ended: Promise<void>;
+  markEnded: () => void;
 }
 
 class SubagentManager {
@@ -336,13 +338,72 @@ class SubagentManager {
   }
 
   startBackground(description: string, prompt: string, toolCallId: string): ToolResult {
-    const parent = this.options.parent();
-    const id = `sa-${randomUUID().slice(0, 6)}`;
+    const job = this.newJob("task", description, toolCallId);
+    const done = this.launch(job, prompt, (update) => this.emitProgress(job, update));
+    return this.adopt(job, done, false);
+  }
+
+  // A call the user can move to the background while it runs. Until then it is an
+  // ordinary foreground call: its progress streams on the call and its result returns.
+  async foreground(
+    kind: SubagentKind,
+    description: string,
+    prompt: string,
+    ctx: {
+      toolCallId: string;
+      signal: AbortSignal;
+      update: (text: string, details?: unknown) => void;
+      background: AbortSignal;
+    },
+  ): Promise<ToolResult> {
+    const job = this.newJob(kind, description, ctx.toolCallId);
+    const relay = () => job.controller.abort();
+    ctx.signal.addEventListener("abort", relay, { once: true });
+    if (ctx.signal.aborted) job.controller.abort();
+    let forward = (update: SubagentProgressUpdate) => ctx.update("", update);
+    let backgrounded = false;
+    const done = this.launch(
+      job,
+      prompt,
+      (update) => forward(update),
+      () => (backgrounded ? job.id : undefined),
+    );
+    let finished = false;
+    void done.then(
+      () => {
+        finished = true;
+      },
+      () => {
+        finished = true;
+      },
+    );
+    let onBackground: (() => void) | undefined;
+    const moved = new Promise<ToolResult>((resolve) => {
+      onBackground = () => {
+        if (finished || job.controller.signal.aborted) return;
+        backgrounded = true;
+        ctx.signal.removeEventListener("abort", relay);
+        forward = (update) => this.emitProgress(job, update);
+        resolve(this.adopt(job, done, true));
+      };
+      if (ctx.background.aborted) onBackground();
+      else ctx.background.addEventListener("abort", onBackground, { once: true });
+    });
+    try {
+      return await Promise.race([done, moved]);
+    } finally {
+      if (!backgrounded) ctx.signal.removeEventListener("abort", relay);
+      if (onBackground) ctx.background.removeEventListener("abort", onBackground);
+    }
+  }
+
+  private newJob(kind: SubagentKind, description: string, toolCallId: string): BackgroundJob {
     let markEnded: () => void = () => {};
-    const job: BackgroundJob = {
-      id,
+    return {
+      id: `sa-${randomUUID().slice(0, 6)}`,
+      kind,
       description,
-      sessionId: parent.sessionId,
+      sessionId: this.options.parent().sessionId,
       toolCallId,
       startedAt: Date.now(),
       state: "running",
@@ -355,10 +416,17 @@ class SubagentManager {
       ended: new Promise((resolve) => {
         markEnded = resolve;
       }),
+      markEnded: () => markEnded(),
     };
-    this.jobs.set(id, job);
-    const emit = (event: AgentEvent) => this.options.parent().emitTaskEvent(event);
-    emit({ type: "subagent_started", subagentId: id, toolCallId, kind: "task", description });
+  }
+
+  // Runs the child, keeping the job's view of its activity current in either mode.
+  private launch(
+    job: BackgroundJob,
+    prompt: string,
+    forward: (update: SubagentProgressUpdate) => void,
+    label: () => string | undefined = () => job.id,
+  ): Promise<SubagentOutcome> {
     const progress = (_text: string, details?: unknown) => {
       const update = details as SubagentProgressUpdate | undefined;
       if (update?.type !== "subagent-progress") return;
@@ -369,9 +437,9 @@ class SubagentManager {
         if (update.event.message.role === "assistant")
           job.answer = messageText(update.event.message);
       }
-      emit({ type: "subagent_progress", subagentId: id, details: update });
+      forward(update);
     };
-    const done = this.run("task", description, prompt, job.controller.signal, progress, {
+    return this.run(job.kind, job.description, prompt, job.controller.signal, progress, {
       child: (child) => {
         job.child = child;
       },
@@ -379,8 +447,31 @@ class SubagentManager {
         const index = job.undelivered.indexOf(text);
         if (index !== -1) job.undelivered.splice(index, 1);
       },
-      permissionLabel: id,
-    })
+      permissionLabel: label,
+    });
+  }
+
+  private emitProgress(job: BackgroundJob, update: SubagentProgressUpdate): void {
+    this.options.parent().emitTaskEvent({
+      type: "subagent_progress",
+      subagentId: job.id,
+      details: update,
+    });
+  }
+
+  // From here on the job is session-owned background work reported by follow-up.
+  private adopt(job: BackgroundJob, done: Promise<SubagentOutcome>, moved: boolean): ToolResult {
+    const parent = this.options.parent();
+    const emit = (event: AgentEvent) => this.options.parent().emitTaskEvent(event);
+    this.jobs.set(job.id, job);
+    emit({
+      type: "subagent_started",
+      subagentId: job.id,
+      toolCallId: job.toolCallId,
+      kind: job.kind,
+      description: job.description,
+    });
+    const settled = done
       .catch(
         (error: unknown): SubagentOutcome => ({
           content: [
@@ -402,10 +493,10 @@ class SubagentManager {
             : "done";
         job.state = status;
         job.child = undefined;
-        markEnded();
+        job.markEnded();
         emit({
           type: "subagent_ended",
-          subagentId: id,
+          subagentId: job.id,
           status,
           content: outcome.content,
           ...(outcome.details ? { details: outcome.details } : {}),
@@ -413,25 +504,28 @@ class SubagentManager {
         await this.deliver(job, outcome, status).catch(() => {});
       });
     parent.trackBackground({
-      label: id,
-      done,
+      label: job.id,
+      done: settled,
       stop: (reason) => {
         job.stoppedBy ??= reason;
         job.controller.abort();
       },
     });
+    const manage = `You will be notified when it finishes; use subagent_status, subagent_send, or subagent_stop with this id to manage it.`;
     return {
       content: [
         {
           type: "text",
-          text: `Started background subagent ${id}. You will be notified when it finishes; use subagent_status, subagent_send, or subagent_stop with this id to manage it.`,
+          text: moved
+            ? `The user moved this subagent to the background as ${job.id} after ${formatElapsed(Date.now() - job.startedAt)}; it is still running. ${manage}${job.kind === "recall" ? " When it finishes, answer with its Recall result as instructed there." : ""}`
+            : `Started background subagent ${job.id}. ${manage}`,
         },
       ],
       details: {
         type: "subagent-background",
-        subagentId: id,
-        kind: "task",
-        description,
+        subagentId: job.id,
+        kind: job.kind,
+        description: job.description,
       } satisfies BackgroundSubagentDetails,
     };
   }
@@ -782,13 +876,11 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: true,
-            execute: (
-              { description, prompt, run_in_background },
-              { toolCallId, signal, update },
-            ) =>
+            canBackground: ({ run_in_background }) => run_in_background !== true,
+            execute: ({ description, prompt, run_in_background }, ctx) =>
               run_in_background
-                ? manager.startBackground(description, prompt, toolCallId)
-                : manager.run("task", description, prompt, signal, update),
+                ? manager.startBackground(description, prompt, ctx.toolCallId)
+                : manager.foreground("task", description, prompt, ctx),
           }),
         );
         if (!excluded.has("subagent_status"))
@@ -849,8 +941,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: false,
-            execute: ({ query }, { signal, update }) =>
-              manager.run("search", query, query, signal, update),
+            canBackground: () => true,
+            execute: ({ query }, ctx) => manager.foreground("search", query, query, ctx),
           }),
         );
       if (options.coding && !excluded.has("counsel"))
@@ -867,8 +959,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: false,
-            execute: ({ question }, { signal, update }) =>
-              manager.run("counsel", question, question, signal, update),
+            canBackground: () => true,
+            execute: ({ question }, ctx) => manager.foreground("counsel", question, question, ctx),
           }),
         );
       if (options.coding && !excluded.has("recall"))
@@ -887,8 +979,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
             isConcurrencySafe: () => true,
             changesState: false,
-            execute: ({ query }, { signal, update }) =>
-              manager.run("recall", query, query, signal, update),
+            canBackground: () => true,
+            execute: ({ query }, ctx) => manager.foreground("recall", query, query, ctx),
           }),
         );
     },

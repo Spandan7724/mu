@@ -33,6 +33,7 @@ export type RpcOp = (
   | { type: "thinking"; level: string }
   | { type: "abort" }
   | { type: "stop_subagent"; subagentId: string }
+  | { type: "background_tools"; toolCallIds?: string[] | undefined }
   | { type: "shutdown" }
 ) & { operationId?: string | undefined };
 
@@ -133,6 +134,12 @@ const rpcOpSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
   z.object({ type: z.literal("abort") }).strict(),
   z.object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) }).strict(),
+  z
+    .object({
+      type: z.literal("background_tools"),
+      toolCallIds: z.array(z.string().min(1).max(512)).max(256).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
 ]);
 
@@ -416,6 +423,11 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         case "stop_subagent":
           if (deps.agent.stopBackgroundWork(op.subagentId)) accept(op);
           else reject(op, `no running background subagent ${op.subagentId}`);
+          break;
+
+        case "background_tools":
+          if (deps.agent.backgroundToolCalls(op.toolCallIds).length > 0) accept(op);
+          else reject(op, "no running call can move to the background");
           break;
 
         case "shutdown":

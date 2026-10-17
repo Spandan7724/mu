@@ -101,6 +101,8 @@ export interface AppCallbacks {
   onAbort: () => void;
   // Stops one background subagent selected in transcript review.
   onStopSubagent?: (subagentId: string) => void;
+  // Moves running foreground calls to the background (ctrl+z, or b in review).
+  onBackgroundTools?: (toolCallIds: string[]) => void;
   onExit: () => void;
   // Present only for a conversation attached from agent view. Plain mu omits
   // it, so Left remains ordinary editor navigation there.

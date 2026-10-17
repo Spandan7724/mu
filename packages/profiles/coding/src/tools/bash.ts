@@ -1,4 +1,10 @@
-import { errorResult, OutputBuffer, type ProcessManager, type ToolResult } from "@mu/core";
+import {
+  errorResult,
+  type ManagedProcessHandle,
+  OutputBuffer,
+  type ProcessManager,
+  type ToolResult,
+} from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
@@ -18,6 +24,16 @@ interface SpawnResult {
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
+  // The process was handed over through BackgroundHandOff and is still running.
+  backgrounded?: boolean;
+}
+
+export interface BackgroundHandOff {
+  // Fires when the user moves the running command to the background.
+  signal: AbortSignal;
+  // The spawner has released its timeout and abort handling; the returned sink
+  // receives everything the process prints from now on.
+  adopt: (handle: ManagedProcessHandle) => (chunk: string) => void;
 }
 
 export interface BashDeps {
@@ -31,13 +47,14 @@ export interface BashDeps {
     signal: AbortSignal,
     timeoutMs: number,
     onOutput?: OutputChunk,
+    background?: BackgroundHandOff,
   ) => Promise<SpawnResult>;
 }
 
 async function readProcessStream(
   stream: ReadableStream<Uint8Array>,
   kind: OutputStream,
-  onOutput?: OutputChunk,
+  onOutput?: OutputChunk | undefined,
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -66,12 +83,12 @@ async function defaultSpawn(
   signal: AbortSignal,
   timeoutMs: number,
   onOutput?: OutputChunk,
+  background?: BackgroundHandOff,
 ): Promise<SpawnResult> {
   const proc = Bun.spawn(shellCommand(command), {
     cwd,
     // `detached` creates the POSIX process group used by
-    // terminateProcessTree. Windows taskkill can walk descendants directly,
-    // and this foreground command never needs to outlive mu.
+    // terminateProcessTree. Windows taskkill can walk descendants directly.
     detached: process.platform !== "win32",
     env: shellEnv(),
     stdout: "pipe",
@@ -93,18 +110,48 @@ async function defaultSpawn(
   const onAbort = terminate;
   signal.addEventListener("abort", onAbort, { once: true });
 
+  let sink: OutputChunk | undefined = onOutput;
+  const forward: OutputChunk = (text, stream) => sink?.(text, stream);
+  const finished = Promise.all([
+    readProcessStream(proc.stdout, "stdout", forward),
+    readProcessStream(proc.stderr, "stderr", forward),
+    proc.exited,
+  ]).then(([stdout, stderr, exitCode]): SpawnResult => ({ stdout, stderr, exitCode, timedOut }));
+
+  let onBackground: (() => void) | undefined;
+  const moved = new Promise<SpawnResult>((resolve) => {
+    if (!background) return;
+    onBackground = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      const adopted = background.adopt({
+        acceptsInput: false,
+        write: () => {},
+        resize: () => {},
+        detach: () => {},
+        kill: terminate,
+        exited: finished.then((result) => result.exitCode),
+      });
+      sink = (text) => adopted(text);
+      resolve({ stdout: "", stderr: "", exitCode: null, timedOut: false, backgrounded: true });
+    };
+    if (background.signal.aborted) onBackground();
+    else background.signal.addEventListener("abort", onBackground, { once: true });
+  });
+
   try {
-    const [stdout, stderr, exitCode] = await Promise.all([
-      readProcessStream(proc.stdout, "stdout", onOutput),
-      readProcessStream(proc.stderr, "stderr", onOutput),
-      proc.exited,
-    ]);
-    return { stdout, stderr, exitCode, timedOut };
+    return await Promise.race([finished, moved]);
   } finally {
     clearTimeout(timer);
     if (escalation) clearTimeout(escalation);
     signal.removeEventListener("abort", onAbort);
+    if (onBackground) background?.signal.removeEventListener("abort", onBackground);
   }
+}
+
+function formatSeconds(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function streamingUpdates(update: (text: string) => void) {
@@ -144,6 +191,8 @@ export function bashTool(deps: BashDeps) {
     permissionScope: ({ command, run_in_background }) =>
       run_in_background !== true && isInspectionShellCommand(command) ? "bash:inspect" : "bash",
     permissionPattern: ({ command }) => command,
+    canBackground: ({ run_in_background }) =>
+      run_in_background !== true && deps.processes !== undefined,
     description:
       "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use write/edit tools for file changes.",
     inputSchema: z.object({
@@ -160,7 +209,7 @@ export function bashTool(deps: BashDeps) {
     }),
     execute: async (
       { command, timeoutMs, run_in_background },
-      { signal, update },
+      { signal, update, background },
     ): Promise<ToolResult | string> => {
       if (signal.aborted) return errorResult("Aborted before the command started.");
 
@@ -182,6 +231,9 @@ export function bashTool(deps: BashDeps) {
 
       const startedAt = Date.now();
       const live = streamingUpdates(update);
+      const printed = new OutputBuffer();
+      const processes = deps.processes;
+      let movedTo: string | undefined;
       let result: SpawnResult;
       try {
         result = await spawn(
@@ -189,12 +241,44 @@ export function bashTool(deps: BashDeps) {
           deps.root,
           signal,
           timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          live.push,
+          (text, stream) => {
+            printed.append(text);
+            live.push(text, stream);
+          },
+          processes
+            ? {
+                signal: background,
+                adopt: (handle) => {
+                  const adopted = processes.adopt(command, handle, {
+                    startedAt,
+                    output: printed.read(),
+                  });
+                  movedTo = adopted.task.id;
+                  return adopted.onOutput;
+                },
+              }
+            : undefined,
         );
       } finally {
         live.flush();
       }
       const durationMs = Date.now() - startedAt;
+
+      if (result.backgrounded && movedTo) {
+        const sofar = printed.read().trimEnd();
+        const body = sofar
+          ? `\n\nOutput so far:\n${withNotice(truncateOutput(sofar), "command produced a lot of output")}`
+          : "";
+        return {
+          content: [
+            {
+              type: "text",
+              text: `The user moved this command to the background as ${movedTo} after ${formatSeconds(durationMs)}; it is still running. You will be notified when it exits. Use task_output to read it, task_kill to stop it.${body}`,
+            },
+          ],
+          details: { taskId: movedTo, command, background: true, movedAfterMs: durationMs },
+        };
+      }
 
       const parts: string[] = [];
       if (result.stdout.trim()) parts.push(result.stdout.trimEnd());

@@ -398,3 +398,112 @@ describe("child permissions and budgets", () => {
     expect(childScript.callCount).toBeLessThanOrEqual(6);
   });
 });
+
+function foreground(id = "fg-1", description = "foreground work"): ScriptedTurn {
+  return call(id, "task", { description, prompt: "Do the work" });
+}
+
+describe("moving a running subagent to the background", () => {
+  test("the call returns at once and the result arrives as a follow-up turn", async () => {
+    const { gate, release, reached } = gateTool();
+    const { parent, parentScript } = await setup(
+      [foreground(), text("Working meanwhile."), text("Integrated the result.")],
+      [call("gate-1", "gate", {}), text("Child finished the work.")],
+      { tools: [gate] },
+    );
+    const events: string[] = [];
+    let backgroundable = false;
+    parent.subscribe((event) => {
+      if (event.type === "tool_execution_start" && event.toolName === "task")
+        backgroundable = event.backgroundable === true;
+      if (event.type === "subagent_started") events.push(`started ${event.toolCallId}`);
+      if (event.type === "subagent_progress") events.push("progress");
+      if (event.type === "tool_execution_end" && event.toolCallId === "fg-1")
+        events.push(`end ${(event.result.details as { type?: string }).type}`);
+    });
+
+    const running = parent.run("delegate");
+    await reached;
+    expect(backgroundable).toBe(true);
+    expect(parent.backgroundableCalls).toEqual(["fg-1"]);
+    expect(parent.backgroundToolCalls()).toEqual(["fg-1"]);
+    const result = await running;
+    expect(result.text).toBe("Working meanwhile.");
+    expect(contextText(parentScript.requests[1] as LlmContext)).toContain(
+      "The user moved this subagent to the background as sa-",
+    );
+    release();
+    await parent.waitForSettled();
+
+    expect(events.slice(0, 2)).toEqual(["started fg-1", "end subagent-background"]);
+    expect(events).toContain("progress");
+    expect(parentScript.callCount).toBe(3);
+    const wake = contextText(parentScript.requests[2] as LlmContext);
+    expect(wake).toContain("Child finished the work.");
+    const [record] = records(parent.session.messagesAt());
+    expect((record?.details as BackgroundSubagentResultDetails).status).toBe("done");
+  });
+
+  test("interrupting the parent after the move leaves the child running", async () => {
+    const { gate, release, reached } = gateTool();
+    const { parent } = await setup(
+      [foreground(), text("Working meanwhile."), text("Integrated.")],
+      [call("gate-1", "gate", {}), text("Child finished.")],
+      { tools: [gate] },
+    );
+
+    const running = parent.run("delegate");
+    await reached;
+    parent.backgroundToolCalls();
+    await running;
+    parent.abort();
+    release();
+    await parent.waitForSettled();
+
+    const [record] = records(parent.session.messagesAt());
+    expect((record?.details as BackgroundSubagentResultDetails).status).toBe("done");
+  });
+
+  test("a moved call reports its end before the rest of its batch finishes", async () => {
+    const { gate, release, reached } = gateTool();
+    const { parent } = await setup(
+      [
+        {
+          content: [
+            {
+              type: "toolCall",
+              id: "a",
+              name: "task",
+              arguments: { description: "a", prompt: "A" },
+            },
+            {
+              type: "toolCall",
+              id: "b",
+              name: "task",
+              arguments: { description: "b", prompt: "B" },
+            },
+          ],
+        },
+        text("Both handled."),
+        text("Integrated."),
+      ],
+      [call("gate-1", "gate", {}), call("gate-2", "gate", {}), text("done"), text("done")],
+      { tools: [gate] },
+    );
+    const ended: string[] = [];
+    parent.subscribe((event) => {
+      if (event.type === "tool_execution_end") ended.push(event.toolCallId);
+    });
+
+    const running = parent.run("two at once");
+    await reached;
+    await Bun.sleep(10);
+    expect(parent.backgroundToolCalls(["a"])).toEqual(["a"]);
+    await Bun.sleep(10);
+    expect(ended).toEqual(["a"]);
+    release();
+    await running;
+    await parent.waitForSettled();
+    expect(ended.slice(0, 2)).toEqual(["a", "b"]);
+  });
+});
