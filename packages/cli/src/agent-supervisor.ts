@@ -602,8 +602,12 @@ export class AgentSupervisor {
         const record = this.requireRecord(request.sessionId, client.scope as string);
         const runtime = await this.ensureRuntime(record);
         this.cancelIdleEviction(runtime);
-        await runtime.ready;
-        await this.workerOperation(runtime, request.op);
+        try {
+          await runtime.ready;
+          await this.workerOperation(runtime, request.op);
+        } finally {
+          this.evictWhenIdle(request.sessionId, runtime);
+        }
         write(client.socket, { type: "ok", id: request.id });
         return;
       }
@@ -972,6 +976,7 @@ export class AgentSupervisor {
       runtime.snapshot.usage = event.sessionTotals;
       runtime.snapshot.contextPercent = event.contextPercent;
     }
+    if (event.type === "agent_start") this.cancelIdleEviction(runtime);
     const next = reduceManagedSession(record, { type: "agent_event", event }, this.now());
     this.records.set(sessionId, next);
     await this.persistAndBroadcast(next);
@@ -1136,6 +1141,14 @@ export class AgentSupervisor {
     if (!runtime.idleTimer) return;
     clearTimeout(runtime.idleTimer);
     delete runtime.idleTimer;
+  }
+
+  // Operations cancel the idle timer; one that starts no run must restart it,
+  // or a finished, unwatched worker is never evicted.
+  private evictWhenIdle(sessionId: string, runtime: WorkerRuntime): void {
+    const record = this.records.get(sessionId);
+    if (this.runtimes.get(sessionId) !== runtime) return;
+    if (record?.state === "completed" && !record.attached) this.scheduleIdleEviction(runtime);
   }
 
   private scheduleIdleEviction(runtime: WorkerRuntime): void {

@@ -590,6 +590,59 @@ describe("agent supervisor", () => {
     }
   });
 
+  test("an operation that starts no run still lets an idle worker be evicted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const supervisor = new AgentSupervisor({
+      paths,
+      completedIdleMs: 50,
+      command: (args) => [process.execPath, fixture, ...args],
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "finish then idle", cwd: root, profile: "coding" });
+      await waitFor(() => client.records[0]?.state === "completed");
+      const sessionId = client.records[0]?.sessionId ?? "";
+      await client.sessionOp(sessionId, { type: "permission_mode", id: "accept-edits" });
+      await waitFor(async () => (await readSessionOwnership(paths, sessionId)) === undefined);
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
+  test("a reply to an idle worker is not evicted while it runs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    let spawns = 0;
+    const supervisor = new AgentSupervisor({
+      paths,
+      completedIdleMs: 20,
+      command: (args) => {
+        spawns += 1;
+        return [process.execPath, fixture, ...args];
+      },
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({ prompt: "finish quickly", cwd: root, profile: "coding" });
+      await waitFor(() => client.records[0]?.state === "completed");
+      const sessionId = client.records[0]?.sessionId ?? "";
+      await client.sessionOp(sessionId, { type: "input", text: "slow follow-up" });
+      await waitFor(() => client.records[0]?.summary.includes("finished slow follow-up") === true);
+      expect(spawns).toBe(1);
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
   test("waits for an evicting worker to exit before accepting work on its replacement", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);
