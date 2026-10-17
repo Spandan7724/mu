@@ -43,10 +43,7 @@ export function nextPermissionMode(
   return modes[(currentIndex + 1) % modes.length];
 }
 
-// Unrestricted modes are never restored: one yolo session must not silently
-// carry over to the next launch, possibly in another repository.
 export function savedPermissionMode(profile: Profile, config: UserConfig): string | undefined {
   const id = config.permissionMode?.[profile.name];
-  const mode = profile.permissionModes?.find((candidate) => candidate.id === id);
-  return mode && mode.tone !== "unrestricted" ? mode.id : undefined;
+  return profile.permissionModes?.find((candidate) => candidate.id === id)?.id;
 }

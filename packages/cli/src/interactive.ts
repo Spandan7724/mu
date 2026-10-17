@@ -913,7 +913,7 @@ export async function runInteractive(
     if (source === "side") sidePermissionMode = mode;
     else activePermissionMode = mode;
     app.setPermissionMode(mode, source);
-    const saved = source !== "side" && profile !== undefined && mode.tone !== "unrestricted";
+    const saved = source !== "side" && profile !== undefined;
     commitLines(formatPermissionMode(mode, depth, saved), source);
     if (!saved || !profile) return;
     void savePermissionMode(profile.name, mode.id).catch((error: unknown) => {

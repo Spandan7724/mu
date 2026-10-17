@@ -30,7 +30,7 @@ const profile: Profile = {
 };
 
 describe("permission modes", () => {
-  test("restores the saved mode for this profile, never an unrestricted or unknown one", () => {
+  test("restores the saved mode for this profile, including an unrestricted one, never an unknown one", () => {
     const modes = profile.permissionModes ?? [];
     const withYolo: Profile = {
       ...profile,
@@ -41,7 +41,7 @@ describe("permission modes", () => {
     };
     expect(savedPermissionMode(withYolo, { permissionMode: { test: "open" } })).toBe("open");
     expect(savedPermissionMode(withYolo, { permissionMode: { other: "open" } })).toBeUndefined();
-    expect(savedPermissionMode(withYolo, { permissionMode: { test: "yolo" } })).toBeUndefined();
+    expect(savedPermissionMode(withYolo, { permissionMode: { test: "yolo" } })).toBe("yolo");
     expect(savedPermissionMode(withYolo, { permissionMode: { test: "gone" } })).toBeUndefined();
     expect(savedPermissionMode(withYolo, {})).toBeUndefined();
   });
