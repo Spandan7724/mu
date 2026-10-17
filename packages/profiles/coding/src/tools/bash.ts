@@ -273,7 +273,7 @@ export function bashTool(deps: BashDeps) {
           content: [
             {
               type: "text",
-              text: `The user moved this command to the background as ${movedTo} after ${formatSeconds(durationMs)}; it is still running. You will be notified when it exits. Use task_output to read it, task_kill to stop it.${body}`,
+              text: `The user moved this command to the background as ${movedTo} after ${formatSeconds(durationMs)} so they can keep working; it is still running. Do not wait for it, sleep, or poll it: continue only with work that does not depend on its result, otherwise end your turn. You will be notified when it exits; task_output reads it and task_kill stops it.${body}`,
             },
           ],
           details: { taskId: movedTo, command, background: true, movedAfterMs: durationMs },

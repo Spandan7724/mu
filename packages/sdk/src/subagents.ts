@@ -517,7 +517,7 @@ class SubagentManager {
         {
           type: "text",
           text: moved
-            ? `The user moved this subagent to the background as ${job.id} after ${formatElapsed(Date.now() - job.startedAt)}; it is still running. ${manage}${job.kind === "recall" ? " When it finishes, answer with its Recall result as instructed there." : ""}`
+            ? `The user moved this subagent to the background as ${job.id} after ${formatElapsed(Date.now() - job.startedAt)} so they can keep working; it is still running. Do not wait for it or poll it: continue only with work that does not depend on its result, otherwise end your turn. ${manage}${job.kind === "recall" ? " When it finishes, answer with its Recall result as instructed there." : ""}`
             : `Started background subagent ${job.id}. ${manage}`,
         },
       ],
