@@ -347,9 +347,10 @@ export class ProcessManager {
 
 // Exit notifications wake an idle agent through the follow-up queue — this is
 // how "tell me when the build finishes" works without polling.
-export function exitNotification(task: TaskInfo): string {
-  const outcome =
-    task.status === "killed"
+export function exitNotification(task: TaskInfo, stoppedByUser = false): string {
+  const outcome = stoppedByUser
+    ? "was stopped by the user"
+    : task.status === "killed"
       ? "was killed"
       : task.exitCode === 0
         ? "finished successfully"

@@ -338,6 +338,7 @@ describe("moving a running bash command to the background", () => {
     const exited: number[] = [];
     const profile = await codingProfile({
       root,
+      home: await scratch(),
       processEvents: { onExited: (task) => exited.push(task.exitCode ?? -1) },
     });
     const bash = toolsOf(profile).get("bash") as AnyTool;
@@ -371,9 +372,49 @@ describe("moving a running bash command to the background", () => {
   }, 60_000);
 
   test("only foreground calls can move", async () => {
-    const profile = await codingProfile({ root: await scratch() });
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
     const bash = toolsOf(profile).get("bash") as AnyTool;
     expect(bash.canBackground?.({ command: "sleep 5" })).toBe(true);
     expect(bash.canBackground?.({ command: "sleep 5", run_in_background: true })).toBe(false);
   });
+});
+
+describe("the user stopping a background task", () => {
+  test("the task is killed and recorded for the model without waking a turn", async () => {
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "bash",
+            arguments: { command: "sleep 30", run_in_background: true },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "started it" }] },
+    ]);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", {
+        model: fakeModel,
+        provider,
+        permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+      }),
+    );
+
+    await agent.run("start a background command");
+    expect(agent.stopBackgroundWork("task_1")).toBe(true);
+    const task = await profile.processes.wait("task_1");
+    await agent.waitForSettled();
+
+    expect(task?.status).toBe("killed");
+    expect(provider.callCount).toBe(2);
+    const notice = agent.session
+      .messagesAt()
+      .find((message) => message.role === "custom" && message.customType === "background_task");
+    expect(JSON.stringify(notice?.content)).toContain("was stopped by the user");
+    expect(agent.stopBackgroundWork("task_1")).toBe(false);
+    await agent.shutdown();
+  }, 60_000);
 });

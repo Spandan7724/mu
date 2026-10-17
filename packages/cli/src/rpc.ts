@@ -422,7 +422,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
 
         case "stop_subagent":
           if (deps.agent.stopBackgroundWork(op.subagentId)) accept(op);
-          else reject(op, `no running background subagent ${op.subagentId}`);
+          else reject(op, `no running background subagent or task ${op.subagentId}`);
           break;
 
         case "background_tools":

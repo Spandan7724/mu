@@ -686,7 +686,7 @@ export async function runAgentView(
             void client.sessionOp(sessionId, { type: "shell", command }).catch(showError),
           onMentionQuery: (query) => mentionCandidates(cwd, query),
           onAbort: () => void client.sessionOp(sessionId, { type: "abort" }).catch(showError),
-          onStopSubagent: (subagentId) =>
+          onStopBackground: (subagentId) =>
             void client
               .sessionOp(sessionId, { type: "stop_subagent", subagentId })
               .catch(showError),

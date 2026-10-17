@@ -236,7 +236,7 @@ describe("runRpc", () => {
         type: "op_result",
         operationId: "op-2",
         ok: false,
-        message: "no running background subagent sa-none",
+        message: "no running background subagent or task sa-none",
       },
     ]);
   });

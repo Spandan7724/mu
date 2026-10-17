@@ -100,7 +100,8 @@ export interface AppCallbacks {
   onMentionQuery?: (query: string) => { label: string; description?: string }[];
   onAbort: () => void;
   // Stops one background subagent selected in transcript review.
-  onStopSubagent?: (subagentId: string) => void;
+  // Stops a background subagent or task by its id (x twice in review).
+  onStopBackground?: (id: string) => void;
   // Moves running foreground calls to the background (ctrl+z, or b in review).
   onBackgroundTools?: (toolCallIds: string[]) => void;
   onExit: () => void;
@@ -1809,7 +1810,7 @@ export class App {
           ? `${search.matches.length === 0 ? "no matches" : `${search.matchIndex + 1}/${search.matches.length}`} ${GLYPHS.separator} n/N next/previous ${GLYPHS.separator} / new search ${GLYPHS.separator} esc close search`
           : this.stopArmedFor
             ? `x again to stop ${GLYPHS.separator} other keys cancel`
-            : `${this.selectedBackgroundCandidate() ? `b background ${GLYPHS.separator} ` : ""}${this.stoppableSubagent() && this.options.callbacks.onStopSubagent ? `x stop ${GLYPHS.separator} ` : ""}↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
+            : `${this.selectedBackgroundCandidate() ? `b background ${GLYPHS.separator} ` : ""}${this.stoppableBackground() && this.options.callbacks.onStopBackground ? `x stop ${GLYPHS.separator} ` : ""}↑↓ select ${GLYPHS.separator} pgup/pgdn jump ${GLYPHS.separator} →/enter expand ${GLYPHS.separator} ← collapse ${GLYPHS.separator} / search ${GLYPHS.separator} ctrl+o/esc close`;
     if (this.running) {
       const elapsed = formatDuration(Date.now() - this.runStartedAt);
       lines.push(
@@ -1963,13 +1964,19 @@ export class App {
     this.footerData = { ...this.footerData, backgroundTasks: tasks + subagents };
   }
 
-  private stoppableSubagent(): string | undefined {
+  private stoppableBackground(): string | undefined {
     if (this.mode !== "activity") return undefined;
     const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
-    const subagentId = node && "pending" in node ? node.pending.subagentId : undefined;
-    if (!subagentId) return undefined;
-    const live = this.backgroundSubagents.get(subagentId);
-    return live && !live.ended ? subagentId : undefined;
+    const pending = node && "pending" in node ? node.pending : undefined;
+    if (pending?.subagentId) {
+      const live = this.backgroundSubagents.get(pending.subagentId);
+      return live && !live.ended ? pending.subagentId : undefined;
+    }
+    if (pending?.taskId) {
+      const task = this.backgroundTasks.get(pending.taskId);
+      return task && !task.exit ? pending.taskId : undefined;
+    }
+    return undefined;
   }
 
   private subagentOwner(subagentId: string): PendingTool | undefined {
@@ -2622,10 +2629,10 @@ export class App {
       return;
     }
     if (key.text === "x" && !key.ctrl && !key.alt) {
-      const subagentId = this.stoppableSubagent();
-      if (!subagentId || !this.options.callbacks.onStopSubagent) return;
-      if (armed === subagentId) this.options.callbacks.onStopSubagent(subagentId);
-      else this.stopArmedFor = subagentId;
+      const id = this.stoppableBackground();
+      if (!id || !this.options.callbacks.onStopBackground) return;
+      if (armed === id) this.options.callbacks.onStopBackground(id);
+      else this.stopArmedFor = id;
       return;
     }
     if (["up", "down", "pageup", "pagedown"].includes(key.name)) {

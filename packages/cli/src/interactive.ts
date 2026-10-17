@@ -405,8 +405,8 @@ export async function runInteractive(
         if (shellController) shellController.abort();
         else activeAgent().abort();
       },
-      onStopSubagent: (subagentId) => {
-        agent.stopBackgroundWork(subagentId);
+      onStopBackground: (id) => {
+        agent.stopBackgroundWork(id);
       },
       onBackgroundTools: (toolCallIds) => {
         agent.backgroundToolCalls(toolCallIds);

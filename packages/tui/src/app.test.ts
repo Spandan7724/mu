@@ -859,7 +859,7 @@ describe("fake-agent session", () => {
 
   test("x twice in transcript review stops the selected background subagent", () => {
     const stopped: string[] = [];
-    const { app } = harness({ onStopSubagent: (id) => void stopped.push(id) });
+    const { app } = harness({ onStopBackground: (id) => void stopped.push(id) });
     const args = { description: "port the parser", prompt: "Port it", run_in_background: true };
     app.handleEvent({
       type: "tool_execution_start",
@@ -4525,6 +4525,32 @@ describe("moving running calls to the background", () => {
     const live = app.renderBottom().map(stripAnsi).join("\n");
     expect(live).toContain("┌ background · 1");
     expect(live).toContain("2 actions");
+  });
+
+  test("x twice in review stops the selected background task", () => {
+    const stopped: string[] = [];
+    const { app } = harness({ onStopBackground: (id) => void stopped.push(id) });
+    started(app);
+    app.handleEvent({ type: "task_started", taskId: "task_1", command, background: true });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "bash-1",
+      result: {
+        role: "toolResult",
+        toolCallId: "bash-1",
+        toolName: "bash",
+        content: [{ type: "text", text: "moved" }],
+        details: { taskId: "task_1", command, background: true },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    feed(app, "\u000f");
+    expect(stripAnsi(app.renderBottom().join("\n"))).toContain("x stop");
+    feed(app, "x");
+    expect(stopped).toEqual([]);
+    feed(app, "x");
+    expect(stopped).toEqual(["task_1"]);
   });
 
   test("b in review moves only the selected call", () => {

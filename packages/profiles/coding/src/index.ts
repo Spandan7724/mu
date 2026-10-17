@@ -225,6 +225,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...taskTools(processes),
   ] as AnyTool[];
 
+  const stoppedByUser = new Set<string>();
   const runtime: ProfileRuntime = {
     attach: (host) => {
       processes.setEvents({
@@ -253,13 +254,20 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
           // The transcript already shows the task's own completion row, and
           // this text is written for the model, so it wakes the run as tagged
           // context rather than as a turn the user appears to have typed.
-          if (!task.detached) {
-            host.followUp(customMessage("background_task", exitNotification(task)));
-          }
+          // A task the user stopped is recorded for the model without waking it.
+          if (task.detached) return;
+          if (stoppedByUser.delete(task.id) && host.record)
+            host.record(customMessage("background_task", exitNotification(task, true)));
+          else host.followUp(customMessage("background_task", exitNotification(task)));
         },
       });
     },
     resize: (cols, rows) => processes.resizeAll(cols, rows),
+    stopTask: (taskId) => {
+      if (!processes.kill(taskId)) return false;
+      stoppedByUser.add(taskId);
+      return true;
+    },
     stop: () => processes.stopAll(),
     shutdown: () => processes.killAll(),
   };

@@ -343,6 +343,12 @@ export class Agent {
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
       followUp: (message) => this.followUp(message),
+      record: (message) =>
+        this.trackBackground({
+          label: "record",
+          done: this.recordMessage(message),
+          stop: () => {},
+        }),
     });
   }
 
@@ -525,13 +531,15 @@ export class Agent {
   }
 
   // A user's request to stop one piece of background work by its label.
+  // Stops a background subagent or other tracked work by label, or a runtime task by id.
   stopBackgroundWork(label: string): boolean {
     for (const work of this.background.keys()) {
       if (work.label !== label) continue;
       work.stop("user");
       return true;
     }
-    return false;
+    if (!this.runningTasks.has(label)) return false;
+    return this.options.runtime?.stopTask?.(label) ?? false;
   }
 
   // Idle with no background work left: what a one-shot caller waits for before

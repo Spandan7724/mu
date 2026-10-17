@@ -26,6 +26,8 @@ export interface ProfileRuntimeHost {
   // A string wakes the run as user-authored text. Custom context reaches the
   // model without appearing in the transcript as something the user said.
   followUp: (message: string | CustomMessage) => void;
+  // Adds context for the model's next turn without starting one.
+  record?: (message: CustomMessage) => void;
 }
 
 // Session-owned resources supplied by a profile. The Agent binds their events
@@ -33,6 +35,8 @@ export interface ProfileRuntimeHost {
 export interface ProfileRuntime {
   attach: (host: ProfileRuntimeHost) => void;
   resize?: (cols: number, rows: number) => void;
+  // Stops one running task the user chose; false when there is no such task.
+  stopTask?: (taskId: string) => boolean;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;
 }
