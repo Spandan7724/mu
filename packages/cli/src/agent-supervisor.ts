@@ -100,6 +100,12 @@ interface SupervisorOptions {
   ) => Promise<void>;
 }
 
+function permissionModeChange(data: unknown): string | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { kind, id } = data as { kind?: unknown; id?: unknown };
+  return kind === "permission-mode" && typeof id === "string" ? id : undefined;
+}
+
 export const DEFAULT_COMPLETED_RUNTIME_IDLE_MS = 10 * 60 * 1_000;
 export const DEFAULT_SUPERVISOR_IDLE_MS = 5 * 60 * 1_000;
 const WORKER_OPERATION_TIMEOUT_MS = 20_000;
@@ -524,6 +530,9 @@ export class AgentSupervisor {
           cwd: request.cwd,
           profile: request.profile,
           ...(request.model ? { model: request.model } : {}),
+          ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
+          ...(request.noInstructions ? { noInstructions: true } : {}),
+          ...(request.noCheckpoints ? { noCheckpoints: true } : {}),
           now: this.now(),
         });
         this.records.set(sessionId, record);
@@ -531,9 +540,6 @@ export class AgentSupervisor {
         let runtime: WorkerRuntime | undefined;
         try {
           runtime = await this.spawnWorker(record, {
-            ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
-            ...(request.noInstructions ? { noInstructions: true } : {}),
-            ...(request.noCheckpoints ? { noCheckpoints: true } : {}),
             ...(request.environment ? { environment: request.environment } : {}),
           });
           await runtime.ready;
@@ -755,9 +761,6 @@ export class AgentSupervisor {
     record: ManagedSessionRecord,
     options: {
       resume?: boolean;
-      permissionMode?: string;
-      noInstructions?: boolean;
-      noCheckpoints?: boolean;
       environment?: Record<string, string>;
     },
   ): Promise<WorkerRuntime> {
@@ -782,9 +785,9 @@ export class AgentSupervisor {
       "--profile",
       record.profile,
       ...(record.model ? ["--model", record.model] : []),
-      ...(options.permissionMode ? ["--permission-mode", options.permissionMode] : []),
-      ...(options.noInstructions ? ["--no-instructions"] : []),
-      ...(options.noCheckpoints ? ["--no-checkpoints"] : []),
+      ...(record.permissionMode ? ["--permission-mode", record.permissionMode] : []),
+      ...(record.noInstructions ? ["--no-instructions"] : []),
+      ...(record.noCheckpoints ? ["--no-checkpoints"] : []),
     ];
     let child: Bun.Subprocess<"pipe", "pipe", "pipe">;
     try {
@@ -888,7 +891,13 @@ export class AgentSupervisor {
         } else if (out.type === "event") {
           await this.consumeAgentEvent(sessionId, out.event as AgentEvent, runtime);
         } else if (out.type === "command_result") {
-          const record = this.records.get(sessionId);
+          let record = this.records.get(sessionId);
+          const mode = permissionModeChange(out.data);
+          if (record && mode && mode !== record.permissionMode) {
+            record = { ...record, permissionMode: mode, updatedAt: this.now() };
+            this.records.set(sessionId, record);
+            await this.persistAndBroadcast(record);
+          }
           if (record) {
             this.broadcast(record.scope, {
               type: "command_result",

@@ -224,6 +224,7 @@ export async function runAgentWorker(
         cancelPermissions: runtime.cancelPermissions,
         cyclePermissionMode: runtime.cyclePermissionMode,
         setPermissionMode: runtime.setPermissionMode,
+        permissionMode: () => runtime.permissionMode?.id,
         abortAuxiliary: () => shellController?.abort(),
         runShell: async (command, emit) => {
           if (shellController) throw new Error("a shell command is already active");

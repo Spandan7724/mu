@@ -88,6 +88,7 @@ export interface RpcDeps {
   abortAuxiliary?: () => void;
   cyclePermissionMode?: () => string | undefined;
   setPermissionMode?: (id: string) => string | undefined;
+  permissionMode?: () => string | undefined;
   onThinkingChange?: () => void;
   ready?: RpcRuntimeMetadata;
   snapshot?: () => RpcSnapshot;
@@ -183,6 +184,10 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   send({ type: "ready", ...(deps.ready ?? {}) });
 
   let active: Promise<void> | undefined;
+  const permissionModeData = (label: string) => {
+    const id = deps.permissionMode?.();
+    return { kind: "permission-mode", label, ...(id ? { id } : {}) };
+  };
   const runtimeMetadata = (): RpcRuntimeMetadata | undefined => {
     const snapshot = deps.snapshot?.();
     if (!snapshot) return undefined;
@@ -356,7 +361,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
             send({
               type: "command_result",
               message: `Permissions set to ${label}.`,
-              data: { kind: "permission-mode", label },
+              data: permissionModeData(label),
               ...(runtime ? { runtime } : {}),
             });
             accept(op);
@@ -371,7 +376,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
             send({
               type: "command_result",
               message: `Permissions set to ${label}.`,
-              data: { kind: "permission-mode", label },
+              data: permissionModeData(label),
             });
             accept(op);
           }

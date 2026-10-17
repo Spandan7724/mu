@@ -535,6 +535,61 @@ describe("agent supervisor", () => {
     }
   });
 
+  test("a worker restarted after idle eviction keeps its permission mode and startup flags", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
+    roots.push(root);
+    const paths = agentViewPaths(root);
+    const spawned: string[][] = [];
+    const supervisor = new AgentSupervisor({
+      paths,
+      completedIdleMs: 20,
+      command: (args) => {
+        spawned.push(args);
+        return [process.execPath, fixture, ...args];
+      },
+    });
+    await supervisor.start();
+    const client = new AgentViewClient({ paths, scope: "project", cwd: root });
+    try {
+      await client.connect(false);
+      await client.dispatch({
+        prompt: "finish then idle",
+        cwd: root,
+        profile: "coding",
+        permissionMode: "plan-readonly",
+        noInstructions: true,
+        noCheckpoints: true,
+      });
+      await waitFor(() => client.records[0]?.state === "completed");
+      const sessionId = client.records[0]?.sessionId ?? "";
+      await client.attach(sessionId);
+      await client.sessionOp(sessionId, { type: "permission_mode", id: "accept-edits" });
+      await client.detach(sessionId);
+      await waitFor(async () => (await readSessionOwnership(paths, sessionId)) === undefined);
+      await client.sessionOp(sessionId, { type: "input", text: "continue after eviction" });
+      await waitFor(() => spawned.length === 2);
+      const flags = (args: string[] | undefined) => ({
+        mode: args?.[(args?.indexOf("--permission-mode") ?? -2) + 1],
+        noInstructions: args?.includes("--no-instructions"),
+        noCheckpoints: args?.includes("--no-checkpoints"),
+      });
+      expect(flags(spawned[0])).toEqual({
+        mode: "plan-readonly",
+        noInstructions: true,
+        noCheckpoints: true,
+      });
+      expect(spawned[1]).toContain("--resume");
+      expect(flags(spawned[1])).toEqual({
+        mode: "accept-edits",
+        noInstructions: true,
+        noCheckpoints: true,
+      });
+    } finally {
+      client.close();
+      await supervisor.close();
+    }
+  });
+
   test("waits for an evicting worker to exit before accepting work on its replacement", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-supervisor-test-"));
     roots.push(root);

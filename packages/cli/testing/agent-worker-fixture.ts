@@ -159,6 +159,13 @@ for await (const chunk of process.stdin) {
         },
       });
       acknowledge(op);
+    } else if (op.type === "permission_mode") {
+      write({
+        type: "command_result",
+        message: `Permissions set to ${op.id}.`,
+        data: { kind: "permission-mode", label: op.id, id: op.id },
+      });
+      acknowledge(op);
     } else if (op.type === "abort") {
       acknowledge(op);
     } else if (op.type === "shutdown") {

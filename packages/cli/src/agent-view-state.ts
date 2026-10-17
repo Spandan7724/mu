@@ -37,6 +37,10 @@ export const managedSessionRecordSchema = z
     workingCwd: z.string().min(1).max(8_192),
     profile: z.string().min(1).max(512),
     model: z.string().max(512).optional(),
+    // Startup choices a worker restarted after idle eviction must keep.
+    permissionMode: z.string().min(1).max(128).optional(),
+    noInstructions: z.boolean().optional(),
+    noCheckpoints: z.boolean().optional(),
     state: managedSessionStateSchema,
     summary: z.string().max(MAX_AGENT_VIEW_SUMMARY_CHARS),
     createdAt: z.number().int().nonnegative(),
@@ -239,6 +243,9 @@ export function createManagedSessionRecord(input: {
   cwd: string;
   profile: string;
   model?: string;
+  permissionMode?: string;
+  noInstructions?: boolean;
+  noCheckpoints?: boolean;
   now?: number;
 }): ManagedSessionRecord {
   const now = input.now ?? Date.now();
@@ -252,6 +259,9 @@ export function createManagedSessionRecord(input: {
     workingCwd: input.cwd,
     profile: input.profile,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+    ...(input.noInstructions ? { noInstructions: true } : {}),
+    ...(input.noCheckpoints ? { noCheckpoints: true } : {}),
     state: "starting",
     summary: displaySummary(prompt),
     createdAt: now,
