@@ -243,7 +243,7 @@ describe("background subagents", () => {
 
     expect(parentScript.callCount).toBe(2);
     const [record] = records(parent.session.messagesAt());
-    expect(JSON.stringify(record?.content)).toContain("stopped by the user");
+    expect(JSON.stringify(record?.content)).toContain("The user you are working with stopped background subagent");
     expect(parent.stopBackgroundWork("sa-missing")).toBe(false);
   });
 

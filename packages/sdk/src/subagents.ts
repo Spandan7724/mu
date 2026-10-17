@@ -815,13 +815,12 @@ function outcomeText(job: BackgroundJob): string {
 }
 
 function notificationText(job: BackgroundJob): string {
-  const by =
+  const elapsed = formatElapsed((job.endedAt ?? Date.now()) - job.startedAt);
+  const by = job.stoppedBy === "session" ? " when its session ended" : "";
+  const header =
     job.stoppedBy === "user"
-      ? " by the user"
-      : job.stoppedBy === "session"
-        ? " when its session ended"
-        : "";
-  const header = `Background subagent ${job.id} (${job.description}) ${job.state}${by} after ${formatElapsed((job.endedAt ?? Date.now()) - job.startedAt)}.`;
+      ? `The user you are working with stopped background subagent ${job.id} (${job.description}) themselves after ${elapsed}, before it finished; it did not fail.`
+      : `Background subagent ${job.id} (${job.description}) ${job.state}${by} after ${elapsed}.`;
   if (job.resultRead) return `${header} Its result was already returned to you.`;
   return `${header}\n\n${outcomeText(job)}`;
 }
