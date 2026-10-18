@@ -127,24 +127,44 @@ export {
   substituteArguments,
   toCommand,
 } from "./markdown-commands.ts";
+export type { McpExtensionOptions } from "./mcp.ts";
+export { MCP_CONTEXT_TYPE, mcpExtension } from "./mcp.ts";
+export type { CatalogTool, ServerCatalog } from "./mcp-catalog.ts";
+export { describeText, openText, signature, validateArgs } from "./mcp-catalog.ts";
 export type {
   LoadMcpConfigOptions,
+  McpApprovals,
   McpConfigReport,
-  McpStdioServerConfig,
-} from "./mcp.ts";
-export { loadMcpConfig, mcpExtension } from "./mcp.ts";
+  McpExposure,
+  McpScope,
+  McpServerSpec,
+  McpSource,
+  McpTransport,
+} from "./mcp-config.ts";
+export { loadMcpApprovals, loadMcpConfig, updateUserServerEntry } from "./mcp-config.ts";
 export type { Profile, ProfileImporter } from "./profile.ts";
 export { loadProfile, optionsFromProfile } from "./profile.ts";
 export type { HookEvent, HookRunner, HookSpec } from "./shell-hooks.ts";
 export { shellHooksExtension } from "./shell-hooks.ts";
 export type { SideConversation, SideConversationInput } from "./side.ts";
 export { startSideConversation } from "./side.ts";
-export type { Skill } from "./skills.ts";
+export type {
+  Skill,
+  SkillCatalog,
+  SkillRoot,
+  SkillRootOptions,
+  SkillScope,
+  SkillSource,
+  SkillsExtensionOptions,
+} from "./skills.ts";
 export {
-  defaultSkillRoots,
+  describeSkillCatalog,
   discoverSkills,
   loadSkill,
+  projectDirectories,
+  SKILLS_CONTEXT_TYPE,
   skillListing,
+  skillRoots,
   skillsExtension,
 } from "./skills.ts";
 export {

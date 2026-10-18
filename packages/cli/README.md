@@ -137,8 +137,10 @@ The CLI also discovers:
 
 - TypeScript extensions in `~/.mu/extensions` and `.mu/extensions`;
 - Markdown slash commands in `~/.mu/commands` and `.mu/commands`;
-- skills in `~/.mu/skills` and `.mu/skills`;
-- MCP servers from user and project `.mu/config.json`.
+- skills in `.mu/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills` and
+  `.opencode/skills` (project and home);
+- MCP servers from user and project `.mu/config.json`, and those configured for Claude Code,
+  Codex, Cursor, opencode, Gemini and VS Code.
 
 ```json
 {
@@ -146,14 +148,15 @@ The CLI also discovers:
     "docs": {
       "command": "bunx",
       "args": ["-y", "your-mcp-server"],
-      "env": { "SERVER_TOKEN": "..." }
+      "env": { "SERVER_TOKEN": "${DOCS_TOKEN}" }
     }
   }
 }
 ```
 
-MCP tools are named `mcp_<server>_<tool>` and use the same permission, event, and abort
-paths as local tools.
+The model opens a server to see its tools and calls them through `mcp_call`, which uses the
+same permission, event, and abort paths as local tools. Project-defined servers need
+`/mcp approve <name>`; `/mcp` and `/skills` show what was found.
 
 ## TypeScript SDK
 

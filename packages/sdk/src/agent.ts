@@ -1064,6 +1064,13 @@ export class Agent {
         (await this.options.refreshContext?.(compacted, {
           sessionId: this._sessionId,
         })) ?? [];
+      if (this.options.extensions) {
+        refreshed.push(
+          ...(await this.options.extensions.runContextProviders([...compacted, ...refreshed], {
+            sessionId: this._sessionId,
+          })),
+        );
+      }
       const tokensAfterSummary = estimateTokens([...compacted, ...refreshed]);
       const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
       if (replacements.length > 0) {
@@ -1933,6 +1940,13 @@ export class Agent {
       (await this.options.refreshContext?.([...seeded, ...initial], {
         sessionId: this._sessionId,
       })) ?? [];
+    if (host) {
+      refreshed.push(
+        ...(await host.runContextProviders([...seeded, ...initial, ...refreshed], {
+          sessionId: this._sessionId,
+        })),
+      );
+    }
     for (const message of refreshed) this.tree.appendMessage(message);
 
     const context: AgentContext = {

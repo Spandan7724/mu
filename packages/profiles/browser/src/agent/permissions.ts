@@ -38,6 +38,9 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule(SCOPES.share, "ask"),
   rule("notes", "allow"),
   rule("todo", "allow"),
+  rule("skill", "allow"),
+  rule("mcp_open", "allow"),
+  rule("mcp_describe", "allow"),
   // Parallel sub-tasks: starting one asks nothing; each of its actions is gated as usual.
   rule("task", "allow"),
   rule("subagent_status", "allow"),

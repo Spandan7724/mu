@@ -40,6 +40,7 @@ export type {
   StreamDelta,
 } from "./events.ts";
 export type {
+  ContextProvider,
   Extension,
   ExtensionAPI,
   ExtensionEvent,

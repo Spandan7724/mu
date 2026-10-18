@@ -18,6 +18,9 @@ export const CODING_PERMISSION_DEFAULTS: PermissionRule[] = [
   { permission: "subagent_stop", pattern: "*", action: "allow" },
   { permission: "search", pattern: "*", action: "allow" },
   { permission: "counsel", pattern: "*", action: "allow" },
+  { permission: "skill", pattern: "*", action: "allow" },
+  { permission: "mcp_open", pattern: "*", action: "allow" },
+  { permission: "mcp_describe", pattern: "*", action: "allow" },
 ];
 
 export const CODING_PERMISSION_MODES: PermissionMode[] = [

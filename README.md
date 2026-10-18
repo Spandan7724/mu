@@ -241,25 +241,47 @@ Mu also loads:
 
 - TypeScript extensions from `~/.mu/extensions` and `.mu/extensions`;
 - Markdown commands from `~/.mu/commands` and `.mu/commands`;
-- skills from the built-in user and project skill roots;
-- stdio MCP servers from user and project `.mu/config.json` files.
+- skills, including those installed for other agents;
+- MCP servers from `.mu/config.json` and from other agents' configs.
 
-An MCP configuration looks like this:
+### Skills
+
+A skill is a folder with a `SKILL.md` (YAML frontmatter with `name` and `description`).
+Mu looks in `.mu/skills`, `.agents/skills`, `.claude/skills`, `.codex/skills` and
+`.opencode/skills` in every directory from the working directory up to the repository root,
+then in the same folders under your home (`~/.config/opencode/skills` for opencode). Skills
+installed with `npx skills add <repo>` are found without extra setup.
+
+The model sees each skill's name and description and loads the full instructions when a
+task matches. Run a skill yourself with `/<skill-name> [request]`, or mention it as
+`$skill-name` in a message. `/skills` lists what was found and where. `allowed-tools` in
+frontmatter is shown but never pre-approves anything.
+
+### MCP
 
 ```json
 {
   "mcpServers": {
-    "docs": {
-      "command": "bunx",
-      "args": ["-y", "your-mcp-server"],
-      "env": { "SERVER_TOKEN": "..." }
-    }
+    "docs": { "command": "bunx", "args": ["-y", "your-mcp-server"], "env": { "TOKEN": "${DOCS_TOKEN}" } },
+    "linear": { "url": "https://mcp.linear.app/mcp", "headers": { "Authorization": "Bearer ${LINEAR_TOKEN}" } }
   }
 }
 ```
 
-Project entries override user entries with the same name. MCP tools are registered as
-`mcp_<server>_<tool>` and pass through the normal permission and event paths.
+Entries take `command`/`args`/`env`/`cwd` (stdio) or `url`/`headers` (`"type": "sse"` for
+the older transport), plus `enabled`, `description`, `includeTools`, `excludeTools`,
+`startupTimeoutMs`, `toolTimeoutMs` and `exposure`. `${VAR}` expands from the environment.
+Mu also reads servers configured for Claude Code, Codex, Cursor, opencode, Gemini and VS
+Code; an entry in `~/.mu/config.json` with only those settings (for example
+`{ "enabled": false }`) adjusts a server defined elsewhere.
+
+The model sees one line per server. It opens a server to get its tool signatures (large
+servers list their tool names, and the model asks for the signatures it needs), then calls
+tools through `mcp_call`, which asks permission as `mcp_call: <server>/<tool>`. Servers start
+on first use. A server defined by the project (`.mcp.json`, `.mu/config.json`, …) runs only
+after you approve it with `/mcp approve <name>`. `/mcp` lists servers and their state;
+`/mcp enable|disable|reconnect <name>` manage them. `"exposure": "direct"` registers a
+server's tools individually as `mcp_<server>_<tool>` instead.
 
 ## Managing several sessions
 

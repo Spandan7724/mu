@@ -124,7 +124,15 @@ export async function createCliSessionRuntime(
 
   resolved = withStoredCredentials(resolved);
   const loaded = useBuiltIns
-    ? await loadBuiltInExtensions(options.cwd, resolved.extensions)
+    ? await loadBuiltInExtensions(
+        options.cwd,
+        resolved.extensions,
+        {},
+        {},
+        {
+          project: profile?.name !== "browser",
+        },
+      )
     : { host: resolved.extensions ?? new ExtensionHost(), warnings: [] };
   for (const warning of loaded.warnings) options.onDiagnostic?.(warning);
 

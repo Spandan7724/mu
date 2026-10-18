@@ -51,6 +51,13 @@ export interface ToolRenderer {
   render: (info: { toolName: string; args: unknown; result?: ToolResult }) => string[];
 }
 
+// Returns typed context messages to append before a run (and after compaction);
+// they are persisted like profile context, so return nothing when unchanged.
+export type ContextProvider = (
+  messages: AgentMessage[],
+  context: { sessionId: string },
+) => AgentMessage[] | Promise<AgentMessage[]>;
+
 export interface ExtensionAPI {
   on<T extends ExtensionEventType>(event: T, handler: (event: ExtensionEventFor<T>) => void): void;
   onToolCall(
@@ -64,6 +71,7 @@ export interface ExtensionAPI {
     ) => ToolResultDirective | undefined | Promise<ToolResultDirective | undefined>,
   ): void;
   onContext(handler: (messages: AgentMessage[]) => AgentMessage[] | Promise<AgentMessage[]>): void;
+  registerContextProvider(provider: ContextProvider): void;
   onInput(
     handler: (text: string) => InputDirective | undefined | Promise<InputDirective | undefined>,
   ): void;
@@ -102,6 +110,7 @@ export class ExtensionHost {
   ) => ToolResultDirective | undefined | Promise<ToolResultDirective | undefined>)[] = [];
   private contextHooks: ((messages: AgentMessage[]) => AgentMessage[] | Promise<AgentMessage[]>)[] =
     [];
+  private contextProviders: ContextProvider[] = [];
   private inputHooks: ((
     text: string,
   ) => InputDirective | undefined | Promise<InputDirective | undefined>)[] = [];
@@ -116,6 +125,7 @@ export class ExtensionHost {
       onToolCall: (handler) => void this.toolCallHooks.push(handler),
       onToolResult: (handler) => void this.toolResultHooks.push(handler),
       onContext: (handler) => void this.contextHooks.push(handler),
+      registerContextProvider: (provider) => void this.contextProviders.push(provider),
       onInput: (handler) => void this.inputHooks.push(handler),
       registerTool: (tool) => void this.tools.set(tool.name, tool),
       registerCommand: (command) => this.commands.register(command),
@@ -207,6 +217,24 @@ export class ExtensionHost {
     let current = messages;
     for (const hook of this.contextHooks) current = await hook(current);
     return current;
+  }
+
+  // Each provider sees the messages earlier providers returned.
+  async runContextProviders(
+    messages: AgentMessage[],
+    context: { sessionId: string },
+  ): Promise<AgentMessage[]> {
+    const added: AgentMessage[] = [];
+    for (const provider of this.contextProviders) {
+      try {
+        added.push(...(await provider([...messages, ...added], context)));
+      } catch (error) {
+        this.logs.push(
+          `[extension context] ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    return added;
   }
 
   // A consuming handler stops the chain: the input never reaches the agent.

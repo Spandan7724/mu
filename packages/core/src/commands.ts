@@ -27,6 +27,8 @@ export interface Command {
   // Commands that replace or rewind the active durable session are unavailable
   // in ephemeral side conversations.
   sessionScoped?: boolean;
+  // Registered only when no other command already has this name.
+  fallback?: boolean;
   // biome-ignore lint/suspicious/noConfusingVoidType: a command may legitimately return nothing
   run: (ctx: CommandContext) => CommandResult | void | Promise<CommandResult | void>;
 }
@@ -35,6 +37,7 @@ export class CommandRegistry {
   private commands = new Map<string, Command>();
 
   register(command: Command): void {
+    if (command.fallback && this.commands.has(command.name)) return;
     this.commands.set(command.name, command);
   }
 
