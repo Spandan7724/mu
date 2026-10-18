@@ -211,8 +211,8 @@ describe("MCP trust and control", () => {
       getModel: () => "m",
       setModel: () => {},
     });
-    await h.commands.get("mcp")?.run(ctx("approve fixture"));
-    expect(printed.at(-1)).toContain("Approved fixture");
+    const approved = await h.commands.get("mcp")?.run(ctx("approve fixture"));
+    expect((approved as { message?: string }).message).toContain("Approved fixture");
     const opened = await h.tools.get("mcp_open")?.execute("2", { server: "fixture" }, signal());
     expect(text(opened?.content)).toContain("echo(");
     expect(

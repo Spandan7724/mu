@@ -373,10 +373,7 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
       api.registerCommand({
         name: "skills",
         description: "List discovered skills and where they come from",
-        run: async (ctx) => {
-          ctx.print(describeSkillCatalog(await rescan()));
-          return { handled: true };
-        },
+        run: async () => ({ handled: true, message: describeSkillCatalog(await rescan()) }),
       });
 
       for (const skill of catalog.skills.filter((candidate) => candidate.userInvocable)) {

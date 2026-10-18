@@ -108,8 +108,8 @@ export function openText(server: string, catalog: ServerCatalog): string {
       : raw;
   const lines = [
     large
-      ? `Server ${server} (${catalog.tools.length} tools). Get the signatures of the tools you need with mcp_describe, then call them with mcp_call.`
-      : `Server ${server} (${catalog.tools.length} tools). Call these with mcp_call.`,
+      ? `Server ${server} (${catalog.tools.length} tool${catalog.tools.length === 1 ? "" : "s"}). Get the signatures of the tools you need with mcp_describe, then call them with mcp_call.`
+      : `Server ${server} (${catalog.tools.length} tool${catalog.tools.length === 1 ? "" : "s"}). Call these with mcp_call.`,
   ];
   if (instructions) lines.push(`Instructions:\n${instructions}`);
   if (catalog.tools.length === 0) lines.push("This server has no tools.");
@@ -197,15 +197,19 @@ export function listingLine(
   server: string,
   options: { description?: string; catalog?: ServerCatalog; note?: string },
 ): string {
-  const about = options.description
-    ? firstSentence(options.description, 140)
-    : firstSentence(options.catalog?.instructions, 140);
+  const instructions = options.catalog?.instructions
+    ?.split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join(" ");
+  const about = firstSentence(options.description ?? instructions, 140);
   const parts = [`- ${server}:`];
   if (about) parts.push(about);
   if (options.catalog) {
     const names = options.catalog.tools.map((tool) => tool.name);
     parts.push(
-      `Tools: ${names.slice(0, 8).join(", ")}${names.length > 8 ? `, … ${names.length} tools` : ""}`,
+      names.length === 0
+        ? "(no tools)"
+        : `Tools: ${names.slice(0, 8).join(", ")}${names.length > 8 ? `, … ${names.length} tools` : ""}`,
     );
   } else {
     parts.push("(not connected yet; mcp_open connects it)");

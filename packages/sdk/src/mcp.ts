@@ -156,6 +156,7 @@ interface ServerState {
   client?: Client | undefined;
   connecting?: Promise<Client> | undefined;
   starting?: Transport | undefined;
+  abandon?: (() => void) | undefined;
   catalog?: ServerCatalog | undefined;
   error?: string | undefined;
 }
@@ -309,7 +310,19 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
         const transport = makeTransport(expanded.transport, fallbackSse);
         state.starting = transport;
         try {
-          await client.connect(transport, { timeout });
+          // The SSE transport never settles if closed before its stream opens, and the
+          // SDK timeout covers only the initialize request; bound the whole attempt.
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const abandoned = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`timed out after ${timeout} ms`)), timeout);
+            state.abandon = () => reject(new Error("MCP is shut down"));
+          });
+          try {
+            await Promise.race([client.connect(transport, { timeout }), abandoned]);
+          } finally {
+            clearTimeout(timer);
+            state.abandon = undefined;
+          }
           return client;
         } catch (error) {
           await client.close().catch(() => {});
@@ -503,7 +516,7 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
               ? "connecting"
               : "not started";
     const tools = state.catalog
-      ? `${state.catalog.tools.length} tools${state.status === "ready" ? "" : " (cached)"}${isLargeServer(state.catalog) ? ", opens as index" : ""}`
+      ? `${state.catalog.tools.length} tool${state.catalog.tools.length === 1 ? "" : "s"}${state.status === "ready" ? "" : " (cached)"}${isLargeServer(state.catalog) ? ", opens as index" : ""}`
       : "tools unknown";
     const where = `${spec.source} ${spec.scope} · ${spec.file}`;
     return { status, tools, where, error: state.error };
@@ -566,7 +579,7 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
         await disconnect(state);
         try {
           await connect(state);
-          return `Reconnected ${name}: ${state.catalog?.tools.length ?? 0} tools.`;
+          return `Reconnected ${name}: ${state.catalog?.tools.length ?? 0} tool(s).`;
         } catch (error) {
           return `Could not connect ${name}: ${message(error)}`;
         }
@@ -637,10 +650,7 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
       api.registerCommand({
         name: "mcp",
         description: "List MCP servers; approve, enable, disable or reconnect one",
-        run: async (ctx) => {
-          ctx.print(await runCommand(ctx));
-          return { handled: true };
-        },
+        run: async (ctx) => ({ handled: true, message: await runCommand(ctx) }),
       });
 
       if (![...states.values()].some((state) => state.spec.exposure === "open")) return;
@@ -724,6 +734,27 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
         },
         permissionPattern: (args: { server?: string; tool?: string }) =>
           `${args.server ?? ""}/${args.tool ?? ""}`,
+        permissionDetails: (args: { server?: string; tool?: string; arguments?: unknown }) => {
+          const tool = states
+            .get(args.server ?? "")
+            ?.catalog?.tools.find((candidate) => candidate.name === args.tool);
+          const hint = tool?.annotations?.destructiveHint
+            ? " (the server marks it destructive)"
+            : tool?.annotations?.readOnlyHint
+              ? " (the server marks it read-only)"
+              : "";
+          const lines = safeJson(args.arguments ?? {}).split("\n");
+          return {
+            description: `Call ${args.server ?? "?"}/${args.tool ?? "?"}${hint}`,
+            preview: {
+              kind: "text",
+              lines:
+                lines.length > 20
+                  ? [...lines.slice(0, 20), `… ${lines.length - 20} more lines`]
+                  : lines,
+            },
+          };
+        },
         execute: async (
           _id,
           args: { server?: unknown; tool?: unknown; arguments?: unknown },
@@ -765,6 +796,7 @@ export function mcpExtension(options: McpExtensionOptions): Extension {
     deactivate: async () => {
       closed = true;
       // A connection still starting would otherwise finish after shutdown and keep the process alive.
+      for (const state of states.values()) state.abandon?.();
       await Promise.allSettled([...states.values()].map((state) => state.starting?.close()));
       await Promise.allSettled([...states.values()].map((state) => state.connecting));
       await Promise.allSettled([...states.values()].map(disconnect));

@@ -63,6 +63,11 @@ describe("signatures", () => {
     expect(listingLine("gh", { catalog: catalog([merge]) })).toBe(
       "- gh: Tools: merge_pull_request",
     );
+    expect(
+      listingLine("ev", {
+        catalog: catalog([], { instructions: "# Title\n\nUse it well. More." }),
+      }),
+    ).toBe("- ev: Use it well. (no tools)");
     expect(listingLine("gh", { description: "GitHub. Issues and PRs." })).toBe(
       "- gh: GitHub. (not connected yet; mcp_open connects it)",
     );
