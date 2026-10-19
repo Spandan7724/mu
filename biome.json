@@ -23,6 +23,12 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/sdk/src/mcp-config.ts", "packages/sdk/src/mcp-config.test.ts"],
+      "linter": { "rules": { "suspicious": { "noTemplateCurlyInString": "off" } } }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

@@ -413,7 +413,9 @@ describe("the user stopping a background task", () => {
     const notice = agent.session
       .messagesAt()
       .find((message) => message.role === "custom" && message.customType === "background_task");
-    expect(JSON.stringify(notice?.content)).toContain("The user you are working with stopped background task task_1");
+    expect(JSON.stringify(notice?.content)).toContain(
+      "The user you are working with stopped background task task_1",
+    );
     expect(agent.stopBackgroundWork("task_1")).toBe(false);
     await agent.shutdown();
   }, 60_000);
