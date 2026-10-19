@@ -1409,4 +1409,35 @@ describe("runtime model and thinking changes", () => {
     );
     expect(provider.callCount).toBe(3);
   });
+
+  test("run and input-hook context reaches the model before the prompt, which stays as typed", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const extensions = new ExtensionHost();
+    await extensions.register({
+      name: "mention",
+      activate: (api) =>
+        api.onInput(() => ({ context: [customMessage("system-reminder", "hook note")] })),
+    });
+    const agent = new Agent({ provider, model: fakeModel, extensions });
+    const users: string[] = [];
+    agent.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "user") {
+        const block = event.message.content[0];
+        if (block?.type === "text") users.push(block.text);
+      }
+    });
+
+    await agent.run("/shout hi", { context: [customMessage("skill", "skill body")] });
+
+    expect(users).toEqual(["/shout hi"]);
+    const sent = JSON.stringify(provider.requests[0]?.messages);
+    expect(sent.indexOf("skill body")).toBeLessThan(sent.indexOf("hook note"));
+    expect(sent.indexOf("hook note")).toBeLessThan(sent.indexOf("/shout hi"));
+    expect(agent.session.messagesAt().map((message) => message.role)).toEqual([
+      "custom",
+      "custom",
+      "user",
+      "assistant",
+    ]);
+  });
 });

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentMessage, ExtensionHost } from "@mu/core";
+import type { MarkdownCommandRun } from "./markdown-commands.ts";
 import {
   discoverSkills,
   loadSkill,
@@ -176,17 +177,21 @@ describe("skills extension", () => {
       getModel: () => "m",
       setModel: () => {},
     });
-    const data = (result as { data?: { kind: string; prompt: string } }).data;
+    const data = (result as { data?: MarkdownCommandRun }).data;
     expect(data?.kind).toBe("markdown-command");
-    expect(data?.prompt).toContain('invoked the skill "secret"');
-    expect(data?.prompt).toContain("User request: for v2");
+    expect(data?.prompt).toBe("/secret for v2");
+    const instructions = data?.context?.[0]?.content[0];
+    expect(instructions?.type === "text" && instructions.text).toContain(
+      'invoked the skill "secret"',
+    );
   });
 
   test("$name mentions point the model at the skill tool", async () => {
     const { host } = await setup();
-    expect((await host.runInputHooks("ship it with $release please"))?.text).toContain(
-      "named the skill release",
-    );
+    const directive = await host.runInputHooks("ship it with $release please");
+    expect(directive?.text).toBeUndefined();
+    const note = directive?.context?.[0]?.content[0];
+    expect(note?.type === "text" && note.text).toContain("named the skill release");
     expect(await host.runInputHooks("costs $5")).toBeUndefined();
   });
 });

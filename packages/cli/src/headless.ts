@@ -103,6 +103,7 @@ export async function runHeadless(
       runOptions = {
         ...(command.data.model ? { model: command.data.model } : {}),
         ...(command.data.allowedTools ? { allowedTools: command.data.allowedTools } : {}),
+        ...(command.data.context ? { context: command.data.context } : {}),
       };
     } else if (command.handled) {
       const messages = [...printed, ...(command.message ? [command.message] : [])];

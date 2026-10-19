@@ -304,6 +304,7 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
               const launchError = launch(result.data.prompt, {
                 ...(result.data.model ? { model: result.data.model } : {}),
                 ...(result.data.allowedTools ? { allowedTools: result.data.allowedTools } : {}),
+                ...(result.data.context ? { context: result.data.context } : {}),
               });
               if (launchError) {
                 reject(op, launchError);

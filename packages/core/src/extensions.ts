@@ -1,7 +1,7 @@
 import type { ModelInfo, Provider } from "@mu/ai";
 import { type Command, CommandRegistry } from "./commands.ts";
 import type { AgentEvent } from "./events.ts";
-import type { AgentMessage } from "./messages.ts";
+import type { AgentMessage, CustomMessage } from "./messages.ts";
 import type { AnyTool, ToolResult } from "./tools.ts";
 
 // Directives returned from the defined block/modify points.
@@ -19,6 +19,8 @@ export interface ToolResultDirective {
 export interface InputDirective {
   consume?: boolean;
   text?: string;
+  // Delivered to the model just before the prompt; the user's text stays as typed.
+  context?: CustomMessage[];
 }
 
 export interface ToolCallHookInfo {
@@ -240,13 +242,19 @@ export class ExtensionHost {
   // A consuming handler stops the chain: the input never reaches the agent.
   async runInputHooks(text: string): Promise<InputDirective | undefined> {
     let current = text;
+    const context: CustomMessage[] = [];
     for (const hook of this.inputHooks) {
       const directive = await hook(current);
       if (directive?.consume)
         return { consume: true, ...(directive.text !== undefined ? { text: directive.text } : {}) };
       if (directive?.text !== undefined) current = directive.text;
+      if (directive?.context) context.push(...directive.context);
     }
-    return current === text ? undefined : { text: current };
+    if (current === text && context.length === 0) return undefined;
+    return {
+      ...(current !== text ? { text: current } : {}),
+      ...(context.length > 0 ? { context } : {}),
+    };
   }
 
   get hasContextHooks(): boolean {

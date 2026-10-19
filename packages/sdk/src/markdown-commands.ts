@@ -4,7 +4,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { Command } from "@mu/core";
+import type { Command, CustomMessage } from "@mu/core";
 
 export interface MarkdownCommand {
   name: string;
@@ -19,6 +19,7 @@ export interface MarkdownCommandRun {
   prompt: string;
   model?: string;
   allowedTools?: string[];
+  context?: CustomMessage[];
 }
 
 // Minimal YAML: `key: value` and `key: [a, b]`. A real YAML parser would be a

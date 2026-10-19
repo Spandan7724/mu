@@ -385,12 +385,21 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
             const fresh = await loadSkill(skill.directory, skill);
             const current = typeof fresh === "string" ? skill : fresh;
             const args = ctx.args.trim();
-            const prompt = [
-              `The user invoked the skill "${current.name}". Follow it for this request.`,
-              skillContent(current, await sampleFiles(current.directory)),
-              ...(args ? [`User request: ${args}`] : []),
-            ].join("\n\n");
-            return { handled: true, data: { kind: "markdown-command", prompt } };
+            const instructions = customMessage(
+              "skill",
+              [
+                `The user invoked the skill "${current.name}" with /${current.name}; their message follows. Follow the skill for it.`,
+                skillContent(current, await sampleFiles(current.directory)),
+              ].join("\n\n"),
+            );
+            return {
+              handled: true,
+              data: {
+                kind: "markdown-command",
+                prompt: args ? `/${current.name} ${args}` : `/${current.name}`,
+                context: [instructions],
+              },
+            };
           },
         });
       }
@@ -403,7 +412,12 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
         const unique = [...new Set(named.map((skill) => skill.name))];
         if (unique.length === 0) return undefined;
         return {
-          text: `${text}\n\n(The user named the skill${unique.length === 1 ? "" : "s"} ${unique.join(", ")}; load ${unique.length === 1 ? "it" : "them"} with the skill tool before acting.)`,
+          context: [
+            customMessage(
+              "system-reminder",
+              `The user named the skill${unique.length === 1 ? "" : "s"} ${unique.join(", ")} in their next message; load ${unique.length === 1 ? "it" : "them"} with the skill tool before acting.`,
+            ),
+          ],
         };
       });
     },

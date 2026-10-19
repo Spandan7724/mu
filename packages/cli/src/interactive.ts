@@ -1374,6 +1374,7 @@ export async function runInteractive(
       beginRun(data.prompt, {
         ...(data.model ? { model: data.model } : {}),
         ...(data.allowedTools ? { allowedTools: data.allowedTools } : {}),
+        ...(data.context ? { context: data.context } : {}),
       });
     } else if (data?.kind === "compaction" && data.status !== "queued") {
       // Standalone compaction reports its durable boundary through AgentEvent;

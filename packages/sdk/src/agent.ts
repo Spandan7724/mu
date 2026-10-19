@@ -170,6 +170,8 @@ export interface AgentRunOptions<T = unknown> {
   output?: z.ZodType<T>;
   model?: string | ModelInfo;
   allowedTools?: string[];
+  // Delivered to the model just before the prompt, without becoming the user's words.
+  context?: CustomMessage[];
 }
 
 export interface ChildAgentOptions {
@@ -1849,6 +1851,7 @@ export class Agent {
 
     const host = this.options.extensions;
     let effectivePrompt = prompt;
+    const promptContext = [...(opts?.context ?? [])];
     if (typeof prompt === "string" && host) {
       host.emitLifecycle({ type: "input", text: prompt });
       const directive = await host.runInputHooks(prompt);
@@ -1872,6 +1875,7 @@ export class Agent {
         };
       }
       if (directive?.text !== undefined) effectivePrompt = directive.text;
+      if (directive?.context) promptContext.push(...directive.context);
     }
 
     const promptMessage: AgentMessage =
@@ -2464,7 +2468,7 @@ export class Agent {
     const result = await (async () => {
       try {
         return await runLoop(
-          [promptMessage],
+          [...promptContext, promptMessage],
           context,
           config,
           async (event) => {
