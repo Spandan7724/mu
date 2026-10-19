@@ -19,3 +19,6 @@ AGENTS.md
 scripts/preview-tui.ts
 scripts/browser-tui-preview.ts
 scripts/preview/
+
+# docs site content (kept local until the site is set up)
+site-docs/
