@@ -100,6 +100,42 @@
       "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
     },
     {
+      "provider": "inception",
+      "id": "mercury-3",
+      "name": "Mercury 3",
+      "contextWindow": 1000000,
+      "maxOutput": 131072,
+      "modalities": ["text"],
+      "thinking": true,
+      "thinkingLevels": ["instant", "low", "medium", "high"],
+      "defaultThinkingLevel": "low",
+      "pricing": { "input": 0.1, "output": 0.35, "cacheRead": 0.01, "cacheWrite": 0 }
+    },
+    {
+      "provider": "inception",
+      "id": "mercury-2.5",
+      "name": "Mercury 2.5",
+      "contextWindow": 260000,
+      "maxOutput": 65536,
+      "modalities": ["text"],
+      "thinking": true,
+      "thinkingLevels": ["instant", "low", "medium", "high"],
+      "defaultThinkingLevel": "medium",
+      "pricing": { "input": 0.2, "output": 0.75, "cacheRead": 0.02, "cacheWrite": 0 }
+    },
+    {
+      "provider": "inception",
+      "id": "mercury-2",
+      "name": "Mercury 2",
+      "contextWindow": 128000,
+      "maxOutput": 50000,
+      "modalities": ["text"],
+      "thinking": true,
+      "thinkingLevels": ["instant", "low", "medium", "high"],
+      "defaultThinkingLevel": "medium",
+      "pricing": { "input": 0.25, "output": 0.75, "cacheRead": 0.025, "cacheWrite": 0 }
+    },
+    {
       "provider": "google",
       "id": "gemini-2.5-pro",
       "name": "Gemini 2.5 Pro",

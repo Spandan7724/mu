@@ -13,6 +13,7 @@ import {
 import { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
 import { discoverGitHubCopilotModels } from "./providers/github-copilot.ts";
 import { openaiCodex } from "./providers/openai.ts";
+import { defaultThinkingLevel, supportedThinkingLevels } from "./thinking.ts";
 import type { ModelInfo, Provider } from "./types.ts";
 
 const codingPlanFallbacks = {
@@ -51,6 +52,33 @@ describe("catalog", () => {
       expect(model.pricing.input).toBeGreaterThanOrEqual(0);
       expect(modelRef(model)).toContain("/");
     }
+  });
+
+  test("bundles Inception chat models with documented limits and reasoning efforts", () => {
+    const expected = [
+      { id: "mercury-3", contextWindow: 1_000_000, maxOutput: 131_072, level: "low" },
+      { id: "mercury-2.5", contextWindow: 260_000, maxOutput: 65_536, level: "medium" },
+      { id: "mercury-2", contextWindow: 128_000, maxOutput: 50_000, level: "medium" },
+    ];
+    expect(listModels().filter((model) => model.provider === "inception")).toHaveLength(3);
+    for (const { id, contextWindow, maxOutput, level } of expected) {
+      const model = findModel(`inception/${id}`) as ModelInfo;
+      expect(model).toMatchObject({
+        contextWindow,
+        maxOutput,
+        modalities: ["text"],
+        thinking: true,
+      });
+      expect(model.inferred).toBeUndefined();
+      expect(supportedThinkingLevels(model)).toEqual(["instant", "low", "medium", "high"]);
+      expect(defaultThinkingLevel(model)).toBe(level);
+    }
+    expect(findModel("inception/mercury-3")?.pricing).toEqual({
+      input: 0.1,
+      output: 0.35,
+      cacheRead: 0.01,
+      cacheWrite: 0,
+    });
   });
 
   test("bundles Codex-compatible ChatGPT-plan reasoning metadata", () => {
@@ -202,6 +230,8 @@ describe("cost", () => {
 describe("credential-aware default model", () => {
   test("prefers a provider the user actually has a key for", () => {
     expect(defaultModelRef({ OPENAI_API_KEY: "x" })).toBe("openai/gpt-5.6-sol");
+    expect(defaultModelRef({ INCEPTION_API_KEY: "x" })).toBe("inception/mercury-3");
+    expect(defaultModelRef({}, ["inception"])).toBe("inception/mercury-3");
     expect(defaultModelRef({ ANTHROPIC_API_KEY: "x" }).startsWith("anthropic/")).toBe(true);
     expect(defaultModelRef({ GEMINI_API_KEY: "x" }).startsWith("google/")).toBe(true);
   });
@@ -223,6 +253,8 @@ describe("credential-aware default model", () => {
   test("reports per-provider credential availability", () => {
     expect(providerHasCredentials("openai", { OPENAI_API_KEY: "x" })).toBe(true);
     expect(providerHasCredentials("openai", {})).toBe(false);
+    expect(providerHasCredentials("inception", { INCEPTION_API_KEY: "x" })).toBe(true);
+    expect(providerHasCredentials("inception", {})).toBe(false);
     expect(providerHasCredentials("openai-codex", { OPENAI_API_KEY: "x" })).toBe(false);
     expect(providerHasCredentials("llama-cpp", {})).toBe(true);
     // An unknown/custom provider is not gated on a key we do not know about.
@@ -255,6 +287,37 @@ describe("catalog refresh merges rather than replaces", () => {
     expect(findModel("anthropic/claude-opus-5")).toBeDefined();
     expect(findModel("openai/gpt-5.1")).toBeDefined();
     expect(findModel("google/gemini-only")).toBeDefined();
+  });
+
+  test("retains documented Inception metadata when the public source is incomplete", async () => {
+    const before = listModels().filter((model) => model.provider === "inception");
+    await refreshModels({
+      providers: [],
+      fetch: async () =>
+        Response.json({
+          inception: {
+            models: {
+              "mercury-2.5": {
+                tool_call: true,
+                reasoning: true,
+                limit: { context: 260_000, output: 65_536 },
+                cost: { input: 0.04, output: 0.15 },
+              },
+            },
+          },
+          google: {
+            models: {
+              usable: {
+                id: "gemini-only",
+                tool_call: true,
+                limit: { context: 1_000_000, output: 64_000 },
+              },
+            },
+          },
+        }),
+    });
+    expect(listModels().filter((model) => model.provider === "inception")).toEqual(before);
+    expect(defaultModelRef({}, ["inception"])).toBe("inception/mercury-3");
   });
 
   test("discovered entries override bundled ones of the same id", async () => {

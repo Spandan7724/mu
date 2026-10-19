@@ -115,6 +115,10 @@ function enabled(level: ThinkingLevel | undefined): boolean {
 
 function addThinking(body: Json, model: ModelInfo, level: ThinkingLevel | undefined): void {
   if (!model.thinking || level === undefined) return;
+  if (model.provider === "inception") {
+    body.reasoning_effort = level === "off" ? "instant" : level;
+    return;
+  }
   if (model.provider === "zai") {
     body.thinking = { type: enabled(level) ? "enabled" : "disabled" };
     if (enabled(level) && model.id === "glm-5.2") body.reasoning_effort = level;
@@ -142,7 +146,8 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
     messages: convertMessages(ctx.messages, ctx.systemPrompt),
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: opts?.maxTokens ?? model.maxOutput,
+    [model.provider === "inception" ? "max_completion_tokens" : "max_tokens"]:
+      opts?.maxTokens ?? model.maxOutput,
   };
   if (ctx.tools && ctx.tools.length > 0) {
     body.tools = ctx.tools.map((tool) => ({
@@ -156,7 +161,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
     body.tool_choice = "auto";
   }
   if (opts?.temperature !== undefined) body.temperature = opts.temperature;
-  if (opts?.sessionId) {
+  if (opts?.sessionId && model.provider !== "inception") {
     if (model.provider === "openrouter") {
       body.user = opts.sessionId;
     } else {
@@ -225,7 +230,10 @@ export function streamOpenAICompletions(
       const usage = event.usage as Json | undefined;
       if (usage) {
         const promptDetails = usage.prompt_tokens_details as Json | undefined;
-        const cached = usageNumber(promptDetails?.cached_tokens);
+        const cached = usageNumber(
+          promptDetails?.cached_tokens ??
+            (model.provider === "inception" ? usage.cached_input_tokens : undefined),
+        );
         const written = usageNumber(promptDetails?.cache_write_tokens);
         output.usage.inputTokens = Math.max(0, usageNumber(usage.prompt_tokens) - cached - written);
         output.usage.cacheReadTokens = cached;

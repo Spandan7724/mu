@@ -87,17 +87,30 @@ Run `mu --help` for the complete CLI reference.
 
 `/login` stores provider-scoped credentials in `~/.mu/auth.json`. Account sign-in is
 available for OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code, OpenRouter, and xAI. Direct
-API-key routes include Anthropic, OpenAI, Google, Z.AI Coding Plan, Qwen Token Plan, and
-other providers supported by the built-in transport catalog. Anthropic subscription OAuth
-is not supported.
+API-key routes include Anthropic, OpenAI, Google, Inception Labs, Z.AI Coding Plan, Qwen
+Token Plan, and other providers supported by the built-in transport catalog. Anthropic
+subscription OAuth is not supported.
 
-Environment variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`
-can be used instead for unattended runs. `/logout` removes only credentials saved by Mu;
-it does not change environment variables.
+Environment variables such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and
+`INCEPTION_API_KEY` can be used instead for unattended runs. `/logout` removes only
+credentials saved by Mu; it does not change environment variables.
 
 OpenAI API-key (`openai/*`) and ChatGPT-plan (`openai-codex/*`) models use separate
 credentials and can coexist. Both routes receive OpenAI's hosted web-search tool
 automatically. Other providers currently run without web search.
+
+### Inception Labs
+
+Set an API key and select a Mercury model:
+
+```sh
+export INCEPTION_API_KEY="your-api-key"
+mu --model inception/mercury-3
+```
+
+Alternatively, use `/login` → “Sign in with an API key” → “Inception Labs”. Bundled models
+are `mercury-3`, `mercury-2.5`, and `mercury-2`, with reasoning levels `instant`, `low`,
+`medium`, and `high` for text-only chat and tool use.
 
 ### Local llama.cpp models
 

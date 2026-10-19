@@ -34,6 +34,7 @@ describe("/login provider registry", () => {
       "xai",
     ]);
     expect(providers.some(({ id }) => id === "anthropic")).toBe(false);
+    expect(providers.some(({ id }) => id === "inception")).toBe(false);
     expect(providers.some(({ id }) => id === "radius")).toBe(false);
   });
 
@@ -42,6 +43,7 @@ describe("/login provider registry", () => {
     expect(providers).toContainEqual({ id: "anthropic", name: "Anthropic" });
     expect(providers).toContainEqual({ id: "openai", name: "OpenAI" });
     expect(providers).toContainEqual({ id: "google", name: "Google" });
+    expect(providers).toContainEqual({ id: "inception", name: "Inception Labs" });
     expect(providers).toContainEqual({ id: "zai", name: "Z.AI" });
     expect(providers).toContainEqual({ id: "qwen-token-plan", name: "Qwen Token Plan" });
     for (const removed of [

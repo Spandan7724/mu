@@ -415,6 +415,7 @@ describe("interactive model catalog", () => {
       openai: "gpt-5.6-sol",
       anthropic: "claude-opus-5",
       google: "gemini-2.5-pro",
+      inception: "mercury-3",
       "openai-codex": "gpt-5.6-sol",
       "github-copilot": "gpt-5.3-codex",
       "kimi-coding": "kimi-for-coding",

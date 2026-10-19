@@ -27,6 +27,7 @@ const PUBLIC_PROVIDER_SOURCES: ReadonlyArray<{
   { source: "google-vertex", providers: ["google-vertex"] },
   { source: "groq", providers: ["groq"] },
   { source: "huggingface", providers: ["huggingface"] },
+  // Inception stays bundled-only until models.dev includes Mercury 3 and current pricing.
   { source: "kimi-for-coding", providers: ["kimi-coding"] },
   { source: "minimax", providers: ["minimax"] },
   { source: "mistral", providers: ["mistral"] },
@@ -480,6 +481,7 @@ const DEFAULT_MODEL_IDS: Readonly<Record<string, string>> = {
   openai: "gpt-5.6-sol",
   anthropic: "claude-opus-5",
   google: "gemini-2.5-pro",
+  inception: "mercury-3",
   "github-copilot": "gpt-5.3-codex",
   "kimi-coding": "kimi-for-coding",
   xai: "grok-4.3",

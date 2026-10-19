@@ -110,6 +110,13 @@ const configs: BuiltinProviderConfig[] = [
     env: ["HF_TOKEN"],
   },
   {
+    id: "inception",
+    name: "Inception Labs",
+    api: "openai-completions",
+    baseUrl: "https://api.inceptionlabs.ai/v1",
+    env: ["INCEPTION_API_KEY"],
+  },
+  {
     id: "kimi-coding",
     name: "Kimi For Coding",
     api: "anthropic-messages",
