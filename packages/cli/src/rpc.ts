@@ -59,7 +59,7 @@ export interface RpcSnapshot extends RpcRuntimeMetadata {
     tone?: PermissionModeTone | undefined;
   }[];
   permissionMode?: string;
-  commands?: { label: string; description?: string }[];
+  commands?: { label: string; description?: string; kind?: "skill" }[];
 }
 
 export type RpcOut =

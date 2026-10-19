@@ -722,10 +722,12 @@ export class App {
     this.options.height = height;
   }
 
-  setCommands(commands: { label: string; description?: string }[]): void {
+  setCommands(commands: { label: string; description?: string; kind?: "skill" }[]): void {
+    const listed = commands.filter((command) => command.label !== COLLAPSE_COMMAND.label);
     this.commands = [
-      ...commands.filter((command) => command.label !== COLLAPSE_COMMAND.label),
+      ...listed.filter((command) => command.kind !== "skill"),
       COLLAPSE_COMMAND,
+      ...listed.filter((command) => command.kind === "skill"),
     ];
   }
 

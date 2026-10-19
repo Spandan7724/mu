@@ -29,6 +29,8 @@ export interface Command {
   sessionScoped?: boolean;
   // Registered only when no other command already has this name.
   fallback?: boolean;
+  // Menus list skills after every other command.
+  kind?: "skill";
   // biome-ignore lint/suspicious/noConfusingVoidType: a command may legitimately return nothing
   run: (ctx: CommandContext) => CommandResult | void | Promise<CommandResult | void>;
 }

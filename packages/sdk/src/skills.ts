@@ -381,6 +381,7 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
           name: skill.name,
           description: `Skill: ${skill.description}`,
           fallback: true,
+          kind: "skill",
           run: async (ctx) => {
             const fresh = await loadSkill(skill.directory, skill);
             const current = typeof fresh === "string" ? skill : fresh;

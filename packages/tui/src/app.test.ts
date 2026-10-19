@@ -1461,6 +1461,21 @@ describe("input handling", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 
+  test("the slash menu lists skills after every built-in command", () => {
+    const h = harness();
+    h.app.setCommands([
+      { label: "alpha-skill", description: "Skill: a", kind: "skill" },
+      { label: "model", description: "switch model" },
+      { label: "zeta", description: "user command" },
+    ]);
+    feed(h.app, "/");
+    const menu = h.app.renderBottom().map(stripAnsi).join("\n");
+    const at = (label: string) => menu.indexOf(label);
+    expect(at("model")).toBeGreaterThan(-1);
+    expect(at("zeta")).toBeLessThan(at("collapse"));
+    expect(at("collapse")).toBeLessThan(at("alpha-skill"));
+  });
+
   test("a typed slash command submits as a command, not a prompt", () => {
     const h = harness();
     h.app.setCommands([{ label: "model" }]);

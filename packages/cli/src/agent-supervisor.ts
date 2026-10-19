@@ -47,7 +47,7 @@ interface WorkerSnapshot {
   usage: Usage;
   contextPercent: number;
   isRunning: boolean;
-  commands?: { label: string; description?: string }[];
+  commands?: { label: string; description?: string; kind?: "skill" }[];
 }
 
 type WorkerLifecycle = "starting" | "ready" | "evicting" | "stopping";

@@ -216,9 +216,11 @@ export async function runAgentWorker(
             ...(mode.tone ? { tone: mode.tone } : {}),
           })),
           ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.id } : {}),
-          commands: runtime.commands
-            .list()
-            .map((command) => ({ label: command.name, description: command.description })),
+          commands: runtime.commands.list().map((command) => ({
+            label: command.name,
+            description: command.description,
+            ...(command.kind ? { kind: command.kind } : {}),
+          })),
         }),
         resolvePermission: runtime.resolvePermission,
         cancelPermissions: runtime.cancelPermissions,

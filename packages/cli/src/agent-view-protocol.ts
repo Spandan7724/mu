@@ -390,7 +390,7 @@ export interface AgentViewAttachment {
   }[];
   permissionMode?: string;
   pendingRequest?: PermissionRequest;
-  commands?: { label: string; description?: string }[];
+  commands?: { label: string; description?: string; kind?: "skill" }[];
 }
 
 export const runtimeMetadataSchema = z
@@ -447,6 +447,7 @@ export const attachmentSchema = z
           .object({
             label: z.string().min(1).max(128),
             description: z.string().max(512).optional(),
+            kind: z.literal("skill").optional(),
           })
           .strict(),
       )

@@ -857,7 +857,13 @@ export async function runInteractive(
     });
   }
 
-  app.setCommands(commands.list().map((c) => ({ label: c.name, description: c.description })));
+  app.setCommands(
+    commands.list().map((c) => ({
+      label: c.name,
+      description: c.description,
+      ...(c.kind ? { kind: c.kind } : {}),
+    })),
+  );
 
   // Layout is intentionally deferred into the renderer's throttled frame.
   // Provider streams often deliver several deltas in one frame interval; an
