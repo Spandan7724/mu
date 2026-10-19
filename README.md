@@ -254,7 +254,9 @@ installed with `npx skills add <repo>` are found without extra setup.
 
 The model sees each skill's name and description and loads the full instructions when a
 task matches. Run a skill yourself with `/<skill-name> [request]`, or mention it as
-`$skill-name` in a message. `/skills` lists what was found and where. `allowed-tools` in
+`$skill-name` in a message (`mu -p "/skill-name …"` works too). Only what you typed shows
+in the conversation; the skill's instructions go to the model alongside it. `/skills` lists
+what was found and where. `allowed-tools` in
 frontmatter is shown but never pre-approves anything.
 
 ### MCP
@@ -282,6 +284,10 @@ on first use. A server defined by the project (`.mcp.json`, `.mu/config.json`, �
 after you approve it with `/mcp approve <name>`. `/mcp` lists servers and their state;
 `/mcp enable|disable|reconnect <name>` manage them. `"exposure": "direct"` registers a
 server's tools individually as `mcp_<server>_<tool>` instead.
+
+In the TUI, a server's calls fold into one row that marks each tool, such as
+`github — opened · search_issues ✓  add_labels ✗`; select it in review (`ctrl+o`) to see
+each call and its error.
 
 ## Managing several sessions
 
