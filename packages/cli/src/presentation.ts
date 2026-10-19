@@ -1,6 +1,7 @@
 import {
   browserRenderers,
   codingRenderers,
+  mcpRenderers,
   RendererRegistry,
   subagentRenderers,
   type ToolRendererFn,
@@ -38,6 +39,7 @@ export function createRendererRegistry(
 ): RendererRegistry {
   const registry = new RendererRegistry();
   registry.registerAll(subagentRenderers);
+  registry.registerAll(mcpRenderers);
   if (profile?.name === "coding") registry.registerAll(codingRenderers);
   if (profile?.name === "browser") registry.registerAll(browserRenderers);
   registerDeclaredRenderers(registry, Object.entries(profile?.renderers ?? {}));

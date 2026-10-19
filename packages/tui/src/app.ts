@@ -2262,6 +2262,7 @@ export class App {
       item.activityKind,
       item.tools.map((tool) => tool.info),
       this.options.depth,
+      Math.max(1, this.options.width - MARGIN.length - 2),
     );
   }
 

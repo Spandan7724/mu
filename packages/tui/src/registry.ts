@@ -64,9 +64,13 @@ export interface ToolRendererFn {
   // Thinking-only turns between calls do not close this renderer's groups; the
   // thinking moves inside the group, shown when it is expanded.
   groupsAcrossThinking?: boolean;
-  // The collapsed header for a group of this renderer's calls. Without it the
-  // coding classes are summarised.
-  summarizeActivity?: (infos: readonly ToolRenderInfo[], depth: ColorDepth) => string;
+  // The collapsed header for a group of this renderer's calls, in at most
+  // `width` columns. Without it the coding classes are summarised.
+  summarizeActivity?: (
+    infos: readonly ToolRenderInfo[],
+    depth: ColorDepth,
+    width?: number,
+  ) => string;
   // Where the agent is after this call (a page, a remote host). It replaces the
   // footer's directory until another call reports a location.
   location?: (info: ToolRenderInfo) => string | undefined;
@@ -671,6 +675,7 @@ function renderSubagentActivity(
             group.kind,
             group.calls.map((call) => call.info),
             ctx.depth,
+            Math.max(1, contentWidth),
           ),
           { bold: true },
           ctx.depth,
@@ -933,9 +938,10 @@ export class RendererRegistry {
     activityKind: ActivityKind,
     infos: readonly ToolRenderInfo[],
     depth: ColorDepth,
+    width?: number,
   ): string {
     const summarize = infos[0] && this.renderers.get(infos[0].toolName)?.summarizeActivity;
-    if (summarize) return summarize(infos, depth);
+    if (summarize) return summarize(infos, depth, width);
     if (activityKind === "explore") {
       const searches = infos.filter((info) => info.toolName === "bash").length;
       const files = infos.length - searches;
