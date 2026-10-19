@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CommandRegistry } from "@mu/core";
 import {
   loadMarkdownCommands,
+  type MarkdownCommandRun,
   parseFrontmatter,
   parseMarkdownCommand,
   substituteArguments,
@@ -138,7 +139,7 @@ describe("loading from disk", () => {
 
 describe("registry integration", () => {
   test("a markdown command submits its expanded body as a prompt", async () => {
-    const submitted: { prompt: string; model?: string }[] = [];
+    const submitted: { prompt: string; model?: string; context?: string }[] = [];
     const markdown = parseMarkdownCommand(
       "review",
       `---\ndescription: Review\nmodel: openai/gpt-5.1\n---\nReview $ARGUMENTS carefully.`,
@@ -147,7 +148,13 @@ describe("registry integration", () => {
     const registry = new CommandRegistry();
     registry.register(
       toCommand(markdown, (prompt, options) =>
-        submitted.push({ prompt, ...(options.model ? { model: options.model } : {}) }),
+        submitted.push({
+          prompt,
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.context?.[0]?.content[0]?.type === "text"
+            ? { context: options.context[0].content[0].text }
+            : {}),
+        }),
       ),
     );
 
@@ -159,7 +166,8 @@ describe("registry integration", () => {
     });
 
     expect(result.handled).toBe(true);
-    expect(submitted[0]?.prompt).toBe("Review src/api.ts carefully.");
+    expect(submitted[0]?.prompt).toBe("/review src/api.ts");
+    expect(submitted[0]?.context).toContain("Review src/api.ts carefully.");
     expect(submitted[0]?.model).toBe("openai/gpt-5.1");
   });
 
@@ -190,11 +198,15 @@ describe("registry integration", () => {
       getModel: () => "fake/fake-1",
       setModel: () => {},
     });
-    expect(result.data).toEqual({
+    expect(result.data).toMatchObject({
       kind: "markdown-command",
-      prompt: "Review src/a.ts.",
+      prompt: "/review src/a.ts",
+      context: [{ role: "custom", customType: "command" }],
       model: "openai/gpt-5.1",
       allowedTools: ["read"],
     });
+    const run = result.data as MarkdownCommandRun;
+    const text = run.context?.[0]?.content[0];
+    expect(text?.type === "text" && text.text).toContain("Review src/a.ts.");
   });
 });

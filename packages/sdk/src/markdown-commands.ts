@@ -4,7 +4,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { Command, CustomMessage } from "@mu/core";
+import { type Command, type CustomMessage, customMessage } from "@mu/core";
 
 export interface MarkdownCommand {
   name: string;
@@ -129,27 +129,33 @@ export async function loadMarkdownCommands(
   return [...byName.values()];
 }
 
-// Turns a markdown command into a registry Command that submits its expanded
-// body as a prompt.
+// Turns a markdown command into a registry Command. The prompt is what the user
+// typed; the expanded body reaches the model as context just before it.
 export function toCommand(
   markdown: MarkdownCommand,
   submit?: (
     prompt: string,
-    options: { model?: string; allowedTools?: string[] },
+    options: { model?: string; allowedTools?: string[]; context?: CustomMessage[] },
   ) => unknown | Promise<unknown>,
 ): Command {
   return {
     name: markdown.name,
     description: markdown.description,
     run: async (ctx) => {
+      const instructions = customMessage(
+        "command",
+        `The user ran /${markdown.name}; treat these instructions as their request.\n\n${substituteArguments(markdown.body, ctx.args)}`,
+      );
       const request: MarkdownCommandRun = {
         kind: "markdown-command",
-        prompt: substituteArguments(markdown.body, ctx.args),
+        prompt: ctx.args ? `/${markdown.name} ${ctx.args}` : `/${markdown.name}`,
+        context: [instructions],
         ...(markdown.model ? { model: markdown.model } : {}),
         ...(markdown.allowedTools ? { allowedTools: markdown.allowedTools } : {}),
       };
       if (submit) {
         await submit(request.prompt, {
+          context: [instructions],
           ...(request.model ? { model: request.model } : {}),
           ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
         });
