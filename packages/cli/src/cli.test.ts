@@ -277,6 +277,34 @@ describe("runHeadless", () => {
     expect(out.join("")).toContain("Model set to anthropic/claude-opus-5");
   });
 
+  test("a command that submits a prompt, like a skill, runs it headlessly", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "reviewed" }] }]);
+    const extensions = new ExtensionHost();
+    await extensions.register({
+      name: "review-skill",
+      activate: (api) =>
+        api.registerCommand({
+          name: "review",
+          description: "Review",
+          run: (ctx) => ({
+            handled: true,
+            data: { kind: "markdown-command", prompt: `Review this: ${ctx.args}` },
+          }),
+        }),
+    });
+    const { out, io: sink } = io();
+    const code = await runHeadless(
+      parseArgs(["-p", "/review the parser"]),
+      { ...base(provider), extensions },
+      sink,
+    );
+
+    expect(code).toBe(EXIT.done);
+    expect(provider.callCount).toBe(1);
+    expect(JSON.stringify(provider.requests[0]?.messages)).toContain("Review this: the parser");
+    expect(out.join("")).toContain("reviewed");
+  });
+
   test("/compact is wired in headless mode", async () => {
     const provider = new FakeProvider([]);
     const { out, io: sink } = io();

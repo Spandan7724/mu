@@ -1,4 +1,4 @@
-import type { AgentOptions, HaltReason } from "mu";
+import type { AgentOptions, AgentRunOptions, HaltReason, MarkdownCommandRun } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { browserFlags } from "./profiles.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -96,7 +96,15 @@ export async function runHeadless(
       setModel: (ref) => agent.setModel(ref),
       isRunning: () => agent.isRunning,
     });
-    if (command.handled) {
+    let prompt = args.prompt;
+    let runOptions: AgentRunOptions | undefined;
+    if (isMarkdownCommandRun(command.data)) {
+      prompt = command.data.prompt;
+      runOptions = {
+        ...(command.data.model ? { model: command.data.model } : {}),
+        ...(command.data.allowedTools ? { allowedTools: command.data.allowedTools } : {}),
+      };
+    } else if (command.handled) {
       const messages = [...printed, ...(command.message ? [command.message] : [])];
       if (args.json) {
         io.stdout(
@@ -125,7 +133,7 @@ export async function runHeadless(
       if (event.type !== "agent_end" || event.reason === "done") return;
       laterReason = event.reason === "budget" ? "maxCostUsd" : event.reason;
     });
-    const result = await agent.run(args.prompt);
+    const result = await agent.run(prompt, runOptions);
     mainDone = true;
     if (!args.json) io.stdout("\n");
     await agent.waitForSettled();
@@ -147,4 +155,13 @@ export async function runHeadless(
     await agent.shutdown();
     unsubscribe();
   }
+}
+
+function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as { kind?: unknown }).kind === "markdown-command" &&
+    typeof (data as { prompt?: unknown }).prompt === "string"
+  );
 }
