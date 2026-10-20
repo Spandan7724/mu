@@ -50,6 +50,7 @@ import {
   type SubagentProgressState,
   type ToolRenderInfo,
   updateSubagentProgress,
+  WEB_SEARCH_TOOL,
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
@@ -455,6 +456,41 @@ function isSubagentTool(item: TranscriptItem | undefined): boolean {
   return item?.kind === "tool" && SUBAGENT_TOOL_NAMES.has(item.info.toolName);
 }
 
+// One spacing rule for history, the live region and the seam between them, so a
+// block that commits keeps the blank rows it had while live and nothing moves.
+type SpacingKind = "user" | "speech" | "thinking" | "tool" | "status" | "bracket";
+
+interface Spacing {
+  first: SpacingKind;
+  last: SpacingKind;
+  rows: number;
+  // A user `!` command stands alone rather than running on into tool rows.
+  standalone?: boolean;
+  subagent?: boolean;
+}
+
+function gapBetween(previous: Spacing, next: Spacing): number {
+  if (previous.last === "thinking") {
+    return next.first === "speech" || next.first === "tool" || next.first === "thinking" ? 0 : 1;
+  }
+  if (previous.last === "tool" && next.first === "tool") {
+    if (previous.standalone || next.standalone || previous.subagent !== next.subagent) return 1;
+    return previous.rows > 1 ? 1 : 0;
+  }
+  return 1;
+}
+
+function assistantSpacing(message: AssistantMessage, rows: number): Spacing {
+  const kinds = message.content.flatMap((block): SpacingKind[] =>
+    block.type === "thinking" && block.thinking.trim()
+      ? ["thinking"]
+      : block.type === "text" && block.text.trim()
+        ? ["speech"]
+        : [],
+  );
+  return { first: kinds[0] ?? "speech", last: kinds.at(-1) ?? "speech", rows };
+}
+
 function hasAssistantText(message: AssistantMessage): boolean {
   return message.content.some((block) => block.type === "text" && block.text.trim().length > 0);
 }
@@ -495,7 +531,6 @@ interface ConversationView {
   compactionPercent: number;
   pendingTools: Map<string, PendingTool>;
   pendingInputs: PendingInput[];
-  webSearchBoundaryPending: boolean;
   transcript: TranscriptItem[];
   transcriptVersion: number;
   transcriptCache:
@@ -503,9 +538,12 @@ interface ConversationView {
         version: number;
         width: number;
         rows: string[];
+        tail: Spacing | undefined;
       }
     | undefined;
   streaming: string | undefined;
+  // Thinking of the message still streaming, shown as it will be once committed.
+  streamingThinking: string[];
   streamingCache:
     | {
         text: string;
@@ -540,11 +578,11 @@ function conversationView(
     compactionPercent: 0,
     pendingTools: new Map(),
     pendingInputs: [],
-    webSearchBoundaryPending: false,
     transcript: [],
     transcriptVersion: 0,
     transcriptCache: undefined,
     streaming: undefined,
+    streamingThinking: [],
     streamingCache: undefined,
     lastError: undefined,
     footerData,
@@ -579,6 +617,7 @@ export class App {
     | "finished"
     | undefined;
   private backgroundTasks = new Map<string, LiveTask>();
+  private webSearches = 0;
   private backgroundSubagents = new Map<string, LiveSubagent>();
   // A first `x` on a running background subagent arms its stop; the second sends it.
   private stopArmedFor: string | undefined;
@@ -650,12 +689,6 @@ export class App {
   }
   private set pendingInputs(value: PendingInput[]) {
     this.view.pendingInputs = value;
-  }
-  private get webSearchBoundaryPending(): boolean {
-    return this.view.webSearchBoundaryPending;
-  }
-  private set webSearchBoundaryPending(value: boolean) {
-    this.view.webSearchBoundaryPending = value;
   }
   private get transcript(): TranscriptItem[] {
     return this.view.transcript;
@@ -961,7 +994,6 @@ export class App {
 
       case "agent_end": {
         this.clearPendingSubmissions();
-        this.webSearchBoundaryPending = false;
         this.running = false;
         this.compacting = false;
         this.compactionStage = undefined;
@@ -999,18 +1031,19 @@ export class App {
       case "message_start":
         if (event.message.role === "assistant") {
           this.streaming = "";
+          this.view.streamingThinking = [];
           this.streamingCache = undefined;
         }
         return [];
 
       case "message_update":
         if (event.delta.kind === "text_delta") {
-          if (this.webSearchBoundaryPending) {
-            this.appendTranscript([""]);
-            this.webSearchBoundaryPending = false;
-          }
           this.streaming = (this.streaming ?? "") + event.delta.text;
           this.streamingCache = undefined;
+        } else if (event.delta.kind === "thinking_delta") {
+          this.view.streamingThinking = event.message.content.flatMap((block) =>
+            block.type === "thinking" && block.thinking.trim() ? [block.thinking] : [],
+          );
         } else if (
           event.delta.kind === "toolcall_start" ||
           event.delta.kind === "toolcall_delta" ||
@@ -1049,7 +1082,6 @@ export class App {
       case "message_end": {
         const message = event.message;
         if (message.role === "user") {
-          this.webSearchBoundaryPending = false;
           const text = message.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
@@ -1081,13 +1113,12 @@ export class App {
         }
         if (message.role === "assistant") {
           this.streaming = undefined;
+          this.view.streamingThinking = [];
           this.streamingCache = undefined;
           if (message.stopReason === "error" && message.errorMessage) {
             this.lastError = message.errorMessage;
           }
           if (hasAssistantDisplay(message)) {
-            if (this.webSearchBoundaryPending) this.appendTranscript([""]);
-            this.webSearchBoundaryPending = false;
             this.pushTranscript({ kind: "assistant", message });
           }
           return [];
@@ -1153,11 +1184,12 @@ export class App {
         return [];
 
       case "web_search_end": {
-        const lines = [
-          MARGIN + styleText(`searched · ${webSearchDetail(event)}`, { dim: true }, this.ctx.depth),
-        ];
-        this.appendTranscript(lines);
-        this.webSearchBoundaryPending = true;
+        const info: ToolRenderInfo = {
+          toolName: WEB_SEARCH_TOOL,
+          args: { query: webSearchDetail(event) },
+        };
+        const lines = this.registry.render(info, this.ctx);
+        this.pushTool(`web-search:${++this.webSearches}`, info, lines);
         return lines;
       }
 
@@ -1418,8 +1450,8 @@ export class App {
     this.backgroundSubagents.clear();
     this.syncBackgroundCount();
     this.pendingInputs = [];
-    this.webSearchBoundaryPending = false;
     this.streaming = undefined;
+    this.view.streamingThinking = [];
     this.streamingCache = undefined;
     this.activitySelection = undefined;
     this.activitySearch = undefined;
@@ -1487,10 +1519,7 @@ export class App {
           ? search.rows.map((line, index) =>
               index === match.row ? this.highlightSearchMatch(line, match) : line,
             )
-          : [
-              ...this.transcriptRows(this.activitySelection),
-              ...this.pendingActivityRows(this.activitySelection),
-            ];
+          : this.reviewRows();
       const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
       const selected = Math.max(0, match?.row ?? rows.findIndex((line) => line.includes("❯")));
       const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
@@ -1538,75 +1567,14 @@ export class App {
         newest.set(item.info.toolName, index);
       }
     });
-    const logical = this.transcript.flatMap((item, index) => {
-      if (item.kind === "lines") return item.lines;
-      if (item.kind === "user") return [...userCell(item.text, this.ctx), ""];
-      if (item.kind === "assistant") {
-        if (revealAll) return [...this.assistantRows(item.message, true), ""];
-        if (item.rendered?.width !== this.options.width) {
-          item.rendered = {
-            width: this.options.width,
-            lines: this.assistantRows(item.message),
-          };
-        }
-        return [...item.rendered.lines, ""];
-      }
-      if (item.kind === "activity") {
-        const lines = this.renderActivity(item, selectedId, revealAll);
-        const next = this.transcript[index + 1];
-        // A single one-row call runs on into the next call like any tool row; a
-        // group always gets air after it.
-        const tight =
-          item.tools.length === 1 &&
-          (next?.kind === "activity" || (next?.kind === "tool" && lines.length === 1));
-        return tight ? lines : [...lines, ""];
-      }
-      const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
-      if (
-        item.rendered?.width !== this.options.width ||
-        item.rendered.expanded !== item.expanded ||
-        item.rendered.superseded !== superseded
-      ) {
-        item.rendered = {
-          width: this.options.width,
-          expanded: item.expanded,
-          superseded,
-          lines: this.registry.render(
-            { ...item.info, expanded: item.expanded, superseded },
-            this.ctx,
-          ),
-        };
-      }
-      // A run of one-line calls reads as one stream and stays tight. A cell
-      // that spans rows needs air after it, or its output runs straight into
-      // the next call's verb; and speech after machinery always gets a break.
-      const visibleLines =
-        !revealAll && !item.expanded && this.registry.expandedByDefault(item.info)
-          ? item.rendered.lines.slice(0, 1)
-          : revealAll
-            ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
-            : item.rendered.lines;
-      const next = this.transcript[index + 1];
-      const previous = this.transcript[index - 1];
-      const primaryResult = this.registry.expandedByDefault(item.info);
-      const startsSubagentRun =
-        isSubagentTool(item) &&
-        !isSubagentTool(previous) &&
-        (previous?.kind === "tool" || (previous?.kind === "lines" && previous.lines.at(-1) !== ""));
-      const leadingBreak =
-        (primaryResult && previous?.kind === "lines" && previous.lines.at(-1) !== "") ||
-        startsSubagentRun
-          ? [""]
-          : [];
-      const separated =
-        next !== undefined &&
-        (next.kind === "user" || next.kind === "assistant" ? true : visibleLines.length > 1);
-      const lines = this.disclosureLines(
-        visibleLines,
-        revealAll || item.expanded,
-        selectedId === item.id,
-      );
-      return [...leadingBreak, ...lines, ...(primaryResult || separated ? [""] : [])];
+    const logical: string[] = [];
+    let tail: Spacing | undefined;
+    this.transcript.forEach((item, index) => {
+      const block = this.transcriptBlock(item, index, newest, selectedId, revealAll);
+      if (!block) return;
+      if (tail && gapBetween(tail, block.spacing) > 0) logical.push("");
+      logical.push(...block.lines);
+      tail = block.spacing;
     });
     const rows = this.toTerminalRows(logical);
     if (selectedId === undefined && !revealAll) {
@@ -1614,9 +1582,103 @@ export class App {
         version: this.transcriptVersion,
         width: this.options.width,
         rows,
+        tail,
       };
     }
     return rows;
+  }
+
+  private transcriptBlock(
+    item: TranscriptItem,
+    index: number,
+    newest: ReadonlyMap<string, number>,
+    selectedId: string | undefined,
+    revealAll: boolean,
+  ): { lines: string[]; spacing: Spacing } | undefined {
+    if (item.kind === "lines") {
+      const blank = (line: string) => stripAnsi(line).trim() === "";
+      let start = 0;
+      let end = item.lines.length;
+      while (start < end && blank(item.lines[start] ?? "")) start++;
+      while (end > start && blank(item.lines[end - 1] ?? "")) end--;
+      if (start === end) return undefined;
+      const lines = item.lines.slice(start, end);
+      return { lines, spacing: { first: "status", last: "status", rows: lines.length } };
+    }
+    if (item.kind === "user") {
+      const lines = userCell(item.text, this.ctx);
+      return { lines, spacing: { first: "user", last: "user", rows: lines.length } };
+    }
+    if (item.kind === "assistant") {
+      let lines: string[];
+      if (revealAll) {
+        lines = this.assistantRows(item.message, true);
+      } else {
+        if (item.rendered?.width !== this.options.width) {
+          item.rendered = {
+            width: this.options.width,
+            lines: this.assistantRows(item.message),
+          };
+        }
+        lines = item.rendered.lines;
+      }
+      return { lines, spacing: assistantSpacing(item.message, lines.length) };
+    }
+    if (item.kind === "activity") {
+      const lines = this.renderActivity(item, selectedId, revealAll);
+      return { lines, spacing: { first: "tool", last: "tool", rows: lines.length } };
+    }
+    const superseded = newest.has(item.info.toolName) && newest.get(item.info.toolName) !== index;
+    if (
+      item.rendered?.width !== this.options.width ||
+      item.rendered.expanded !== item.expanded ||
+      item.rendered.superseded !== superseded
+    ) {
+      item.rendered = {
+        width: this.options.width,
+        expanded: item.expanded,
+        superseded,
+        lines: this.registry.render(
+          { ...item.info, expanded: item.expanded, superseded },
+          this.ctx,
+        ),
+      };
+    }
+    const visibleLines =
+      !revealAll && !item.expanded && this.registry.expandedByDefault(item.info)
+        ? item.rendered.lines.slice(0, 1)
+        : revealAll
+          ? this.registry.render({ ...item.info, expanded: true }, this.ctx)
+          : item.rendered.lines;
+    const lines = this.disclosureLines(
+      visibleLines,
+      revealAll || item.expanded,
+      selectedId === item.id,
+    );
+    return {
+      lines,
+      spacing: {
+        first: "tool",
+        last: "tool",
+        rows: lines.length,
+        ...(this.registry.expandedByDefault(item.info) ? { standalone: true } : {}),
+        ...(isSubagentTool(item) ? { subagent: true } : {}),
+      },
+    };
+  }
+
+  private reviewRows(): string[] {
+    const history = this.transcriptRows(this.activitySelection);
+    const pending = this.pendingActivityRows(this.activitySelection);
+    const tail = this.transcriptTail();
+    const gap =
+      pending.length > 0 && tail && gapBetween(tail, { first: "tool", last: "tool", rows: 1 }) > 0;
+    return [...history, ...(gap ? [""] : []), ...pending];
+  }
+
+  private transcriptTail(): Spacing | undefined {
+    this.transcriptRows();
+    return this.transcriptCache?.tail;
   }
 
   // The live activity and composer region, rebuilt from state on every paint.
@@ -1628,11 +1690,23 @@ export class App {
     const height = this.options.height ?? 24;
 
     // Live region: streaming assistant text and running tool cells, so a long
-    // turn is never a frozen screen with only a spinner.
-    if (this.streaming && this.streaming.trim().length > 0) lines.push(...this.streamingRows());
+    // turn is never a frozen screen with only a spinner. Each block is spaced
+    // from the committed history above exactly as it will be once committed.
+    const live: { lines: string[]; spacing: Spacing }[] = [];
+    const liveThinking = this.view.streamingThinking.flatMap((text) =>
+      thinkingCell(text, this.ctx),
+    );
+    if (liveThinking.length > 0) {
+      live.push({
+        lines: liveThinking,
+        spacing: { first: "thinking", last: "thinking", rows: liveThinking.length },
+      });
+    }
+    if (this.streaming && this.streaming.trim().length > 0) {
+      const rows = this.streamingRows();
+      live.push({ lines: rows, spacing: { first: "speech", last: "speech", rows: rows.length } });
+    }
     const backgroundPending: PendingTool[] = [];
-    let hasLiveSubagent = false;
-    let previousWasLiveSubagent = false;
     const renderPending = (pending: PendingTool): string[] => {
       const rendered = this.registry.render(
         {
@@ -1675,43 +1749,56 @@ export class App {
       }
       if (pending.taskId !== undefined || pending.subagentId !== undefined) {
         backgroundPending.push(pending);
-      } else {
-        const liveSubagent = SUBAGENT_TOOL_NAMES.has(pending.toolName);
-        if (liveSubagent && !previousWasLiveSubagent && lines.at(-1) !== "") lines.push("");
-        if (liveSubagent) hasLiveSubagent = true;
-        lines.push(...renderPending(pending));
-        previousWasLiveSubagent = liveSubagent;
+        continue;
       }
+      // A running row wears the marker its committed row will have.
+      const rows = this.disclosureLines(renderPending(pending), false, false);
+      live.push({
+        lines: rows,
+        spacing: {
+          first: "tool",
+          last: "tool",
+          rows: rows.length,
+          ...(SUBAGENT_TOOL_NAMES.has(pending.toolName) ? { subagent: true } : {}),
+        },
+      });
     }
     if (backgroundPending.length > 0) {
-      if (lines.length > 0) lines.push("");
-      lines.push(
+      const rows = [
         MARGIN +
           styleText(
             `${GLYPHS.ruleOpen} background ${GLYPHS.separator} ${backgroundPending.length}`,
             { dim: true },
             depth,
           ),
-      );
+      ];
       for (const [index, pending] of backgroundPending.entries()) {
-        if (index > 0) lines.push(MARGIN + styleText(GLYPHS.rule, { dim: true }, depth));
-        lines.push(...renderPending(pending));
+        if (index > 0) rows.push(MARGIN + styleText(GLYPHS.rule, { dim: true }, depth));
+        rows.push(...renderPending(pending));
       }
-      lines.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth), "");
+      rows.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth));
+      live.push({ lines: rows, spacing: { first: "bracket", last: "bracket", rows: rows.length } });
     }
-    if (hasLiveSubagent && lines.at(-1) !== "") lines.push("");
     if (this.compacting && this.compactionStage && this.mode !== "activity") {
-      if (lines.length > 0 && lines.at(-1) !== "") lines.push("");
-      lines.push(
-        compactionProgressRow(
-          this.compactionState(),
-          this.view.compactionPercent,
-          this.spinner.frameIndex,
-          this.ctx,
-        ),
-        "",
-      );
+      live.push({
+        lines: [
+          compactionProgressRow(
+            this.compactionState(),
+            this.view.compactionPercent,
+            this.spinner.frameIndex,
+            this.ctx,
+          ),
+        ],
+        spacing: { first: "status", last: "status", rows: 1 },
+      });
     }
+    let previous = this.transcriptTail();
+    for (const block of live) {
+      if (previous && gapBetween(previous, block.spacing) > 0) lines.push("");
+      lines.push(...block.lines);
+      previous = block.spacing;
+    }
+    if (previous || this.mode === "activity") lines.push("");
 
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
@@ -1819,7 +1906,6 @@ export class App {
         : this.isShellMode
           ? styleText("shell", { toolExec: true, bold: true }, depth)
           : undefined;
-    if (this.mode === "activity" && lines.at(-1) !== "") lines.push("");
     lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";
@@ -2290,13 +2376,14 @@ export class App {
     activityKind: ActivityKind,
     selected: boolean,
     reveal = false,
+    width = this.options.width,
   ): string[] {
     const expanded = reveal || tool.expanded;
-    if (tool.rendered?.width !== this.options.width || tool.rendered.expanded !== expanded) {
+    if (tool.rendered?.width !== width || tool.rendered.expanded !== expanded) {
       tool.rendered = {
-        width: this.options.width,
+        width,
         expanded,
-        lines: this.registry.render({ ...tool.info, expanded }, this.ctx),
+        lines: this.registry.render({ ...tool.info, expanded }, { ...this.ctx, width }),
       };
     }
     const lines = [...tool.rendered.lines];
@@ -2328,13 +2415,39 @@ export class App {
     );
     const summary = `${MARGIN}${marker} ${styleText(this.activitySummary(item), { bold: true }, this.options.depth)}`;
     if (!expanded) return [summary];
+    // Children hang off the group's rail, two columns in, so they read as its body.
+    const childWidth = Math.max(20, this.options.width - 2);
     return [
       summary,
       ...item.tools.flatMap((tool) => [
-        ...(tool.thinking ? this.assistantRows(tool.thinking, revealAll) : []),
-        ...this.renderActivityTool(tool, item.activityKind, selectedId === tool.id, revealAll),
+        ...(tool.thinking ? this.onGroupRail(this.assistantRows(tool.thinking, revealAll)) : []),
+        ...this.onGroupRail(
+          this.renderActivityTool(
+            tool,
+            item.activityKind,
+            selectedId === tool.id,
+            revealAll,
+            childWidth,
+          ),
+          true,
+        ),
       ]),
     ];
+  }
+
+  // Puts rows on the dim rail of the group above them. A row's own leading rail
+  // merges into it; under a child header the body steps in to align with the
+  // child's text instead of doubling the rail.
+  private onGroupRail(lines: string[], header = false): string[] {
+    const rail = MARGIN + styleText(`${GLYPHS.rule} `, { dim: true }, this.options.depth);
+    return lines.map((line, index) => {
+      const body = line.startsWith(MARGIN) ? line.slice(MARGIN.length) : line;
+      if (header && index === 0) return rail + body;
+      const ownRail = stripAnsi(body).startsWith(`${GLYPHS.rule} `)
+        ? body.slice(rawOffsetAtVisible(body, 2))
+        : body;
+      return header ? `${rail}  ${ownRail}` : rail + ownRail;
+    });
   }
 
   private activityNodes(): ActivityNode[] {

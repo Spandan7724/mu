@@ -867,8 +867,22 @@ export const subagentRenderers: Record<string, ToolRendererFn> = {
   counsel: makeSubagentRenderer("counsel"),
 };
 
+// A provider-hosted web search is not a tool call, but it reads like exploration
+// and folds with it. The space keeps it from colliding with any real tool name.
+export const WEB_SEARCH_TOOL = "web search";
+
+const webSearchRenderer: ToolRendererFn = (info, ctx) => {
+  const query = firstString(info.args, ["query"]) ?? "web";
+  const text = truncateToWidth(
+    sanitizeUntrusted(`searched · ${query}`),
+    Math.max(1, ctx.width - 4),
+  );
+  return [MARGIN + styleText(`${GLYPHS.rule} ${text}`, { dim: true }, ctx.depth)];
+};
+webSearchRenderer.activityKind = "explore";
+
 export class RendererRegistry {
-  private renderers = new Map<string, ToolRendererFn>();
+  private renderers = new Map<string, ToolRendererFn>([[WEB_SEARCH_TOOL, webSearchRenderer]]);
 
   register(toolName: string, renderer: ToolRendererFn): void {
     this.renderers.set(toolName, renderer);
@@ -944,10 +958,12 @@ export class RendererRegistry {
     if (summarize) return summarize(infos, depth, width);
     if (activityKind === "explore") {
       const searches = infos.filter((info) => info.toolName === "bash").length;
-      const files = infos.length - searches;
+      const web = infos.filter((info) => info.toolName === WEB_SEARCH_TOOL).length;
+      const files = infos.length - searches - web;
       const parts = [
         files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
         searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
+        web > 0 ? `${web} web search${web === 1 ? "" : "es"}` : "",
       ].filter(Boolean);
       return `Explored ${parts.join(", ")}`;
     }

@@ -192,7 +192,7 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("exit 1");
   });
 
-  test("native web searches stay compact with one blank before streamed response text", () => {
+  test("native web searches fold into exploration with one blank before streamed text", () => {
     const { app } = harness();
     expect(
       app.handleEvent({
@@ -216,7 +216,7 @@ describe("fake-agent session", () => {
       },
     });
 
-    expect(lines.map(stripAnsi)).toEqual(["  searched · mu agent"]);
+    expect(lines.map(stripAnsi)).toEqual(["  │ searched · mu agent"]);
     app.handleEvent({
       type: "web_search_end",
       search: {
@@ -232,12 +232,8 @@ describe("fake-agent session", () => {
       delta: { kind: "text_delta", contentIndex: 0, text: "response" },
     });
 
-    expect(app.renderTranscript().map(stripAnsi)).toEqual([
-      "  searched · mu agent",
-      "  searched · https://example.com",
-      "",
-    ]);
-    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("mu  response");
+    expect(app.renderTranscript().map(stripAnsi)).toEqual(["  › Explored 2 web searches"]);
+    expect(app.renderBottom().map(stripAnsi).slice(0, 2)).toEqual(["", "  mu  response"]);
   });
 
   test("the spinner and interrupt hint appear only while running", () => {
@@ -2377,13 +2373,14 @@ describe("activity disclosure", () => {
     review = app.renderScreen().map(stripAnsi);
     expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
     expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
-    expect(review.some((line) => line.includes("│ a1"))).toBe(false);
+    expect(review.some((line) => line.includes("│   a1"))).toBe(false);
     expect(review.some((line) => line.includes("packages/a.ts:4:TODO"))).toBe(false);
 
     press(app, "down");
     press(app, "return");
     review = app.renderScreen().map(stripAnsi);
-    expect(review.some((line) => line.includes("│ a4"))).toBe(true);
+    expect(review).toContain("  │   a4");
+    expect(review).toContain("  │ › read b.ts · 1 line");
 
     feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
@@ -2391,7 +2388,7 @@ describe("activity disclosure", () => {
       app
         .renderTranscript()
         .map(stripAnsi)
-        .some((line) => line.includes("│ a4")),
+        .some((line) => line.includes("│   a4")),
     ).toBe(true);
 
     feed(app, "/collapse\r");
@@ -2482,10 +2479,10 @@ describe("activity disclosure", () => {
     expect(expanded.match(/a\.ts/g)).toHaveLength(1);
     expect(expanded.match(/b\.ts/g)).toHaveLength(1);
     expect(expanded).not.toContain("Edited a.ts (1 replacement)");
-    expect(expanded).toContain("│     1 − old");
+    expect(expanded).toContain("  │       1 − old");
   });
 
-  test("expanded group children align with standalone activity", () => {
+  test("expanded group children sit on the group's rail, and the group gets air when open", () => {
     const { app } = harness();
     complete(app, "c1", "bash", { command: "git status --short" }, "clean", { exitCode: 0 });
     complete(app, "c2", "bash", { command: "git log -1" }, "abc change", { exitCode: 0 });
@@ -2497,7 +2494,7 @@ describe("activity disclosure", () => {
     press(app, "up");
     let rows = app.renderScreen().map(stripAnsi);
     let searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
-    expect(rows[searchIndex - 1]).toBe("");
+    expect(rows[searchIndex - 1]).toBe("  ❯ Ran 2 commands");
 
     press(app, "return");
     rows = app.renderScreen().map(stripAnsi);
@@ -2505,7 +2502,7 @@ describe("activity disclosure", () => {
     searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
     const search = rows[searchIndex];
 
-    expect(command?.indexOf("ran")).toBe(4);
+    expect(command).toStartWith("  │ › ran");
     expect(search?.indexOf("ran")).toBe(4);
     expect(rows[searchIndex - 1]).toBe("");
   });
@@ -4808,5 +4805,190 @@ describe("moving running calls to the background", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("transcript spacing", () => {
+  const above = (app: App) => {
+    const rows = app.renderScreen().map(stripAnsi);
+    return rows.slice(
+      0,
+      rows.findIndex((row) => row.startsWith("  ╭")),
+    );
+  };
+  const thinking = (text: string, reply?: string) => ({
+    ...assistant(""),
+    content: [
+      { type: "thinking" as const, thinking: text },
+      ...(reply ? [{ type: "text" as const, text: reply }] : []),
+    ],
+  });
+  const user = (text: string) => ({
+    role: "user" as const,
+    content: [{ type: "text" as const, text }],
+    timestamp: 1,
+  });
+  const run = (
+    app: App,
+    id: string,
+    toolName: string,
+    args: unknown,
+    output: string,
+    details = {},
+  ) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: output }],
+        details,
+        isError: false,
+        timestamp: 1,
+      },
+    });
+  };
+  const webSearch = (app: App, query: string) =>
+    app.handleEvent({
+      type: "web_search_end",
+      search: {
+        type: "webSearch",
+        id: query,
+        status: "completed",
+        action: { type: "search", query },
+      },
+    });
+
+  test("one rule spaces every kind of history row", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: user("fix it") });
+    app.handleEvent({ type: "message_end", message: thinking("Reading the code") });
+    run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
+    webSearch(app, "mu docs");
+    run(app, "s1", "bash", { command: "rg -n TODO" }, "a.ts:1:TODO", { exitCode: 0 });
+    app.handleEvent({ type: "message_end", message: thinking("Planning", "I'll run the tests.") });
+    run(app, "b1", "bash", { command: "bun test" }, "ok", { exitCode: 0, durationMs: 1200 });
+    run(app, "b2", "bash", { command: "bun x" }, "ok", { exitCode: 0, durationMs: 100 });
+    run(app, "w1", "write", { path: "b.ts", content: "b\n" }, "Created b.ts", {
+      created: true,
+      diff: { path: "b.ts", added: 1, removed: 0, hunks: [] },
+    });
+    app.handleEvent({ type: "message_end", message: thinking("Done") });
+    app.handleEvent({ type: "message_end", message: assistant("All set.") });
+    app.appendTranscript(["", "", "  Exported to notes.md", "", ""]);
+
+    expect(above(app)).toEqual([
+      "  ▸ fix it",
+      "",
+      "  │ thinking · Reading the code",
+      "  › Explored 1 file, 1 search, 1 web search",
+      "",
+      "  │ thinking · Planning",
+      "  mu  I'll run the tests.",
+      "",
+      "  › Ran 2 commands",
+      "  › created b.ts +1 -0",
+      "",
+      "  │ thinking · Done",
+      "  mu  All set.",
+      "",
+      "  Exported to notes.md",
+      "",
+    ]);
+  });
+
+  test("a running row wears the disclosure marker and spaces like its committed row", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: assistant("Checking.") });
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "r1",
+      toolName: "read",
+      args: { path: "a.ts" },
+    });
+    const running = above(app);
+    expect(running).toEqual(["  mu  Checking.", "", "  › read a.ts", ""]);
+
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "r1",
+      result: {
+        role: "toolResult",
+        toolCallId: "r1",
+        toolName: "read",
+        content: [{ type: "text", text: "a" }],
+        details: { lines: 1 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    expect(above(app)).toEqual(["  mu  Checking.", "", "  › read a.ts · 1 line", ""]);
+  });
+
+  test("committing streamed thinking and text moves rows from live to history without a repaint", () => {
+    const { app } = harness();
+    const written: string[] = [];
+    const renderer = new FullScreenRenderer(
+      new Terminal({ write: (data) => written.push(data), columns: 60, rows: 24, isTty: true }),
+      0,
+    );
+    app.handleEvent({ type: "message_end", message: user("why") });
+    run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
+    const message = thinking("Weighing it", "Because it is cached.");
+    app.handleEvent({ type: "message_start", message: assistant("") });
+    app.handleEvent({
+      type: "message_update",
+      message: thinking("Weighing it"),
+      delta: { kind: "thinking_delta", contentIndex: 0, text: "Weighing it" },
+    } as AgentEvent);
+    app.handleEvent({
+      type: "message_update",
+      message,
+      delta: { kind: "text_delta", contentIndex: 1, text: "Because it is cached." },
+    } as AgentEvent);
+    renderer.renderNow(app.renderFrame());
+    const live = above(app);
+    const before = written.length;
+
+    app.handleEvent({ type: "message_end", message });
+    renderer.renderNow(app.renderFrame());
+
+    expect(above(app)).toEqual(live);
+    expect(live).toEqual([
+      "  ▸ why",
+      "",
+      "  › read a.ts · 1 line",
+      "",
+      "  │ thinking · Weighing it",
+      "  mu  Because it is cached.",
+      "",
+    ]);
+    expect(written.length).toBe(before);
+  });
+
+  test("notices never stack blank rows and keep one blank before the composer", () => {
+    const { app } = harness();
+    app.appendTranscript(["", "  first notice", "", ""]);
+    app.appendTranscript([""]);
+    app.appendTranscript(["  second notice"]);
+    expect(above(app)).toEqual(["  first notice", "", "  second notice", ""]);
+  });
+
+  test("an expanded multi-row tool gets one blank after it, a one-row tool none", () => {
+    const { app } = harness();
+    run(app, "u1", "bash", { command: "ls", userShell: true }, "README.md", { exitCode: 0 });
+    run(app, "b1", "bash", { command: "bun test" }, "ok", { exitCode: 0 });
+    run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
+    expect(above(app)).toEqual([
+      "  ⌄ $ ls · ✓",
+      "  │ README.md",
+      "",
+      "  › ran bun test · ✓",
+      "  › read a.ts · 1 line",
+      "",
+    ]);
   });
 });

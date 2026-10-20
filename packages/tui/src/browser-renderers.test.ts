@@ -276,8 +276,8 @@ test("a hand-off is its own row and leaves the session waiting on the user", () 
   expect(transcript).toContain(
     "  │ finish in the browser, submit included · mu continues when the page moves on or you reply",
   );
-  expect(transcript.at(-3)).toBe("");
-  expect(transcript.at(-2)).toStartWith("  worked for ");
+  expect(transcript.at(-2)).toBe("");
+  expect(transcript.at(-1)).toStartWith("  worked for ");
   const waiting = "  ◆ waiting on you: sign in to linkedin.com · reply when done";
   expect(app.renderScreen().map(stripAnsi)).toContain(waiting);
   app.handleEvent({ type: "agent_start" });
