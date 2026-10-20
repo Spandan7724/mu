@@ -45,6 +45,7 @@ import {
 import type { InputEvent, Key } from "./input.ts";
 import {
   type ActivityKind,
+  diffLineCounts,
   EXPANDED_OUTPUT_LINES,
   RendererRegistry,
   type SubagentProgressState,
@@ -2405,9 +2406,7 @@ export class App {
     const lines = [...tool.rendered.lines];
     if (activityKind === "edit" && lines.length > 0) {
       const diff = (tool.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
-      if (diff) {
-        lines[0] = `${lines[0]} ${styleText(`+${diff.added}`, { green: true }, this.options.depth)} ${styleText(`-${diff.removed}`, { red: true }, this.options.depth)}`;
-      }
+      if (diff) lines[0] = `${lines[0]} ${diffLineCounts(diff, this.options.depth)}`;
     }
     return this.disclosureLines(expanded ? lines : lines.slice(0, 1), expanded, selected);
   }

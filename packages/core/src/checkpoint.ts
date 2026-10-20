@@ -8,6 +8,9 @@ export interface CheckpointDiffFile {
   added: number;
   removed: number;
   hunks: string[];
+  // The changes span one region shown as removed and re-added, not a minimal
+  // line diff, so the counts overstate them.
+  approximate?: boolean;
 }
 
 export interface CheckpointProvider {

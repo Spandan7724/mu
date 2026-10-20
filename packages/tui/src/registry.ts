@@ -457,6 +457,21 @@ function liveFileRow(
   return [fitted + suffix];
 }
 
+// Calls naming the same path are one file; a call with no path is its own.
+function distinctPaths(paths: readonly string[]): number {
+  return new Set(paths.map((path, index) => path || `\u0000${index}`)).size;
+}
+
+// `≈` marks counts that cover one changed region rather than a minimal line diff.
+export function diffLineCounts(
+  diff: { added: number; removed: number; approximate?: boolean | undefined },
+  depth: ColorDepth,
+): string {
+  const added = styleText(`+${diff.added}`, { green: true }, depth);
+  const removed = styleText(`-${diff.removed}`, { red: true }, depth);
+  return `${diff.approximate ? styleText("≈ ", { dim: true }, depth) : ""}${added} ${removed}`;
+}
+
 // A diff is only meaningful whole: a completed call shows the tool's authoritative
 // before/after file diff, and a failed one what it proposed, unnumbered.
 function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
@@ -475,7 +490,17 @@ function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
       },
       ctx,
     );
-    return lines;
+    if (!completed.approximate) return lines;
+    const note = "≈ too many changes for a line diff: the changed region is shown whole";
+    return [
+      MARGIN +
+        styleText(
+          `${GLYPHS.rule} ${truncateToWidth(note, ctx.width - 4)}`,
+          { dim: true },
+          ctx.depth,
+        ),
+      ...lines,
+    ];
   }
 
   if (info.toolName === "write") {
@@ -1086,7 +1111,11 @@ export class RendererRegistry {
     if (activityKind === "explore") {
       const searches = infos.filter((info) => info.toolName === "bash").length;
       const web = infos.filter((info) => info.toolName === WEB_SEARCH_TOOL).length;
-      const files = infos.length - searches - web;
+      const files = distinctPaths(
+        infos
+          .filter((info) => info.toolName !== "bash" && info.toolName !== WEB_SEARCH_TOOL)
+          .map((info) => stringArg(info.args, "path")),
+      );
       const parts = [
         files > 0 ? `${files} file${files === 1 ? "" : "s"}` : "",
         searches > 0 ? `${searches} search${searches === 1 ? "" : "es"}` : "",
@@ -1099,19 +1128,28 @@ export class RendererRegistry {
       const failure = failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, depth)}` : "";
       return `Ran ${infos.length} command${infos.length === 1 ? "" : "s"}${failure}`;
     }
-    const totals = infos.reduce(
-      (sum, info) => {
-        const diff = (info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
-        return {
-          added: sum.added + (diff?.added ?? 0),
-          removed: sum.removed + (diff?.removed ?? 0),
-        };
-      },
-      { added: 0, removed: 0 },
+    // A file edited by several calls is one file, and a failed call changed nothing.
+    const done = infos.filter((info) => info.result && !info.result.isError);
+    const failed = infos.filter((info) => info.result?.isError).length;
+    const diffs = done.map(
+      (info) => (info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff,
     );
-    const added = styleText(`+${totals.added}`, { green: true }, depth);
-    const removed = styleText(`-${totals.removed}`, { red: true }, depth);
-    return `Edited ${infos.length} file${infos.length === 1 ? "" : "s"} ${added} ${removed}`;
+    const files = distinctPaths(
+      done.map((info, index) => diffs[index]?.path ?? stringArg(info.args, "path")),
+    );
+    const failure = styleText(`${failed} failed`, { red: true }, depth);
+    if (files === 0 && failed > 0) {
+      return styleText(`${failed} edit${failed === 1 ? "" : "s"} failed`, { red: true }, depth);
+    }
+    const counts = diffLineCounts(
+      {
+        added: diffs.reduce((sum, diff) => sum + (diff?.added ?? 0), 0),
+        removed: diffs.reduce((sum, diff) => sum + (diff?.removed ?? 0), 0),
+        approximate: diffs.some((diff) => diff?.approximate),
+      },
+      depth,
+    );
+    return `Edited ${files} file${files === 1 ? "" : "s"}${failed > 0 ? `, ${failure}` : ""} ${counts}`;
   }
 
   render(info: ToolRenderInfo, ctx: RenderContext): string[] {

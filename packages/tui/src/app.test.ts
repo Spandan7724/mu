@@ -5208,3 +5208,91 @@ describe("incremental transcript rows", () => {
     expect(app.renderTranscript().map(stripAnsi).join("\n")).toContain("plan");
   });
 });
+
+describe("activity summaries count what happened", () => {
+  const call = (
+    app: App,
+    id: string,
+    toolName: string,
+    args: unknown,
+    details: unknown,
+    isError = false,
+  ) => {
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: isError ? "oldString was not found" : "ok" }],
+        details,
+        isError,
+        timestamp: 1,
+      },
+    });
+  };
+  const diff = (path: string, added: number, removed: number, approximate?: boolean) => ({
+    diff: { path, added, removed, hunks: [], ...(approximate ? { approximate } : {}) },
+  });
+  const rows = (app: App) => app.renderTranscript().map(stripAnsi);
+
+  test("an edit group counts distinct files, names failures, and leaves them out of totals", () => {
+    const { app } = harness();
+    call(app, "e1", "edit", { path: "a.ts" }, diff("a.ts", 3, 1));
+    call(app, "e2", "edit", { path: "a.ts" }, {}, true);
+    call(app, "e3", "edit", { path: "./a.ts" }, diff("a.ts", 1, 0));
+    call(app, "e4", "write", { path: "b.ts" }, { created: true, ...diff("b.ts", 4, 0) });
+    call(app, "e5", "edit", { path: "c.ts" }, {}, true);
+    expect(rows(app)).toEqual(["  › Edited 2 files, 2 failed +8 -1"]);
+  });
+
+  test("a group of only failed edits says so", () => {
+    const { app } = harness();
+    call(app, "e1", "edit", { path: "a.ts" }, {}, true);
+    call(app, "e2", "edit", { path: "a.ts" }, {}, true);
+    expect(rows(app)).toEqual(["  › 2 edits failed"]);
+  });
+
+  test("exploration counts a file read twice once", () => {
+    const { app } = harness();
+    call(app, "r1", "read", { path: "a.ts" }, { lines: 1 });
+    call(app, "r2", "read", { path: "a.ts", offset: 5 }, { lines: 1 });
+    call(app, "r3", "read", { path: "b.ts" }, { lines: 1 });
+    expect(rows(app)).toEqual(["  › Explored 2 files"]);
+  });
+
+  test("approximate counts are marked on the row, the group and the expanded diff", () => {
+    const { app } = harness();
+    call(app, "w1", "write", { path: "big.ts" }, diff("big.ts", 900, 880, true));
+    expect(rows(app)).toEqual(["  › updated big.ts ≈ +900 -880"]);
+    call(app, "e1", "edit", { path: "c.ts" }, diff("c.ts", 1, 1));
+    expect(rows(app)).toEqual(["  › Edited 2 files ≈ +901 -881"]);
+
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const expanded = registry
+      .render(
+        {
+          toolName: "write",
+          args: { path: "big.ts" },
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "w",
+            toolName: "write",
+            content: [{ type: "text", text: "ok" }],
+            details: diff("big.ts", 1, 1, true),
+            isError: false,
+            timestamp: 1,
+          },
+        },
+        { width: 100, depth: "none" },
+      )
+      .map(stripAnsi);
+    expect(expanded[1]).toBe(
+      "  │ ≈ too many changes for a line diff: the changed region is shown whole",
+    );
+  });
+});

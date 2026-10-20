@@ -6,6 +6,7 @@ import { tool } from "mu";
 import { z } from "zod";
 import type { FileState } from "../state.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
+import { fileDiff, replacementDiff } from "./diff.ts";
 
 const MAX_READ_SOURCE_BYTES = 16 * 1024 * 1024;
 
@@ -111,46 +112,7 @@ export function filePermissionDiff(
   before: string | undefined,
   after: string,
 ): CheckpointDiffFile {
-  const oldLines = before === undefined ? [] : fileLines(before);
-  const newLines = fileLines(after);
-  let prefix = 0;
-  while (
-    prefix < oldLines.length &&
-    prefix < newLines.length &&
-    oldLines[prefix] === newLines[prefix]
-  ) {
-    prefix++;
-  }
-
-  let suffix = 0;
-  while (
-    suffix < oldLines.length - prefix &&
-    suffix < newLines.length - prefix &&
-    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) {
-    suffix++;
-  }
-
-  const removed = oldLines.length - prefix - suffix;
-  const added = newLines.length - prefix - suffix;
-  if (added === 0 && removed === 0) return { path, added, removed, hunks: [] };
-
-  const contextBefore = Math.min(3, prefix);
-  const contextAfter = Math.min(3, suffix);
-  const oldStart = prefix - contextBefore;
-  const newStart = prefix - contextBefore;
-  const oldCount = contextBefore + removed + contextAfter;
-  const newCount = contextBefore + added + contextAfter;
-  const hunks = [
-    `@@ -${oldLines.length === 0 ? 0 : oldStart + 1},${oldCount} +${newLines.length === 0 ? 0 : newStart + 1},${newCount} @@`,
-    ...oldLines.slice(oldStart, prefix).map((line) => ` ${line}`),
-    ...oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`),
-    ...newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`),
-    ...newLines
-      .slice(newLines.length - suffix, newLines.length - suffix + contextAfter)
-      .map((line) => ` ${line}`),
-  ];
-  return { path, added, removed, hunks };
+  return fileDiff(path, before, after);
 }
 
 export function readTool(deps: ToolDeps) {
@@ -320,7 +282,13 @@ interface EditHunk {
 }
 
 type ApplyResult =
-  | { ok: true; updated: string; replacements: number; hunks: EditHunk[] }
+  | {
+      ok: true;
+      updated: string;
+      replacements: number;
+      hunks: EditHunk[];
+      ranges: EditRange[];
+    }
   | { ok: false; message: string };
 
 const lineCount = (text: string) => text.split("\n").length - 1;
@@ -357,6 +325,76 @@ function adaptLineEndings(content: string, oldString: string, newString: string)
   return { oldString, newString: content.includes("\r\n") ? toCRLF(newString) : newString };
 }
 
+const MAX_HINT_CANDIDATES = 2;
+const HINT_SNIPPET_CHARS = 80;
+
+const squash = (line: string) => line.trim().replace(/\s+/g, " ");
+
+function describeIndent(line: string): string {
+  const indent = /^[ \t]*/.exec(line)?.[0] ?? "";
+  if (indent === "") return "no indentation";
+  const tabs = indent.split("\t").length - 1;
+  const spaces = indent.length - tabs;
+  return [
+    tabs > 0 ? `${tabs} tab${tabs === 1 ? "" : "s"}` : "",
+    spaces > 0 ? `${spaces} space${spaces === 1 ? "" : "s"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+}
+
+const snippet = (line: string) => {
+  const trimmed = line.trim();
+  return JSON.stringify(
+    trimmed.length > HINT_SNIPPET_CHARS ? `${trimmed.slice(0, HINT_SNIPPET_CHARS)}…` : trimmed,
+  );
+};
+
+// Points the model at where its oldString almost matched: the file lines whose
+// whitespace-normalised text equals oldString's first non-blank line, and the
+// first line at each that differs. Matching itself stays exact.
+function nearestMatch(content: string, oldString: string): string | undefined {
+  const wanted = oldString.split("\n").map((line) => line.replace(/\r$/, ""));
+  const anchor = wanted.findIndex((line) => line.trim() !== "");
+  if (anchor === -1) return undefined;
+  const key = squash(wanted[anchor] as string);
+  const file = fileLines(content).map((line) => line.replace(/\r$/, ""));
+  const hints: string[] = [];
+  for (let line = 0; line < file.length && hints.length < MAX_HINT_CANDIDATES; line++) {
+    if (squash(file[line] as string) !== key) continue;
+    const start = line - anchor;
+    if (start < 0) continue;
+    const before = hints.length;
+    for (let offset = 0; offset < wanted.length; offset++) {
+      const have = file[start + offset];
+      const want = wanted[offset] as string;
+      const number = start + offset + 1;
+      if (have === undefined) {
+        hints.push(`At line ${start + 1} the file ends before oldString does.`);
+        break;
+      }
+      if (have === want) continue;
+      if (squash(have) !== squash(want)) {
+        hints.push(
+          `At line ${start + 1} it matches until line ${number}, where the file has ${snippet(have)}.`,
+        );
+      } else if (describeIndent(have) !== describeIndent(want)) {
+        hints.push(
+          `Line ${number} matches except for indentation (${describeIndent(have)} in the file, ${describeIndent(want)} in oldString).`,
+        );
+      } else {
+        hints.push(`Line ${number} matches except for spacing within the line.`);
+      }
+      break;
+    }
+    if (hints.length === before) {
+      hints.push(`At line ${start + 1} it matches except for line endings.`);
+    }
+  }
+  if (hints.length > 0) return hints.join(" ");
+  return `Its first line, ${snippet(wanted[anchor] as string)}, does not appear in the file even ignoring whitespace.`;
+}
+
 // Every edit is matched against the file as it was read, never against the result of an
 // earlier edit in the same call, so the model can describe all of them from one read.
 // Splicing by offset rather than String.replace is also what keeps $&, $`, $', $$ and $n
@@ -380,9 +418,10 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
 
     const occurrences = content.split(oldString).length - 1;
     if (occurrences === 0) {
+      const hint = nearestMatch(content, oldString);
       return {
         ok: false,
-        message: `${at(index)}oldString was not found in ${label}. The text must match exactly, including whitespace and indentation.`,
+        message: `${at(index)}oldString was not found in ${label}. The text must match exactly, including whitespace and indentation.${hint ? ` ${hint}` : ""}`,
       };
     }
     if (occurrences > 1 && !replaceAll) {
@@ -434,7 +473,7 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
     cursor = range.end;
   }
   updated += content.slice(cursor);
-  return { ok: true, updated, replacements: ranges.length, hunks };
+  return { ok: true, updated, replacements: ranges.length, hunks, ranges };
 }
 
 const MAX_PROBE_BYTES = 4 * 1024 * 1024;
@@ -554,7 +593,7 @@ export function editTool(deps: ToolDeps) {
         description: `Edit ${relativePath}`,
         preview: {
           kind: "diff",
-          file: filePermissionDiff(relativePath, text, applied.updated),
+          file: replacementDiff(relativePath, text, applied.ranges),
         },
       };
     },
@@ -595,7 +634,7 @@ export function editTool(deps: ToolDeps) {
       const applied = applyEdits(text, edits, display(deps.root, absolute));
       if (!applied.ok) return errorResult(applied.message);
 
-      const { updated, replacements: occurrences, hunks } = applied;
+      const { updated, replacements: occurrences, hunks, ranges } = applied;
       await writeFile(absolute, bom + updated, "utf8");
       deps.state.markWritten(absolute);
 
@@ -611,7 +650,7 @@ export function editTool(deps: ToolDeps) {
           occurrences,
           edits: edits.length,
           hunks,
-          diff: filePermissionDiff(display(deps.root, absolute), text, updated),
+          diff: replacementDiff(display(deps.root, absolute), text, ranges),
         },
       };
     },

@@ -242,6 +242,48 @@ describe("edit", () => {
     return { root, state };
   }
 
+  test("a missed oldString names where it nearly matched, and still changes nothing", async () => {
+    const source = [
+      "function f() {",
+      "    if (ready) {",
+      "        start();",
+      "    }",
+      "}",
+      "",
+    ].join("\n");
+    const miss = async (oldString: string) => {
+      const { root, state } = await prepared(source);
+      const result = await run(editTool({ root, state }), {
+        path: "code.ts",
+        edits: [
+          { oldString: "function f() {", newString: "function g() {" },
+          { oldString, newString: "x" },
+        ],
+      });
+      expect(result.isError).toBe(true);
+      expect(await readFile(join(root, "code.ts"), "utf8")).toBe(source);
+      return textOf(result);
+    };
+
+    expect(await miss("      if (ready) {\n        start();")).toBe(
+      "edits[1]: oldString was not found in code.ts. The text must match exactly, including whitespace and indentation. Line 2 matches except for indentation (4 spaces in the file, 6 spaces in oldString).",
+    );
+    expect(await miss("    if (ready) {\n        begin();")).toContain(
+      'At line 2 it matches until line 3, where the file has "start();".',
+    );
+    expect(await miss("    if  (ready) {")).toContain(
+      "Line 2 matches except for spacing within the line.",
+    );
+    expect(await miss("    if (done) {")).toContain(
+      'Its first line, "if (done) {", does not appear in the file even ignoring whitespace.',
+    );
+    const twice = await miss("}\n}\n}");
+    expect(twice).toContain(
+      "Line 4 matches except for indentation (4 spaces in the file, no indentation in oldString).",
+    );
+    expect(twice).toContain("At line 5 the file ends before oldString does.");
+  });
+
   test("replaces a unique string", async () => {
     const { root, state } = await prepared("const a = 1;\nconst b = 2;\n");
     const result = await run(editTool({ root, state }), {
