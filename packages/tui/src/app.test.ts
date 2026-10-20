@@ -3,6 +3,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import type { AgentEvent, AgentMessage, ToolResultMessage } from "@mu/core";
 import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
+import { diffCell, diffLinesFromHunks } from "./cells.ts";
 import { InputDecoder } from "./input.ts";
 import {
   codingRenderers,
@@ -2006,10 +2007,36 @@ describe("renderer registry", () => {
       "  │     1 − const a = 1;",
       "  │     1 + const a = 10;",
       "  │     2 + const extra = 0;",
+      "  │     ⋮",
       "  │     3 − const c = 3;",
       "  │     4 + const c = 30;",
     ]);
     expect(lines.filter((line) => line.includes("code.ts"))).toHaveLength(1);
+  });
+
+  test("skipped lines between hunks are marked, and touching hunks are not", () => {
+    const rows = (hunks: string[]) =>
+      diffCell(
+        { path: "f.ts", added: 0, removed: 0, lines: diffLinesFromHunks(hunks) },
+        { width: 60, depth: "none" },
+      )
+        .slice(1)
+        .map(stripAnsi);
+    expect(rows(["@@ -1,2 +1,2 @@", " a", "-b", "+B", "@@ -10,1 +10,1 @@", "-j", "+J"])).toEqual([
+      "  │     1   a",
+      "  │     2 − b",
+      "  │     2 + B",
+      "  │     ⋮",
+      "  │    10 − j",
+      "  │    10 + J",
+    ]);
+    expect(rows(["@@ -1,1 +1,1 @@", "-a", "+A", "@@ -2,1 +2,1 @@", "-b", "+B"])).not.toContain(
+      "  │     ⋮",
+    );
+    // An insertion after line 1 starts at old line 2: nothing skipped.
+    expect(rows(["@@ -1,1 +1,1 @@", "-a", "+A", "@@ -1,0 +2,1 @@", "+new"])).not.toContain(
+      "  │     ⋮",
+    );
   });
 
   test("a completed edit uses the actual file diff instead of replacement payload counts", () => {

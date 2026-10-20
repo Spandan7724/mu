@@ -596,7 +596,8 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
 }
 
 export interface DiffLine {
-  kind: "add" | "del" | "context";
+  // "gap" marks unchanged lines skipped between two hunks.
+  kind: "add" | "del" | "context" | "gap";
   lineNumber?: number;
   text: string;
 }
@@ -615,10 +616,13 @@ export function diffLinesFromHunks(hunks: string[]): DiffLine[] {
   let inHunk = false;
 
   for (const raw of hunks) {
-    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/.exec(raw);
     if (header) {
+      // An empty old side ("-5,0") sits after its line rather than on it.
+      const firstOld = header[2] === "0" ? Number(header[1]) + 1 : Number(header[1]);
+      if (lines.length > 0 && firstOld > oldLine) lines.push({ kind: "gap", text: "" });
       oldLine = Number(header[1]);
-      newLine = Number(header[2]);
+      newLine = Number(header[3]);
       inHunk = true;
       continue;
     }
@@ -651,6 +655,10 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
 
   const gutterWidth = 5;
   for (const line of file.lines) {
+    if (line.kind === "gap") {
+      out.push(`${MARGIN}${rule}${dim(GLYPHS.hunkGap.padStart(gutterWidth), ctx.depth)}`);
+      continue;
+    }
     const number = line.lineNumber === undefined ? "" : String(line.lineNumber);
     const sign = line.kind === "add" ? "+" : line.kind === "del" ? "−" : " ";
     // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.

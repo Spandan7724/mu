@@ -222,6 +222,8 @@ export const GLYPHS = {
   pending: "▹",
   bullet: "•",
   separator: "·",
+  // Between two hunks of a diff, where unchanged lines are skipped.
+  hunkGap: "⋮",
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
   subagentSpinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const;
