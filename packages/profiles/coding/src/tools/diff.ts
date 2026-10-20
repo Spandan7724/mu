@@ -1,8 +1,8 @@
 import type { CheckpointDiffFile } from "@mu/core";
 
 const CONTEXT_LINES = 3;
-// Myers costs O((N+M)·D) time and O(D²) memory. Past these bounds a whole-file
-// diff falls back to one changed region and says so.
+// Myers costs O((N+M)·D) time and O(D²) memory; past these bounds a region is
+// split at unique lines instead (see diffLines).
 const MAX_DIFF_LINES = 50_000;
 const MAX_EDIT_DISTANCE = 2_000;
 
@@ -71,11 +71,20 @@ function backtrack(a: readonly string[], b: readonly string[], trace: Int32Array
   return ops.reverse();
 }
 
-// Lines shared at both ends never need the diff search.
+// Lines shared at both ends never need the diff search. A middle too different
+// for Myers within its bound is split at anchors instead: lines that occur once
+// in each version, kept in order, with each gap between them diffed the same way.
+// Only a gap with nothing to anchor on is reported whole.
 function diffLines(
   before: readonly string[],
   after: readonly string[],
 ): { ops: Op[]; exact: boolean } {
+  const ops: Op[] = [];
+  const exact = diffRegion(before, after, ops);
+  return { ops, exact };
+}
+
+function diffRegion(before: readonly string[], after: readonly string[], ops: Op[]): boolean {
   let prefix = 0;
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) {
     prefix++;
@@ -88,24 +97,95 @@ function diffLines(
   ) {
     suffix++;
   }
+  for (let index = 0; index < prefix; index++) {
+    ops.push({ kind: "equal", line: before[index] as string });
+  }
   const oldMiddle = before.slice(prefix, before.length - suffix);
   const newMiddle = after.slice(prefix, after.length - suffix);
+  const exact = diffMiddle(oldMiddle, newMiddle, ops);
+  for (let index = before.length - suffix; index < before.length; index++) {
+    ops.push({ kind: "equal", line: before[index] as string });
+  }
+  return exact;
+}
+
+function diffMiddle(before: readonly string[], after: readonly string[], ops: Op[]): boolean {
+  if (before.length === 0 || after.length === 0) {
+    for (const line of before) ops.push({ kind: "del", line });
+    for (const line of after) ops.push({ kind: "add", line });
+    return true;
+  }
   const searched =
-    oldMiddle.length + newMiddle.length <= MAX_DIFF_LINES
-      ? myers(oldMiddle, newMiddle, MAX_EDIT_DISTANCE)
+    before.length + after.length <= MAX_DIFF_LINES
+      ? myers(before, after, MAX_EDIT_DISTANCE)
       : undefined;
-  const middle = searched ?? [
-    ...oldMiddle.map((line): Op => ({ kind: "del", line })),
-    ...newMiddle.map((line): Op => ({ kind: "add", line })),
-  ];
-  return {
-    ops: [
-      ...before.slice(0, prefix).map((line): Op => ({ kind: "equal", line })),
-      ...middle,
-      ...before.slice(before.length - suffix).map((line): Op => ({ kind: "equal", line })),
-    ],
-    exact: searched !== undefined,
-  };
+  if (searched) {
+    for (const op of searched) ops.push(op);
+    return true;
+  }
+  const anchors = uniqueAnchors(before, after);
+  if (anchors.length === 0) {
+    for (const line of before) ops.push({ kind: "del", line });
+    for (const line of after) ops.push({ kind: "add", line });
+    // With no line in common this is the real diff; otherwise it overstates.
+    const kept = new Set(before);
+    return !after.some((line) => kept.has(line));
+  }
+  let exact = true;
+  let oldAt = 0;
+  let newAt = 0;
+  for (const [oldIndex, newIndex] of anchors) {
+    exact = diffRegion(before.slice(oldAt, oldIndex), after.slice(newAt, newIndex), ops) && exact;
+    ops.push({ kind: "equal", line: before[oldIndex] as string });
+    oldAt = oldIndex + 1;
+    newAt = newIndex + 1;
+  }
+  return diffRegion(before.slice(oldAt), after.slice(newAt), ops) && exact;
+}
+
+// Lines occurring exactly once in each version, as [old, new] index pairs, keeping
+// the longest run whose order agrees in both (patience diff's anchors).
+function uniqueAnchors(before: readonly string[], after: readonly string[]): [number, number][] {
+  const counts = new Map<
+    string,
+    { old: number; new: number; oldIndex: number; newIndex: number }
+  >();
+  before.forEach((line, index) => {
+    const entry = counts.get(line) ?? { old: 0, new: 0, oldIndex: index, newIndex: -1 };
+    entry.old++;
+    counts.set(line, entry);
+  });
+  after.forEach((line, index) => {
+    const entry = counts.get(line);
+    if (!entry) return;
+    entry.new++;
+    entry.newIndex = index;
+  });
+  const pairs: [number, number][] = [];
+  for (const entry of counts.values()) {
+    if (entry.old === 1 && entry.new === 1) pairs.push([entry.oldIndex, entry.newIndex]);
+  }
+  pairs.sort((x, y) => x[0] - y[0]);
+  // Longest increasing subsequence on the new-side index, O(n log n).
+  const tails: number[] = [];
+  const previous: number[] = new Array(pairs.length).fill(-1);
+  for (let index = 0; index < pairs.length; index++) {
+    const value = (pairs[index] as [number, number])[1];
+    let low = 0;
+    let high = tails.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if ((pairs[tails[mid] as number] as [number, number])[1] < value) low = mid + 1;
+      else high = mid;
+    }
+    if (low > 0) previous[index] = tails[low - 1] as number;
+    tails[low] = index;
+  }
+  const chain: [number, number][] = [];
+  for (let at = tails.at(-1) ?? -1; at !== -1; at = previous[at] as number) {
+    chain.push(pairs[at] as [number, number]);
+  }
+  return chain.reverse();
 }
 
 // Unified hunks with three lines of context, merging changes whose context meets.

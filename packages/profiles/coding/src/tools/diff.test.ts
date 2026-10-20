@@ -205,10 +205,35 @@ describe("whole-file diffs", () => {
     expect(fileDiff("f", "a\n", "a\n")).toEqual({ path: "f", added: 0, removed: 0, hunks: [] });
   });
 
-  test("past the search bound the changed region is reported, marked approximate", () => {
+  test("many scattered changes past the search bound still count exactly", async () => {
+    const before = Array.from({ length: 23_100 }, (_, index) => `line ${index}`);
+    const after = before.map((line, index) => (index % 21 === 10 ? `changed ${index}` : line));
+    const a = `${before.join("\n")}\n`;
+    const b = `${after.join("\n")}\n`;
+    const diff = fileDiff("f", a, b);
+    expect(diff.approximate).toBeUndefined();
+    expect({ added: diff.added, removed: diff.removed }).toEqual({ added: 1_100, removed: 1_100 });
+    expect({ added: diff.added, removed: diff.removed }).toEqual(await gitNumstat(a, b));
+    expect(applyHunks(a, diff)).toEqual(lines(b));
+  });
+
+  test("a rewrite sharing no line with the old file is exact, not approximate", () => {
     const before = Array.from({ length: 3_000 }, (_, index) => `old ${index}`);
     const after = Array.from({ length: 3_000 }, (_, index) => `new ${index}`);
     const diff = fileDiff("f", `${before.join("\n")}\n`, `${after.join("\n")}\n`);
-    expect(diff).toMatchObject({ added: 3_000, removed: 3_000, approximate: true });
+    expect(diff).toMatchObject({ added: 3_000, removed: 3_000 });
+    expect(diff.approximate).toBeUndefined();
+  });
+
+  test("only a region with shared but never-unique lines is reported whole, marked approximate", () => {
+    let seed = 11;
+    const symbol = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return "abcd"[Math.floor((seed / 2 ** 31) * 4)] as string;
+    };
+    const before = Array.from({ length: 6_000 }, symbol);
+    const after = Array.from({ length: 6_000 }, symbol);
+    const diff = fileDiff("f", `${before.join("\n")}\n`, `${after.join("\n")}\n`);
+    expect(diff.approximate).toBe(true);
   });
 });
