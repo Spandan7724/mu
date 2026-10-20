@@ -14,6 +14,7 @@ import {
   toolCell,
   toolOutputCell,
 } from "./cells.ts";
+import { subagentCheckRenderers, taskCheckRenderers } from "./check-renderers.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import { type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
@@ -64,6 +65,8 @@ export interface ToolRendererFn {
   // Thinking-only turns between calls do not close this renderer's groups; the
   // thinking moves inside the group, shown when it is expanded.
   groupsAcrossThinking?: boolean;
+  // Housekeeping rows: the group summary stays dim instead of bold.
+  quiet?: boolean;
   // The collapsed header for a group of this renderer's calls, in at most
   // `width` columns. Without it the coding classes are summarised.
   summarizeActivity?: (
@@ -1012,6 +1015,7 @@ export const subagentRenderers: Record<string, ToolRendererFn> = {
   search: makeSubagentRenderer("search"),
   recall: makeSubagentRenderer("recall"),
   counsel: makeSubagentRenderer("counsel"),
+  ...subagentCheckRenderers,
 };
 
 // A provider-hosted web search is not a tool call, but it reads like exploration
@@ -1090,6 +1094,10 @@ export class RendererRegistry {
     } catch {
       return undefined;
     }
+  }
+
+  quiet(info: ToolRenderInfo): boolean {
+    return this.renderers.get(info.toolName)?.quiet === true;
   }
 
   groupsAcrossThinking(info: ToolRenderInfo): boolean {
@@ -1225,6 +1233,7 @@ planRenderer.supersedes = true;
 // Renderers for the coding profile's tools, expressed as data so the TUI does
 // not import the profile (dependency direction).
 export const codingRenderers: Record<string, ToolRendererFn> = {
+  ...taskCheckRenderers,
   todo: planRenderer,
   read: (info, ctx) => {
     const details = info.result?.details as

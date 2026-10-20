@@ -836,6 +836,134 @@ describe("steering, follow-ups and abort", () => {
     await agent.shutdown();
   });
 
+  describe("background notices", () => {
+    const sees = (provider: FakeProvider, call: number, text: string) =>
+      JSON.stringify(provider.requests[call]?.messages ?? []).includes(text);
+    const gatedTool = (name: string, calls: string[], gate?: Promise<void>) =>
+      tool({
+        name,
+        description: name,
+        inputSchema: z.object({}),
+        execute: async () => {
+          calls.push(name);
+          await gate;
+          return `${name} done`;
+        },
+      });
+    const hostOf = () => {
+      let host: ProfileRuntimeHost | undefined;
+      const runtime: ProfileRuntime = {
+        attach: (attached) => {
+          host = attached;
+        },
+      };
+      return { runtime, host: () => host as ProfileRuntimeHost };
+    };
+
+    test("a notice mid-run reaches the next model call and planned tool calls still run", async () => {
+      let open = () => {};
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const calls: string[] = [];
+      const provider = new FakeProvider([
+        {
+          content: [
+            { type: "toolCall", id: "c1", name: "slow", arguments: {} },
+            { type: "toolCall", id: "c2", name: "quick", arguments: {} },
+          ],
+        },
+        { content: [{ type: "text", text: "noted" }] },
+      ]);
+      const { runtime, host } = hostOf();
+      const agent = agentWith(provider, {
+        runtime,
+        tools: [gatedTool("slow", calls, gate), gatedTool("quick", calls)] as AnyTool[],
+      });
+      const running = agent.run("work");
+      while (calls.length === 0) await Bun.sleep(1);
+      host().notify?.(customMessage("background_task", "task_1 exited with code 0"));
+      open();
+      await running;
+      await agent.waitForIdle();
+
+      expect(calls).toEqual(["slow", "quick"]);
+      expect(provider.callCount).toBe(2);
+      expect(sees(provider, 1, "task_1 exited with code 0")).toBe(true);
+      await agent.shutdown();
+    });
+
+    test("a notice while idle wakes the agent", async () => {
+      const provider = new FakeProvider([
+        { content: [{ type: "text", text: "started" }] },
+        { content: [{ type: "text", text: "saw it" }] },
+      ]);
+      const { runtime, host } = hostOf();
+      const agent = agentWith(provider, { runtime });
+      await agent.run("start");
+      host().notify?.(customMessage("background_task", "task_1 exited with code 0"));
+      await agent.waitForIdle();
+      expect(provider.callCount).toBe(2);
+      expect(sees(provider, 1, "task_1 exited with code 0")).toBe(true);
+      await agent.shutdown();
+    });
+
+    test("after a user abort, notices wait for the user's next message", async () => {
+      let open = () => {};
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      const calls: string[] = [];
+      const provider = new FakeProvider([
+        { content: [{ type: "toolCall", id: "c1", name: "slow", arguments: {} }] },
+        { content: [{ type: "text", text: "next answer" }] },
+      ]);
+      const { runtime, host } = hostOf();
+      const agent = agentWith(provider, {
+        runtime,
+        tools: [gatedTool("slow", calls, gate)] as AnyTool[],
+      });
+      const running = agent.run("work");
+      while (calls.length === 0) await Bun.sleep(1);
+      agent.abort();
+      host().notify?.(customMessage("background_task", "task_1 exited during the abort"));
+      open();
+      await running;
+      host().notify?.(customMessage("background_task", "task_2 exited afterwards"));
+      await agent.waitForIdle();
+      await Bun.sleep(5);
+      expect(provider.callCount).toBe(1);
+
+      await agent.run("what happened?");
+      expect(provider.callCount).toBe(2);
+      expect(sees(provider, 1, "task_1 exited during the abort")).toBe(true);
+      expect(sees(provider, 1, "task_2 exited afterwards")).toBe(true);
+      await agent.shutdown();
+    });
+
+    test("a user follow-up after an abort releases held notices", async () => {
+      const provider = new FakeProvider([
+        { content: [{ type: "text", text: "first" }], delayMs: 50 },
+        { content: [{ type: "text", text: "second" }] },
+      ]);
+      const { runtime, host } = hostOf();
+      const agent = agentWith(provider, { runtime });
+      const running = agent.run("work");
+      await Bun.sleep(5);
+      agent.abort();
+      await running;
+      host().notify?.(customMessage("background_task", "task_1 exited with code 0"));
+      await agent.waitForIdle();
+      expect(provider.callCount).toBe(1);
+
+      agent.followUp("continue");
+      await agent.waitForIdle();
+      expect(provider.callCount).toBe(2);
+      expect(sees(provider, 1, "task_1 exited with code 0")).toBe(true);
+      await agent.shutdown();
+    });
+  });
+
   test("resize, stop, and awaited shutdown are owned by the agent", async () => {
     const calls: string[] = [];
     let release!: () => void;

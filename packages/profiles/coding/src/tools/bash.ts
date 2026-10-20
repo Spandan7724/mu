@@ -9,6 +9,7 @@ import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
 import { isInspectionShellCommand, isSingleRipgrepCommand } from "../shell-inspection.ts";
+import { plainTerminalText } from "../terminal-text.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -205,7 +206,9 @@ export function bashTool(deps: BashDeps) {
       run_in_background: z
         .boolean()
         .optional()
-        .describe("Start the command in the background and return a task id immediately"),
+        .describe(
+          "Start the command in the background and return a task id immediately. Its exit is reported to you automatically, mid-turn or by waking you, so there is no need to poll it",
+        ),
     }),
     execute: async (
       { command, timeoutMs, run_in_background },
@@ -222,7 +225,7 @@ export function bashTool(deps: BashDeps) {
           content: [
             {
               type: "text",
-              text: `Started ${task.id} in the background. Use task_output to read it, task_kill to stop it.`,
+              text: `Started ${task.id} in the background. Its exit is reported to you automatically, mid-turn or by waking you, so keep working or end your turn. Use task_output with timeoutMs only when you need its result now; task_kill stops it.`,
             },
           ],
           details: { taskId: task.id, command, background: true },
@@ -265,7 +268,7 @@ export function bashTool(deps: BashDeps) {
       const durationMs = Date.now() - startedAt;
 
       if (result.backgrounded && movedTo) {
-        const sofar = printed.read().trimEnd();
+        const sofar = plainTerminalText(printed.read()).trimEnd();
         const body = sofar
           ? `\n\nOutput so far:\n${withNotice(truncateOutput(sofar), "command produced a lot of output")}`
           : "";
@@ -281,8 +284,10 @@ export function bashTool(deps: BashDeps) {
       }
 
       const parts: string[] = [];
-      if (result.stdout.trim()) parts.push(result.stdout.trimEnd());
-      if (result.stderr.trim()) parts.push(`[stderr]\n${result.stderr.trimEnd()}`);
+      const stdout = plainTerminalText(result.stdout);
+      const stderr = plainTerminalText(result.stderr);
+      if (stdout.trim()) parts.push(stdout.trimEnd());
+      if (stderr.trim()) parts.push(`[stderr]\n${stderr.trimEnd()}`);
       const body = withNotice(
         truncateOutput(parts.join("\n\n") || "(no output)"),
         "command produced a lot of output",

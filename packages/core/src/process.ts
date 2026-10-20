@@ -264,9 +264,20 @@ export class ProcessManager {
     return [...this.tasks.values()].filter((t) => t.info.status === "running").length;
   }
 
-  output(id: string, since?: "start" | "new"): { text: string; truncated: boolean } | undefined {
+  // "new" reads what arrived since the last read and marks it read; "peek" reads
+  // the same without marking it.
+  output(
+    id: string,
+    since?: "start" | "new" | "peek",
+  ): { text: string; truncated: boolean } | undefined {
     const task = this.tasks.get(id);
     if (!task) return undefined;
+    if (since === "peek") {
+      return {
+        text: task.buffer.readSince(task.readOffset).text,
+        truncated: task.buffer.truncated,
+      };
+    }
     if (since === "new") {
       const { text, offset } = task.buffer.readSince(task.readOffset);
       task.readOffset = offset;

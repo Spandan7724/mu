@@ -81,7 +81,7 @@ describe("task tools", () => {
     const taskId = (started.details as { taskId: string }).taskId;
 
     await Bun.sleep(300);
-    const output = await run(tools.get("task_output"), { taskId });
+    const output = await run(tools.get("task_output"), { taskId, timeoutMs: 0 });
     expect(textOf(output)).toContain("hello-from-background");
 
     const killed = await run(tools.get("task_kill"), { taskId });
@@ -100,7 +100,7 @@ describe("task tools", () => {
     await run(tools.get("task_write_stdin"), { taskId, data: "ping\n" });
     await Bun.sleep(300);
 
-    const output = await run(tools.get("task_output"), { taskId });
+    const output = await run(tools.get("task_output"), { taskId, timeoutMs: 0 });
     expect(textOf(output)).toContain("ping");
 
     await run(tools.get("task_kill"), { taskId });
@@ -118,7 +118,7 @@ describe("task tools", () => {
     const taskId = (started.details as { taskId: string }).taskId;
 
     await Bun.sleep(400);
-    const output = await run(tools.get("task_output"), { taskId });
+    const output = await run(tools.get("task_output"), { taskId, timeoutMs: 0 });
     expect(textOf(output)).toContain("done");
     expect(textOf(output)).toContain("exit 3");
   });
@@ -419,4 +419,154 @@ describe("the user stopping a background task", () => {
     expect(agent.stopBackgroundWork("task_1")).toBe(false);
     await agent.shutdown();
   }, 60_000);
+});
+
+describe("waiting on background tasks", () => {
+  const start = async (tools: Map<string, AnyTool>, command: string) => {
+    const started = await run(tools.get("bash"), { command, run_in_background: true });
+    return (started.details as { taskId: string }).taskId;
+  };
+
+  test("task_output returns the moment the task exits", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const tools = toolsOf(profile);
+    const taskId = await start(tools, "sleep 0.3; echo done-now");
+    const began = Date.now();
+    const output = await run(tools.get("task_output"), { taskId, timeoutMs: 10_000 });
+    expect(Date.now() - began).toBeLessThan(3_000);
+    expect(textOf(output)).toContain("done-now");
+    expect(textOf(output)).toContain("[exited (exit 0)]");
+    await profile.processes.killAll();
+  });
+
+  test("a wait that runs out says so, and Esc ends a wait early", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const tools = toolsOf(profile);
+    const taskId = await start(tools, "sleep 5");
+    const output = await run(tools.get("task_output"), { taskId, timeoutMs: 200 });
+    expect(textOf(output)).toContain("[still running after waiting 200ms]");
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 100);
+    const began = Date.now();
+    const cancelled = await (tools.get("task_output") as AnyTool).execute(
+      "t2",
+      { taskId, timeoutMs: 60_000 },
+      controller.signal,
+    );
+    expect(Date.now() - began).toBeLessThan(2_000);
+    expect(textOf(cancelled)).toContain("[still running; the wait was cancelled]");
+    await profile.processes.killAll();
+  });
+
+  test("a waiting call streams the task's new output into its row", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const tools = toolsOf(profile);
+    const taskId = await start(tools, "echo first-line; sleep 1.5; echo second-line");
+    const updates: string[] = [];
+    await (tools.get("task_output") as AnyTool).execute(
+      "t3",
+      { taskId, timeoutMs: 10_000 },
+      signal,
+      (partial) => {
+        for (const block of partial) if (block.type === "text") updates.push(block.text);
+      },
+    );
+    expect(updates.some((text) => text.includes("first-line"))).toBe(true);
+    await profile.processes.killAll();
+  });
+
+  test("the model reads task and command output without terminal control sequences", async () => {
+    const profile = await codingProfile({ root: await scratch() });
+    const tools = toolsOf(profile);
+    const command = "printf '\\033[32m✓\\033[0m passed\\n'; printf '10%%\\r50%%\\r100%%\\n'";
+    const taskId = await start(tools, command);
+    const background = textOf(await run(tools.get("task_output"), { taskId, timeoutMs: 5_000 }));
+    const foreground = textOf(await run(tools.get("bash"), { command }));
+    for (const text of [background, foreground]) {
+      expect(text).toContain("✓ passed");
+      expect(text).toContain("100%");
+      expect(text).not.toContain("\u001b");
+      expect(text).not.toContain("50%");
+    }
+    await profile.processes.killAll();
+  });
+
+  const agentFor = async (turns: ConstructorParameters<typeof FakeProvider>[0]) => {
+    const profile = await codingProfile({ root: await scratch(), home: await scratch() });
+    const provider = new FakeProvider(turns);
+    const agent = new Agent(
+      await optionsFromProfile(profile, "fake/fake-1", {
+        model: fakeModel,
+        provider,
+        permissions: [{ permission: "*", pattern: "*", action: "allow" }],
+      }),
+    );
+    return { profile, provider, agent };
+  };
+
+  test("an exit during a run reaches the model in that run, without waking another", async () => {
+    const { profile, provider, agent } = await agentFor([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "bash",
+            arguments: { command: "sleep 0.1", run_in_background: true },
+          },
+        ],
+      },
+      {
+        content: [
+          { type: "toolCall", id: "c2", name: "bash", arguments: { command: "sleep 0.6" } },
+        ],
+      },
+      { content: [{ type: "text", text: "saw the exit" }] },
+    ]);
+    await agent.run("start it and keep working");
+    await agent.waitForIdle();
+    await Bun.sleep(100);
+
+    expect(provider.callCount).toBe(3);
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("Background task task_1");
+    await agent.shutdown();
+    await profile.processes.killAll();
+  });
+
+  test("an exit a waiting task_output reports is not announced again", async () => {
+    const { profile, provider, agent } = await agentFor([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "bash",
+            arguments: { command: "sleep 0.2", run_in_background: true },
+          },
+        ],
+      },
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c2",
+            name: "task_output",
+            arguments: { taskId: "task_1", timeoutMs: 5_000 },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    await agent.run("start it and wait");
+    await agent.waitForIdle();
+    await Bun.sleep(100);
+
+    expect(provider.callCount).toBe(3);
+    const third = JSON.stringify(provider.requests[2]?.messages);
+    expect(third).toContain("exited (exit 0)");
+    expect(third).not.toContain("Background task task_1");
+    await agent.shutdown();
+    await profile.processes.killAll();
+  });
 });

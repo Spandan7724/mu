@@ -5296,3 +5296,94 @@ describe("activity summaries count what happened", () => {
     );
   });
 });
+
+describe("housekeeping rows", () => {
+  const end = (
+    app: App,
+    id: string,
+    toolName: string,
+    text: string,
+    details?: unknown,
+    isError = false,
+  ) =>
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text }],
+        ...(details !== undefined ? { details } : {}),
+        isError,
+        timestamp: 1,
+      },
+    });
+  const startCall = (app: App, id: string, toolName: string, args: unknown) =>
+    app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+  const rows = (app: App) => app.renderTranscript().map(stripAnsi);
+
+  test("a check is one quiet row naming the target and what it found", () => {
+    const { app } = harness();
+    startCall(app, "o1", "task_output", { taskId: "task_1" });
+    end(app, "o1", "task_output", "a\nb\nc\n\n[still running after waiting 10s]", {
+      taskId: "task_1",
+      status: "running",
+      exitCode: null,
+    });
+    expect(rows(app)).toEqual(["  › checked task_1 · running · 3 new lines"]);
+  });
+
+  test("consecutive checks fold into one row with each target's latest state", () => {
+    const { app } = harness();
+    for (const [id, status, body] of [
+      ["o1", "running", "(no new output)\n\n[still running]"],
+      ["o2", "running", "x\n\n[still running]"],
+      ["o3", "exited", "done\n\n[exited (exit 0)]"],
+    ] as const) {
+      startCall(app, id, "task_output", { taskId: "task_1" });
+      end(app, id, "task_output", body, {
+        taskId: "task_1",
+        status,
+        exitCode: status === "exited" ? 0 : null,
+      });
+    }
+    startCall(app, "s1", "subagent_status", { subagentId: "sa-c9d014" });
+    end(app, "s1", "subagent_status", "sa-c9d014 · done", {
+      subagentId: "sa-c9d014",
+      status: "done",
+    });
+    startCall(app, "l1", "task_list", {});
+    end(app, "l1", "task_list", "task_1 · exited (exit 0) · bun run ci");
+    expect(rows(app)).toEqual(["  › checked task_1 ×3 · exited 0 · 1 new line, sa-c9d014 · …"]);
+    app.setWidth(120);
+    expect(rows(app)).toEqual([
+      "  › checked task_1 ×3 · exited 0 · 1 new line, sa-c9d014 · done, tasks · 1 task, 0 running",
+    ]);
+
+    const app2 = harness().app;
+    startCall(app2, "k1", "task_kill", { taskId: "task_2" });
+    end(app2, "k1", "task_kill", "Killed task_2.");
+    startCall(app2, "o9", "task_output", { taskId: "task_9" });
+    end(app2, "o9", "task_output", "No such task: task_9", undefined, true);
+    expect(rows(app2)).toEqual(["  › checked task_2 · stopped, task_9 · No such task: task_9"]);
+  });
+
+  test("a waiting check says what it waits on while it runs", () => {
+    const { app } = harness();
+    startCall(app, "o1", "task_output", { taskId: "task_1", timeoutMs: 120_000 });
+    startCall(app, "s1", "subagent_status", { subagentId: "sa-1" });
+    const live = app.renderBottom().map(stripAnsi);
+    expect(live).toContain("  › waiting on task_1 · up to 120s");
+    expect(live).toContain("  › checking sa-1");
+  });
+
+  test("a group summary of checks is not bold", () => {
+    const { app } = harness({}, { depth: "ansi16" });
+    for (const id of ["o1", "o2"]) {
+      startCall(app, id, "task_output", { taskId: "task_1" });
+      end(app, id, "task_output", "x\n\n[still running]", { taskId: "task_1", status: "running" });
+    }
+    expect(app.renderTranscript()[0]).not.toContain("\u001b[1m");
+  });
+});

@@ -77,6 +77,9 @@ export interface LoopConfig {
   // Follow-ups keep the loop alive after it would otherwise stop. Also the
   // wake-up mechanism for background work completing.
   getFollowUpMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
+  // News from outside the run (background work finishing): joins the context
+  // before the next LLM call, like steering, but never skips pending tool calls.
+  getNotices?: () => AgentMessage[] | Promise<AgentMessage[]>;
 
   // Control hooks — the loop's public API.
   beforeToolCall?: (
@@ -177,7 +180,10 @@ export async function runLoop(
     await emit({ type: "message_end", message: prompt });
   }
 
-  let pending: AgentMessage[] = (await currentConfig.getSteeringMessages?.()) ?? [];
+  let pending: AgentMessage[] = [
+    ...((await currentConfig.getSteeringMessages?.()) ?? []),
+    ...((await currentConfig.getNotices?.()) ?? []),
+  ];
 
   for (;;) {
     let hasMoreToolCalls = true;
@@ -310,6 +316,7 @@ export async function runLoop(
       if (directResponse !== undefined) return finish("done");
 
       pending.push(...((await currentConfig.getSteeringMessages?.()) ?? []));
+      pending.push(...((await currentConfig.getNotices?.()) ?? []));
     }
 
     const followUps = (await currentConfig.getFollowUpMessages?.()) ?? [];

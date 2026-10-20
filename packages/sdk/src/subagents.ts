@@ -671,7 +671,7 @@ class SubagentManager {
     if (job.stoppedBy || parent.isStopping) await parent.recordMessage(record);
     else {
       job.queued = record;
-      parent.followUp(record);
+      parent.notify(record);
     }
   }
 

@@ -2428,7 +2428,9 @@ export class App {
       },
       this.options.depth,
     );
-    const summary = `${MARGIN}${marker} ${styleText(this.activitySummary(item), { bold: true }, this.options.depth)}`;
+    const text = this.activitySummary(item);
+    const quiet = item.tools[0] !== undefined && this.registry.quiet(item.tools[0].info);
+    const summary = `${MARGIN}${marker} ${quiet ? text : styleText(text, { bold: true }, this.options.depth)}`;
     if (!expanded) return [summary];
     // Children hang off the group's rail, two columns in, so they read as its body.
     const childWidth = Math.max(20, this.options.width - 2);

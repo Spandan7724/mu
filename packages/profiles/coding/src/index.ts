@@ -210,6 +210,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     checkpoints.setIncludedPaths(included);
   }
   const deps = { root, state: fileState, instructions: instructionLoader };
+  // Tasks a task_output call is waiting on; that call reports the exit itself.
+  const waitingOn = new Map<string, number>();
   const processes = new ProcessManager(
     options.spawner ?? shellSpawner(root),
     options.processEvents ?? {},
@@ -222,7 +224,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     lsTool(deps),
     bashTool({ root, processes, ...(options.spawn ? { spawn: options.spawn } : {}) }),
     todoTool(todos),
-    ...taskTools(processes),
+    ...taskTools(processes, waitingOn),
   ] as AnyTool[];
 
   const stoppedByUser = new Set<string>();
@@ -252,13 +254,16 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
             status: task.status === "killed" ? "killed" : "exited",
           });
           // The transcript already shows the task's own completion row, and
-          // this text is written for the model, so it wakes the run as tagged
-          // context rather than as a turn the user appears to have typed.
+          // this text is written for the model, so it reaches the run as tagged
+          // context rather than as a turn the user appears to have typed: mid-run
+          // if one is going, otherwise by waking the agent.
           // A task the user stopped is recorded for the model without waking it.
-          if (task.detached) return;
+          if (task.detached || waitingOn.has(task.id)) return;
+          const notice = customMessage("background_task", exitNotification(task));
           if (stoppedByUser.delete(task.id) && host.record)
             host.record(customMessage("background_task", exitNotification(task, true)));
-          else host.followUp(customMessage("background_task", exitNotification(task)));
+          else if (host.notify) host.notify(notice);
+          else host.followUp(notice);
         },
       });
     },

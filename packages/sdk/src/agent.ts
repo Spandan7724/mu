@@ -286,6 +286,10 @@ export class Agent {
   private controller = new AbortController();
   private steering: AgentMessage[] = [];
   private followUps: AgentMessage[] = [];
+  // Background news for the model. During a run it joins the context before the
+  // next model call; after a user abort it waits for the user's next message.
+  private notices: AgentMessage[] = [];
+  private noticesHeld = false;
   private totals: Usage = zeroUsage();
   private compactRequested = false;
   private compactRequestedFocus: string | undefined;
@@ -345,6 +349,7 @@ export class Agent {
     options.runtime?.attach({
       emit: (event) => this.emitTaskEvent(event),
       followUp: (message) => this.followUp(message),
+      notify: (message) => this.notify(message),
       record: (message) =>
         this.trackBackground({
           label: "record",
@@ -674,6 +679,8 @@ export class Agent {
     this.reactiveRecoveryPending = false;
     this.steering = [];
     this.followUps = [];
+    this.notices = [];
+    this.noticesHeld = false;
     this.pendingCheckpoint = undefined;
     this.sessionStarted = false;
     this.controller = new AbortController();
@@ -732,6 +739,8 @@ export class Agent {
     this.reactiveRecoveryPending = false;
     this.steering = [];
     this.followUps = [];
+    this.notices = [];
+    this.noticesHeld = false;
     this.pendingCheckpoint = undefined;
     this.checkpoints.restore([]);
     this.sessionStarted = false;
@@ -749,17 +758,31 @@ export class Agent {
   // context the user never typed.
   followUp(message: string | CustomMessage): void {
     if (this.stopping) return;
+    if (typeof message === "string") this.noticesHeld = false;
     this.followUps.push(typeof message === "string" ? userMessage(message) : message);
     if (!this.running) this.scheduleAutonomousRun();
   }
 
-  // Withdraws a queued follow-up by identity before the loop delivers it.
+  // Tells the model something happened outside its run, such as background work
+  // finishing. A running agent sees it before its next model call without losing
+  // the tool calls it has planned; an idle one wakes. After the user aborts a run,
+  // it waits for the user's next message instead of starting a run they stopped.
+  notify(message: CustomMessage): void {
+    if (this.stopping) return;
+    if (this.running || this.noticesHeld) this.notices.push(message);
+    else this.followUp(message);
+  }
+
+  // Withdraws a queued follow-up or notice by identity before the loop delivers it.
   withdrawFollowUp(message: AgentMessage): boolean {
-    const index = this.followUps.indexOf(message);
-    if (index === -1) return false;
-    this.followUps.splice(index, 1);
-    this.resolveIdleIfDone();
-    return true;
+    for (const queue of [this.followUps, this.notices]) {
+      const index = queue.indexOf(message);
+      if (index === -1) continue;
+      queue.splice(index, 1);
+      this.resolveIdleIfDone();
+      return true;
+    }
+    return false;
   }
 
   // Removes a specific message while it is still waiting in an agent queue.
@@ -853,6 +876,7 @@ export class Agent {
   }
 
   abort(): void {
+    if (this.running) this.noticesHeld = true;
     this.controller.abort();
   }
 
@@ -922,12 +946,21 @@ export class Agent {
       this.compacting = false;
       this.activeEmit = undefined;
       this.activeExecution = undefined;
+      this.releaseNotices();
       if (this.manualCompactionQueued && !this.stopping) this.scheduleManualCompaction();
       else if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
       this.resolveIdleIfDone();
     });
     this.activeExecution = execution;
     return execution;
+  }
+
+  // News that arrived too late for the run that just ended wakes the next one,
+  // unless the user stopped that run.
+  private releaseNotices(): void {
+    if (this.noticesHeld || this.stopping || this.followUps.length > 0) return;
+    const next = this.notices.shift();
+    if (next) this.followUps.push(next);
   }
 
   private async executeManualCompaction(
@@ -1545,6 +1578,7 @@ export class Agent {
     prompt: string | UserContent[],
     opts?: AgentRunOptions<T>,
   ): Promise<RunResult | (RunResult & { output: T })> {
+    this.noticesHeld = false;
     return this.execute(prompt, opts, () => {});
   }
 
@@ -1563,6 +1597,7 @@ export class Agent {
       else queue.push(event);
     };
 
+    this.noticesHeld = false;
     const finished = this.execute(prompt, opts, push).finally(() => {
       done = true;
       while (waiters.length > 0) {
@@ -1830,6 +1865,7 @@ export class Agent {
       this.activeEmit = undefined;
       this.activeExecution = undefined;
       if (heldEnd) publish(heldEnd);
+      this.releaseNotices();
       if (this.manualCompactionQueued && !this.stopping) this.scheduleManualCompaction();
       else if (this.followUps.length > 0 && !this.stopping) this.scheduleAutonomousRun();
       this.resolveIdleIfDone();
@@ -2146,6 +2182,8 @@ export class Agent {
         this.steering = [];
         return pending;
       },
+      // An aborted loop returns before delivering, so notices stay queued for later.
+      getNotices: () => (this.controller.signal.aborted ? [] : this.notices.splice(0)),
       getFollowUpMessages: () => {
         const next = this.followUps.shift();
         if (next) return [next];

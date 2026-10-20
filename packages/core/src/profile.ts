@@ -26,6 +26,10 @@ export interface ProfileRuntimeHost {
   // A string wakes the run as user-authored text. Custom context reaches the
   // model without appearing in the transcript as something the user said.
   followUp: (message: string | CustomMessage) => void;
+  // News for the model from outside the run: delivered before its next model
+  // call while running, waking it when idle, held for the user's next message
+  // after the user aborted. Hosts without it fall back to followUp.
+  notify?: (message: CustomMessage) => void;
   // Adds context for the model's next turn without starting one.
   record?: (message: CustomMessage) => void;
 }

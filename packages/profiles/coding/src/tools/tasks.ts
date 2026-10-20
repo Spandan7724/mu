@@ -10,6 +10,7 @@ import {
 import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
+import { plainTerminalText } from "../terminal-text.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
 export function shellSpawner(root: string): Spawner {
@@ -131,26 +132,84 @@ export function shellSpawner(root: string): Spawner {
   };
 }
 
-export function taskTools(manager: ProcessManager) {
+const DEFAULT_WAIT_MS = 10_000;
+const MAX_WAIT_MS = 300_000;
+const WAIT_PROGRESS_MS = 500;
+
+// `waiting` counts task_output calls currently waiting on each task, so the
+// runtime can skip the exit notice a waiting call is about to report itself.
+export function taskTools(manager: ProcessManager, waiting = new Map<string, number>()) {
   const taskOutput = tool({
     name: "task_output",
     changesState: false,
     description:
-      "Read output from a background task. Returns only what is new since the last read unless full is set.",
+      "Read a background task's output, waiting up to timeoutMs (default 10000, max 300000) for it to exit and returning the moment it does. Returns only what is new since the last read unless full is set. Still running after the wait is normal: when you need the result now, set timeoutMs to how long the task should take; otherwise keep working or end your turn, since the task's exit is reported to you automatically.",
     inputSchema: z.object({
       taskId: z.string(),
       full: z.boolean().optional().describe("Return all output rather than only what is new"),
+      timeoutMs: z
+        .number()
+        .int()
+        .min(0)
+        .max(MAX_WAIT_MS)
+        .optional()
+        .describe("How long to wait for the task to exit, in ms; 0 reads without waiting"),
     }),
     isConcurrencySafe: () => true,
-    execute: ({ taskId, full }): ToolResult | string => {
+    execute: async (
+      { taskId, full, timeoutMs },
+      { signal, update },
+    ): Promise<ToolResult | string> => {
+      if (!manager.get(taskId)) return errorResult(`No such task: ${taskId}`);
+      const waitMs = timeoutMs ?? DEFAULT_WAIT_MS;
+      let waited = false;
+      if (manager.get(taskId)?.status === "running" && waitMs > 0 && !signal.aborted) {
+        waited = true;
+        waiting.set(taskId, (waiting.get(taskId) ?? 0) + 1);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let progress: ReturnType<typeof setInterval> | undefined;
+        let onAbort: (() => void) | undefined;
+        try {
+          // Updates append to the call's live output, so each carries only what is new.
+          let shown = 0;
+          progress = setInterval(() => {
+            const sofar = manager.output(taskId, "peek")?.text ?? "";
+            const fresh = sofar.slice(shown);
+            shown = sofar.length;
+            if (fresh.trim()) update(plainTerminalText(fresh));
+          }, WAIT_PROGRESS_MS);
+          await Promise.race([
+            manager.wait(taskId),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, waitMs);
+            }),
+            new Promise<void>((resolve) => {
+              onAbort = resolve;
+              signal.addEventListener("abort", onAbort, { once: true });
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+          if (progress) clearInterval(progress);
+          if (onAbort) signal.removeEventListener("abort", onAbort);
+          const count = (waiting.get(taskId) ?? 1) - 1;
+          if (count > 0) waiting.set(taskId, count);
+          else waiting.delete(taskId);
+        }
+      }
       const task = manager.get(taskId);
       if (!task) return errorResult(`No such task: ${taskId}`);
       const output = manager.output(taskId, full ? "start" : "new");
       const status =
         task.status === "running"
-          ? "still running"
+          ? waited
+            ? signal.aborted
+              ? "still running; the wait was cancelled"
+              : `still running after waiting ${formatWait(waitMs)}`
+            : "still running"
           : `${task.status}${task.exitCode !== null ? ` (exit ${task.exitCode})` : ""}`;
-      const body = output?.text.trim().length ? output.text : "(no new output)";
+      const text = plainTerminalText(output?.text ?? "");
+      const body = text.trim().length ? text : "(no new output)";
       return {
         content: [
           {
@@ -221,4 +280,8 @@ export function taskTools(manager: ProcessManager) {
   });
 
   return [taskOutput, taskWriteStdin, taskKill, taskDetach, taskList];
+}
+
+function formatWait(ms: number): string {
+  return ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
 }
