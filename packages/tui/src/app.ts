@@ -538,9 +538,15 @@ interface ConversationView {
         version: number;
         width: number;
         rows: string[];
-        tail: Spacing | undefined;
+        // Per item: the row its blank and lines start at, and the spacing tail
+        // after it, so an append rebuilds only from the first changed item.
+        entries: { start: number; tail: Spacing | undefined }[];
+        newest: Map<string, number>;
       }
     | undefined;
+  // The first item changed since the cache was built, when every change was
+  // local to the end; otherwise the cache is dropped instead.
+  transcriptDirtyFrom: number | undefined;
   streaming: string | undefined;
   // Thinking of the message still streaming, shown as it will be once committed.
   streamingThinking: string[];
@@ -581,6 +587,7 @@ function conversationView(
     transcript: [],
     transcriptVersion: 0,
     transcriptCache: undefined,
+    transcriptDirtyFrom: undefined,
     streaming: undefined,
     streamingThinking: [],
     streamingCache: undefined,
@@ -1104,8 +1111,7 @@ export class App {
           if (submitted) {
             submitted.text = text;
             submitted.pending = false;
-            this.transcriptVersion++;
-            this.transcriptCache = undefined;
+            this.transcriptChangedFrom(this.transcript.indexOf(submitted));
           } else {
             this.pushTranscript({ kind: "user", text });
           }
@@ -1550,15 +1556,6 @@ export class App {
   }
 
   private transcriptRows(selectedId?: string, revealAll = false): string[] {
-    const cached = this.transcriptCache;
-    if (
-      !revealAll &&
-      selectedId === undefined &&
-      cached?.version === this.transcriptVersion &&
-      cached.width === this.options.width
-    ) {
-      return cached.rows;
-    }
     // A tool whose calls replace one another leaves only its newest call still
     // true; the rest are history and say so themselves.
     const newest = new Map<string, number>();
@@ -1567,23 +1564,43 @@ export class App {
         newest.set(item.info.toolName, index);
       }
     });
-    const logical: string[] = [];
-    let tail: Spacing | undefined;
-    this.transcript.forEach((item, index) => {
+    const cacheable = !revealAll && selectedId === undefined;
+    const cached = cacheable ? this.transcriptCache : undefined;
+    let from = 0;
+    if (cached?.width === this.options.width) {
+      if (cached.version === this.transcriptVersion) return cached.rows;
+      from = Math.min(this.view.transcriptDirtyFrom ?? 0, cached.entries.length);
+      // A newer call superseding an older one changes the older row.
+      for (const [name, index] of cached.newest) {
+        if (newest.get(name) !== index) from = Math.min(from, index);
+      }
+    }
+    const reused = from > 0 && cached ? cached : undefined;
+    const rows = reused
+      ? reused.rows.slice(0, reused.entries[from]?.start ?? reused.rows.length)
+      : [];
+    const entries = reused ? reused.entries.slice(0, from) : [];
+    let tail = entries.at(-1)?.tail;
+    for (let index = from; index < this.transcript.length; index++) {
+      const item = this.transcript[index] as TranscriptItem;
+      const start = rows.length;
       const block = this.transcriptBlock(item, index, newest, selectedId, revealAll);
-      if (!block) return;
-      if (tail && gapBetween(tail, block.spacing) > 0) logical.push("");
-      logical.push(...block.lines);
-      tail = block.spacing;
-    });
-    const rows = this.toTerminalRows(logical);
-    if (selectedId === undefined && !revealAll) {
+      if (block) {
+        if (tail && gapBetween(tail, block.spacing) > 0) rows.push("");
+        rows.push(...this.toTerminalRows(block.lines));
+        tail = block.spacing;
+      }
+      entries.push({ start, tail });
+    }
+    if (cacheable) {
       this.transcriptCache = {
         version: this.transcriptVersion,
         width: this.options.width,
         rows,
-        tail,
+        entries,
+        newest,
       };
+      this.view.transcriptDirtyFrom = undefined;
     }
     return rows;
   }
@@ -1678,7 +1695,7 @@ export class App {
 
   private transcriptTail(): Spacing | undefined {
     this.transcriptRows();
-    return this.transcriptCache?.tail;
+    return this.transcriptCache?.entries.at(-1)?.tail;
   }
 
   // The live activity and composer region, rebuilt from state on every paint.
@@ -2329,8 +2346,7 @@ export class App {
         tool.thinking = thinking.message;
       }
       previous.tools.push(tool);
-      this.transcriptVersion++;
-      this.transcriptCache = undefined;
+      this.transcriptChangedFrom(this.transcript.lastIndexOf(previous));
       return;
     }
     this.pushTranscript({
@@ -2473,8 +2489,13 @@ export class App {
 
   private pushTranscript(item: TranscriptItem): void {
     this.transcript.push(item);
+    this.transcriptChangedFrom(this.transcript.length - 1);
+  }
+
+  private transcriptChangedFrom(index: number): void {
     this.transcriptVersion++;
-    this.transcriptCache = undefined;
+    const dirty = this.view.transcriptDirtyFrom;
+    this.view.transcriptDirtyFrom = dirty === undefined ? index : Math.min(dirty, index);
   }
 
   private clearPendingSubmissions(): void {

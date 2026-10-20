@@ -5140,3 +5140,71 @@ describe("transcript spacing", () => {
     ]);
   });
 });
+
+describe("incremental transcript rows", () => {
+  test("rows rebuilt from the first changed item always equal a full rebuild", () => {
+    const { app } = harness();
+    // An id no item has: a selection render bypasses the cache and rebuilds everything.
+    const full = () =>
+      (app as unknown as { transcriptRows(id: string): string[] }).transcriptRows("-");
+    const check = () => expect(app.renderTranscript()).toEqual(full());
+    const user = (text: string) => ({
+      role: "user" as const,
+      content: [{ type: "text" as const, text }],
+      timestamp: 1,
+    });
+    const run = (id: string, toolName: string, args: unknown, details: unknown = {}) => {
+      app.handleEvent({ type: "tool_execution_start", toolCallId: id, toolName, args });
+      check();
+      app.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: id,
+        result: {
+          role: "toolResult",
+          toolCallId: id,
+          toolName,
+          content: [{ type: "text", text: "ok" }],
+          details,
+          isError: false,
+          timestamp: 1,
+        },
+      });
+      check();
+    };
+    const plan = (status: string) => ({ items: [{ content: "ship it", status }] });
+
+    for (let turn = 0; turn < 3; turn++) {
+      feed(app, `turn ${turn}\r`);
+      check();
+      app.handleEvent({ type: "message_end", message: user(`turn ${turn}`) });
+      check();
+      app.handleEvent({
+        type: "message_end",
+        message: { ...assistant(""), content: [{ type: "thinking", thinking: "Looking" }] },
+      });
+      check();
+      run(`r${turn}a`, "read", { path: "a.ts" }, { lines: 1 });
+      run(`r${turn}b`, "read", { path: "b.ts" }, { lines: 1 });
+      app.handleEvent({
+        type: "web_search_end",
+        search: {
+          type: "webSearch",
+          id: `w${turn}`,
+          status: "completed",
+          action: { type: "search", query: "q" },
+        },
+      });
+      check();
+      run(`p${turn}`, "todo", plan("in_progress"), plan("in_progress"));
+      app.handleEvent({ type: "message_end", message: assistant(`Step ${turn} done.`) });
+      check();
+      run(`b${turn}`, "bash", { command: "bun test" }, { exitCode: 0 });
+      run(`b${turn}x`, "bash", { command: "bun x" }, { exitCode: 0 });
+      app.appendTranscript(["", `  notice ${turn}`, ""]);
+      check();
+      app.handleEvent({ type: "agent_end", reason: "done" } as AgentEvent);
+      check();
+    }
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).toContain("plan");
+  });
+});
