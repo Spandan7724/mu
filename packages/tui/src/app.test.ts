@@ -7,6 +7,7 @@ import { InputDecoder } from "./input.ts";
 import {
   codingRenderers,
   genericRenderer,
+  liveLineCounts,
   RendererRegistry,
   subagentRenderers,
 } from "./registry.ts";
@@ -2087,7 +2088,7 @@ describe("renderer registry", () => {
     expect(lines.join("\n")).toContain("code.ts changed since it was read");
   });
 
-  test("an edit still running renders its diff without invented line numbers", () => {
+  test("a failed edit expands to what it proposed, without invented line numbers", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
     const lines = registry
@@ -2095,30 +2096,176 @@ describe("renderer registry", () => {
         {
           toolName: "edit",
           args: { path: "code.ts", oldString: "a", newString: "b" },
-          running: true,
+          expanded: true,
+          result: {
+            role: "toolResult",
+            toolCallId: "e",
+            toolName: "edit",
+            content: [{ type: "text", text: "oldString was not found" }],
+            isError: true,
+            timestamp: 1,
+          },
         },
         { width: 60, depth: "none" },
       )
       .map(stripAnsi);
 
-    expect(lines.slice(1)).toEqual(["  │       − a", "  │       + b"]);
+    expect(lines.slice(1, 3)).toEqual(["  │       − a", "  │       + b"]);
   });
 
-  test("an edit whose arguments are still streaming renders no partial diff", () => {
+  test("a running edit or write is one row, with no diff until its result", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
-    // A deletion whose replacement has not arrived yet: the worst frame to show.
+    const ctx = { width: 60, depth: "none" as const };
     const args = { path: "a.ts", oldString: "const limit = 3;", newString: "const li" };
 
-    const streaming = registry.render(
-      { toolName: "edit", args, argsStreaming: true },
-      { width: 60, depth: "none" },
-    );
-    expect(streaming.map(stripAnsi)).toEqual(["  │ edit a.ts"]);
+    for (const argsStreaming of [true, false]) {
+      expect(
+        registry
+          .render({ toolName: "edit", args, argsStreaming, running: true }, ctx)
+          .map(stripAnsi),
+      ).toEqual(["  │ edit a.ts"]);
+    }
+    const write = { path: "b.ts", content: "one\ntwo\n" };
+    expect(registry.render({ toolName: "write", args: write }, ctx).map(stripAnsi)).toEqual([
+      "  │ write b.ts",
+    ]);
 
-    const complete = registry.render({ toolName: "edit", args }, { width: 60, depth: "none" });
-    expect(complete.length).toBeGreaterThan(1);
-    expect(complete.map(stripAnsi).join("\n")).toContain("const limit = 3;");
+    registry.setFileProbe({ occurrences: () => 1, exists: () => false });
+    expect(registry.render({ toolName: "write", args: write }, ctx).map(stripAnsi)).toEqual([
+      "  │ write b.ts · +2 −0",
+    ]);
+    expect(
+      registry
+        .render({ toolName: "edit", args: { ...args, newString: "const limit = 5;" } }, ctx)
+        .map(stripAnsi),
+    ).toEqual(["  │ edit a.ts · +1 −1"]);
+  });
+
+  test("live counts climb as edit arguments stream and never guess", () => {
+    const files: Record<string, string> = {
+      "a.ts": "one\ntwo\nthree\nfour\n",
+      "dup.ts": "x\nx\n",
+    };
+    const probe = {
+      occurrences: (path: string, text: string) => {
+        const content = files[path];
+        return content === undefined ? undefined : content.split(text).length - 1;
+      },
+      exists: (path: string) => path in files,
+    };
+    const counts = (args: unknown, argsStreaming = true, toolName = "edit") =>
+      liveLineCounts({ toolName, args, argsStreaming }, probe);
+    const edit = (oldString?: string, newString?: string) => ({
+      path: "a.ts",
+      edits: [
+        {
+          ...(oldString !== undefined ? { oldString } : {}),
+          ...(newString !== undefined ? { newString } : {}),
+        },
+      ],
+    });
+
+    // oldString may still be growing until newString starts.
+    expect(counts(edit("two\nthr"))).toBeUndefined();
+    expect(counts(edit("two\nthree", ""))).toEqual({ added: 0, removed: 0 });
+    // A row matching the old row is context, and a half-written one that still could be waits.
+    expect(counts(edit("two\nthree", "two\nth"))).toEqual({ added: 0, removed: 0 });
+    expect(counts(edit("two\nthree", "two\nTHREE\nnew"))).toEqual({ added: 2, removed: 0 });
+    // Removed rows and the common suffix are known only once the call is complete.
+    expect(counts(edit("two\nthree", "two\nTHREE\nnew"), false)).toEqual({
+      added: 2,
+      removed: 1,
+    });
+    expect(counts(edit("two\nthree", "three"), false)).toEqual({ added: 0, removed: 1 });
+
+    expect(counts(edit("missing", "x"), false)).toBeUndefined();
+    expect(counts({ path: "dup.ts", edits: [{ oldString: "x", newString: "y" }] }, false)).toBe(
+      undefined,
+    );
+    expect(
+      counts(
+        { path: "dup.ts", edits: [{ oldString: "x", newString: "y", replaceAll: true }] },
+        false,
+      ),
+    ).toEqual({ added: 2, removed: 2 });
+
+    // An earlier edit is complete once the next one has begun; the call sums them.
+    expect(
+      counts({
+        path: "a.ts",
+        edits: [
+          { oldString: "one", newString: "ONE" },
+          { oldString: "four", newString: "four\nfive\nsi" },
+        ],
+      }),
+    ).toEqual({ added: 3, removed: 1 });
+    expect(counts({ path: "a.ts", oldString: "one", newString: "1" }, false)).toEqual({
+      added: 1,
+      removed: 1,
+    });
+
+    expect(counts({ path: "new.ts", content: "a\nb\nc" }, true, "write")).toEqual({
+      added: 3,
+      removed: 0,
+    });
+    expect(counts({ path: "new.ts", content: "a\nb\n" }, true, "write")).toEqual({
+      added: 2,
+      removed: 0,
+    });
+    // Overwriting has an unknown removal count until the tool's diff arrives.
+    expect(counts({ path: "a.ts", content: "a" }, true, "write")).toBeUndefined();
+    expect(liveLineCounts({ toolName: "edit", args: edit("one", "1") }, undefined)).toBeUndefined();
+  });
+
+  test("a running edit commits in place as its completed row", () => {
+    const { app } = harness();
+    app.registry.setFileProbe({ occurrences: () => 1, exists: () => true });
+    app.handleEvent({ type: "message_end", message: assistant("Editing.") });
+    const args = { path: "a.ts", edits: [{ oldString: "a", newString: "b\nc" }] };
+    app.handleEvent({
+      type: "message_update",
+      message: {
+        ...assistant(""),
+        content: [{ type: "toolCall", id: "e1", name: "edit", arguments: args }],
+      },
+      delta: { kind: "toolcall_end", contentIndex: 0, toolCallId: "e1" },
+    } as AgentEvent);
+    app.handleEvent({ type: "tool_execution_start", toolCallId: "e1", toolName: "edit", args });
+    const above = (rows: string[]) =>
+      rows.slice(
+        0,
+        rows.findIndex((row) => row.startsWith("  ╭")),
+      );
+    expect(above(app.renderScreen().map(stripAnsi))).toEqual([
+      "  mu  Editing.",
+      "",
+      "  › edit a.ts · +2 −1",
+      "",
+    ]);
+
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "e1",
+      result: {
+        role: "toolResult",
+        toolCallId: "e1",
+        toolName: "edit",
+        content: [{ type: "text", text: "Edited a.ts (1 replacement)" }],
+        details: {
+          occurrences: 1,
+          diff: { path: "a.ts", added: 2, removed: 1, hunks: [] },
+        },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    expect(above(app.renderScreen().map(stripAnsi))).toEqual([
+      "  mu  Editing.",
+      "",
+      "  › edited a.ts · 1 replacement +2 -1",
+      "",
+    ]);
   });
 
   test("a todo call renders a bracketed plan instead of one truncated line", () => {
@@ -4164,8 +4311,9 @@ describe("live streaming region", () => {
     expect(rendered).not.toContain("line 0\n");
   });
 
-  test("a streaming tool call names its target but withholds the diff until arguments complete", () => {
+  test("a streaming write is one counting row; its diff waits for the result", () => {
     const { app } = harness();
+    app.registry.setFileProbe({ occurrences: () => undefined, exists: () => false });
     const streamed = (content: string, done: boolean): AgentEvent => ({
       type: "message_update",
       message: {
@@ -4195,14 +4343,14 @@ describe("live streaming region", () => {
 
     app.handleEvent(streamed("print('hello')\nprint('wor", false));
     const partial = app.renderBottom().map(stripAnsi).join("\n");
-    // The user learns which file is coming without watching a half-written one.
-    expect(partial).toContain("write demo.py");
+    // The user learns which file is coming and how much, without a half-written diff.
+    expect(partial).toContain("› write demo.py · +2 −0");
     expect(partial).not.toContain("+ print('hello')");
 
     app.handleEvent(streamed("print('hello')\nprint('world')", true));
     const complete = app.renderBottom().map(stripAnsi).join("\n");
-    expect(complete).toContain("+ print('hello')");
-    expect(complete).toContain("+ print('world')");
+    expect(complete).toContain("› write demo.py · +2 −0");
+    expect(complete).not.toContain("+ print('hello')");
 
     app.handleEvent({
       type: "tool_execution_start",
@@ -4212,7 +4360,7 @@ describe("live streaming region", () => {
     });
     const running = app.renderBottom().map(stripAnsi).join("\n");
     expect(running.match(/write demo\.py/g)?.length).toBe(1);
-    expect(running).toContain("+ print('world')");
+    expect(running).not.toContain("+ print('world')");
   });
 });
 

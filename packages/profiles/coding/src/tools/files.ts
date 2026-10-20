@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
@@ -434,6 +434,55 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
   }
   updated += content.slice(cursor);
   return { ok: true, updated, replacements: ranges.length, hunks };
+}
+
+const MAX_PROBE_BYTES = 4 * 1024 * 1024;
+const PROBE_CACHE_ENTRIES = 64;
+
+const countIn = (content: string, text: string) => content.split(text).length - 1;
+
+// Lets a running edit row count its lines without the UI reading files. Matching
+// mirrors applyEdits, line-ending adaptation included. Answers are cached per file
+// version, so a frame costs one stat per call rather than a read.
+export function editPreviewProbe(root: string): {
+  occurrences(path: string, text: string): number | undefined;
+  exists(path: string): boolean | undefined;
+} {
+  const cache = new Map<string, number>();
+  return {
+    exists(path) {
+      try {
+        statSync(resolveInRoot(root, path));
+        return true;
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === "ENOENT" ? false : undefined;
+      }
+    },
+    occurrences(path, text) {
+      try {
+        const absolute = resolveInRoot(root, path);
+        const stats = statSync(absolute);
+        if (!stats.isFile() || stats.size > MAX_PROBE_BYTES) return undefined;
+        const key = `${absolute}\u0000${stats.mtimeMs}\u0000${stats.size}\u0000${text}`;
+        const cached = cache.get(key);
+        if (cached !== undefined) return cached;
+        const content = readFileSync(absolute, "utf8");
+        let count = countIn(content, text);
+        if (count === 0 && text.includes("\n")) {
+          for (const convert of [toCRLF, toLF]) {
+            const converted = convert(text);
+            if (converted !== text) count = countIn(content, converted);
+            if (count > 0) break;
+          }
+        }
+        if (cache.size >= PROBE_CACHE_ENTRIES) cache.clear();
+        cache.set(key, count);
+        return count;
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }
 
 // Models trained on single-replacement editors routinely send one flat edit, and some

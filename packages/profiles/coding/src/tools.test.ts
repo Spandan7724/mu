@@ -6,7 +6,14 @@ import type { AnyTool } from "@mu/core";
 import { renderTodos, TodoStore, todoTool } from "mu";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
-import { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
+import {
+  editPreviewProbe,
+  editTool,
+  lsTool,
+  readTool,
+  resolveInRoot,
+  writeTool,
+} from "./tools/files.ts";
 import { truncateOutput } from "./truncate.ts";
 
 async function scratch(): Promise<string> {
@@ -559,6 +566,29 @@ describe("edit", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(await readFile(join(root, "code.ts"), "utf8")).toBe("\uFEFFconst a = 2;\n");
+  });
+});
+
+describe("edit preview probe", () => {
+  test("counts matches the way edit does and follows file changes", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "crlf.ts"), "one\r\ntwo\r\none\r\n");
+    const probe = editPreviewProbe(root);
+
+    expect(probe.exists("crlf.ts")).toBe(true);
+    expect(probe.exists("missing.ts")).toBe(false);
+    expect(probe.occurrences("crlf.ts", "one")).toBe(2);
+    // A model usually sends LF for a CRLF file; edit adapts, so the probe does too.
+    expect(probe.occurrences("crlf.ts", "one\ntwo")).toBe(1);
+    expect(probe.occurrences("crlf.ts", "three")).toBe(0);
+    expect(probe.occurrences("missing.ts", "one")).toBeUndefined();
+    expect(probe.occurrences("../outside.ts", "one")).toBeUndefined();
+
+    await writeFile(join(root, "crlf.ts"), "one\r\n");
+    const later = new Date(Date.now() + 5_000);
+    await utimes(join(root, "crlf.ts"), later, later);
+    expect(probe.occurrences("crlf.ts", "one")).toBe(1);
+    await rm(root, { recursive: true, force: true });
   });
 });
 

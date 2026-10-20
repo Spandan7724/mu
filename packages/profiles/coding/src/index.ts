@@ -404,6 +404,13 @@ export {
 } from "./shell-inspection.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
-export { editTool, lsTool, readTool, resolveInRoot, writeTool } from "./tools/files.ts";
+export {
+  editPreviewProbe,
+  editTool,
+  lsTool,
+  readTool,
+  resolveInRoot,
+  writeTool,
+} from "./tools/files.ts";
 export { shellSpawner, taskTools } from "./tools/tasks.ts";
 export { MAX_OUTPUT_CHARS, truncateOutput, withNotice } from "./truncate.ts";

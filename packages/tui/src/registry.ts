@@ -16,7 +16,7 @@ import {
 } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { highlightCode } from "./syntax-highlight.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { wrapLine, wrapText } from "./wrap.ts";
@@ -334,11 +334,133 @@ function displayedDiffLines(
   return bounded.map((line) => ({ ...line, text: truncateToWidth(line.text, width) }));
 }
 
-// A diff is only meaningful whole. While arguments stream, the path is enough;
-// a running call previews its complete arguments, and a completed call replaces
-// that preview with the tool's authoritative before/after file diff.
+// Answers what live edit counts need to know about a file without the TUI reading
+// it; the profile that owns file access supplies it. Undefined means unknown.
+export interface FileProbe {
+  occurrences(path: string, text: string): number | undefined;
+  exists(path: string): boolean | undefined;
+}
+
+export interface LineCounts {
+  added: number;
+  removed: number;
+}
+
+// What a write or edit adds and removes, counted from its arguments as they
+// stream. Rows the model has not finished are never guessed at: anything that
+// cannot be known yet (a file to overwrite, an oldString not found or not unique)
+// shows no counts, and removed rows wait until an edit's text is complete.
+export function liveLineCounts(
+  info: ToolRenderInfo,
+  probe: FileProbe | undefined,
+): LineCounts | undefined {
+  const path = stringArg(info.args, "path");
+  if (!path || !probe) return undefined;
+  if (info.toolName === "write") {
+    if (probe.exists(path) !== false) return undefined;
+    const rows = stringArg(info.args, "content").split("\n");
+    if (rows.at(-1) === "") rows.pop();
+    return { added: rows.length, removed: 0 };
+  }
+  const edits = streamedEdits(info.args);
+  let counts: LineCounts | undefined;
+  for (const [index, edit] of edits.entries()) {
+    const complete = !info.argsStreaming || index < edits.length - 1;
+    if (edit.oldString === undefined || edit.newString === undefined) break;
+    if (!complete && !edit.newStringLast) break;
+    if (edit.oldString === "") return undefined;
+    const occurrences = probe.occurrences(path, edit.oldString);
+    if (!occurrences || (occurrences > 1 && !edit.replaceAll)) return undefined;
+    const times = edit.replaceAll ? occurrences : 1;
+    const one = editLineCounts(edit.oldString, edit.newString, complete);
+    counts = {
+      added: (counts?.added ?? 0) + one.added * times,
+      removed: (counts?.removed ?? 0) + one.removed * times,
+    };
+  }
+  return counts;
+}
+
+// Edits as streamed, keeping a key that has not arrived apart from an empty one.
+// `newStringLast` says oldString was finished before newString began.
+function streamedEdits(args: unknown): {
+  oldString?: string;
+  newString?: string;
+  replaceAll?: boolean;
+  newStringLast: boolean;
+}[] {
+  if (typeof args !== "object" || args === null) return [];
+  const record = args as Record<string, unknown>;
+  const raw = Array.isArray(record.edits) ? record.edits : [];
+  const flat = typeof record.oldString === "string" || typeof record.newString === "string";
+  return [...raw, ...(flat ? [record] : [])].flatMap((edit) => {
+    if (typeof edit !== "object" || edit === null) return [];
+    const fields = edit as Record<string, unknown>;
+    const keys = Object.keys(fields);
+    return [
+      {
+        ...(typeof fields.oldString === "string" ? { oldString: fields.oldString } : {}),
+        ...(typeof fields.newString === "string" ? { newString: fields.newString } : {}),
+        ...(fields.replaceAll === true ? { replaceAll: true } : {}),
+        newStringLast: keys.indexOf("oldString") < keys.indexOf("newString"),
+      },
+    ];
+  });
+}
+
+function editLineCounts(oldString: string, newString: string, complete: boolean): LineCounts {
+  const oldRows = oldString.split("\n");
+  const newRows = newString.split("\n");
+  // The last streamed row may still be half written.
+  const settled = complete ? newRows.length : newRows.length - 1;
+  let prefix = 0;
+  while (prefix < oldRows.length && prefix < settled && oldRows[prefix] === newRows[prefix]) {
+    prefix++;
+  }
+  let suffix = 0;
+  if (complete) {
+    while (
+      suffix < oldRows.length - prefix &&
+      suffix < newRows.length - prefix &&
+      oldRows[oldRows.length - 1 - suffix] === newRows[newRows.length - 1 - suffix]
+    ) {
+      suffix++;
+    }
+  }
+  // A half-written row that still matches the old row may yet be context.
+  const pending =
+    !complete && prefix === settled && (oldRows[prefix] ?? "").startsWith(newRows[prefix] ?? "")
+      ? 1
+      : 0;
+  return {
+    added: Math.max(0, newRows.length - prefix - suffix - pending),
+    removed: complete ? oldRows.length - prefix - suffix : 0,
+  };
+}
+
+// A running write or edit is one row whose counts climb as its arguments stream;
+// the diff itself waits for the tool's result.
+function liveFileRow(
+  info: ToolRenderInfo,
+  ctx: RenderContext,
+  registry: RendererRegistry | undefined,
+  cell: ToolCellOptions,
+): string[] {
+  const counts = liveLineCounts(info, registry?.fileProbe);
+  const suffix = counts
+    ? `${styleText(` ${GLYPHS.separator} `, { dim: true }, ctx.depth)}${styleText(`+${counts.added}`, { green: true }, ctx.depth)} ${styleText(`−${counts.removed}`, { red: true }, ctx.depth)}`
+    : "";
+  const [header = ""] = toolCell(cell, ctx);
+  if (!suffix) return [header];
+  const room = Math.max(1, ctx.width - stringWidth(stripAnsi(suffix)));
+  const fitted = stringWidth(stripAnsi(header)) > room ? truncateToWidth(header, room) : header;
+  return [fitted + suffix];
+}
+
+// A diff is only meaningful whole: a completed call shows the tool's authoritative
+// before/after file diff, and a failed one what it proposed, unnumbered.
 function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
-  if (info.argsStreaming) return [];
+  if (info.argsStreaming || !info.result) return [];
   const path = stringArg(info.args, "path");
   if (!path) return [];
 
@@ -883,6 +1005,11 @@ webSearchRenderer.activityKind = "explore";
 
 export class RendererRegistry {
   private renderers = new Map<string, ToolRendererFn>([[WEB_SEARCH_TOOL, webSearchRenderer]]);
+  fileProbe: FileProbe | undefined;
+
+  setFileProbe(probe: FileProbe | undefined): void {
+    this.fileProbe = probe;
+  }
 
   register(toolName: string, renderer: ToolRendererFn): void {
     this.renderers.set(toolName, renderer);
@@ -1102,51 +1229,37 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           : resultPreview(info, ctx)),
     ];
   },
-  write: (info, ctx) => {
+  write: (info, ctx, registry) => {
     const details = info.result?.details as { created?: boolean } | undefined;
-    return [
-      ...toolCell(
-        {
-          name:
-            info.result && !info.result.isError
-              ? details?.created
-                ? "created"
-                : "updated"
-              : "write",
-          tone: "mutate",
-          ...(stringArg(info.args, "path")
-            ? { primaryArg: stringArg(info.args, "path"), primaryRole: "path" }
-            : {}),
-          ...(info.result?.isError ? { isError: true } : {}),
-        },
-        ctx,
-      ),
-      ...fileDiff(info, ctx),
-      ...errorPreview(info, ctx),
-    ];
+    const cell: ToolCellOptions = {
+      name:
+        info.result && !info.result.isError ? (details?.created ? "created" : "updated") : "write",
+      tone: "mutate",
+      ...(stringArg(info.args, "path")
+        ? { primaryArg: stringArg(info.args, "path"), primaryRole: "path" }
+        : {}),
+      ...(info.result?.isError ? { isError: true } : {}),
+    };
+    if (!info.result) return liveFileRow(info, ctx, registry, cell);
+    return [...toolCell(cell, ctx), ...fileDiff(info, ctx), ...errorPreview(info, ctx)];
   },
-  edit: (info, ctx) => {
+  edit: (info, ctx, registry) => {
     const details = info.result?.details as { occurrences?: number } | undefined;
-    return [
-      ...toolCell(
-        {
-          name: info.result && !info.result.isError ? "edited" : "edit",
-          tone: "mutate",
-          ...(firstString(info.args, ["path"])
-            ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
-            : {}),
-          ...(info.result?.isError ? { isError: true } : {}),
-          ...(details?.occurrences
-            ? {
-                summary: `${details.occurrences} replacement${details.occurrences === 1 ? "" : "s"}`,
-              }
-            : {}),
-        },
-        ctx,
-      ),
-      ...fileDiff(info, ctx),
-      ...errorPreview(info, ctx),
-    ];
+    const cell: ToolCellOptions = {
+      name: info.result && !info.result.isError ? "edited" : "edit",
+      tone: "mutate",
+      ...(firstString(info.args, ["path"])
+        ? { primaryArg: firstString(info.args, ["path"]) as string, primaryRole: "path" }
+        : {}),
+      ...(info.result?.isError ? { isError: true } : {}),
+      ...(details?.occurrences
+        ? {
+            summary: `${details.occurrences} replacement${details.occurrences === 1 ? "" : "s"}`,
+          }
+        : {}),
+    };
+    if (!info.result) return liveFileRow(info, ctx, registry, cell);
+    return [...toolCell(cell, ctx), ...fileDiff(info, ctx), ...errorPreview(info, ctx)];
   },
   bash: (info, ctx) => {
     const details = info.result?.details as

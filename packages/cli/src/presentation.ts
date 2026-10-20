@@ -1,3 +1,4 @@
+import { editPreviewProbe } from "@mu/profile-coding";
 import {
   browserRenderers,
   codingRenderers,
@@ -33,14 +34,20 @@ export function registerDeclaredRenderers(
   }
 }
 
+// `root` is the directory coding tools resolve paths against; with it, running
+// edit rows can count lines against the files they change.
 export function createRendererRegistry(
   profile: PresentationProfile | undefined,
   extensionRenderers: Iterable<readonly [string, ToolRenderer]> = [],
+  root?: string,
 ): RendererRegistry {
   const registry = new RendererRegistry();
   registry.registerAll(subagentRenderers);
   registry.registerAll(mcpRenderers);
-  if (profile?.name === "coding") registry.registerAll(codingRenderers);
+  if (profile?.name === "coding") {
+    registry.registerAll(codingRenderers);
+    if (root) registry.setFileProbe(editPreviewProbe(root));
+  }
   if (profile?.name === "browser") registry.registerAll(browserRenderers);
   registerDeclaredRenderers(registry, Object.entries(profile?.renderers ?? {}));
   registerDeclaredRenderers(registry, extensionRenderers);

@@ -308,7 +308,7 @@ export async function runInteractive(
   let activePermissionMode: PermissionMode | undefined = runtime.permissionMode;
   let sessionResumable = Boolean(args.resumeSessionId);
 
-  const registry = createRendererRegistry(profile, extensions.renderers);
+  const registry = createRendererRegistry(profile, extensions.renderers, process.cwd());
   const depth = detectColorDepth();
   let app: App;
   const renderer = new FullScreenRenderer(terminal);

@@ -64,10 +64,17 @@ export { InputDecoder, PasteBurstDetector } from "./input.ts";
 export type { Keybinding, KeybindingGroup } from "./keybindings.ts";
 export { formatKeybindings, KEYBINDING_GROUPS } from "./keybindings.ts";
 export { mcpRenderers } from "./mcp-renderers.ts";
-export type { ActivityKind, ToolRendererFn, ToolRenderInfo } from "./registry.ts";
+export type {
+  ActivityKind,
+  FileProbe,
+  LineCounts,
+  ToolRendererFn,
+  ToolRenderInfo,
+} from "./registry.ts";
 export {
   codingRenderers,
   genericRenderer,
+  liveLineCounts,
   RendererRegistry,
   subagentRenderers,
 } from "./registry.ts";

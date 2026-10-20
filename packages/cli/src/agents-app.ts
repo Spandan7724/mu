@@ -569,7 +569,7 @@ export async function rendererRegistryForManagedProfile(
 ): Promise<{ registry: RendererRegistry; dispose: () => Promise<void> }> {
   if (record.profile === DEFAULT_PROFILE) {
     return {
-      registry: createRendererRegistry({ name: DEFAULT_PROFILE }),
+      registry: createRendererRegistry({ name: DEFAULT_PROFILE }, [], record.workingCwd),
       dispose: async () => {},
     };
   }
@@ -579,7 +579,7 @@ export async function rendererRegistryForManagedProfile(
     presentationOnly: true,
   });
   return {
-    registry: createRendererRegistry(profile),
+    registry: createRendererRegistry(profile, [], record.workingCwd),
     dispose: async () => {
       await profile.runtime?.shutdown?.();
     },
