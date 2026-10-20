@@ -226,6 +226,7 @@ const TASK_LIVE_TAIL_LINES = 3;
 const TASK_LIVE_TAIL_SCAN = 200;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
+const LIVE_TOOL_TAIL_LINES = 4;
 // How long a backgroundable call runs before its row offers ctrl+z.
 export const BACKGROUND_HINT_MS = 5_000;
 const PENDING_INPUT_ROWS = 3;
@@ -370,6 +371,26 @@ class LiveToolOutput {
     const visible = retained.slice(-visibleCount);
     const hidden = total - visible.length;
     return [`… ${hidden} earlier lines · ctrl+o to expand`, ...visible];
+  }
+
+  // The newest non-blank lines, the first row giving way to a count of the lines above
+  // once there are more; nothing until output exists.
+  tail(rows: number): string[] | undefined {
+    const retained = [...this.lines, this.partial];
+    if (this.omitted === 0 && this.lines.length === 0 && this.partial === "") return undefined;
+    const found: number[] = [];
+    for (let index = retained.length - 1; index >= 0 && found.length <= rows; index--) {
+      if ((retained[index] ?? "").trim().length > 0) found.push(index);
+    }
+    if (found.length <= rows && this.omitted === 0) {
+      return found.reverse().map((index) => retained[index] ?? "");
+    }
+    const shown = found.slice(0, rows - 1).reverse();
+    const hidden = this.omitted + (shown[0] ?? retained.length);
+    return [
+      `… ${hidden} earlier lines · ctrl+o to expand`,
+      ...shown.map((index) => retained[index] ?? ""),
+    ];
   }
 
   private finishLine(): void {
@@ -535,6 +556,8 @@ interface ConversationView {
   // When the model call in flight last produced anything (or began), so a
   // stalled stream can say how long it has been silent.
   modelQuietSince: number | undefined;
+  // Background results the agent holds for the user's next message after a stop.
+  heldNotices: number;
   pendingTools: Map<string, PendingTool>;
   pendingInputs: PendingInput[];
   transcript: TranscriptItem[];
@@ -589,6 +612,7 @@ function conversationView(
     compactionWaitingSince: 0,
     compactionPercent: 0,
     modelQuietSince: undefined,
+    heldNotices: 0,
     pendingTools: new Map(),
     pendingInputs: [],
     transcript: [],
@@ -1334,6 +1358,10 @@ export class App {
         return [];
       }
 
+      case "notices_held":
+        this.view.heldNotices = event.count;
+        return [];
+
       case "thinking_adjusted": {
         const reason = event.inferredModel ? " (not in mu's model catalog)" : "";
         const lines = [
@@ -1770,9 +1798,8 @@ export class App {
         rendered.push(...taskLiveTail(task, this.ctx));
         return rendered;
       }
-      for (const line of pending.output.display(4)) {
-        if (line.trim().length > 0) rendered.push(...toolOutputCell(line, this.ctx));
-      }
+      const tail = pending.output.tail(LIVE_TOOL_TAIL_LINES);
+      if (tail) rendered.push(...fixedTailCell(tail, LIVE_TOOL_TAIL_LINES, this.ctx));
       return rendered;
     };
     for (const pending of this.pendingTools.values()) {
@@ -1832,6 +1859,20 @@ export class App {
     }
     if (previous || this.mode === "activity") lines.push("");
 
+    if (this.view.heldNotices > 0 && !this.running) {
+      const count = this.view.heldNotices;
+      composerLines.push(
+        MARGIN +
+          styleText(
+            truncateToWidth(
+              `${count === 1 ? "1 background result waits" : `${count} background results wait`} for your next message`,
+              composerWidth,
+            ),
+            { dim: true },
+            depth,
+          ),
+      );
+    }
     const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
     const hiddenPending = this.pendingInputs.length - visiblePending.length;
     if (hiddenPending > 0) {

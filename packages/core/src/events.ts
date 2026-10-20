@@ -114,6 +114,8 @@ export type AgentEvent =
       exitCode: number | null;
       status?: "exited" | "killed";
     }
+  // Background results waiting for the user's next message after they stopped a run.
+  | { type: "notices_held"; count: number }
   // The model does not offer the selected thinking level, so requests use
   // `level` instead. Emitted once per model and selection.
   | {

@@ -478,17 +478,20 @@ function applyEdits(content: string, edits: EditItem[], label: string): ApplyRes
 
 const MAX_PROBE_BYTES = 4 * 1024 * 1024;
 const PROBE_CACHE_ENTRIES = 64;
+const PROBE_TEXT_FILES = 4;
 
 const countIn = (content: string, text: string) => content.split(text).length - 1;
 
 // Lets a running edit row count its lines without the UI reading files. Matching
 // mirrors applyEdits, line-ending adaptation included. Answers are cached per file
-// version, so a frame costs one stat per call rather than a read.
+// version, and each file is read once per version however many edits a call makes.
 export function editPreviewProbe(root: string): {
   occurrences(path: string, text: string): number | undefined;
   exists(path: string): boolean | undefined;
 } {
   const cache = new Map<string, number>();
+  // The latest text of each probed file, so a call's later edits count without a read.
+  const texts = new Map<string, { version: string; content: string }>();
   return {
     exists(path) {
       try {
@@ -503,10 +506,17 @@ export function editPreviewProbe(root: string): {
         const absolute = resolveInRoot(root, path);
         const stats = statSync(absolute);
         if (!stats.isFile() || stats.size > MAX_PROBE_BYTES) return undefined;
-        const key = `${absolute}\u0000${stats.mtimeMs}\u0000${stats.size}\u0000${text}`;
+        const version = `${stats.mtimeMs}\u0000${stats.size}`;
+        const key = `${absolute}\u0000${version}\u0000${text}`;
         const cached = cache.get(key);
         if (cached !== undefined) return cached;
-        const content = readFileSync(absolute, "utf8");
+        const known = texts.get(absolute);
+        let content = known?.version === version ? known.content : undefined;
+        if (content === undefined) {
+          content = readFileSync(absolute, "utf8");
+          if (texts.size >= PROBE_TEXT_FILES) texts.clear();
+          texts.set(absolute, { version, content });
+        }
         let count = countIn(content, text);
         if (count === 0 && text.includes("\n")) {
           for (const convert of [toCRLF, toLF]) {

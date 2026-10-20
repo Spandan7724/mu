@@ -471,7 +471,7 @@ export function diffLineCounts(
   depth: ColorDepth,
 ): string {
   const added = styleText(`+${diff.added}`, { green: true }, depth);
-  const removed = styleText(`-${diff.removed}`, { red: true }, depth);
+  const removed = styleText(`−${diff.removed}`, { red: true }, depth);
   return `${diff.approximate ? styleText("≈ ", { dim: true }, depth) : ""}${added} ${removed}`;
 }
 
@@ -793,7 +793,7 @@ function renderSubagentTool(
   if (activityKind === "edit") {
     const diff = (call.info.result?.details as { diff?: CheckpointDiffFile } | undefined)?.diff;
     if (diff) {
-      rendered += ` ${styleText(`+${diff.added}`, { green: true }, ctx.depth)} ${styleText(`-${diff.removed}`, { red: true }, ctx.depth)}`;
+      rendered += ` ${diffLineCounts(diff, ctx.depth)}`;
     }
   }
   const body = rendered.startsWith(MARGIN) ? rendered.slice(MARGIN.length) : rendered;

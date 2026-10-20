@@ -330,6 +330,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       status: z.enum(["exited", "killed"]).optional(),
     })
     .strict(),
+  z.object({ type: z.literal("notices_held"), count: z.number().int().nonnegative() }).strict(),
   z
     .object({
       type: z.literal("thinking_adjusted"),

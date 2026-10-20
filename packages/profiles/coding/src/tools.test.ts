@@ -660,6 +660,23 @@ describe("edit preview probe", () => {
     expect(probe.occurrences("crlf.ts", "one")).toBe(1);
     await rm(root, { recursive: true, force: true });
   });
+
+  test("the edit preview probe reads a file once per version, whatever the edit text", async () => {
+    const root = await scratch();
+    const path = join(root, "a.ts");
+    await writeFile(path, "alpha beta");
+    const stamp = new Date(Date.now() - 60_000);
+    await utimes(path, stamp, stamp);
+    const probe = editPreviewProbe(root);
+    expect(probe.occurrences("a.ts", "alpha")).toBe(1);
+
+    // Same size and mtime: the probe answers from the text it already holds.
+    await writeFile(path, "gamma beta");
+    await utimes(path, stamp, stamp);
+    expect(probe.occurrences("a.ts", "beta")).toBe(1);
+    expect(probe.occurrences("a.ts", "gamma")).toBe(0);
+    await rm(root, { recursive: true, force: true });
+  });
 });
 
 describe("ls", () => {

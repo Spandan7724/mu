@@ -290,6 +290,7 @@ export class Agent {
   // next model call; after a user abort it waits for the user's next message.
   private notices: AgentMessage[] = [];
   private noticesHeld = false;
+  private heldPublished = 0;
   private totals: Usage = zeroUsage();
   private compactRequested = false;
   private compactRequestedFocus: string | undefined;
@@ -681,6 +682,7 @@ export class Agent {
     this.followUps = [];
     this.notices = [];
     this.noticesHeld = false;
+    this.publishHeld();
     this.pendingCheckpoint = undefined;
     this.sessionStarted = false;
     this.controller = new AbortController();
@@ -741,6 +743,7 @@ export class Agent {
     this.followUps = [];
     this.notices = [];
     this.noticesHeld = false;
+    this.publishHeld();
     this.pendingCheckpoint = undefined;
     this.checkpoints.restore([]);
     this.sessionStarted = false;
@@ -758,7 +761,7 @@ export class Agent {
   // context the user never typed.
   followUp(message: string | CustomMessage): void {
     if (this.stopping) return;
-    if (typeof message === "string") this.noticesHeld = false;
+    if (typeof message === "string") this.releaseHeld();
     this.followUps.push(typeof message === "string" ? userMessage(message) : message);
     if (!this.running) this.scheduleAutonomousRun();
   }
@@ -771,6 +774,20 @@ export class Agent {
     if (this.stopping) return;
     if (this.running || this.noticesHeld) this.notices.push(message);
     else this.followUp(message);
+    this.publishHeld();
+  }
+
+  // Tells subscribers how many results wait for the user's next message, when that changes.
+  private publishHeld(): void {
+    const count = this.noticesHeld && !this.running ? this.notices.length : 0;
+    if (count === this.heldPublished) return;
+    this.heldPublished = count;
+    this.publishEvent({ type: "notices_held", count });
+  }
+
+  private releaseHeld(): void {
+    this.noticesHeld = false;
+    this.publishHeld();
   }
 
   // Withdraws a queued follow-up or notice by identity before the loop delivers it.
@@ -779,6 +796,7 @@ export class Agent {
       const index = queue.indexOf(message);
       if (index === -1) continue;
       queue.splice(index, 1);
+      this.publishHeld();
       this.resolveIdleIfDone();
       return true;
     }
@@ -958,6 +976,7 @@ export class Agent {
   // News that arrived too late for the run that just ended wakes the next one,
   // unless the user stopped that run.
   private releaseNotices(): void {
+    if (this.noticesHeld) this.publishHeld();
     if (this.noticesHeld || this.stopping || this.followUps.length > 0) return;
     const next = this.notices.shift();
     if (next) this.followUps.push(next);
@@ -1578,7 +1597,7 @@ export class Agent {
     prompt: string | UserContent[],
     opts?: AgentRunOptions<T>,
   ): Promise<RunResult | (RunResult & { output: T })> {
-    this.noticesHeld = false;
+    this.releaseHeld();
     return this.execute(prompt, opts, () => {});
   }
 
@@ -1597,7 +1616,7 @@ export class Agent {
       else queue.push(event);
     };
 
-    this.noticesHeld = false;
+    this.releaseHeld();
     const finished = this.execute(prompt, opts, push).finally(() => {
       done = true;
       while (waiters.length > 0) {

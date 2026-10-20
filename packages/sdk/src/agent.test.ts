@@ -923,6 +923,10 @@ describe("steering, follow-ups and abort", () => {
         runtime,
         tools: [gatedTool("slow", calls, gate)] as AnyTool[],
       });
+      const held: number[] = [];
+      agent.subscribe((event) => {
+        if (event.type === "notices_held") held.push(event.count);
+      });
       const running = agent.run("work");
       while (calls.length === 0) await Bun.sleep(1);
       agent.abort();
@@ -938,6 +942,7 @@ describe("steering, follow-ups and abort", () => {
       expect(provider.callCount).toBe(2);
       expect(sees(provider, 1, "task_1 exited during the abort")).toBe(true);
       expect(sees(provider, 1, "task_2 exited afterwards")).toBe(true);
+      expect(held).toEqual([1, 2, 0]);
       await agent.shutdown();
     });
 

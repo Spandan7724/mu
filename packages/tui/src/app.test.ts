@@ -2290,7 +2290,7 @@ describe("renderer registry", () => {
     expect(above(app.renderScreen().map(stripAnsi))).toEqual([
       "  mu  Editing.",
       "",
-      "  › edited a.ts · 1 replacement +2 -1",
+      "  › edited a.ts · 1 replacement +2 −1",
       "",
     ]);
   });
@@ -2639,13 +2639,13 @@ describe("activity disclosure", () => {
     });
 
     const collapsed = app.renderTranscript().join("\n");
-    expect(stripAnsi(collapsed)).toContain("Edited 2 files +4 -3");
+    expect(stripAnsi(collapsed)).toContain("Edited 2 files +4 −3");
 
     feed(app, "\u000f");
     press(app, "right");
     let expanded = app.renderScreen().map(stripAnsi).join("\n");
-    expect(expanded).toContain("edited a.ts · 1 replacement +3 -1");
-    expect(expanded).toContain("updated b.ts +1 -2");
+    expect(expanded).toContain("edited a.ts · 1 replacement +3 −1");
+    expect(expanded).toContain("updated b.ts +1 −2");
 
     press(app, "down");
     press(app, "right");
@@ -4338,6 +4338,39 @@ describe("live streaming region", () => {
     expect(rendered).not.toContain("line 0\n");
   });
 
+  test("results held after a stop say they wait for the next message", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "notices_held", count: 2 });
+    const rendered = app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("2 background results wait for your next message");
+    app.handleEvent({ type: "notices_held", count: 0 });
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("background results");
+  });
+
+  test("a running command's output tail keeps one height as lines arrive", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "build" },
+    });
+    const heights: number[] = [];
+    const chunks = ["one\n", "\n\n", `${"x".repeat(300)}\n`, "two\n", "three\nfour\nfive\n", "\n"];
+    for (const text of chunks) {
+      app.handleEvent({
+        type: "tool_execution_update",
+        toolCallId: "c1",
+        partial: [{ type: "text", text }],
+      });
+      heights.push(app.renderBottom().length);
+    }
+    expect(new Set(heights).size).toBe(1);
+    const rendered = app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("… 5 earlier lines · ctrl+o to expand");
+    expect(rendered).toContain("five");
+  });
+
   test("a streaming write is one counting row; its diff waits for the result", () => {
     const { app } = harness();
     app.registry.setFileProbe({ occurrences: () => undefined, exists: () => false });
@@ -5065,7 +5098,7 @@ describe("transcript spacing", () => {
       "  mu  I'll run the tests.",
       "",
       "  › Ran 2 commands",
-      "  › created b.ts +1 -0",
+      "  › created b.ts +1 −0",
       "",
       "  │ thinking · Done",
       "  mu  All set.",
@@ -5272,7 +5305,7 @@ describe("activity summaries count what happened", () => {
     call(app, "e3", "edit", { path: "./a.ts" }, diff("a.ts", 1, 0));
     call(app, "e4", "write", { path: "b.ts" }, { created: true, ...diff("b.ts", 4, 0) });
     call(app, "e5", "edit", { path: "c.ts" }, {}, true);
-    expect(rows(app)).toEqual(["  › Edited 2 files, 2 failed +8 -1"]);
+    expect(rows(app)).toEqual(["  › Edited 2 files, 2 failed +8 −1"]);
   });
 
   test("a group of only failed edits says so", () => {
@@ -5293,9 +5326,9 @@ describe("activity summaries count what happened", () => {
   test("approximate counts are marked on the row, the group and the expanded diff", () => {
     const { app } = harness();
     call(app, "w1", "write", { path: "big.ts" }, diff("big.ts", 900, 880, true));
-    expect(rows(app)).toEqual(["  › updated big.ts ≈ +900 -880"]);
+    expect(rows(app)).toEqual(["  › updated big.ts ≈ +900 −880"]);
     call(app, "e1", "edit", { path: "c.ts" }, diff("c.ts", 1, 1));
-    expect(rows(app)).toEqual(["  › Edited 2 files ≈ +901 -881"]);
+    expect(rows(app)).toEqual(["  › Edited 2 files ≈ +901 −881"]);
 
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);

@@ -41,7 +41,7 @@ export function permissionPreviewLines(preview: PermissionPreview | undefined): 
   if (!preview) return [];
   if (preview.kind === "text") return preview.lines;
   if (preview.kind === "diff") {
-    return [`${preview.file.path} +${preview.file.added} -${preview.file.removed}`];
+    return [`${preview.file.path} +${preview.file.added} −${preview.file.removed}`];
   }
   return preview.sections.flatMap((section) => {
     const indent = section.title ? "  " : "";
