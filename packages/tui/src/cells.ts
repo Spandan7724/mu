@@ -193,6 +193,22 @@ export function toolOutputCell(text: string, ctx: RenderContext): string[] {
   return wrapText(content, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
 }
 
+// Exactly `rows` one-row lines, padded with bare rail rows, so a live tail
+// keeps its height while output arrives.
+export function fixedTailCell(
+  lines: readonly string[],
+  rows: number,
+  ctx: RenderContext,
+): string[] {
+  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const shown = lines.slice(-rows).map((line) => {
+    const safe = sanitizeUntrusted(line).replace(/\t/g, "    ");
+    return MARGIN + rule + dim(truncateToWidth(safe, body(ctx) - 2), ctx.depth);
+  });
+  while (shown.length < rows) shown.push(MARGIN + dim(GLYPHS.rule, ctx.depth));
+  return shown;
+}
+
 export type PlanStatus = "completed" | "in_progress" | "pending";
 
 export interface PlanItem {

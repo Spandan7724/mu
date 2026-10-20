@@ -70,23 +70,35 @@ export class FullScreenRenderer {
       frame.transcript === previous.transcript
         ? Math.max(frame.transcript.length, frame.dirtyFrom)
         : 0;
-    const firstChanged = firstChangedRow(previous, frame, dirtyFrom);
+    let firstChanged = firstChangedRow(previous, frame, dirtyFrom);
     if (firstChanged < 0) return;
+    const previousCount = frameRowCount(previous);
+    // Only removed rows changed: repaint the new last row so the clear below
+    // starts right after it.
+    if (firstChanged >= rowCount) firstChanged = rowCount - 1;
 
-    if (rowCount < frameRowCount(previous) || firstChanged < this.viewportTop) {
+    // Cursor movement cannot reach rows that scrolled into scrollback, and
+    // clearing more rows than the screen holds would leave stale ones above it.
+    if (
+      rowCount === 0 ||
+      firstChanged < this.viewportTop ||
+      previousCount - rowCount > this.terminal.rows
+    ) {
       this.fullRender(frame);
       return;
     }
 
     let body: string;
-    if (firstChanged === frameRowCount(previous)) {
+    if (firstChanged === previousCount) {
       body = `\r\n${drawFrom(frame, firstChanged)}`;
     } else {
-      const moveUp = frameRowCount(previous) - 1 - firstChanged;
+      const moveUp = previousCount - 1 - firstChanged;
       body = `\r${CURSOR.up(moveUp)}${CURSOR.clearBelow}${drawFrom(frame, firstChanged)}`;
     }
     this.previous = frame;
-    this.viewportTop = Math.max(0, rowCount - this.terminal.rows);
+    // A shrink leaves blank screen rows below the frame rather than scrolling
+    // history back down, so the top only moves once the frame outgrows them.
+    this.viewportTop = Math.max(this.viewportTop, rowCount - this.terminal.rows);
     this.terminal.frame(body);
   }
 

@@ -18,6 +18,7 @@ import {
   compactionTargetPercent,
   diffLinesFromHunks,
   errorCell,
+  fixedTailCell,
   formatDuration,
   type RenderContext,
   thinkingCell,
@@ -219,11 +220,30 @@ const TASK_RETAINED_CHARS = 5_000_000;
 const TASK_RETAINED_LINE_CHARS = 10_000;
 // The live row is transient and shares space with the composer.
 const TASK_LIVE_TAIL_LINES = 3;
+const TASK_LIVE_TAIL_SCAN = 200;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
 // How long a backgroundable call runs before its row offers ctrl+z.
 export const BACKGROUND_HINT_MS = 5_000;
 const PENDING_INPUT_ROWS = 3;
+
+// The newest non-blank lines at a fixed height once any output exists; blank
+// output rows would otherwise make the bracket jump as lines arrive.
+function taskLiveTail(task: LiveTask, ctx: RenderContext): string[] {
+  const lines: string[] = [];
+  if (task.partial.trim().length > 0) lines.push(task.partial);
+  const stop = Math.max(0, task.tail.length - TASK_LIVE_TAIL_SCAN);
+  for (
+    let index = task.tail.length - 1;
+    index >= stop && lines.length < TASK_LIVE_TAIL_LINES;
+    index--
+  ) {
+    const line = task.tail[index] ?? "";
+    if (line.trim().length > 0) lines.push(line);
+  }
+  if (lines.length === 0 && task.tail.length === 0) return [];
+  return fixedTailCell(lines.reverse(), TASK_LIVE_TAIL_LINES, ctx);
+}
 
 function appendTaskOutput(task: LiveTask, chunk: string): void {
   const parts = `${task.partial}${chunk}`.split(/\r\n|\n|\r/);
@@ -1640,12 +1660,11 @@ export class App {
         rendered[0] = `${header} ${hint}`;
       }
       const task = pending.taskId ? this.backgroundTasks.get(pending.taskId) : undefined;
-      const output = task
-        ? [...task.tail, ...(task.partial.length > 0 ? [task.partial] : [])].slice(
-            -TASK_LIVE_TAIL_LINES,
-          )
-        : pending.output.display(4);
-      for (const line of output) {
+      if (task) {
+        rendered.push(...taskLiveTail(task, this.ctx));
+        return rendered;
+      }
+      for (const line of pending.output.display(4)) {
         if (line.trim().length > 0) rendered.push(...toolOutputCell(line, this.ctx));
       }
       return rendered;

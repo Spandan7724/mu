@@ -607,6 +607,43 @@ describe("fake-agent session", () => {
     expect(live).not.toContain("one");
   });
 
+  test("a running task's tail keeps one height while output, blank lines included, arrives", () => {
+    const { app } = harness();
+    startTask(app);
+    const before = app.renderBottom().length;
+    const heights = new Set<number>();
+    for (const chunk of [
+      "one\n",
+      "\n\n",
+      "two",
+      "\n",
+      "\n\n\n",
+      `${"x".repeat(200)}\n`,
+      "three\n",
+    ]) {
+      app.handleEvent({ type: "task_output", taskId: "task_1", chunk });
+      heights.add(app.renderBottom().length);
+    }
+    expect([...heights]).toEqual([before + 3]);
+
+    const live = app.renderBottom().map(stripAnsi);
+    const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
+    expect(live.slice(row + 1, row + 4).map((line) => line.trimEnd().slice(0, 8))).toEqual([
+      "  │ two",
+      "  │ xxxx",
+      "  │ thre",
+    ]);
+  });
+
+  test("a task tail is padded with bare rail rows until it has three lines", () => {
+    const { app } = harness();
+    startTask(app);
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "\n" });
+    const live = app.renderBottom().map(stripAnsi);
+    const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
+    expect(live.slice(row + 1, row + 4)).toEqual(["  │", "  │", "  │"]);
+  });
+
   test("multiple background tasks share one bracket without enclosing ordinary tools", () => {
     const { app } = harness();
     startTask(app, "bun test", "task_1", "c1");
@@ -3171,7 +3208,194 @@ describe("full-screen renderer", () => {
     expect(renderer.lineCount).toBe(3);
 
     renderer.renderNow(physicalFrame(["replacement"]));
-    expect(written.at(-1)).toContain(`${ESC}[2J${ESC}[H${ESC}[3J`);
+    expect(renderer.lineCount).toBe(1);
+    expect(written.at(-1)).toBe(`${ESC}[?2026h\r${ESC}[2A${ESC}[Jreplacement${ESC}[?2026l`);
+  });
+
+  function virtualSetup(height: number) {
+    const screen = new VirtualScreen(height);
+    const written: string[] = [];
+    const io: TerminalIo = {
+      write: (data) => {
+        written.push(data);
+        screen.write(data);
+      },
+      columns: 80,
+      rows: height,
+      isTty: true,
+    };
+    const renderer = new FullScreenRenderer(new Terminal(io), 0);
+    const replays = () => written.filter((data) => data.includes(`${ESC}[2J`)).length;
+    return { screen, io, renderer, replays };
+  }
+
+  // What is on screen must be the frame's bottom rows, with any rows a shrink
+  // left behind blank.
+  function expectScreenShows(screen: VirtualScreen, frame: RenderFrame) {
+    const rows = [...frame.transcript, ...frame.managed].map(stripAnsi);
+    const visible = [...screen.lines];
+    while (visible.length > 0 && visible.at(-1) === "") visible.pop();
+    expect(visible).toEqual(rows.slice(rows.length - visible.length));
+    expect(visible.length).toBeGreaterThan(0);
+  }
+
+  test("a frame shrinking inside the viewport clears its leftover rows in place", () => {
+    const { screen, renderer, replays } = virtualSetup(8);
+    const history = Array.from({ length: 20 }, (_, index) => `history ${index}`);
+    renderer.renderNow({
+      transcript: history,
+      managed: ["tool", "out 1", "out 2", "out 3", "composer"],
+      dirtyFrom: 0,
+    });
+    const scrollback = [...screen.scrollback];
+
+    const shrunk = { transcript: history, managed: ["tool done", "composer"], dirtyFrom: 20 };
+    renderer.renderNow(shrunk);
+
+    expect(replays()).toBe(1);
+    expect(screen.scrollback).toEqual(scrollback);
+    expect(screen.lines).toEqual([
+      "history 17",
+      "history 18",
+      "history 19",
+      "tool done",
+      "composer",
+      "",
+      "",
+      "",
+    ]);
+    expectScreenShows(screen, shrunk);
+  });
+
+  test("the viewport top survives a shrink, so later changes and growth land correctly", () => {
+    const { screen, renderer, replays } = virtualSetup(8);
+    const rows = (count: number, mark = "") =>
+      Array.from({ length: count }, (_, index) => `row ${index}${index >= 24 ? mark : ""}`);
+    renderer.renderNow(physicalFrame(rows(30)));
+    // Top is row 22; a shrink to 26 rows leaves it there.
+    renderer.renderNow(physicalFrame(rows(26)));
+    // Row 24 is visible only because the top did not move to 18.
+    const changed = physicalFrame(rows(26, " changed"));
+    renderer.renderNow(changed);
+    expectScreenShows(screen, changed);
+    const grown = physicalFrame(rows(34, " changed"));
+    renderer.renderNow(grown);
+    expectScreenShows(screen, grown);
+    expect(replays()).toBe(1);
+
+    // Rows 22–25 are now in scrollback; changing one needs a replay.
+    renderer.renderNow(physicalFrame(rows(34)));
+    expect(replays()).toBe(2);
+  });
+
+  test("a shrink larger than the screen, or one removing visible history, replays", () => {
+    const { screen, renderer, replays } = virtualSetup(8);
+    const rows = (count: number) => Array.from({ length: count }, (_, index) => `row ${index}`);
+    renderer.renderNow(physicalFrame(rows(30)));
+    renderer.renderNow(physicalFrame(rows(21)));
+    expect(replays()).toBe(2);
+    const short = physicalFrame(rows(10));
+    renderer.renderNow(short);
+    expect(replays()).toBe(3);
+    expectScreenShows(screen, short);
+  });
+
+  test("a scripted session never clears and replays the screen after its first frame", () => {
+    const { app } = harness();
+    const { screen, renderer, replays } = virtualSetup(24);
+    const paint = () => {
+      const frame = app.renderFrame();
+      renderer.renderNow(frame);
+      expectScreenShows(screen, frame);
+    };
+    const toolEnd = (id: string, toolName: string, text: string, details: unknown) => ({
+      type: "tool_execution_end" as const,
+      toolCallId: id,
+      result: {
+        role: "toolResult" as const,
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text" as const, text }],
+        details,
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    paint();
+    for (let turn = 0; turn < 4; turn++) {
+      app.handleEvent({ type: "agent_start" });
+      app.handleEvent({
+        type: "message_end",
+        message: { role: "user", content: [{ type: "text", text: `step ${turn}` }], timestamp: 1 },
+      });
+      paint();
+      app.handleEvent({ type: "message_start", message: assistant("") });
+      for (const word of "I will run the tests and read the config first.".split(" ")) {
+        app.handleEvent({
+          type: "message_update",
+          message: assistant(""),
+          delta: { kind: "text_delta", text: `${word} `, contentIndex: 0 },
+        } as AgentEvent);
+        paint();
+      }
+      app.handleEvent({
+        type: "message_end",
+        message: {
+          ...assistant("I will run the tests and read the config first."),
+          stopReason: "toolUse",
+        },
+      });
+      paint();
+      if (turn === 1) {
+        app.handleEvent({
+          type: "tool_execution_start",
+          toolCallId: "bg",
+          toolName: "bash",
+          args: { command: "bun run ci", run_in_background: true },
+        });
+        app.handleEvent({
+          type: "task_started",
+          taskId: "task_1",
+          command: "bun run ci",
+          background: true,
+        });
+        app.handleEvent(
+          toolEnd("bg", "bash", "Started task_1 in the background.", {
+            taskId: "task_1",
+            command: "bun run ci",
+            background: true,
+          }),
+        );
+      }
+      app.handleEvent({
+        type: "tool_execution_start",
+        toolCallId: `t${turn}`,
+        toolName: "bash",
+        args: { command: "bun test" },
+      });
+      paint();
+      for (const chunk of ["ok 1\n", "\n", "ok 2\nok 3\n", "ok 4\n"]) {
+        app.handleEvent({
+          type: "tool_execution_update",
+          toolCallId: `t${turn}`,
+          partial: [{ type: "text", text: chunk }],
+        });
+        if (turn >= 1) app.handleEvent({ type: "task_output", taskId: "task_1", chunk });
+        paint();
+      }
+      app.handleEvent(toolEnd(`t${turn}`, "bash", "ok 1\nok 2\nok 3\nok 4", { exitCode: 0 }));
+      paint();
+      if (turn === 3) {
+        app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
+        paint();
+      }
+      app.handleEvent({ type: "message_end", message: assistant(`Done with step ${turn}.`) });
+      app.handleEvent({ type: "agent_end", reason: "done" } as AgentEvent);
+      paint();
+    }
+
+    expect(screen.scrollback.length).toBeGreaterThan(0);
+    expect(replays()).toBe(1);
   });
 
   test("a terminal resize forces a complete replay", () => {
