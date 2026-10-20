@@ -40,6 +40,8 @@ const describers: Record<string, Describe> = {
   task_output: (info) => {
     const target = String(arg(info, "taskId") ?? "task");
     if (!info.result) {
+      // The wait is unknown until the arguments are complete; the default is not a guess to show.
+      if (info.argsStreaming) return { target: `checking ${target}`, state: "" };
       const wait = arg(info, "timeoutMs");
       const ms = typeof wait === "number" ? wait : 10_000;
       return ms > 0
@@ -82,7 +84,7 @@ const describers: Record<string, Describe> = {
     const target = typeof id === "string" ? id : "subagents";
     if (!info.result) {
       const wait = arg(info, "waitSeconds");
-      return typeof wait === "number" && wait > 0
+      return !info.argsStreaming && typeof wait === "number" && wait > 0
         ? { target: `waiting on ${target}`, state: `up to ${formatWait(wait * 1000)}` }
         : { target: `checking ${target}`, state: "" };
     }

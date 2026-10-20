@@ -5369,6 +5369,23 @@ describe("housekeeping rows", () => {
     expect(rows(app2)).toEqual(["  › checked task_2 · stopped, task_9 · No such task: task_9"]);
   });
 
+  test("a check whose arguments are still streaming does not guess its wait", () => {
+    const { app } = harness();
+    const streamed = (args: unknown, kind: "toolcall_delta" | "toolcall_end") =>
+      app.handleEvent({
+        type: "message_update",
+        message: {
+          ...assistant(""),
+          content: [{ type: "toolCall", id: "o1", name: "task_output", arguments: args }],
+        },
+        delta: { kind, contentIndex: 0, ...(kind === "toolcall_end" ? { toolCallId: "o1" } : {}) },
+      } as AgentEvent);
+    streamed({ taskId: "task_1" }, "toolcall_delta");
+    expect(app.renderBottom().map(stripAnsi)).toContain("  › checking task_1");
+    streamed({ taskId: "task_1", timeoutMs: 300_000 }, "toolcall_end");
+    expect(app.renderBottom().map(stripAnsi)).toContain("  › waiting on task_1 · up to 300s");
+  });
+
   test("a waiting check says what it waits on while it runs", () => {
     const { app } = harness();
     startCall(app, "o1", "task_output", { taskId: "task_1", timeoutMs: 120_000 });
