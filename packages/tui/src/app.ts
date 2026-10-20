@@ -54,6 +54,7 @@ import {
   WEB_SEARCH_TOOL,
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
+import { stripCitationMarkup } from "./sanitize.ts";
 import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
@@ -228,6 +229,7 @@ const LIVE_TOOL_OUTPUT_LINES = 50;
 // How long a backgroundable call runs before its row offers ctrl+z.
 export const BACKGROUND_HINT_MS = 5_000;
 const PENDING_INPUT_ROWS = 3;
+const STALL_HINT_MS = 45_000;
 
 // The newest non-blank lines at a fixed height once any output exists; blank
 // output rows would otherwise make the bracket jump as lines arrive.
@@ -530,6 +532,9 @@ interface ConversationView {
   compactionWaitingSince: number;
   // Eased on spinner ticks so repaints for other reasons do not speed it up.
   compactionPercent: number;
+  // When the model call in flight last produced anything (or began), so a
+  // stalled stream can say how long it has been silent.
+  modelQuietSince: number | undefined;
   pendingTools: Map<string, PendingTool>;
   pendingInputs: PendingInput[];
   transcript: TranscriptItem[];
@@ -583,6 +588,7 @@ function conversationView(
     compactionProgress: undefined,
     compactionWaitingSince: 0,
     compactionPercent: 0,
+    modelQuietSince: undefined,
     pendingTools: new Map(),
     pendingInputs: [],
     transcript: [],
@@ -1000,7 +1006,12 @@ export class App {
         }
         return [];
 
+      case "turn_start":
+        this.view.modelQuietSince = Date.now();
+        return [];
+
       case "agent_end": {
+        this.view.modelQuietSince = undefined;
         this.clearPendingSubmissions();
         this.running = false;
         this.compacting = false;
@@ -1038,6 +1049,7 @@ export class App {
 
       case "message_start":
         if (event.message.role === "assistant") {
+          if (this.view.modelQuietSince !== undefined) this.view.modelQuietSince = Date.now();
           this.streaming = "";
           this.view.streamingThinking = [];
           this.streamingCache = undefined;
@@ -1045,6 +1057,7 @@ export class App {
         return [];
 
       case "message_update":
+        if (this.view.modelQuietSince !== undefined) this.view.modelQuietSince = Date.now();
         if (event.delta.kind === "text_delta") {
           this.streaming = (this.streaming ?? "") + event.delta.text;
           this.streamingCache = undefined;
@@ -1119,6 +1132,7 @@ export class App {
           return [...userCell(text, this.ctx), ""];
         }
         if (message.role === "assistant") {
+          this.view.modelQuietSince = undefined;
           this.streaming = undefined;
           this.view.streamingThinking = [];
           this.streamingCache = undefined;
@@ -1944,7 +1958,7 @@ export class App {
             ? ` ${elapsed} ${GLYPHS.separator} transcript review`
             : this.compacting
               ? ` ${elapsed} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-              : ` ${elapsed} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+              : ` ${elapsed}${this.stallHint()} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
           { dim: true },
           depth,
         )}`,
@@ -1982,6 +1996,16 @@ export class App {
       ),
     );
     return lines;
+  }
+
+  // Shown once a model call has been silent long enough to look stuck.
+  private stallHint(): string {
+    const since = this.view.modelQuietSince;
+    if (since === undefined || this.compacting) return "";
+    const quiet = Date.now() - since;
+    return quiet >= STALL_HINT_MS
+      ? ` ${GLYPHS.separator} no output for ${formatDuration(Math.floor(quiet / 1000) * 1000)}`
+      : "";
   }
 
   private pendingActivityRows(selectedId?: string): string[] {
@@ -2072,7 +2096,7 @@ export class App {
       MIN_STREAMING_PREVIEW_CHARS,
       Math.min(MAX_STREAMING_PREVIEW_CHARS, this.options.width * height * STREAMING_VIEWPORTS),
     );
-    const preview = streamingMarkdownPreview(this.streaming, maxChars);
+    const preview = streamingMarkdownPreview(stripCitationMarkup(this.streaming), maxChars);
     const rows = this.toTerminalRows(agentCell(preview.text, this.ctx));
     this.streamingCache = {
       text: this.streaming,
@@ -2536,7 +2560,7 @@ export class App {
       if (block.type === "thinking" && block.thinking.trim()) {
         lines.push(...thinkingCell(block.thinking, this.ctx, revealThinking));
       } else if (block.type === "text" && block.text.trim()) {
-        lines.push(...this.toTerminalRows(agentCell(block.text, this.ctx)));
+        lines.push(...this.toTerminalRows(agentCell(stripCitationMarkup(block.text), this.ctx)));
       }
     }
     return lines;

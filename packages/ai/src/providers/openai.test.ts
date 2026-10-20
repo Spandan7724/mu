@@ -185,6 +185,91 @@ describe("codexClientVersion", () => {
 });
 
 describe("streamOpenAI", () => {
+  test("strips citation markup split across deltas and separates reasoning summary parts", async () => {
+    const responseEvents = [
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "reasoning", id: "rs_1" },
+      },
+      { type: "response.reasoning_summary_part.added", output_index: 0, summary_index: 0 },
+      {
+        type: "response.reasoning_summary_text.delta",
+        output_index: 0,
+        delta: "**Reading the provider**\n\nIt is well-structured.",
+      },
+      { type: "response.reasoning_summary_part.added", output_index: 0, summary_index: 1 },
+      {
+        type: "response.reasoning_summary_text.delta",
+        output_index: 0,
+        delta: "**Organizing test structure**",
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { type: "reasoning", id: "rs_1" },
+      },
+      {
+        type: "response.output_item.added",
+        output_index: 1,
+        item: { type: "message", id: "msg_1" },
+      },
+      { type: "response.output_text.delta", output_index: 1, delta: "Mercury 3. \ue200ci" },
+      { type: "response.output_text.delta", output_index: 1, delta: "te\ue202turn0view0" },
+      { type: "response.output_text.delta", output_index: 1, delta: "\ue201 Next." },
+      {
+        type: "response.output_item.done",
+        output_index: 1,
+        item: {
+          type: "message",
+          id: "msg_1",
+          content: [
+            {
+              type: "output_text",
+              text: "Mercury 3. \ue200cite\ue202turn0view0\ue201 Next.",
+              annotations: [
+                {
+                  type: "url_citation",
+                  url: "https://example.com",
+                  start_index: 29,
+                  end_index: 34,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      { type: "response.completed", response: { usage: { input_tokens: 10, output_tokens: 4 } } },
+    ];
+    const replay = replayFetch({
+      interactions: [
+        {
+          request: { method: "POST", url: "https://api.openai.com/v1/responses" },
+          response: {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+            body: responseEvents.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          },
+        },
+      ],
+    });
+    const stream = streamOpenAI(model, ctx, { apiKey: "test", fetch: replay.fetch });
+    const deltas: string[] = [];
+    for await (const event of stream) if (event.type === "text_delta") deltas.push(event.delta);
+    const message = await stream.result();
+
+    const text = message.content.find((block) => block.type === "text");
+    const thinking = message.content.find((block) => block.type === "thinking");
+    expect(deltas.join("")).toBe("Mercury 3. Next.");
+    expect(text).toMatchObject({
+      text: "Mercury 3. Next.",
+      citations: [{ url: "https://example.com", startIndex: 11, endIndex: 16 }],
+    });
+    expect(thinking?.type === "thinking" && thinking.thinking).toBe(
+      "**Reading the provider**\n\nIt is well-structured.\n\n**Organizing test structure**",
+    );
+  });
+
   test("sends hosted web search and preserves native activity, citations, and replay", async () => {
     const responseEvents = [
       {

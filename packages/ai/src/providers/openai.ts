@@ -16,6 +16,7 @@ import type {
   WebSearchCitation,
   WebSearchContent,
 } from "../types.ts";
+import { CitationMarkupFilter } from "./citation-markup.ts";
 import {
   apiPath,
   credentialBaseUrl,
@@ -424,6 +425,7 @@ interface ItemState {
   contentIndex: number;
   kind: "text" | "reasoning" | "function_call" | "web_search";
   partialJson: string;
+  markup?: CitationMarkupFilter;
 }
 
 export function streamOpenAI(
@@ -461,7 +463,12 @@ export function streamOpenAI(
         const kind = item.type as string;
         const contentIndex = output.content.length;
         if (kind === "message") {
-          items.set(outputIndex, { contentIndex, kind: "text", partialJson: "" });
+          items.set(outputIndex, {
+            contentIndex,
+            kind: "text",
+            partialJson: "",
+            markup: new CitationMarkupFilter(),
+          });
           output.content.push({ type: "text", text: "" });
           stream.push({ type: "text_start", contentIndex, partial: output });
         } else if (kind === "reasoning") {
@@ -497,11 +504,29 @@ export function streamOpenAI(
         const state = items.get(event.output_index as number);
         const block = state && output.content[state.contentIndex];
         if (state && block?.type === "text") {
-          block.text += event.delta as string;
+          const delta = state.markup
+            ? state.markup.push(event.delta as string)
+            : (event.delta as string);
+          if (delta) {
+            block.text += delta;
+            stream.push({
+              type: "text_delta",
+              contentIndex: state.contentIndex,
+              delta,
+              partial: output,
+            });
+          }
+        }
+      } else if (type === "response.reasoning_summary_part.added") {
+        // Summary parts arrive as separate paragraphs, each led by its own heading.
+        const state = items.get(event.output_index as number);
+        const block = state && output.content[state.contentIndex];
+        if (state && block?.type === "thinking" && (event.summary_index as number) > 0) {
+          block.thinking += "\n\n";
           stream.push({
-            type: "text_delta",
+            type: "thinking_delta",
             contentIndex: state.contentIndex,
-            delta: event.delta as string,
+            delta: "\n\n",
             partial: output,
           });
         }
@@ -536,7 +561,20 @@ export function streamOpenAI(
         const item = event.item as Json;
         const block = output.content[state.contentIndex];
         if (block?.type === "text") {
-          const citations = citationsFromMessageItem(item);
+          state.markup?.flush();
+          const citations = citationsFromMessageItem(item).map((citation) => {
+            const markup = state.markup;
+            if (!markup) return citation;
+            return {
+              ...citation,
+              ...(citation.startIndex !== undefined
+                ? { startIndex: markup.mapIndex(citation.startIndex) }
+                : {}),
+              ...(citation.endIndex !== undefined
+                ? { endIndex: markup.mapIndex(citation.endIndex) }
+                : {}),
+            };
+          });
           if (citations.length > 0) block.citations = citations;
           stream.push({
             type: "text_end",

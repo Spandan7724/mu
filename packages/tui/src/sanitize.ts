@@ -85,3 +85,13 @@ export function sanitizeTerminalText(text: string, options: SanitizeOptions = {}
 export function sanitizeUntrusted(text: string): string {
   return sanitizeTerminalText(text, { allowStyling: false });
 }
+
+// Sessions saved before the OpenAI provider removed it can still hold that
+// provider's private-use citation markup ("\ue200cite\ue202turn0view0\ue201");
+// it renders invisibly. Only assistant text goes through this: the same code
+// points are icons in some fonts, so file and tool content keeps them.
+const CITATION_MARKUP = / ?\ue200[a-z_]+(?:\ue202[^\ue200-\ue202]*)*\ue201/g;
+
+export function stripCitationMarkup(text: string): string {
+  return text.includes("\ue200") ? text.replace(CITATION_MARKUP, "") : text;
+}

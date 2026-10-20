@@ -5387,3 +5387,80 @@ describe("housekeeping rows", () => {
     expect(app.renderTranscript()[0]).not.toContain("\u001b[1m");
   });
 });
+
+describe("provider text and stalls", () => {
+  test("a silent model call says how long it has produced nothing, and clears on output", () => {
+    let now = 1_000_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const { app } = harness();
+      const runningRow = () =>
+        stripAnsi(app.renderBottom().find((row) => row.includes("enter steer")) ?? "");
+      app.handleEvent({ type: "agent_start" });
+      app.handleEvent({ type: "turn_start" });
+      now += 44_000;
+      expect(runningRow()).not.toContain("no output");
+      now += 1_000;
+      expect(runningRow()).toContain("45s · no output for 45s · enter steer");
+      now += 17_000;
+      expect(runningRow()).toContain("no output for 1m 2s");
+
+      app.handleEvent({
+        type: "message_update",
+        message: assistant(""),
+        delta: { kind: "thinking_delta", contentIndex: 0, text: "Planning" },
+      } as AgentEvent);
+      expect(runningRow()).not.toContain("no output");
+
+      app.handleEvent({ type: "message_end", message: assistant("Done.") });
+      now += 120_000;
+      // A tool or the idle gap after the call is not a silent model.
+      expect(runningRow()).not.toContain("no output");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("assistant text from an older session loses provider citation markup", () => {
+    const { app } = harness();
+    const markup = "Mercury 3. \ue200cite\ue202turn0view0\ue202turn0view2\ue201 Next.";
+    app.replaceTranscript([assistant(markup)]);
+    const rows = app.renderTranscript().map(stripAnsi);
+    expect(rows).toContain("  mu  Mercury 3. Next.");
+    expect(rows.join("\n")).not.toContain("\ue200");
+
+    app.handleEvent({ type: "message_start", message: assistant("") });
+    app.handleEvent({
+      type: "message_update",
+      message: assistant(markup),
+      delta: { kind: "text_delta", contentIndex: 0, text: markup },
+    } as AgentEvent);
+    expect(app.renderBottom().map(stripAnsi)).toContain("  mu  Mercury 3. Next.");
+  });
+
+  test("the same code points elsewhere, such as font icons in output, are kept", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "b1",
+      toolName: "bash",
+      args: { command: "ls" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "b1",
+      result: {
+        role: "toolResult",
+        toolCallId: "b1",
+        toolName: "bash",
+        content: [{ type: "text", text: "\ue200cite\ue201 icon" }],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    feed(app, "\u000f");
+    press(app, "right");
+    expect(app.renderScreen().join("\n")).toContain("\ue200cite\ue201 icon");
+  });
+});
