@@ -5,8 +5,12 @@
 // markup is removed (with the space it leaves doubled) as text streams in.
 const START = "\ue200";
 const END = "\ue201";
-const SPAN = /^\ue200[a-z_]+(?:\ue202[^\ue200-\ue202]*)*\ue201$/;
-// A start marker this far from any end marker is not markup.
+// As much of a span as can be markup: a name, then separator-led references.
+const PREFIX = /^\ue200[a-z_]*(?:\ue202[A-Za-z0-9_.-]*)*/;
+// Text unfinished at the end of a message is dropped only when it is plainly
+// markup; anything else, such as a font icon at U+E200, is ordinary text.
+const UNFINISHED = /^\ue200[a-z_]+\ue202/;
+const NAMED = /^\ue200[a-z_]/;
 const MAX_SPAN = 1_024;
 
 export class CitationMarkupFilter {
@@ -34,40 +38,46 @@ export class CitationMarkupFilter {
       out += this.emit(input.slice(0, start), at);
       at += start;
       input = input.slice(start);
-      const end = input.indexOf(END);
-      if (end === -1) {
-        if (input.length > MAX_SPAN) {
-          out += this.emit(input, at);
-          at += input.length;
-        } else {
-          this.held = input;
-        }
+      const prefix = PREFIX.exec(input)?.[0] ?? START;
+      const next = input[prefix.length];
+      if (next === undefined && prefix.length <= MAX_SPAN) {
+        // Could still become markup; wait for more text.
+        this.held = input;
         break;
       }
-      const span = input.slice(0, end + 1);
-      if (SPAN.test(span)) {
-        this.removed.push({ at, length: span.length });
+      if (next === END && NAMED.test(prefix)) {
+        const span = prefix.length + 1;
+        this.removed.push({ at, length: span });
         const before = (this.emitted + out).at(-1);
         this.dropSpace = before === undefined || before === " " || before === "\n";
-      } else {
-        out += this.emit(span, at);
+        at += span;
+        input = input.slice(span);
+        continue;
       }
-      at += span.length;
-      input = input.slice(end + 1);
+      // Not markup: the marker is text, and scanning resumes right after it.
+      out += this.emit(START, at);
+      at += 1;
+      input = input.slice(1);
     }
     this.consumed = at;
     this.emitted = (this.emitted + out).slice(-1);
     return out;
   }
 
-  // The end of the text: a start marker never closed is dropped with what follows.
+  // The end of the text: unfinished markup is dropped; any other held text is emitted.
   flush(): string {
-    if (this.held) {
-      this.removed.push({ at: this.consumed, length: this.held.length });
-      this.consumed += this.held.length;
-      this.held = "";
+    const held = this.held;
+    this.held = "";
+    if (!held) return "";
+    if (UNFINISHED.test(held)) {
+      this.removed.push({ at: this.consumed, length: held.length });
+      this.consumed += held.length;
+      return "";
     }
-    return "";
+    const out = this.emit(held, this.consumed);
+    this.consumed += held.length;
+    this.emitted = (this.emitted + out).slice(-1);
+    return out;
   }
 
   // Where a raw-text offset lands in the filtered text.

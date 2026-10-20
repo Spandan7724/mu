@@ -31,6 +31,24 @@ describe("citation markup", () => {
     expect(stripCitationMarkup(long)).toBe(long);
   });
 
+  test("a lone marker is ordinary text: never held back or dropped with what follows", () => {
+    const icon = "\ue200";
+    const reply = `Build ${icon} passed, and the rest of the reply follows without any end marker.`;
+    const filter = new CitationMarkupFilter();
+    expect(filter.push(reply)).toBe(reply);
+    expect(filter.flush()).toBe("");
+
+    expect(stripCitationMarkup(`Done ${icon}`)).toBe(`Done ${icon}`);
+    expect(stripCitationMarkup(`${icon} ok \ue200cite\ue202turn0view0\ue201 next`)).toBe(
+      `${icon} ok next`,
+    );
+
+    const split = new CitationMarkupFilter();
+    expect(split.push(`Status ${icon}`)).toBe("Status ");
+    expect(split.push(" green")).toBe(`${icon} green`);
+    expect(split.flush()).toBe("");
+  });
+
   test("a span at the start or the end leaves no stray space, and an unclosed one is dropped", () => {
     expect(stripCitationMarkup("\ue200cite\ue202a\ue201 Start.")).toBe("Start.");
     expect(stripCitationMarkup("End.\ue200cite\ue202a\ue201")).toBe("End.");
