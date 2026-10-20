@@ -51,6 +51,34 @@ describe("read", () => {
     expect(state.hasRead(join(root, "a.txt"))).toBe(true);
   });
 
+  test("a trailing newline ends the last line instead of adding one", async () => {
+    const root = await scratch();
+    const read = (path: string) => run(readTool({ root, state: new FileState() }), { path });
+    await writeFile(join(root, "ends.txt"), "one\ntwo\n");
+    await writeFile(join(root, "open.txt"), "one\ntwo");
+    await writeFile(join(root, "blank.txt"), "one\n\n");
+    await writeFile(join(root, "crlf.txt"), "one\r\ntwo\r\n");
+    await writeFile(join(root, "empty.txt"), "");
+
+    const ends = await read("ends.txt");
+    expect(ends.details).toMatchObject({ lines: 2 });
+    expect(textOf(ends)).not.toContain("    3");
+    expect((await read("open.txt")).details).toMatchObject({ lines: 2 });
+    // A blank last line is a real line.
+    expect((await read("blank.txt")).details).toMatchObject({ lines: 2 });
+    expect((await read("crlf.txt")).details).toMatchObject({ lines: 2 });
+    const empty = await read("empty.txt");
+    expect(empty.details).toMatchObject({ lines: 0 });
+    expect(textOf(empty)).toBe("(empty file)");
+
+    const written = await run(writeTool({ root, state: new FileState() }), {
+      path: "new.txt",
+      content: "a\nb\n",
+    });
+    expect(textOf(written)).toContain("(2 lines)");
+    await rm(root, { recursive: true, force: true });
+  });
+
   test("offset and limit window the file", async () => {
     const root = await scratch();
     await writeFile(join(root, "a.txt"), "l1\nl2\nl3\nl4\n");
@@ -64,7 +92,7 @@ describe("read", () => {
     expect(text).toContain("3  l3");
     expect(text).not.toContain("l4");
     expect(result.details).toMatchObject({
-      lines: 5,
+      lines: 4,
       startLine: 2,
       endLine: 3,
       returnedLines: 2,

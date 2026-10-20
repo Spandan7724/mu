@@ -99,7 +99,8 @@ function display(root: string, path: string): string {
   return rel === "" ? "." : rel;
 }
 
-function previewLines(text: string): string[] {
+// A trailing newline ends the last line rather than starting another.
+function fileLines(text: string): string[] {
   const lines = text.split("\n");
   if (lines.at(-1) === "") lines.pop();
   return lines;
@@ -110,8 +111,8 @@ export function filePermissionDiff(
   before: string | undefined,
   after: string,
 ): CheckpointDiffFile {
-  const oldLines = before === undefined ? [] : previewLines(before);
-  const newLines = previewLines(after);
+  const oldLines = before === undefined ? [] : fileLines(before);
+  const newLines = fileLines(after);
   let prefix = 0;
   while (
     prefix < oldLines.length &&
@@ -187,7 +188,7 @@ export function readTool(deps: ToolDeps) {
       }
 
       deps.state.markRead(absolute, content);
-      const allLines = content.split("\n");
+      const allLines = fileLines(content);
       const start = (offset ?? 1) - 1;
       const slice = allLines.slice(start, limit ? start + limit : undefined);
       const numbered = slice.map((line, i) => `${String(start + i + 1).padStart(5)}  ${line}`);
@@ -276,7 +277,7 @@ export function writeTool(deps: ToolDeps) {
       await writeFile(absolute, content, "utf8");
       deps.state.markWritten(absolute);
 
-      const lines = content.split("\n").length;
+      const lines = fileLines(content).length;
       return {
         content: [
           {
