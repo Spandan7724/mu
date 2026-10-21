@@ -25,7 +25,6 @@ import {
   footer,
   formatCwdForFooter,
   formatTokens,
-  queuedInputPreview,
   renderMarkdown,
   SelectList,
   Spinner,
@@ -612,25 +611,35 @@ describe("components", () => {
     expect(second).toBe("▹▸▹");
   });
 
-  test("queued input is labeled, sanitized, and width-safe", () => {
-    expect(visible(queuedInputPreview("follow-up", "run tests when done", 60, "none"))).toEqual([
-      "  ▸ follow-up · run tests when done",
-    ]);
-    expect(visible(queuedInputPreview("steer", "dojopj", 60, "none", true))).toEqual([
-      "  ▸ steer · dojopj · alt+up edit",
-    ]);
-
-    const narrow = queuedInputPreview("steer", "change direction now", 14, "truecolor");
-    expect(visible(narrow)[0]).toBe("  ▸ steer");
-    for (const line of narrow) expect(stringWidth(line)).toBeLessThanOrEqual(14);
-
-    const long = visible(queuedInputPreview("follow-up", "word ".repeat(40), 24, "none"));
-    expect(long).toHaveLength(3);
-    expect(long.at(-1)).toContain("… +");
-
+  test("queued input is a dim pending user row, wrapped in full and sanitized", () => {
     expect(
-      visible(queuedInputPreview("follow-up", "safe\u001b[2J text", 60, "none")).join(""),
-    ).toContain("safe text");
+      visible(userCell("run tests when done", plain, { queued: true, note: "follow-up" })),
+    ).toEqual(["  ▹ run tests when done · follow-up"]);
+
+    const long = userCell(
+      "word ".repeat(40).trim(),
+      { ...plain, width: 30 },
+      {
+        queued: true,
+        note: "steer · alt+up edit",
+      },
+    );
+    expect(visible(long).length).toBeGreaterThan(3);
+    expect(visible(long).at(-1)).toContain("steer · alt+up edit");
+    for (const line of long) expect(stringWidth(line)).toBeLessThanOrEqual(30);
+
+    const dimmed = userCell("one\ntwo", colored, { queued: true });
+    for (const line of dimmed) expect(line).toContain("\u001b[2m");
+
+    expect(visible(userCell("safe\u001b[2J text", plain, { queued: true })).join("")).toContain(
+      "safe text",
+    );
+  });
+
+  test("a delivered steer keeps the user marker and a dim note", () => {
+    expect(visible(userCell("check jitter first", plain, { note: "steered" }))).toEqual([
+      "  ▸ check jitter first · steered",
+    ]);
   });
 
   test("approval overlay lists the three options without a box", () => {

@@ -37,7 +37,6 @@ import {
   type FooterData,
   footer,
   type QueuedInputKind,
-  queuedInputPreview,
   type SelectItem,
   SelectList,
   Spinner,
@@ -452,7 +451,7 @@ interface ActivitySearch {
 
 type TranscriptItem =
   | { kind: "lines"; lines: string[] }
-  | { kind: "user"; text: string; pending?: boolean }
+  | { kind: "user"; text: string; pending?: boolean; steered?: boolean }
   | {
       kind: "assistant";
       message: AssistantMessage;
@@ -1142,6 +1141,7 @@ export class App {
                 )
               : pendingIndex;
           if (deliveredIndex !== -1) this.pendingInputs.splice(deliveredIndex, 1);
+          const steered = pendingIndex !== -1;
           const submitted = this.transcript.find(
             (item): item is Extract<TranscriptItem, { kind: "user" }> =>
               item.kind === "user" && item.pending === true,
@@ -1151,9 +1151,9 @@ export class App {
             submitted.pending = false;
             this.transcriptChangedFrom(this.transcript.indexOf(submitted));
           } else {
-            this.pushTranscript({ kind: "user", text });
+            this.pushTranscript({ kind: "user", text, ...(steered ? { steered } : {}) });
           }
-          return [...userCell(text, this.ctx), ""];
+          return [...userCell(text, this.ctx, steered ? { note: "steered" } : {}), ""];
         }
         if (message.role === "assistant") {
           this.view.modelQuietSince = undefined;
@@ -1666,7 +1666,7 @@ export class App {
       return { lines, spacing: { first: "status", last: "status", rows: lines.length } };
     }
     if (item.kind === "user") {
-      const lines = userCell(item.text, this.ctx);
+      const lines = userCell(item.text, this.ctx, item.steered ? { note: "steered" } : {});
       return { lines, spacing: { first: "user", last: "user", rows: lines.length } };
     }
     if (item.kind === "assistant") {
@@ -1851,6 +1851,25 @@ export class App {
         spacing: { first: "status", last: "status", rows: 1 },
       });
     }
+    // Queued input sits at the foot of the live region in full until the agent takes it.
+    const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
+    const hiddenPending = this.pendingInputs.length - visiblePending.length;
+    if (hiddenPending > 0) {
+      const notice = `… ${hiddenPending} earlier queued input${hiddenPending === 1 ? "" : "s"}`;
+      live.push({
+        lines: [
+          MARGIN + styleText(truncateToWidth(notice, width - MARGIN.length), { dim: true }, depth),
+        ],
+        spacing: { first: "status", last: "status", rows: 1 },
+      });
+    }
+    const editable = this.options.callbacks.onEditQueued !== undefined;
+    for (const [index, pending] of visiblePending.entries()) {
+      const newest = index === visiblePending.length - 1;
+      const note = `${pending.kind}${newest && editable ? ` ${GLYPHS.separator} alt+up edit` : ""}`;
+      const rows = userCell(pending.text, this.ctx, { queued: true, note });
+      live.push({ lines: rows, spacing: { first: "user", last: "user", rows: rows.length } });
+    }
     let previous = this.transcriptTail();
     for (const block of live) {
       if (previous && gapBetween(previous, block.spacing) > 0) lines.push("");
@@ -1871,29 +1890,6 @@ export class App {
             { dim: true },
             depth,
           ),
-      );
-    }
-    const visiblePending = this.pendingInputs.slice(-PENDING_INPUT_ROWS);
-    const hiddenPending = this.pendingInputs.length - visiblePending.length;
-    if (hiddenPending > 0) {
-      composerLines.push(
-        MARGIN +
-          styleText(
-            `… ${hiddenPending} earlier queued input${hiddenPending === 1 ? "" : "s"}`,
-            { dim: true },
-            depth,
-          ),
-      );
-    }
-    for (const [index, pending] of visiblePending.entries()) {
-      composerLines.push(
-        ...queuedInputPreview(
-          pending.kind,
-          pending.text,
-          composerWidth,
-          depth,
-          index === visiblePending.length - 1 && this.options.callbacks.onEditQueued !== undefined,
-        ),
       );
     }
 
@@ -1999,7 +1995,7 @@ export class App {
             ? ` ${elapsed} ${GLYPHS.separator} transcript review`
             : this.compacting
               ? ` ${elapsed} ${GLYPHS.separator} enter queue ${GLYPHS.separator} esc cancel`
-              : ` ${elapsed}${this.stallHint()} ${GLYPHS.separator} enter steer ${GLYPHS.separator} tab follow-up ${GLYPHS.separator} esc/ctrl+c interrupt ${GLYPHS.separator} ${toolHint}`,
+              : ` ${elapsed}${this.stallHint()} ${GLYPHS.separator} ${this.runningControls()}`,
           { dim: true },
           depth,
         )}`,
@@ -2037,6 +2033,23 @@ export class App {
       ),
     );
     return lines;
+  }
+
+  // Send keys only matter once there is a draft to send.
+  private runningControls(): string {
+    const text = this.editor.text;
+    const callbacks = this.options.callbacks;
+    const sep = ` ${GLYPHS.separator} `;
+    if (text.trim().length === 0 || this.mode !== "composing") {
+      return `esc interrupt${sep}ctrl+o transcript`;
+    }
+    if (this.isShellMode) return `enter run${sep}esc interrupt`;
+    if (text.startsWith("/")) return "esc interrupt";
+    const send = [
+      ...(callbacks.onSteer ? ["enter steer"] : []),
+      ...(callbacks.onFollowUp ? ["tab follow-up"] : []),
+    ];
+    return [...send, "esc interrupt"].join(sep);
   }
 
   // Shown once a model call has been silent long enough to look stuck.

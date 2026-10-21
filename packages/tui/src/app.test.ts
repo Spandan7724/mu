@@ -242,10 +242,11 @@ describe("fake-agent session", () => {
     const { app } = harness();
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("esc to interrupt");
     app.handleEvent({ type: "agent_start" });
-    const runningHint = app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
-    expect(runningHint).toContain("enter steer");
-    expect(runningHint).toContain("tab follow-up");
-    expect(runningHint).toContain("esc/ctrl+c interrupt");
+    const runningHint = () => app.renderBottom().map(stripAnsi).join(" ").replace(/\s+/g, " ");
+    expect(runningHint()).toContain("esc interrupt · ctrl+o transcript");
+    expect(runningHint()).not.toContain("enter steer");
+    feed(app, "also lint");
+    expect(runningHint()).toContain("enter steer · tab follow-up · esc interrupt");
     app.handleEvent({ type: "agent_end", messages: [], reason: "done" });
     expect(stripAnsi(app.renderBottom().at(-1) ?? "")).not.toContain("enter steer");
   });
@@ -1220,7 +1221,7 @@ describe("input handling", () => {
     expect(h.followUps).toEqual(["not yet"]);
     expect(h.submitted).toEqual([]);
     expect(h.app.editor.text).toBe("");
-    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("▸ follow-up · not yet");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("▹ not yet · follow-up");
 
     h.app.handleEvent({
       type: "message_end",
@@ -1230,7 +1231,7 @@ describe("input handling", () => {
         timestamp: 1,
       },
     });
-    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("follow-up · not yet");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).not.toContain("▹ not yet");
   });
 
   test("pending steers and follow-ups stay labeled until each is delivered", () => {
@@ -1242,16 +1243,17 @@ describe("input handling", () => {
     expect(h.followUps).toEqual(["same"]);
     expect(h.steers).toEqual(["same"]);
     let pending = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(pending).toContain("▸ steer · same");
-    expect(pending).toContain("▸ follow-up · same");
+    expect(pending).toContain("▹ same · steer");
+    expect(pending).toContain("▹ same · follow-up");
 
     h.app.handleEvent({
       type: "message_end",
       message: { role: "user", content: [{ type: "text", text: "same" }], timestamp: 1 },
     });
     pending = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(pending).not.toContain("▸ steer · same");
-    expect(pending).toContain("▸ follow-up · same");
+    expect(pending).not.toContain("▹ same · steer");
+    expect(pending).toContain("▹ same · follow-up");
+    expect(h.app.renderScreen().map(stripAnsi)).toContain("  ▸ same · steered");
   });
 
   test("alt+up restores only the newest queued message for editing", () => {
@@ -1267,8 +1269,8 @@ describe("input handling", () => {
     feed(h.app, "dojopj\r");
 
     const before = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(before).toContain("▸ steer · dojopj · alt+up edit");
-    expect(before).not.toContain("follow-up · run tests · alt+up edit");
+    expect(before).toContain("▹ dojopj · steer · alt+up edit");
+    expect(before).not.toContain("run tests · follow-up · alt+up edit");
 
     feed(h.app, "draft");
     feed(h.app, `${ESC}[1;3A`);
@@ -1276,8 +1278,8 @@ describe("input handling", () => {
     expect(edited).toEqual([{ kind: "steer", text: "dojopj" }]);
     expect(h.app.editor.text).toBe("dojopj\n\ndraft");
     const after = h.app.renderBottom().map(stripAnsi).join("\n");
-    expect(after).not.toContain("steer · dojopj");
-    expect(after).toContain("▸ follow-up · run tests · alt+up edit");
+    expect(after).not.toContain("dojopj · steer");
+    expect(after).toContain("▹ run tests · follow-up · alt+up edit");
   });
 
   test("alt+up leaves a queued message visible when it is already being delivered", () => {
@@ -1288,7 +1290,7 @@ describe("input handling", () => {
 
     expect(h.app.editor.text).toBe("");
     expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain(
-      "▸ follow-up · too late · alt+up edit",
+      "▹ too late · follow-up · alt+up edit",
     );
   });
 
@@ -1306,10 +1308,27 @@ describe("input handling", () => {
 
     const pending = h.app.renderBottom().map(stripAnsi).join("\n");
     expect(pending).toContain("… 1 earlier queued input");
-    expect(pending).not.toContain("follow-up · first");
-    expect(pending).toContain("follow-up · second");
-    expect(pending).toContain("follow-up · third");
-    expect(pending).toContain("follow-up · fourth");
+    expect(pending).not.toContain("first · follow-up");
+    expect(pending).toContain("second · follow-up");
+    expect(pending).toContain("third · follow-up");
+    expect(pending).toContain("fourth · follow-up");
+  });
+
+  test("a queued message shows in full above the composer", () => {
+    const h = harness();
+    h.app.handleEvent({ type: "agent_start" });
+    const text = "then update the changelog entry ".repeat(6).trim();
+    feed(h.app, `${text}\t`);
+
+    const bottom = h.app.renderBottom().map(stripAnsi);
+    const first = bottom.findIndex((row) => row.startsWith("  ▹ then update"));
+    const box = bottom.findIndex((row) => row.startsWith("  ╭"));
+    expect(first).toBeGreaterThan(-1);
+    expect(box).toBeGreaterThan(first + 1);
+    expect(bottom[box - 1]).toBe("");
+    const rows = bottom.slice(first, box - 1);
+    expect(rows.join(" ").replace(/\s+/g, " ")).toContain(`${text} · follow-up`);
+    expect(bottom.slice(box, box + 3).join("\n")).not.toContain("follow-up");
   });
 
   test("a multi-line paste does not submit", () => {
@@ -5472,13 +5491,13 @@ describe("provider text and stalls", () => {
     try {
       const { app } = harness();
       const runningRow = () =>
-        stripAnsi(app.renderBottom().find((row) => row.includes("enter steer")) ?? "");
+        stripAnsi(app.renderBottom().find((row) => row.includes("esc interrupt")) ?? "");
       app.handleEvent({ type: "agent_start" });
       app.handleEvent({ type: "turn_start" });
       now += 44_000;
       expect(runningRow()).not.toContain("no output");
       now += 1_000;
-      expect(runningRow()).toContain("45s · no output for 45s · enter steer");
+      expect(runningRow()).toContain("45s · no output for 45s · esc interrupt");
       now += 17_000;
       expect(runningRow()).toContain("no output for 1m 2s");
 

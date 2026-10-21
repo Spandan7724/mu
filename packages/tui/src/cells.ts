@@ -49,9 +49,30 @@ function body(ctx: RenderContext): number {
 }
 
 // ▸ user input
-export function userCell(text: string, ctx: RenderContext): string[] {
-  const marker = `${accent(GLYPHS.userMarker, ctx.depth)} `;
-  return wrapText(sanitizeUntrusted(text), body(ctx) - 2, "  ").map((line, i) =>
+export interface UserCellOptions {
+  // Dim metadata after the text, such as `steered`.
+  note?: string;
+  // Not yet delivered to the agent: pending glyph, everything dim.
+  queued?: boolean;
+}
+
+export function userCell(
+  text: string,
+  ctx: RenderContext,
+  options: UserCellOptions = {},
+): string[] {
+  const { note, queued } = options;
+  const marker = `${queued ? dim(GLYPHS.pending, ctx.depth) : accent(GLYPHS.userMarker, ctx.depth)} `;
+  const suffix = note ? ` ${GLYPHS.separator} ${note}` : "";
+  const safe = sanitizeUntrusted(text);
+  // Styled per line: wrapping carries a style across breaks but not across newlines.
+  const content = queued
+    ? (safe + suffix)
+        .split("\n")
+        .map((line) => dim(line, ctx.depth))
+        .join("\n")
+    : safe + (suffix ? dim(suffix, ctx.depth) : "");
+  return wrapText(content, body(ctx) - 2, "  ").map((line, i) =>
     i === 0 ? MARGIN + marker + line : MARGIN + line,
   );
 }
