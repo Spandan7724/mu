@@ -218,6 +218,11 @@ export const GLYPHS = {
   separator: "·",
   // Between two hunks of a diff, where unchanged lines are skipped.
   hunkGap: "⋮",
+  // The background block is the one bracketed region: it holds several tasks
+  // above the composer, and its rounded corners echo the composer's.
+  bracketOpen: "╭",
+  bracket: "│",
+  bracketClose: "╰",
   spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
   subagentSpinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const;

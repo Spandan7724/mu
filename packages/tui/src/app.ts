@@ -1361,7 +1361,7 @@ export class App {
           omittedChars: 0,
         };
         this.backgroundTasks.set(event.taskId, task);
-        this.adoptRestoredBackgroundOwner(event.taskId);
+        this.adoptRestoredBackgroundOwner(event.taskId, event.command);
         this.syncBackgroundCount();
         return [];
       }
@@ -1831,18 +1831,25 @@ export class App {
       });
     }
     if (backgroundPending.length > 0) {
+      const edge = (glyph: string) => MARGIN + styleText(glyph, { dim: true }, depth);
+      // Task rows trade their indent for the bracket's rail.
+      const onRail = (line: string) => {
+        const body = line.startsWith(MARGIN) ? line.slice(MARGIN.length) : line;
+        const content = stripAnsi(body).startsWith(INDENT)
+          ? body.slice(rawOffsetAtVisible(body, INDENT.length))
+          : body;
+        return stripAnsi(content).trim() === ""
+          ? edge(GLYPHS.bracket)
+          : `${edge(`${GLYPHS.bracket} `)}${content}`;
+      };
       const rows = [
-        MARGIN +
-          styleText(
-            `background ${GLYPHS.separator} ${backgroundPending.length}`,
-            { dim: true },
-            depth,
-          ),
+        edge(`${GLYPHS.bracketOpen} background ${GLYPHS.separator} ${backgroundPending.length}`),
       ];
       for (const [index, pending] of backgroundPending.entries()) {
-        if (index > 0) rows.push("");
-        rows.push(...renderPending(pending));
+        if (index > 0) rows.push(edge(GLYPHS.bracket));
+        rows.push(...renderPending(pending).map(onRail));
       }
+      rows.push(edge(GLYPHS.bracketClose));
       live.push({ lines: rows, spacing: { first: "bracket", last: "bracket", rows: rows.length } });
     }
     if (this.compacting && this.compactionStage && this.mode !== "activity") {
@@ -2297,8 +2304,20 @@ export class App {
     return lines;
   }
 
-  private adoptRestoredBackgroundOwner(taskId: string): void {
-    if ([...this.pendingTools.values()].some((candidate) => candidate.taskId === taskId)) return;
+  private adoptRestoredBackgroundOwner(taskId: string, command: string): void {
+    const pending = [...this.pendingTools.values()];
+    if (pending.some((candidate) => candidate.taskId === taskId)) return;
+    // Task ids restart with each process, so a resumed row can carry the id of a
+    // task that died with the old one. A call still running this command owns it.
+    if (
+      pending.some(
+        (candidate) =>
+          candidate.taskId === undefined &&
+          (candidate.args as { command?: unknown }).command === command,
+      )
+    ) {
+      return;
+    }
     for (let index = this.transcript.length - 1; index >= 0; index--) {
       const item = this.transcript[index];
       if (item?.kind === "tool") {

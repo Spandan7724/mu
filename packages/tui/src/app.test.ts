@@ -598,8 +598,8 @@ describe("fake-agent session", () => {
     // The bash row has not committed yet, so the log renders beneath it.
     expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun test");
     const live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("  background · 1\n    running bun test · task_1 bg");
-    expect(live).toContain("    seven\n\n  ╭");
+    expect(live).toContain("╭ background · 1\n  │ running bun test · task_1 bg");
+    expect(live).toContain("  │ seven\n  ╰\n\n  ╭");
     expect(live).toContain("running bun test · task_1 bg");
     expect(live).toContain("five");
     expect(live).toContain("seven");
@@ -628,22 +628,22 @@ describe("fake-agent session", () => {
     const live = app.renderBottom().map(stripAnsi);
     const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
     expect(live.slice(row + 1, row + 4).map((line) => line.trimEnd().slice(0, 8))).toEqual([
-      "    two",
-      "    xxxx",
-      "    thre",
+      "  │ two",
+      "  │ xxxx",
+      "  │ thre",
     ]);
   });
 
-  test("a task tail is padded with blank rows until it has three lines", () => {
+  test("a task tail is padded with bare bracket rows until it has three lines", () => {
     const { app } = harness();
     startTask(app);
     app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "\n" });
     const live = app.renderBottom().map(stripAnsi);
     const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
-    expect(live.slice(row + 1, row + 4)).toEqual(["", "", ""]);
+    expect(live.slice(row + 1, row + 4)).toEqual(["  │", "  │", "  │"]);
   });
 
-  test("multiple background tasks share one block without enclosing ordinary tools", () => {
+  test("multiple background tasks share one bracket without enclosing ordinary tools", () => {
     const { app } = harness();
     startTask(app, "bun test", "task_1", "c1");
     app.handleEvent({
@@ -656,7 +656,7 @@ describe("fake-agent session", () => {
 
     const live = app.renderBottom().map(stripAnsi);
     const read = live.findIndex((line) => line.includes("read README.md"));
-    const open = live.findIndex((line) => line.includes("  background · 2"));
+    const open = live.findIndex((line) => line.includes("╭ background · 2"));
     const first = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
     const second = live.findIndex((line) => line.includes("running bun dev · task_2 bg"));
 
@@ -664,9 +664,11 @@ describe("fake-agent session", () => {
     expect(read).toBeLessThan(open);
     expect(first).toBeGreaterThan(open);
     expect(second).toBeGreaterThan(first);
-    expect(live.slice(first + 1, second)).toContain("");
-    expect(live[second + 1]).toBe("");
-    expect(live[second + 2]).toStartWith("  ╭");
+    expect(live.slice(first + 1, second)).toContain("  │");
+    const close = live.findIndex((line) => line.trim() === "╰");
+    expect(close).toBeGreaterThan(second);
+    expect(live[close + 1]).toBe("");
+    expect(live[close + 2]).toStartWith("  ╭");
   });
 
   test("a running background task is selectable and expandable in activity mode", () => {
@@ -699,7 +701,7 @@ describe("fake-agent session", () => {
 
     feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
-    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("  background · 1");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("╭ background · 1");
 
     feed(app, "\u000f");
     app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
@@ -975,6 +977,44 @@ describe("fake-agent session", () => {
     const restored = app.renderTranscript("main").map(stripAnsi).join("\n");
     expect(restored).toContain("1m 5s");
     expect(restored).not.toContain("background");
+  });
+
+  test("a new task that reuses a dead task's id is not shown twice", () => {
+    const { app } = harness();
+    // A row from an earlier process whose task never reported an exit.
+    app.replaceTranscript([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "old-call",
+            name: "bash",
+            arguments: { command: "bun test", run_in_background: true },
+          },
+        ],
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        model: "fake/fake-1",
+        stopReason: "toolUse",
+        timestamp: Date.now(),
+      },
+      {
+        role: "toolResult",
+        toolCallId: "old-call",
+        toolName: "bash",
+        content: [{ type: "text", text: "Started task_1 in the background." }],
+        details: { taskId: "task_1", command: "bun test", background: true },
+        isError: false,
+        timestamp: Date.now(),
+      },
+    ]);
+
+    startTask(app, "bun test", "task_1", "new-call");
+    app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "tick\n" });
+
+    const live = app.renderBottom().map(stripAnsi);
+    expect(live).toContain("  ╭ background · 1");
+    expect(live.filter((line) => line.includes("task_1 bg"))).toHaveLength(1);
   });
 
   test("an attached running task reclaims its persisted bash row", () => {
@@ -1948,6 +1988,29 @@ describe("renderer registry", () => {
     );
     expect(lines).toHaveLength(2);
     for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(60);
+  });
+
+  test("a multi-line command is one row until expanded", () => {
+    const registry = new RendererRegistry();
+    registry.registerAll(codingRenderers);
+    const command = "python3 -c 'import time\nfor i in range(3):\n  print(i)'\n";
+    const render = (expanded: boolean) =>
+      registry
+        .render(
+          { toolName: "bash", args: { command }, running: true, expanded },
+          {
+            width: 60,
+            depth: "none",
+          },
+        )
+        .map(stripAnsi);
+
+    expect(render(false)).toEqual(["    running python3 -c 'import time …"]);
+    expect(render(true)).toEqual([
+      "    running python3 -c 'import time",
+      "    for i in range(3):",
+      "      print(i)'",
+    ]);
   });
 
   test("an explicit user shell command uses the dollar action", () => {
@@ -4283,7 +4346,7 @@ describe("live streaming region", () => {
     expect(rendered).toContain("ok 1 - first");
   });
 
-  test("a multiline command preview stays inside the managed viewport", () => {
+  test("a streaming multiline command is one row in the managed viewport", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
     const app = new App({
@@ -4319,8 +4382,8 @@ describe("live streaming region", () => {
 
     const bottom = app.renderBottom().map(stripAnsi);
     expect(bottom.length).toBeLessThanOrEqual(9);
-    expect(bottom[0]).toContain("rows above hidden");
-    expect(bottom.every((line) => !line.includes("\n"))).toBe(true);
+    expect(bottom[0]).toBe("  › bash command line 1 …");
+    expect(bottom.join("\n")).not.toContain("command line 2");
   });
 
   test("live tool chunks join partial lines and stay bounded", () => {
@@ -4907,7 +4970,7 @@ describe("moving running calls to the background", () => {
         },
       });
       const live = app.renderBottom().map(stripAnsi).join("\n");
-      expect(live).toContain("  background · 1");
+      expect(live).toContain("╭ background · 1");
       expect(live).toContain("(fail) parser");
       expect(live).not.toContain("ctrl+z");
 
@@ -4984,7 +5047,7 @@ describe("moving running calls to the background", () => {
     app.handleEvent({ type: "subagent_progress", subagentId: "sa-abc123", details: step("b") });
 
     const live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("  background · 1");
+    expect(live).toContain("╭ background · 1");
     expect(live).toContain("2 actions");
   });
 

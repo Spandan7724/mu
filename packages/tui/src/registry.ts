@@ -1328,17 +1328,17 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       .filter(Boolean)
       .join(" · ");
     const succeeded = [task, duration].filter(Boolean).join(" · ");
+    // A multi-line script is one row until expanded, so live rows and the
+    // background bracket show its output rather than its source.
+    const command = firstString(info.args, ["command"])?.trimEnd();
+    const [firstLine = "", ...moreLines] = command?.split("\n") ?? [];
+    const shownCommand = info.expanded || moreLines.length === 0 ? command : `${firstLine} …`;
     return [
       ...toolCell(
         {
           name: userShell ? "$" : info.running ? "running" : info.result ? "ran" : "bash",
           tone: "exec",
-          ...(firstString(info.args, ["command"])
-            ? {
-                primaryArg: firstString(info.args, ["command"]) as string,
-                primaryRole: "code",
-              }
-            : {}),
+          ...(shownCommand ? { primaryArg: shownCommand, primaryRole: "code" } : {}),
           ...(info.result?.isError ? { isError: true } : {}),
           ...(info.result
             ? pendingTask
