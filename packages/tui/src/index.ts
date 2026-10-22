@@ -80,7 +80,15 @@ export {
 export type { RenderFrame } from "./renderer.ts";
 export { FullScreenRenderer } from "./renderer.ts";
 export type { ColorDepth, Style, SyntaxRole } from "./style.ts";
-export { detectColorDepth, GLYPHS, hyperlink, MARGIN, stripAnsi, styleText } from "./style.ts";
+export {
+  detectColorDepth,
+  GLYPHS,
+  hyperlink,
+  INDENT,
+  MARGIN,
+  stripAnsi,
+  styleText,
+} from "./style.ts";
 export { highlightCode } from "./syntax-highlight.ts";
 export type { TerminalIo } from "./terminal.ts";
 export { CURSOR, nodeTerminalIo, Terminal } from "./terminal.ts";

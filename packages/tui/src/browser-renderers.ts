@@ -6,7 +6,7 @@ import {
   type ToolRenderInfo,
 } from "./registry.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, INDENT, MARGIN, styleText } from "./style.ts";
 import { truncateToWidth } from "./width.ts";
 
 // Renderers for the browser profile's tools, as data (the TUI does not import the
@@ -143,6 +143,12 @@ function outcomeTarget(summary: string, toolName: string): string {
   return toolName === "click" || toolName === "type" ? withoutVerb : withoutVerb || summary;
 }
 
+// Puts a mark in front of a tool cell's action, inside its indent.
+function withMark(row: string, mark: string): string {
+  const lead = MARGIN + INDENT;
+  return row.startsWith(lead) ? lead + mark + row.slice(lead.length) : row;
+}
+
 // ● Send  To: Alex <alex@example.com> · Subject: Running late · ✓ mail.google.com · 702 ms
 // The control's own name leads, so the row says what was pressed, not which tool did it.
 function commitRow(
@@ -173,9 +179,8 @@ function commitRow(
     // The mark takes two columns of the row's width.
     { ...ctx, width: ctx.width - 2 },
   );
-  const rail = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
   const mark = `${styleText("●", { toolMutate: true }, ctx.depth)} `;
-  return [first.replace(rail, `${rail}${mark}`), ...rest];
+  return [withMark(first, mark), ...rest];
 }
 
 const browserRenderer: ToolRendererFn = (info, ctx) => {
@@ -348,7 +353,7 @@ function handoffOf(info: ToolRenderInfo): BrowserHandoff | undefined {
 }
 
 // ◆ your turn  sign in to linkedin.com
-// │ mu continues once the page moves on, or when you reply
+//   mu continues once the page moves on, or when you reply
 const handoffRenderer: ToolRendererFn = (info, ctx) => {
   const handoff = handoffOf(info);
   const reason = handoff?.reason ?? argString(info.args, "reason");
@@ -377,11 +382,7 @@ const handoffRenderer: ToolRendererFn = (info, ctx) => {
     // The mark takes two columns of the row's width.
     { ...ctx, width: ctx.width - 2 },
   );
-  const rail = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
-  return [
-    first.replace(rail, `${rail}${styleText("◆", { toolMutate: true }, ctx.depth)} `),
-    ...rest,
-  ];
+  return [withMark(first, `${styleText("◆", { toolMutate: true }, ctx.depth)} `), ...rest];
 };
 handoffRenderer.ownsExpansion = true;
 handoffRenderer.awaitsUser = (info) => {

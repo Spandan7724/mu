@@ -231,9 +231,9 @@ describe("interactive command rendering", () => {
       "none",
     ).map(stripAnsi);
 
-    expect(lines[0]).toBe("  │ src/a.ts · +1 −1");
-    expect(lines[1]).toBe("  │     7 − old");
-    expect(lines[2]).toBe("  │     7 + new");
+    expect(lines[0]).toBe("    src/a.ts · +1 −1");
+    expect(lines[1]).toBe("        7 − old");
+    expect(lines[2]).toBe("        7 + new");
   });
 
   test("/diff keeps multiple files as separate cells", () => {
@@ -249,8 +249,8 @@ describe("interactive command rendering", () => {
       "ansi16",
     ).map(stripAnsi);
 
-    expect(lines).toContain("  │ a.ts · +1 −0");
-    expect(lines).toContain("  │ b.ts · +1 −0");
+    expect(lines).toContain("    a.ts · +1 −0");
+    expect(lines).toContain("    b.ts · +1 −0");
     expect(lines).toContain("");
   });
 
@@ -276,9 +276,9 @@ describe("interactive command rendering", () => {
     ).map(stripAnsi);
 
     expect(lines).toEqual([
-      "  │ undo · 1 prompt · 4 messages reverted · 1 file · /redo to restore",
-      "  │ fibonacci.py +17",
-      "  │ prompt restored to editor",
+      "    undo · 1 prompt · 4 messages reverted · 1 file · /redo to restore",
+      "    fibonacci.py +17",
+      "    prompt restored to editor",
     ]);
   });
 });

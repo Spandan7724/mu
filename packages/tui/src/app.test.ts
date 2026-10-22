@@ -218,7 +218,7 @@ describe("fake-agent session", () => {
       },
     });
 
-    expect(lines.map(stripAnsi)).toEqual(["  │ searched · mu agent"]);
+    expect(lines.map(stripAnsi)).toEqual(["    searched · mu agent"]);
     app.handleEvent({
       type: "web_search_end",
       search: {
@@ -598,8 +598,8 @@ describe("fake-agent session", () => {
     // The bash row has not committed yet, so the log renders beneath it.
     expect(app.renderTranscript("main").map(stripAnsi).join("\n")).not.toContain("bun test");
     const live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("┌ background · 1\n  │ running bun test · task_1 bg");
-    expect(live).toContain("\n  └\n\n  ╭");
+    expect(live).toContain("  background · 1\n    running bun test · task_1 bg");
+    expect(live).toContain("    seven\n\n  ╭");
     expect(live).toContain("running bun test · task_1 bg");
     expect(live).toContain("five");
     expect(live).toContain("seven");
@@ -628,22 +628,22 @@ describe("fake-agent session", () => {
     const live = app.renderBottom().map(stripAnsi);
     const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
     expect(live.slice(row + 1, row + 4).map((line) => line.trimEnd().slice(0, 8))).toEqual([
-      "  │ two",
-      "  │ xxxx",
-      "  │ thre",
+      "    two",
+      "    xxxx",
+      "    thre",
     ]);
   });
 
-  test("a task tail is padded with bare rail rows until it has three lines", () => {
+  test("a task tail is padded with blank rows until it has three lines", () => {
     const { app } = harness();
     startTask(app);
     app.handleEvent({ type: "task_output", taskId: "task_1", chunk: "\n" });
     const live = app.renderBottom().map(stripAnsi);
     const row = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
-    expect(live.slice(row + 1, row + 4)).toEqual(["  │", "  │", "  │"]);
+    expect(live.slice(row + 1, row + 4)).toEqual(["", "", ""]);
   });
 
-  test("multiple background tasks share one bracket without enclosing ordinary tools", () => {
+  test("multiple background tasks share one block without enclosing ordinary tools", () => {
     const { app } = harness();
     startTask(app, "bun test", "task_1", "c1");
     app.handleEvent({
@@ -656,19 +656,17 @@ describe("fake-agent session", () => {
 
     const live = app.renderBottom().map(stripAnsi);
     const read = live.findIndex((line) => line.includes("read README.md"));
-    const open = live.findIndex((line) => line.includes("┌ background · 2"));
+    const open = live.findIndex((line) => line.includes("  background · 2"));
     const first = live.findIndex((line) => line.includes("running bun test · task_1 bg"));
     const second = live.findIndex((line) => line.includes("running bun dev · task_2 bg"));
-    const close = live.findIndex((line) => line.trim() === "└");
 
     expect(read).toBeGreaterThanOrEqual(0);
     expect(read).toBeLessThan(open);
     expect(first).toBeGreaterThan(open);
     expect(second).toBeGreaterThan(first);
-    expect(live.slice(first + 1, second)).toContain("  │");
-    expect(close).toBeGreaterThan(second);
-    expect(live[close + 1]).toBe("");
-    expect(live[close + 2]).toStartWith("  ╭");
+    expect(live.slice(first + 1, second)).toContain("");
+    expect(live[second + 1]).toBe("");
+    expect(live[second + 2]).toStartWith("  ╭");
   });
 
   test("a running background task is selectable and expandable in activity mode", () => {
@@ -688,7 +686,7 @@ describe("fake-agent session", () => {
     expect(reviewRows[composer - 1]).toBe("");
     let review = reviewRows.join("\n");
     expect(review).toContain("❯ running bun test · task_1 bg");
-    expect(review).not.toContain("┌ background");
+    expect(review).not.toContain("  background");
     expect(review).not.toContain("first");
 
     press(app, "right");
@@ -701,7 +699,7 @@ describe("fake-agent session", () => {
 
     feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
-    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("┌ background · 1");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("  background · 1");
 
     feed(app, "\u000f");
     app.handleEvent({ type: "task_exited", taskId: "task_1", exitCode: 0, status: "exited" });
@@ -710,7 +708,7 @@ describe("fake-agent session", () => {
     expect(review).toContain("❯ ran bun test · ✓ task_1 bg");
     expect(review).toContain("first");
     expect(review).toContain("fifth");
-    expect(review).not.toContain("┌ background");
+    expect(review).not.toContain("  background");
   });
 
   test("the task's exit commits that one row, carrying its outcome", () => {
@@ -1736,9 +1734,9 @@ describe("renderer registry", () => {
 
   test("a registered renderer overrides the fallback", () => {
     const registry = new RendererRegistry();
-    registry.register("custom", () => ["  │ custom rendering"]);
+    registry.register("custom", () => ["    custom rendering"]);
     const lines = registry.render({ toolName: "custom", args: {} }, { width: 60, depth: "none" });
-    expect(lines).toEqual(["  │ custom rendering"]);
+    expect(lines).toEqual(["    custom rendering"]);
   });
 
   test("a throwing renderer degrades to the generic cell instead of crashing", () => {
@@ -1771,7 +1769,7 @@ describe("renderer registry", () => {
 
   test("expanded mode appends sanitized tool output even for custom renderers", () => {
     const registry = new RendererRegistry();
-    registry.register("custom", () => ["  │ custom rendering"]);
+    registry.register("custom", () => ["    custom rendering"]);
     const lines = registry.render(
       {
         toolName: "custom",
@@ -1788,12 +1786,12 @@ describe("renderer registry", () => {
       },
       { width: 60, depth: "none" },
     );
-    expect(lines.map(stripAnsi)).toEqual(["  │ custom rendering", "  │ line one", "  │ line two"]);
+    expect(lines.map(stripAnsi)).toEqual(["    custom rendering", "    line one", "    line two"]);
   });
 
   test("expanded output has an honest per-tool row bound", () => {
     const registry = new RendererRegistry();
-    registry.register("custom", () => ["  │ custom rendering"]);
+    registry.register("custom", () => ["    custom rendering"]);
     const output = Array.from({ length: 1_000 }, (_, index) => `line ${index + 1}`).join("\n");
     const lines = registry
       .render(
@@ -1815,8 +1813,8 @@ describe("renderer registry", () => {
       .map(stripAnsi);
 
     expect(lines.length).toBeLessThanOrEqual(201);
-    expect(lines).toContain("  │ line 1");
-    expect(lines).toContain("  │ line 1000");
+    expect(lines).toContain("    line 1");
+    expect(lines).toContain("    line 1000");
     expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
   });
 
@@ -1845,12 +1843,12 @@ describe("renderer registry", () => {
 
     expect(
       render({ lines: 2_052, startLine: 300, endLine: 339, returnedLines: 40, truncated: false }),
-    ).toBe("  │ read large.ts · lines 300–339 of 2052");
+    ).toBe("    read large.ts · lines 300–339 of 2052");
     expect(render({ lines: 2_052, truncated: true })).toBe(
-      "  │ read large.ts · 2052 lines · output truncated",
+      "    read large.ts · 2052 lines · output truncated",
     );
     expect(render({ lines: 2_052, returnedLines: 0, truncated: false })).toBe(
-      "  │ read large.ts · 0 lines returned · 2052 total",
+      "    read large.ts · 0 lines returned · 2052 total",
     );
   });
 
@@ -1893,7 +1891,7 @@ describe("renderer registry", () => {
       styleText('"""Agent models."""', { syntax: "string" }, "truecolor"),
     );
     expect(lines.join("\n")).not.toContain("\u001b]52");
-    expect(lines.map(stripAnsi)).toContain("  │     5  class Plan:");
+    expect(lines.map(stripAnsi)).toContain("        5  class Plan:");
   });
 
   test("expanded syntax-highlighted reads retain the output row bound", () => {
@@ -1924,8 +1922,8 @@ describe("renderer registry", () => {
       .map(stripAnsi);
 
     expect(lines.length).toBeLessThanOrEqual(201);
-    expect(lines).toContain("  │     1  value_1 = 1");
-    expect(lines).toContain("  │  1000  value_1000 = 1000");
+    expect(lines).toContain("        1  value_1 = 1");
+    expect(lines).toContain("     1000  value_1000 = 1000");
     expect(lines.some((line) => line.includes("801 lines omitted"))).toBe(true);
   });
 
@@ -1972,8 +1970,8 @@ describe("renderer registry", () => {
       { width: 60, depth: "none" },
     );
 
-    expect(stripAnsi(lines[0] ?? "")).toBe("  │ $ pwd · ✓ 10ms");
-    expect(stripAnsi(lines[1] ?? "")).toBe("  │ /tmp");
+    expect(stripAnsi(lines[0] ?? "")).toBe("    $ pwd · ✓ 10ms");
+    expect(stripAnsi(lines[1] ?? "")).toBe("    /tmp");
   });
 
   test("a completed edit numbers its diff with the file's own lines", () => {
@@ -2023,12 +2021,12 @@ describe("renderer registry", () => {
     // File order, not the order the model sent, and the added line shifts the
     // later hunk's new-side number past its old-side one.
     expect(lines.slice(1)).toEqual([
-      "  │     1 − const a = 1;",
-      "  │     1 + const a = 10;",
-      "  │     2 + const extra = 0;",
-      "  │     ⋮",
-      "  │     3 − const c = 3;",
-      "  │     4 + const c = 30;",
+      "        1 − const a = 1;",
+      "        1 + const a = 10;",
+      "        2 + const extra = 0;",
+      "        ⋮",
+      "        3 − const c = 3;",
+      "        4 + const c = 30;",
     ]);
     expect(lines.filter((line) => line.includes("code.ts"))).toHaveLength(1);
   });
@@ -2042,19 +2040,19 @@ describe("renderer registry", () => {
         .slice(1)
         .map(stripAnsi);
     expect(rows(["@@ -1,2 +1,2 @@", " a", "-b", "+B", "@@ -10,1 +10,1 @@", "-j", "+J"])).toEqual([
-      "  │     1   a",
-      "  │     2 − b",
-      "  │     2 + B",
-      "  │     ⋮",
-      "  │    10 − j",
-      "  │    10 + J",
+      "        1   a",
+      "        2 − b",
+      "        2 + B",
+      "        ⋮",
+      "       10 − j",
+      "       10 + J",
     ]);
     expect(rows(["@@ -1,1 +1,1 @@", "-a", "+A", "@@ -2,1 +2,1 @@", "-b", "+B"])).not.toContain(
-      "  │     ⋮",
+      "        ⋮",
     );
     // An insertion after line 1 starts at old line 2: nothing skipped.
     expect(rows(["@@ -1,1 +1,1 @@", "-a", "+A", "@@ -1,0 +2,1 @@", "+new"])).not.toContain(
-      "  │     ⋮",
+      "        ⋮",
     );
   });
 
@@ -2102,11 +2100,11 @@ describe("renderer registry", () => {
       )
       .map(stripAnsi);
 
-    expect(lines[0]).toBe("  │ edited pyproject.toml · 1 replacement");
+    expect(lines[0]).toBe("    edited pyproject.toml · 1 replacement");
     expect(lines.join("\n")).not.toContain("+4 −3");
     expect(lines.filter((line) => line.includes("pyproject.toml"))).toHaveLength(1);
-    expect(lines).not.toContain("  │ Edited pyproject.toml (1 replacement)");
-    expect(lines).toContain('  │    15 + coding-agent = "multiagent_coder.tui:main"');
+    expect(lines).not.toContain("    Edited pyproject.toml (1 replacement)");
+    expect(lines).toContain('       15 + coding-agent = "multiagent_coder.tui:main"');
   });
 
   test("an expanded failed edit still shows its error", () => {
@@ -2156,7 +2154,7 @@ describe("renderer registry", () => {
       )
       .map(stripAnsi);
 
-    expect(lines.slice(1, 3)).toEqual(["  │       − a", "  │       + b"]);
+    expect(lines.slice(1, 3)).toEqual(["          − a", "          + b"]);
   });
 
   test("a running edit or write is one row, with no diff until its result", () => {
@@ -2170,22 +2168,22 @@ describe("renderer registry", () => {
         registry
           .render({ toolName: "edit", args, argsStreaming, running: true }, ctx)
           .map(stripAnsi),
-      ).toEqual(["  │ edit a.ts"]);
+      ).toEqual(["    edit a.ts"]);
     }
     const write = { path: "b.ts", content: "one\ntwo\n" };
     expect(registry.render({ toolName: "write", args: write }, ctx).map(stripAnsi)).toEqual([
-      "  │ write b.ts",
+      "    write b.ts",
     ]);
 
     registry.setFileProbe({ occurrences: () => 1, exists: () => false });
     expect(registry.render({ toolName: "write", args: write }, ctx).map(stripAnsi)).toEqual([
-      "  │ write b.ts · +2 −0",
+      "    write b.ts · +2 −0",
     ]);
     expect(
       registry
         .render({ toolName: "edit", args: { ...args, newString: "const limit = 5;" } }, ctx)
         .map(stripAnsi),
-    ).toEqual(["  │ edit a.ts · +1 −1"]);
+    ).toEqual(["    edit a.ts · +1 −1"]);
   });
 
   test("live counts climb as edit arguments stream and never guess", () => {
@@ -2314,7 +2312,7 @@ describe("renderer registry", () => {
     ]);
   });
 
-  test("a todo call renders a bracketed plan instead of one truncated line", () => {
+  test("a todo call renders a plan list instead of one truncated line", () => {
     const registry = new RendererRegistry();
     registry.registerAll(codingRenderers);
     const items = [
@@ -2343,10 +2341,10 @@ describe("renderer registry", () => {
       .map(stripAnsi);
 
     expect(lines).toEqual([
-      "  ┌ plan · 1/3 done",
-      "  │ ✓ add the plan cell",
-      "  │ ▸ update the docs",
-      "  └ ▹ run the full ci pass",
+      "    plan · 1/3 done",
+      "    ✓ add the plan cell",
+      "    ▸ update the docs",
+      "    ▹ run the full ci pass",
     ]);
   });
 
@@ -2374,7 +2372,7 @@ describe("renderer registry", () => {
       )
       .map(stripAnsi);
 
-    expect(lines).toEqual(["  ┌ plan · 0/1 done", "  └ ▸ update the docs"]);
+    expect(lines).toEqual(["    plan · 0/1 done", "    ▸ update the docs"]);
   });
 
   test("a plan whose arguments are still streaming renders no partial list", () => {
@@ -2387,7 +2385,7 @@ describe("renderer registry", () => {
       { toolName: "todo", args, argsStreaming: true },
       { width: 60, depth: "none" },
     );
-    expect(streaming.map(stripAnsi)).toEqual(["  │ plan"]);
+    expect(streaming.map(stripAnsi)).toEqual(["    plan"]);
   });
 
   test("a malformed plan degrades to its header rather than half a list", () => {
@@ -2397,7 +2395,7 @@ describe("renderer registry", () => {
       { toolName: "todo", args: { items: [{ content: "no status" }] } },
       { width: 60, depth: "none" },
     );
-    expect(lines.map(stripAnsi)).toEqual(["  │ plan"]);
+    expect(lines.map(stripAnsi)).toEqual(["    plan"]);
   });
 });
 
@@ -2566,14 +2564,14 @@ describe("activity disclosure", () => {
     review = app.renderScreen().map(stripAnsi);
     expect(review.some((line) => line.includes("read a.ts"))).toBe(true);
     expect(review.some((line) => line.includes("rg -n TODO packages"))).toBe(true);
-    expect(review.some((line) => line.includes("│   a1"))).toBe(false);
+    expect(review.some((line) => line.includes("    a1"))).toBe(false);
     expect(review.some((line) => line.includes("packages/a.ts:4:TODO"))).toBe(false);
 
     press(app, "down");
     press(app, "return");
     review = app.renderScreen().map(stripAnsi);
-    expect(review).toContain("  │   a4");
-    expect(review).toContain("  │ › read b.ts · 1 line");
+    expect(review).toContain("      a4");
+    expect(review).toContain("    › read b.ts · 1 line");
 
     feed(app, "\u000f");
     expect(app.currentMode).toBe("composing");
@@ -2581,7 +2579,7 @@ describe("activity disclosure", () => {
       app
         .renderTranscript()
         .map(stripAnsi)
-        .some((line) => line.includes("│   a4")),
+        .some((line) => line.includes("    a4")),
     ).toBe(true);
 
     feed(app, "/collapse\r");
@@ -2672,10 +2670,10 @@ describe("activity disclosure", () => {
     expect(expanded.match(/a\.ts/g)).toHaveLength(1);
     expect(expanded.match(/b\.ts/g)).toHaveLength(1);
     expect(expanded).not.toContain("Edited a.ts (1 replacement)");
-    expect(expanded).toContain("  │       1 − old");
+    expect(expanded).toContain("          1 − old");
   });
 
-  test("expanded group children sit on the group's rail, and the group gets air when open", () => {
+  test("expanded group children step in under the group, and the group gets air when open", () => {
     const { app } = harness();
     complete(app, "c1", "bash", { command: "git status --short" }, "clean", { exitCode: 0 });
     complete(app, "c2", "bash", { command: "git log -1" }, "abc change", { exitCode: 0 });
@@ -2695,7 +2693,7 @@ describe("activity disclosure", () => {
     searchIndex = rows.findIndex((line) => line.includes("ran rg -n TODO packages"));
     const search = rows[searchIndex];
 
-    expect(command).toStartWith("  │ › ran");
+    expect(command).toStartWith("    › ran");
     expect(search?.indexOf("ran")).toBe(4);
     expect(rows[searchIndex - 1]).toBe("");
   });
@@ -2712,14 +2710,14 @@ describe("activity disclosure", () => {
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("› ran git status --short");
     expect(expanded).toContain("⌄ $ pwd");
-    expect(expanded).toContain("│ /tmp");
+    expect(expanded).toContain("  /tmp");
     expect(expanded).not.toContain("Ran 2 commands");
 
     feed(app, "/collapse\r");
     expect(commands).toEqual([]);
     const collapsed = app.renderScreen().map(stripAnsi).join("\n");
     expect(collapsed).toContain("› $ pwd");
-    expect(collapsed).not.toContain("│ /tmp");
+    expect(collapsed).not.toContain("  /tmp");
   });
 
   test("an explicit user shell result has a blank boundary on both sides", () => {
@@ -2732,7 +2730,7 @@ describe("activity disclosure", () => {
 
     const rows = app.renderScreen().map(stripAnsi);
     const shellIndex = rows.findIndex((line) => line.includes("$ ls"));
-    const outputIndex = rows.findIndex((line) => line.includes("│ README.md"));
+    const outputIndex = rows.findIndex((line) => line.includes("  README.md"));
     expect(rows[shellIndex - 2]).toBe("  Keybindings");
     expect(rows[shellIndex - 1]).toBe("");
     expect(rows[outputIndex + 1]).toBe("");
@@ -2778,8 +2776,8 @@ describe("superseded plans", () => {
     expect(screen).toContain("  › plan · 1/3 · task 2");
     // The disclosure marker replaces the bracket's opening glyph; its task rail still closes.
     expect(screen).toContain("  › plan · 2/3 done");
-    expect(screen).toContain("  │ ✓ task 1");
-    expect(screen).toContain("  └ ▸ task 3");
+    expect(screen).toContain("    ✓ task 1");
+    expect(screen).toContain("    ▸ task 3");
     // Three plans of three tasks would be twelve rows unfolded.
     expect(screen.filter((line) => line.includes("task 1"))).toHaveLength(2);
   });
@@ -2861,7 +2859,7 @@ describe("tool output toggle", () => {
       },
     });
     const collapsed = app.renderScreen().map(stripAnsi).join("\n");
-    expect(collapsed).not.toContain("│ line 1");
+    expect(collapsed).not.toContain("  line 1");
     expect(collapsed).not.toContain("lines omitted");
 
     feed(app, "\u000f");
@@ -2871,7 +2869,7 @@ describe("tool output toggle", () => {
     expect(app.areToolOutputsExpanded).toBe(true);
     const expanded = app.renderScreen().map(stripAnsi).join("\n");
     expect(expanded).toContain("ran bun test");
-    expect(expanded).toContain("│ line 6");
+    expect(expanded).toContain("  line 6");
 
     feed(app, `${ESC}t`);
     expect(app.currentMode).toBe("activity");
@@ -2887,7 +2885,7 @@ describe("tool output toggle", () => {
     feed(app, "/collapse\r");
     expect(app.areToolOutputsExpanded).toBe(false);
     expect(commands).toEqual([]);
-    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("│ line 6");
+    expect(app.renderScreen().map(stripAnsi).join("\n")).not.toContain("  line 6");
   });
 
   test("expanded tools keep the final assistant response last", () => {
@@ -2927,7 +2925,7 @@ describe("tool output toggle", () => {
     const expanded = app.renderScreen().map(stripAnsi);
     const preambleIndex = expanded.findIndex((line) => line.includes("inspect the project"));
     const toolIndex = expanded.findIndex((line) => line.includes("ran bun test"));
-    const resultIndex = expanded.findIndex((line) => line.includes("│ two"));
+    const resultIndex = expanded.findIndex((line) => line.includes("  two"));
     const finalIndex = expanded.findIndex((line) => line.includes("the tests pass"));
 
     expect(preambleIndex).toBeGreaterThanOrEqual(0);
@@ -4225,7 +4223,7 @@ describe("live streaming region", () => {
     let toolRenders = 0;
     registry.register("counted", () => {
       toolRenders++;
-      return ["  │ counted"];
+      return ["    counted"];
     });
     const app = new App({
       width: 80,
@@ -4909,7 +4907,7 @@ describe("moving running calls to the background", () => {
         },
       });
       const live = app.renderBottom().map(stripAnsi).join("\n");
-      expect(live).toContain("┌ background · 1");
+      expect(live).toContain("  background · 1");
       expect(live).toContain("(fail) parser");
       expect(live).not.toContain("ctrl+z");
 
@@ -4986,7 +4984,7 @@ describe("moving running calls to the background", () => {
     app.handleEvent({ type: "subagent_progress", subagentId: "sa-abc123", details: step("b") });
 
     const live = app.renderBottom().map(stripAnsi).join("\n");
-    expect(live).toContain("┌ background · 1");
+    expect(live).toContain("  background · 1");
     expect(live).toContain("2 actions");
   });
 
@@ -5110,16 +5108,16 @@ describe("transcript spacing", () => {
     expect(above(app)).toEqual([
       "  ▸ fix it",
       "",
-      "  │ thinking · Reading the code",
+      "  thinking · Reading the code",
       "  › Explored 1 file, 1 search, 1 web search",
       "",
-      "  │ thinking · Planning",
+      "  thinking · Planning",
       "  mu  I'll run the tests.",
       "",
       "  › Ran 2 commands",
       "  › created b.ts +1 −0",
       "",
-      "  │ thinking · Done",
+      "  thinking · Done",
       "  mu  All set.",
       "",
       "  Exported to notes.md",
@@ -5189,7 +5187,7 @@ describe("transcript spacing", () => {
       "",
       "  › read a.ts · 1 line",
       "",
-      "  │ thinking · Weighing it",
+      "  thinking · Weighing it",
       "  mu  Because it is cached.",
       "",
     ]);
@@ -5211,7 +5209,7 @@ describe("transcript spacing", () => {
     run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
     expect(above(app)).toEqual([
       "  ⌄ $ ls · ✓",
-      "  │ README.md",
+      "    README.md",
       "",
       "  › ran bun test · ✓",
       "  › read a.ts · 1 line",
@@ -5371,7 +5369,7 @@ describe("activity summaries count what happened", () => {
       )
       .map(stripAnsi);
     expect(expanded[1]).toBe(
-      "  │ ≈ too many changes for a line diff: the changed region is shown whole",
+      "    ≈ too many changes for a line diff: the changed region is shown whole",
     );
   });
 });

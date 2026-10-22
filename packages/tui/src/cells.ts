@@ -6,6 +6,7 @@ import {
   AGENT_LABEL,
   type ColorDepth,
   GLYPHS,
+  INDENT,
   MARGIN,
   mutateShimmer,
   type Style,
@@ -96,16 +97,17 @@ function plainSummary(line: string): string {
     .replace(/`([^`]+)`/g, "$1");
 }
 
-// Thinking is dim and behind the rule; collapsed to one line unless expanded.
+// Thinking sits in the marker column, dim and italic so it never reads as a
+// header; collapsed to one line unless expanded.
 export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
+  const paint = (line: string) => styleText(line, { dim: true, italic: true }, ctx.depth);
   const safe = sanitizeUntrusted(text);
   if (!expanded) {
     const first = safe.trim().split("\n")[0] ?? "";
-    const summary = truncateToWidth(plainSummary(first), body(ctx) - 12);
-    return [MARGIN + rule + dim(`thinking ${GLYPHS.separator} ${summary}`, ctx.depth)];
+    const summary = truncateToWidth(plainSummary(first), body(ctx) - 11);
+    return [MARGIN + paint(`thinking ${GLYPHS.separator} ${summary}`)];
   }
-  return wrapText(safe, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
+  return wrapText(safe, body(ctx)).map((line) => MARGIN + paint(line));
 }
 
 export interface ToolCellOptions {
@@ -121,19 +123,13 @@ export interface ToolCellOptions {
   // Places success/failure before the action when the action itself is the
   // primary subject, rather than a verb such as read, edited, or ran.
   statusFirst?: boolean;
-  nested?: boolean;
-  // Overrides the left rule glyph, for a cell that brackets a block rather than
-  // marking one event. Wins over `nested`.
-  rule?: string;
   // Live output tail shown while running; omitted once collapsed.
   tail?: string[];
 }
 
-// │ read src/api/client.ts · 142 lines
+//   read src/api/client.ts · 142 lines
 export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[] {
-  const ruleGlyph = options.rule ?? (options.nested ? GLYPHS.nestedRule : GLYPHS.rule);
-  const rule = dim(`${ruleGlyph} `, ctx.depth);
-  const available = ctx.width - MARGIN.length - stringWidth(`${ruleGlyph} `);
+  const available = ctx.width - MARGIN.length - INDENT.length;
   const separator = ` ${GLYPHS.separator} `;
   const status = options.isError
     ? styleText(GLYPHS.error, { red: true }, ctx.depth)
@@ -184,7 +180,7 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
   );
   const head =
     MARGIN +
-    rule +
+    INDENT +
     leading +
     action +
     (styledPrimary ? ` ${styledPrimary}` : "") +
@@ -195,38 +191,36 @@ export function toolCell(options: ToolCellOptions, ctx: RenderContext): string[]
     const continuation = truncateToWidth(line, Math.max(1, available));
     lines.push(
       MARGIN +
-        rule +
+        INDENT +
         (primaryStyle ? styleText(continuation, primaryStyle, ctx.depth) : continuation),
     );
   }
   for (const line of options.tail ?? []) {
     lines.push(
-      MARGIN + rule + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
+      MARGIN + INDENT + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
     );
   }
   return lines;
 }
 
 export function toolOutputCell(text: string, ctx: RenderContext): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const safe = sanitizeUntrusted(text).replace(/\t/g, "    ");
   const content = safe.length > 0 ? safe : "(no output)";
-  return wrapText(content, body(ctx) - 2).map((line) => MARGIN + rule + dim(line, ctx.depth));
+  return wrapText(content, body(ctx) - 2).map((line) => MARGIN + INDENT + dim(line, ctx.depth));
 }
 
-// Exactly `rows` one-row lines, padded with bare rail rows, so a live tail
-// keeps its height while output arrives.
+// Exactly `rows` one-row lines, padded with blank rows, so a live tail keeps
+// its height while output arrives.
 export function fixedTailCell(
   lines: readonly string[],
   rows: number,
   ctx: RenderContext,
 ): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const shown = lines.slice(-rows).map((line) => {
     const safe = sanitizeUntrusted(line).replace(/\t/g, "    ");
-    return MARGIN + rule + dim(truncateToWidth(safe, body(ctx) - 2), ctx.depth);
+    return MARGIN + INDENT + dim(truncateToWidth(safe, body(ctx) - 2), ctx.depth);
   });
-  while (shown.length < rows) shown.push(MARGIN + dim(GLYPHS.rule, ctx.depth));
+  while (shown.length < rows) shown.push("");
   return shown;
 }
 
@@ -267,10 +261,10 @@ const PLAN_TEXT_STYLES: Record<PlanStatus, Style> = {
 // A compact plan is one row per task; wrapping is what expansion is for.
 const COMPACT_PLAN_ROWS = 8;
 
-// ┌ plan · 3/6 done
-// │ ✓ read the registry
-// │ ▸ update the docs
-// └ ▹ run the full ci pass
+//   plan · 3/6 done
+//   ✓ read the registry
+//   ▸ update the docs
+//   ▹ run the full ci pass
 export function planCell(options: PlanCellOptions, ctx: RenderContext): string[] {
   const { items, expanded } = options;
   const completed = items.filter((item) => item.status === "completed").length;
@@ -292,17 +286,7 @@ export function planCell(options: PlanCellOptions, ctx: RenderContext): string[]
       ctx,
     );
   }
-  // An empty plan is the whole cell, so it takes the ordinary rule — a bracket
-  // that opens and never closes reads as a rendering bug.
-  const header = toolCell(
-    {
-      name: "plan",
-      tone: "state",
-      summary,
-      ...(items.length > 0 ? { rule: GLYPHS.ruleOpen } : {}),
-    },
-    ctx,
-  );
+  const header = toolCell({ name: "plan", tone: "state", summary }, ctx);
   if (items.length === 0) return header;
 
   const textWidth = Math.max(8, body(ctx) - 4);
@@ -343,13 +327,7 @@ export function planCell(options: PlanCellOptions, ctx: RenderContext): string[]
     rows.push(dim(`… ${hidden} more ${GLYPHS.separator} ctrl+o to expand`, ctx.depth));
   }
 
-  return [
-    ...header,
-    ...rows.map((row, index) => {
-      const glyph = index === rows.length - 1 ? GLYPHS.ruleClose : GLYPHS.rule;
-      return MARGIN + dim(`${glyph} `, ctx.depth) + row;
-    }),
-  ];
+  return [...header, ...rows.map((row) => MARGIN + INDENT + row)];
 }
 
 export interface TaskCellOptions {
@@ -375,7 +353,6 @@ export function formatDuration(durationMs: number): string {
 // Background process cells live in the managed region while running and are
 // committed as a one-line outcome when they exit.
 export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const taskId = truncateToWidth(
     sanitizeUntrusted(options.taskId),
     Math.max(4, Math.min(12, Math.floor(body(ctx) / 4))),
@@ -420,7 +397,7 @@ export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[]
   const separatorWidth = stringWidth(` ${GLYPHS.separator} `);
   const commandBudget = () =>
     body(ctx) -
-    stringWidth(`${GLYPHS.rule} `) -
+    INDENT.length -
     stringWidth(taskId) -
     metadata.reduce((total, item) => total + stringWidth(item.text), 0) -
     separatorWidth * (metadata.length + 1);
@@ -434,11 +411,11 @@ export function taskCell(options: TaskCellOptions, ctx: RenderContext): string[]
     styleText(truncateToWidth(command, Math.max(1, commandBudget())), { code: true }, ctx.depth),
     ...metadata.map((item) => item.rendered),
   ];
-  const lines = [MARGIN + rule + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth))];
+  const lines = [MARGIN + INDENT + parts.join(dim(` ${GLYPHS.separator} `, ctx.depth))];
   for (const line of options.tail ?? []) {
     if (line.length === 0) continue;
     lines.push(
-      MARGIN + rule + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
+      MARGIN + INDENT + dim(truncateToWidth(sanitizeUntrusted(line), body(ctx) - 2), ctx.depth),
     );
   }
   return lines;
@@ -585,7 +562,6 @@ export interface CheckpointCellOptions {
 }
 
 export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContext): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const fileCount = options.files.length;
   const messageLabel = `${options.messageCount} message${options.messageCount === 1 ? "" : "s"}`;
   const fileLabel = `${fileCount} file${fileCount === 1 ? "" : "s"}`;
@@ -595,7 +571,7 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
     options.action === "undo"
       ? `${turnLabel} ${GLYPHS.separator} ${messageLabel} reverted ${GLYPHS.separator} ${fileLabel} ${GLYPHS.separator} /redo to restore`
       : `${messageLabel} restored ${GLYPHS.separator} ${fileLabel}`;
-  const lines = [MARGIN + rule + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
+  const lines = [MARGIN + INDENT + action + dim(` ${GLYPHS.separator} ${status}`, ctx.depth)];
 
   for (const file of options.files) {
     const path = styleText(
@@ -608,10 +584,10 @@ export function checkpointCell(options: CheckpointCellOptions, ctx: RenderContex
     const removed =
       file.removed > 0 ? styleText(`−${file.removed}`, { red: true }, ctx.depth) : undefined;
     const counts = [added, removed].filter(Boolean).join(" ");
-    lines.push(MARGIN + rule + path + (counts ? ` ${counts}` : ""));
+    lines.push(MARGIN + INDENT + path + (counts ? ` ${counts}` : ""));
   }
   if (options.promptRestored) {
-    lines.push(MARGIN + rule + dim("prompt restored to editor", ctx.depth));
+    lines.push(MARGIN + INDENT + dim("prompt restored to editor", ctx.depth));
   }
   return lines;
 }
@@ -665,24 +641,23 @@ export function diffLinesFromHunks(hunks: string[]): DiffLine[] {
 }
 
 export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
-  const rule = dim(`${GLYPHS.rule} `, ctx.depth);
   const header =
     styleText(sanitizeUntrusted(file.path), { path: true }, ctx.depth) +
     dim(` ${GLYPHS.separator} `, ctx.depth) +
     styleText(`+${file.added}`, { green: true }, ctx.depth) +
     " " +
     styleText(`−${file.removed}`, { red: true }, ctx.depth);
-  const out = [MARGIN + rule + header];
+  const out = [MARGIN + INDENT + header];
 
   const gutterWidth = 5;
   for (const line of file.lines) {
     if (line.kind === "gap") {
-      out.push(`${MARGIN}${rule}${dim(GLYPHS.hunkGap.padStart(gutterWidth), ctx.depth)}`);
+      out.push(`${MARGIN}${INDENT}${dim(GLYPHS.hunkGap.padStart(gutterWidth), ctx.depth)}`);
       continue;
     }
     const number = line.lineNumber === undefined ? "" : String(line.lineNumber);
     const sign = line.kind === "add" ? "+" : line.kind === "del" ? "−" : " ";
-    // Prefix is margin(2) + rule(2) + gutter(5) + space + sign(1) + space.
+    // Prefix is margin(2) + indent(2) + gutter(5) + space + sign(1) + space.
     const available = ctx.width - MARGIN.length - 2 - gutterWidth - 3;
     const text = sanitizeUntrusted(line.text).replace(/\t/g, "    ");
     const accentStyle: Style =
@@ -698,7 +673,7 @@ export function diffCell(file: DiffFile, ctx: RenderContext): string[] {
       const signStyled =
         line.kind === "context" ? gutter : styleText(gutter, accentStyle, ctx.depth);
       const content = line.kind === "context" ? chunk : styleText(chunk, accentStyle, ctx.depth);
-      out.push(`${MARGIN}${rule}${numberCell} ${signStyled} ${content}`);
+      out.push(`${MARGIN}${INDENT}${numberCell} ${signStyled} ${content}`);
     }
   }
   return out;

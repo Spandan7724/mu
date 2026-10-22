@@ -1,5 +1,5 @@
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, type Style, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, INDENT, type Style, styleText } from "./style.ts";
 import { highlightCode } from "./syntax-highlight.ts";
 import { stringWidth } from "./width.ts";
 import { wrapLine } from "./wrap.ts";
@@ -279,10 +279,9 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         codeLines.push(source[index] ?? "");
         index++;
       }
-      const rule = styleText(`${GLYPHS.rule} `, { codeAccent: true }, depth);
       for (const highlighted of highlightCode(codeLines.join("\n"), language, depth)) {
         const wrapped = wrapLine(highlighted, Math.max(1, width - 2));
-        out.push(...wrapped.map((line) => rule + line));
+        out.push(...wrapped.map((line) => INDENT + line));
       }
       if (index < source.length) index++;
       continue;
@@ -332,13 +331,12 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         quoteLines.push(next[1] ?? "");
         index++;
       }
-      const rule = styleText(`${GLYPHS.rule} `, { dim: true, link: true }, depth);
       out.push(
         ...renderParagraph(quoteLines, Math.max(1, width - 2), depth, {
           dim: true,
           italic: true,
           link: true,
-        }).map((line) => rule + line),
+        }).map((line) => INDENT + line),
       );
       continue;
     }

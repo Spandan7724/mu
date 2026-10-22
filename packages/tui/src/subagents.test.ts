@@ -180,8 +180,8 @@ describe("subagent transcript rendering", () => {
     expect(live[0]).toContain("⠙ recalling history Find the prior parser decision · 12s");
     expect(expanded[0]).toContain("recalled history");
     expect(expanded).toContain("    activity · 2 actions");
-    expect(expanded).toContain("      │ history_search parser ownership · entry-42");
-    expect(expanded).toContain("      │ history_read · The parser owns normalization.");
+    expect(expanded).toContain("        history_search parser ownership · entry-42");
+    expect(expanded).toContain("        history_read · The parser owns normalization.");
     expect(expanded).toContain("    result");
   });
 
@@ -208,8 +208,8 @@ describe("subagent transcript rendering", () => {
     expect(expanded).toContain("      Trace parser ownership");
     expect(expanded).toContain("    activity · 2 actions");
     expect(expanded).toContain("      Explored 1 file, 1 search");
-    expect(expanded).toContain("      │ read packages/parser.ts · lines 10–40 of 100");
-    expect(expanded).toContain("      │ ran rg -n 'parse' packages · ✓ 334ms");
+    expect(expanded).toContain("        read packages/parser.ts · lines 10–40 of 100");
+    expect(expanded).toContain("        ran rg -n 'parse' packages · ✓ 334ms");
     expect(expanded).not.toContain("      files");
     expect(expanded).not.toContain("      commands");
     expect(expanded).toContain("    result");
@@ -297,7 +297,7 @@ describe("subagent transcript rendering", () => {
       registry,
     ).map(stripAnsi);
 
-    expect(compact).toEqual(["  │ ✓ Implement parser · 2 actions · 1.2s"]);
+    expect(compact).toEqual(["    ✓ Implement parser · 2 actions · 1.2s"]);
     expect(compact[0]).not.toContain("delegated");
     expect(compact[0]).not.toContain("gpt-5.6-terra");
     expect(compact[0]).not.toContain("low");
@@ -333,7 +333,7 @@ describe("subagent transcript rendering", () => {
       { width: 100, depth: "none", spinnerFrame: 0 },
     ).map(stripAnsi);
 
-    expect(running).toEqual(["  │ ⠋ Explore SDK and CLI · 2 actions · 1m 4s"]);
+    expect(running).toEqual(["    ⠋ Explore SDK and CLI · 2 actions · 1m 4s"]);
     expect(running[0]).not.toContain("delegating");
     expect(running[0]).not.toContain("gpt-5.6-terra");
     expect(running[0]).not.toContain("none");
@@ -364,7 +364,7 @@ describe("subagent transcript rendering", () => {
     ).map(stripAnsi);
 
     expect(expanded[0]).toBe(
-      "  │ ⠋ Explore SDK and CLI · openai/gpt-5.6-terra · none · 2 actions · 1m 4s",
+      "    ⠋ Explore SDK and CLI · openai/gpt-5.6-terra · none · 2 actions · 1m 4s",
     );
     expect(expanded[0]).not.toContain("delegating");
     expect(expanded).toContain("    prompt");
@@ -403,7 +403,7 @@ describe("subagent transcript rendering", () => {
 
   test("task activity reuses renderers registered by a custom profile", () => {
     const registry = rendererRegistry();
-    registry.register("inspect_domain", () => ["  │ inspected widget · ✓ 9ms"]);
+    registry.register("inspect_domain", () => ["    inspected widget · ✓ 9ms"]);
     const messages = (result.details as { messages: unknown[] }).messages;
     const customResult: ToolResultMessage = {
       ...result,
@@ -448,7 +448,7 @@ describe("subagent transcript rendering", () => {
       )
       .map(stripAnsi);
 
-    expect(expanded).toContain("      │ inspected widget · ✓ 9ms");
+    expect(expanded).toContain("        inspected widget · ✓ 9ms");
   });
 
   test.each([

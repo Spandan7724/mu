@@ -3,7 +3,7 @@
 import type { RenderContext } from "./cells.ts";
 import type { ToolRendererFn, ToolRenderInfo } from "./registry.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, MARGIN, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, INDENT, MARGIN, styleText } from "./style.ts";
 import { truncateToWidth } from "./width.ts";
 
 const sep = ` ${GLYPHS.separator} `;
@@ -112,7 +112,7 @@ function checkRow(check: Check, done: boolean, depth: ColorDepth, width: number)
 function makeCheckRenderer(describe: Describe): ToolRendererFn {
   const render: ToolRendererFn = (info, ctx: RenderContext) => [
     MARGIN +
-      styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth) +
+      INDENT +
       checkRow(describe(info), info.result !== undefined, ctx.depth, Math.max(1, ctx.width - 4)),
   ];
   render.activityKind = "check";

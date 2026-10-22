@@ -71,7 +71,7 @@ describe("transcript cells (golden lines)", () => {
       visible(
         toolCell({ name: "read", primaryArg: "src/api/client.ts", summary: "142 lines" }, plain),
       ),
-    ).toEqual(["  │ read src/api/client.ts · 142 lines"]);
+    ).toEqual(["    read src/api/client.ts · 142 lines"]);
   });
 
   test("failed tool cell carries the error glyph", () => {
@@ -97,16 +97,12 @@ describe("transcript cells (golden lines)", () => {
     expect(stripAnsi(line ?? "")).toContain("✗");
   });
 
-  test("nested (subagent) activity uses the double rule", () => {
-    expect(visible(toolCell({ name: "read", nested: true }, plain))[0]).toBe("  │ │ read");
-  });
-
   test("a running tool cell shows a bounded output tail", () => {
     const lines = visible(
       toolCell({ name: "bash", primaryArg: "bun test", tail: ["ok 1", "ok 2"] }, plain),
     );
     expect(lines.length).toBe(3);
-    expect(lines[1]).toBe("  │ ok 1");
+    expect(lines[1]).toBe("    ok 1");
   });
 
   test("multiline tool arguments occupy separately tracked rows", () => {
@@ -121,7 +117,7 @@ describe("transcript cells (golden lines)", () => {
       ),
     );
 
-    expect(lines).toEqual(["  │ running set -e", "  │ PORT=18080 cargo run &", "  │ pid=$!"]);
+    expect(lines).toEqual(["    running set -e", "    PORT=18080 cargo run &", "    pid=$!"]);
     expect(lines.every((line) => !line.includes("\n"))).toBe(true);
   });
 
@@ -138,7 +134,7 @@ describe("transcript cells (golden lines)", () => {
           plain,
         ),
       ),
-    ).toEqual(["  │ task_1 · bun test", "  │ test output"]);
+    ).toEqual(["    task_1 · bun test", "    test output"]);
 
     expect(
       visible(
@@ -153,7 +149,7 @@ describe("transcript cells (golden lines)", () => {
           plain,
         ),
       ),
-    ).toEqual(["  │ task_1 · bun test · ✓ · 340ms"]);
+    ).toEqual(["    task_1 · bun test · ✓ · 340ms"]);
   });
 
   test("background task failures and kills are explicit", () => {
@@ -170,7 +166,7 @@ describe("transcript cells (golden lines)", () => {
           plain,
         ),
       )[0],
-    ).toBe("  │ task_2 · bun test · ✗ · exit 3 · 1.2s");
+    ).toBe("    task_2 · bun test · ✗ · exit 3 · 1.2s");
     expect(
       visible(
         taskCell(
@@ -183,7 +179,7 @@ describe("transcript cells (golden lines)", () => {
           plain,
         ),
       )[0],
-    ).toBe("  │ task_3 · bun dev · ✗ · killed · 1m");
+    ).toBe("    task_3 · bun dev · ✗ · killed · 1m");
   });
 
   test("background task summaries fit narrow terminals", () => {
@@ -208,15 +204,17 @@ describe("transcript cells (golden lines)", () => {
 
   test("thinking summary drops markdown markers from the heading", () => {
     const lines = visible(thinkingCell("**Checking `arithmetic`**\n\nThe user asked…", plain));
-    expect(lines).toEqual(["  │ thinking · Checking arithmetic"]);
+    expect(lines).toEqual(["  thinking · Checking arithmetic"]);
     expect(visible(thinkingCell("## Planning reply", plain))[0]).toBe(
-      "  │ thinking · Planning reply",
+      "  thinking · Planning reply",
     );
   });
 
-  test("thinking expands behind the rule", () => {
+  test("thinking sits in the marker column, dim and italic", () => {
     const lines = visible(thinkingCell("one\ntwo", plain, true));
-    expect(lines).toEqual(["  │ one", "  │ two"]);
+    expect(lines).toEqual(["  one", "  two"]);
+    const [summary] = thinkingCell("one", { width: 40, depth: "ansi256" });
+    expect(summary).toContain("\u001b[2;3m");
   });
 
   test("error cell", () => {
@@ -366,27 +364,20 @@ describe("plan rendering", () => {
     { content: "run the full ci pass", status: "pending" },
   ];
 
-  test("the rule brackets the list instead of repeating per row", () => {
+  test("tasks step in under the plan header, one row each", () => {
     expect(visible(planCell({ items: plan }, plain))).toEqual([
-      "  ┌ plan · 3/6 done",
-      "  │ ✓ read the renderer registry",
-      "  │ ✓ add the plan cell",
-      "  │ ✓ wire the coding renderer",
-      "  │ ▸ update the docs",
-      "  │ ▹ add golden-line tests",
-      "  └ ▹ run the full ci pass",
+      "    plan · 3/6 done",
+      "    ✓ read the renderer registry",
+      "    ✓ add the plan cell",
+      "    ✓ wire the coding renderer",
+      "    ▸ update the docs",
+      "    ▹ add golden-line tests",
+      "    ▹ run the full ci pass",
     ]);
   });
 
-  test("a single task closes the bracket on its own row", () => {
-    expect(visible(planCell({ items: [plan[3] as PlanItem] }, plain))).toEqual([
-      "  ┌ plan · 0/1 done",
-      "  └ ▸ update the docs",
-    ]);
-  });
-
-  test("an empty plan takes the ordinary rule — a bracket would never close", () => {
-    expect(visible(planCell({ items: [] }, plain))).toEqual(["  │ plan · no tasks"]);
+  test("an empty plan is only its header", () => {
+    expect(visible(planCell({ items: [] }, plain))).toEqual(["    plan · no tasks"]);
   });
 
   test("completed work is struck through and dim, the live task is neither", () => {
@@ -419,20 +410,20 @@ describe("plan rendering", () => {
     ];
     const lines = visible(planCell({ items: long }, plain));
     expect(lines).toEqual([
-      "  ┌ plan · 8/14 done",
-      "  │ … 7 done",
-      "  │ ✓ finished step 8",
-      "  │ ▸ update the docs",
-      "  │ ▹ remaining step 1",
-      "  │ ▹ remaining step 2",
-      "  │ ▹ remaining step 3",
-      "  │ ▹ remaining step 4",
-      "  └ ▹ remaining step 5",
+      "    plan · 8/14 done",
+      "    … 7 done",
+      "    ✓ finished step 8",
+      "    ▸ update the docs",
+      "    ▹ remaining step 1",
+      "    ▹ remaining step 2",
+      "    ▹ remaining step 3",
+      "    ▹ remaining step 4",
+      "    ▹ remaining step 5",
     ]);
     // Expanding restores every task, and the bracket still closes last.
     const expanded = visible(planCell({ items: long, expanded: true }, plain));
     expect(expanded).toHaveLength(long.length + 1);
-    expect(expanded.at(-1)).toBe("  └ ▹ remaining step 5");
+    expect(expanded.at(-1)).toBe("    ▹ remaining step 5");
   });
 
   test("a plan with nothing finished truncates its tail instead", () => {
@@ -442,7 +433,7 @@ describe("plan rendering", () => {
     }));
     const lines = visible(planCell({ items: pending }, plain));
     expect(lines).toHaveLength(9);
-    expect(lines.at(-1)).toBe("  └ … 5 more · ctrl+o to expand");
+    expect(lines.at(-1)).toBe("    … 5 more · ctrl+o to expand");
   });
 
   test("compact rows never wrap; expanded ones hang under the task text", () => {
@@ -451,13 +442,13 @@ describe("plan rendering", () => {
     ];
     const narrow: RenderContext = { width: 40, depth: "none" };
     expect(visible(planCell({ items: long }, narrow))).toEqual([
-      "  ┌ plan · 0/1 done",
-      "  └ ▹ wire the renderer into the regist…",
+      "    plan · 0/1 done",
+      "    ▹ wire the renderer into the regist…",
     ]);
     expect(visible(planCell({ items: long, expanded: true }, narrow))).toEqual([
-      "  ┌ plan · 0/1 done",
-      "  │ ▹ wire the renderer into the",
-      "  └   registry and close the bracket",
+      "    plan · 0/1 done",
+      "    ▹ wire the renderer into the",
+      "      registry and close the bracket",
     ]);
   });
 
@@ -483,10 +474,10 @@ describe("diff rendering", () => {
 
   test("header and gutters match the spec", () => {
     const lines = visible(diffCell(file, plain));
-    expect(lines[0]).toBe("  │ src/api/client.ts · +2 −1");
-    expect(lines[1]).toBe("  │    41   async function fetchJson(url) {");
-    expect(lines[2]).toBe("  │    42 −   return fetch(url);");
-    expect(lines[3]).toBe("  │    42 +   return withRetry(() => fetch(url));");
+    expect(lines[0]).toBe("    src/api/client.ts · +2 −1");
+    expect(lines[1]).toBe("       41   async function fetchJson(url) {");
+    expect(lines[2]).toBe("       42 −   return fetch(url);");
+    expect(lines[3]).toBe("       42 +   return withRetry(() => fetch(url));");
   });
 
   test("changed text uses foreground colour without a background band", () => {
@@ -742,7 +733,7 @@ describe("components", () => {
     const lines = visible(renderMarkdown("# Title\n- one\n- two\n```\ncode\n```", 40, "none"));
     expect(lines[0]).toBe("Title");
     expect(lines[1]).toBe("• one");
-    expect(lines[3]).toBe("│ code");
+    expect(lines[3]).toBe("  code");
   });
 
   test("markdown renders inline emphasis, links, quotes, tasks, and tables", () => {
@@ -762,7 +753,7 @@ describe("components", () => {
         "truecolor",
       ),
     );
-    expect(lines).toContain("│ quoted text");
+    expect(lines).toContain("  quoted text");
     expect(lines).toContain("✓ shipped");
     expect(lines).toContain("name  │ value");
     expect(lines).toContain("alpha │ beta");
@@ -814,16 +805,16 @@ describe("components", () => {
 
     expect(visible(lines)).toEqual([
       "ts",
-      "│ // greeting",
-      "│ const answer: number = 42;",
-      `│ function hello(name: string) { return \`hi \${name}\`; }`,
+      "  // greeting",
+      "  const answer: number = 42;",
+      `  function hello(name: string) { return \`hi \${name}\`; }`,
     ]);
     expect(rendered).not.toBe(stripAnsi(rendered));
   });
 
   test("multiline syntax scopes reopen their color on every terminal row", () => {
     const rendered = renderMarkdown("```ts\n/* first\nsecond */\n```", 80, "truecolor");
-    expect(visible(rendered)).toEqual(["ts", "│ /* first", "│ second */"]);
+    expect(visible(rendered)).toEqual(["ts", "  /* first", "  second */"]);
     // Every physical row reopens the scope rather than leaning on the row above.
     const opensStyle = (row: string, text: string) => {
       const prefix = row.slice(0, row.indexOf(text));
@@ -837,8 +828,8 @@ describe("components", () => {
     const unknown = renderMarkdown("```not-a-language\nconst value = 1;\n```", 80, "truecolor");
     const languageLess = renderMarkdown("```\nconst value = 1;\n```", 80, "truecolor");
 
-    expect(visible(unknown)).toEqual(["not-a-language", "│ const value = 1;"]);
-    expect(visible(languageLess)).toEqual(["│ const value = 1;"]);
+    expect(visible(unknown)).toEqual(["not-a-language", "  const value = 1;"]);
+    expect(visible(languageLess)).toEqual(["  const value = 1;"]);
     // A highlighted fence splits its line into many styled spans; a plain one does not.
     const spans = (rows: string[]) => rows.join("\n").split("\u001b[").length - 1;
     const highlighted = renderMarkdown("```ts\nconst value = 1;\n```", 80, "truecolor");
@@ -855,7 +846,7 @@ describe("components", () => {
     expect(ansi256).not.toBe(stripAnsi(ansi256));
     expect(ansi16).not.toBe(stripAnsi(ansi16));
     expect(noColor.join("\n")).not.toContain("\u001b");
-    expect(noColor).toEqual(["html", '│ <div title="a&b">text</div>']);
+    expect(noColor).toEqual(["html", '  <div title="a&b">text</div>']);
   });
 
   test("highlighted fences strip model-authored terminal controls", () => {
@@ -873,7 +864,7 @@ describe("components", () => {
     for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(24);
     const code = visible(lines)
       .slice(1)
-      .map((line) => line.replace(/^│ /, ""))
+      .map((line) => line.replace(/^ {2}/, ""))
       .join("");
     expect(code).toContain("build_value_with_a_very_long_name");
   });
@@ -1023,7 +1014,7 @@ describe("style conformance", () => {
       toolCell({ name: "ran", tone: "exec" }, colored)[0] ?? "",
     ];
     for (const line of verbs) expect(line).toContain("\u001b[1;");
-    expect(toolCell({ name: "read", tone: "read" }, plain)[0]).toBe("  │ read");
+    expect(toolCell({ name: "read", tone: "read" }, plain)[0]).toBe("    read");
   });
 
   test("an ordinary summary is dim", () => {
@@ -1056,7 +1047,7 @@ describe("style conformance", () => {
   });
 
   test("no borders or box drawing in the transcript", () => {
-    for (const glyph of ["┌", "┐", "└", "┘", "├", "┤", "═"]) {
+    for (const glyph of ["│", "┌", "┐", "└", "┘", "├", "┤", "═"]) {
       expect(everything).not.toContain(glyph);
     }
   });

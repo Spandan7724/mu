@@ -57,7 +57,7 @@ test("a call leads with the server and tool, then its arguments", () => {
     ctx,
   );
   expect(lines.map(stripAnsi)).toEqual([
-    "  │ github search_issues · ✓ repo mu, query is:open label:bug",
+    "    github search_issues · ✓ repo mu, query is:open label:bug",
   ]);
 });
 
@@ -70,13 +70,13 @@ test("a failed call shows the error instead of its arguments", () => {
     },
     ctx,
   );
-  expect(lines.map(stripAnsi)).toEqual(["  │ github add_labels · ✗ 401 Bad credentials"]);
+  expect(lines.map(stripAnsi)).toEqual(["    github add_labels · ✗ 401 Bad credentials"]);
 });
 
 test("opening, looking up and loading a skill read quietly", () => {
   const render = (info: ToolRenderInfo) => registry().render(info, ctx).map(stripAnsi);
-  expect(render(opened)).toEqual(["  │ opened github · 91 tools"]);
-  expect(render(describe)).toEqual(["  │ looked up github · search_issues, get_issue, add_labels"]);
+  expect(render(opened)).toEqual(["    opened github · 91 tools"]);
+  expect(render(describe)).toEqual(["    looked up github · search_issues, get_issue, add_labels"]);
   expect(
     render({
       toolName: "skill",
@@ -86,7 +86,7 @@ test("opening, looking up and loading a skill read quietly", () => {
         directory: "/home/someone/.claude/skills/triage",
       }),
     }),
-  ).toEqual(["  │ loaded skill triage · ~/.claude/skills/triage"]);
+  ).toEqual(["    loaded skill triage · ~/.claude/skills/triage"]);
 });
 
 test("the summary marks each tool, merging repeats in first-call order", () => {

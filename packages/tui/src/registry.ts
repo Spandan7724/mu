@@ -17,7 +17,7 @@ import {
 import { subagentCheckRenderers, taskCheckRenderers } from "./check-renderers.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
+import { type ColorDepth, GLYPHS, INDENT, MARGIN, stripAnsi, styleText } from "./style.ts";
 import { highlightCode } from "./syntax-highlight.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { wrapLine, wrapText } from "./wrap.ts";
@@ -220,7 +220,6 @@ function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string
   );
   const parsed = selected.map((line) => /^(\s*\d+\s{2})(.*)$/.exec(line));
   const out: string[] = [];
-  const rule = styleText(`${GLYPHS.rule} `, { dim: true }, ctx.depth);
 
   let index = 0;
   while (index < selected.length) {
@@ -244,7 +243,7 @@ function highlightedReadResult(info: ToolRenderInfo, ctx: RenderContext): string
       const chunks = wrapLine(highlighted[offset] ?? "", available);
       for (const [chunkIndex, chunk] of chunks.entries()) {
         const gutter = chunkIndex === 0 ? prefix : " ".repeat(prefix.length);
-        out.push(`${MARGIN}${rule}${styleText(gutter, { dim: true }, ctx.depth)}${chunk}`);
+        out.push(`${MARGIN}${INDENT}${styleText(gutter, { dim: true }, ctx.depth)}${chunk}`);
       }
     }
   }
@@ -496,12 +495,7 @@ function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
     if (!completed.approximate) return lines;
     const note = "≈ too many changes for a line diff: the changed region is shown whole";
     return [
-      MARGIN +
-        styleText(
-          `${GLYPHS.rule} ${truncateToWidth(note, ctx.width - 4)}`,
-          { dim: true },
-          ctx.depth,
-        ),
+      MARGIN + INDENT + styleText(truncateToWidth(note, ctx.width - 4), { dim: true }, ctx.depth),
       ...lines,
     ];
   }
@@ -1028,7 +1022,7 @@ const webSearchRenderer: ToolRendererFn = (info, ctx) => {
     sanitizeUntrusted(`searched · ${query}`),
     Math.max(1, ctx.width - 4),
   );
-  return [MARGIN + styleText(`${GLYPHS.rule} ${text}`, { dim: true }, ctx.depth)];
+  return [MARGIN + INDENT + styleText(text, { dim: true }, ctx.depth)];
 };
 webSearchRenderer.activityKind = "explore";
 

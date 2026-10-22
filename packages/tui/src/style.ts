@@ -210,12 +210,6 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
 
 export const GLYPHS = {
   userMarker: "▸",
-  rule: "│",
-  // A plan is one object rather than a run of events, so its rule opens and
-  // closes around the whole list instead of repeating per row.
-  ruleOpen: "┌",
-  ruleClose: "└",
-  nestedRule: "│ │",
   ok: "✓",
   error: "✗",
   // Not started yet — the spinner's own "not this one" glyph, held still.
@@ -268,6 +262,9 @@ export function mutateShimmer(
 }
 
 export const MARGIN = "  ";
+// A header's body steps in two columns under it. Whitespace groups the rows;
+// there is no rail (D7).
+export const INDENT = "  ";
 export const AGENT_LABEL = "mu";
 // "mu" + two spaces, so continuation lines hang under the text.
 export const AGENT_INDENT = " ".repeat(AGENT_LABEL.length + 2);

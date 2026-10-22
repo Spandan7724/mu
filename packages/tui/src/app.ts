@@ -54,7 +54,15 @@ import {
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
 import { stripCitationMarkup } from "./sanitize.ts";
-import { AGENT_LABEL, type ColorDepth, GLYPHS, MARGIN, stripAnsi, styleText } from "./style.ts";
+import {
+  AGENT_LABEL,
+  type ColorDepth,
+  GLYPHS,
+  INDENT,
+  MARGIN,
+  stripAnsi,
+  styleText,
+} from "./style.ts";
 import { stringWidth, truncateToWidth } from "./width.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
@@ -1826,16 +1834,15 @@ export class App {
       const rows = [
         MARGIN +
           styleText(
-            `${GLYPHS.ruleOpen} background ${GLYPHS.separator} ${backgroundPending.length}`,
+            `background ${GLYPHS.separator} ${backgroundPending.length}`,
             { dim: true },
             depth,
           ),
       ];
       for (const [index, pending] of backgroundPending.entries()) {
-        if (index > 0) rows.push(MARGIN + styleText(GLYPHS.rule, { dim: true }, depth));
+        if (index > 0) rows.push("");
         rows.push(...renderPending(pending));
       }
-      rows.push(MARGIN + styleText(GLYPHS.ruleClose, { dim: true }, depth));
       live.push({ lines: rows, spacing: { first: "bracket", last: "bracket", rows: rows.length } });
     }
     if (this.compacting && this.compactionStage && this.mode !== "activity") {
@@ -2449,11 +2456,10 @@ export class App {
     );
     const [first = "", ...rest] = lines;
     const body = first.startsWith(MARGIN) ? first.slice(MARGIN.length) : first;
-    const visibleBody = stripAnsi(body);
-    const hasHeaderRail = [GLYPHS.rule, GLYPHS.ruleOpen].some((glyph) =>
-      visibleBody.startsWith(`${glyph} `),
-    );
-    const content = hasHeaderRail ? body.slice(rawOffsetAtVisible(body, 2)) : body;
+    // The marker takes the place of the header's indent.
+    const content = stripAnsi(body).startsWith(INDENT)
+      ? body.slice(rawOffsetAtVisible(body, INDENT.length))
+      : body;
     return [`${MARGIN}${marker} ${content}`, ...rest];
   }
 
@@ -2510,13 +2516,13 @@ export class App {
     const quiet = item.tools[0] !== undefined && this.registry.quiet(item.tools[0].info);
     const summary = `${MARGIN}${marker} ${quiet ? text : styleText(text, { bold: true }, this.options.depth)}`;
     if (!expanded) return [summary];
-    // Children hang off the group's rail, two columns in, so they read as its body.
+    // Children step in two columns under the group, so they read as its body.
     const childWidth = Math.max(20, this.options.width - 2);
     return [
       summary,
       ...item.tools.flatMap((tool) => [
-        ...(tool.thinking ? this.onGroupRail(this.assistantRows(tool.thinking, revealAll)) : []),
-        ...this.onGroupRail(
+        ...(tool.thinking ? this.underGroup(this.assistantRows(tool.thinking, revealAll)) : []),
+        ...this.underGroup(
           this.renderActivityTool(
             tool,
             item.activityKind,
@@ -2530,18 +2536,18 @@ export class App {
     ];
   }
 
-  // Puts rows on the dim rail of the group above them. A row's own leading rail
-  // merges into it; under a child header the body steps in to align with the
-  // child's text instead of doubling the rail.
-  private onGroupRail(lines: string[], header = false): string[] {
-    const rail = MARGIN + styleText(`${GLYPHS.rule} `, { dim: true }, this.options.depth);
+  // Steps rows in under the group above them. A row's own indent merges into
+  // the group's; under a child header the body steps in again to align with the
+  // child's text.
+  private underGroup(lines: string[], header = false): string[] {
+    const step = MARGIN + INDENT;
     return lines.map((line, index) => {
       const body = line.startsWith(MARGIN) ? line.slice(MARGIN.length) : line;
-      if (header && index === 0) return rail + body;
-      const ownRail = stripAnsi(body).startsWith(`${GLYPHS.rule} `)
-        ? body.slice(rawOffsetAtVisible(body, 2))
+      if (header && index === 0) return step + body;
+      const own = stripAnsi(body).startsWith(INDENT)
+        ? body.slice(rawOffsetAtVisible(body, INDENT.length))
         : body;
-      return header ? `${rail}  ${ownRail}` : rail + ownRail;
+      return header ? `${step}${INDENT}${own}` : step + own;
     });
   }
 

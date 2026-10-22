@@ -92,14 +92,14 @@ test("a commit is a loud row led by the control's name and what it sent", () => 
   };
   const [row] = registry.render(info, ctx);
   expect(row).toBe(
-    "  │ ● Send To: Alex <alex@example.com> · Subject: Re: Standup · ✓ mail.google.com · 200 ms",
+    "    ● Send To: Alex <alex@example.com> · Subject: Re: Standup · ✓ mail.google.com · 200 ms",
   );
   expect(registry.activityKind(info)).toBeUndefined();
   const [bare] = registry.render(
     { ...info, result: result({ summary: 'clicked button "Buy" [e2]', commit: { id: "c2" } }) },
     ctx,
   );
-  expect(bare).toBe('  │ ● committed button "Buy" [e2] · ✓');
+  expect(bare).toBe('    ● committed button "Buy" [e2] · ✓');
 });
 
 test("running calls show their target from the arguments; failures are marked", () => {
@@ -240,8 +240,8 @@ test("a running sub-task shows where its browser is and what it is doing", () =>
     )
     .map(stripAnsi);
   expect(lines).toEqual([
-    "  │ ⠋ Apply to Acme · 2 actions · 41s",
-    "  │ jobs.lever.co · Acme — Apply · upload e7",
+    "    ⠋ Apply to Acme · 2 actions · 41s",
+    "    jobs.lever.co · Acme — Apply · upload e7",
   ]);
 });
 
@@ -274,7 +274,7 @@ test("a hand-off is its own row and leaves the session waiting on the user", () 
   const transcript = app.renderTranscript().map(stripAnsi);
   expect(transcript).toContain("  › ◆ your turn sign in to linkedin.com · www.linkedin.com");
   expect(transcript).toContain(
-    "  │ finish in the browser, submit included · mu continues when the page moves on or you reply",
+    "    finish in the browser, submit included · mu continues when the page moves on or you reply",
   );
   expect(transcript.at(-2)).toBe("");
   expect(transcript.at(-1)).toStartWith("  worked for ");
@@ -368,7 +368,7 @@ test("a step commit is an ordinary row inside its visit; a final one warns when 
     ),
   };
   expect(registry.render(step, ctx)[0]).toBe(
-    '  │ click button "Checkout" [e50] · ✓ mail.google.com · 200 ms · committed',
+    '    click button "Checkout" [e50] · ✓ mail.google.com · 200 ms · committed',
   );
   expect(registry.activityKind(step)).toBe("browse");
   const stalled = {
@@ -382,7 +382,7 @@ test("a step commit is an ordinary row inside its visit; a final one warns when 
     ),
   };
   expect(registry.render(stalled, ctx)[0]).toBe(
-    "  │ ● Finish · no visible change · mail.google.com · 200 ms",
+    "    ● Finish · no visible change · mail.google.com · 200 ms",
   );
   expect(registry.activityKind(stalled)).toBeUndefined();
 });
