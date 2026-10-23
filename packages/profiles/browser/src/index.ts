@@ -13,10 +13,12 @@ import { notesTool } from "./agent/notes.ts";
 import {
   BROWSER_PERMISSION_DEFAULTS,
   browserPermissionModes,
+  forgetRemembered,
   hostAllowed,
   hostRules,
   loadRememberedPermissions,
   rememberAllow,
+  rememberedPermissionsPath,
   restrictsHosts,
 } from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, BROWSER_TASK_PROMPT, browserPrompt } from "./agent/prompts.ts";
@@ -280,6 +282,12 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     rememberPermission: (permission, pattern) => {
       rememberAllow(config.home, permission, pattern);
     },
+    savedPermissions: () =>
+      loadRememberedPermissions(config.home).map((rule) => ({
+        ...rule,
+        source: rememberedPermissionsPath(config.home),
+      })),
+    forgetPermission: (rule) => forgetRemembered(config.home, rule.permission, rule.pattern),
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,

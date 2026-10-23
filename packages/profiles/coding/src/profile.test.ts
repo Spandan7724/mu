@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluate } from "@mu/core";
@@ -188,9 +188,13 @@ describe("permission defaults", () => {
     const root = await scratch();
     await mkdir(join(root, ".mu"), { recursive: true });
     await writeFile(join(root, ".mu", "config.json"), "{ not json");
+    await writeFile(join(root, ".mu", "config.local.json"), "{ not json");
     await expect(loadProjectConfig(root)).rejects.toThrow();
     const profile = await codingProfile({ root });
     expect(profile.diagnostics?.some((message) => message.includes("JSON Parse error"))).toBe(true);
+    expect(profile.diagnostics?.some((message) => message.includes("config.local.json"))).toBe(
+      true,
+    );
     await expect(rememberAllow(root, "bash", "ls*")).rejects.toThrow();
   });
 
@@ -210,32 +214,94 @@ describe("permission defaults", () => {
     expect(evaluate(profile.permissionDefaults, "bash", "anything")).toBe("ask");
   });
 
-  test("always-allow persists to the project config", async () => {
+  test("always-allow persists to the ignored local config", async () => {
     const root = await scratch();
-    await rememberAllow(root, "bash", "npm test*");
+    const local = join(root, ".mu", "config.local.json");
+    await rememberAllow(root, "bash", "npm test *");
 
-    const config = await loadProjectConfig(root);
-    expect(config.permissions).toEqual([
-      { permission: "bash", pattern: "npm test*", action: "allow" },
+    expect(JSON.parse(await readFile(local, "utf8")).permissions).toEqual([
+      { permission: "bash", pattern: "npm test *", action: "allow" },
     ]);
+    expect(await readFile(join(root, ".mu", ".gitignore"), "utf8")).toBe("config.local.json\n");
+    expect((await loadProjectConfig(root)).permissions).toBeUndefined();
 
     // Recording the same rule twice must not duplicate it.
-    await rememberAllow(root, "bash", "npm test*");
-    expect((await loadProjectConfig(root)).permissions?.length).toBe(1);
+    await rememberAllow(root, "bash", "npm test *");
+    expect(JSON.parse(await readFile(local, "utf8")).permissions.length).toBe(1);
 
     // And it takes effect on the next session.
     const profile = await codingProfile({ root });
     expect(evaluate(profile.permissionDefaults, "bash", "npm test -- --watch")).toBe("allow");
+    expect(evaluate(profile.permissionDefaults, "bash", "npm test")).toBe("allow");
   });
 
-  test("remembering preserves other config keys", async () => {
+  test("remembering preserves other keys of the local config", async () => {
+    const root = await scratch();
+    const local = join(root, ".mu", "config.local.json");
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(local, JSON.stringify({ note: "mine" }));
+    await rememberAllow(root, "write", "*");
+    const config = JSON.parse(await readFile(local, "utf8"));
+    expect(config.note).toBe("mine");
+    expect(config.permissions.length).toBe(1);
+  });
+
+  test("user, project and local rules layer in that order and can be forgotten", async () => {
+    const root = await scratch();
+    const home = await scratch();
+    await mkdir(join(home, ".mu"), { recursive: true });
+    await mkdir(join(root, ".mu"), { recursive: true });
+    await writeFile(
+      join(home, ".mu", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.1",
+        permissions: [{ permission: "bash", pattern: "git *", action: "allow" }],
+      }),
+    );
+    await writeFile(
+      join(root, ".mu", "config.json"),
+      JSON.stringify({
+        permissions: [{ permission: "bash", pattern: "git push *", action: "ask" }],
+      }),
+    );
+    await rememberAllow(root, "bash", "git push origin *");
+
+    const profile = await codingProfile({ root, home });
+    expect(evaluate(profile.permissionDefaults, "bash", "git status")).toBe("allow");
+    expect(evaluate(profile.permissionDefaults, "bash", "git push upstream x")).toBe("ask");
+    expect(evaluate(profile.permissionDefaults, "bash", "git push origin main")).toBe("allow");
+
+    const saved = (await profile.savedPermissions?.()) ?? [];
+    expect(saved.map((rule) => [rule.pattern, rule.source])).toEqual([
+      ["git *", join(home, ".mu", "config.json")],
+      ["git push *", join(root, ".mu", "config.json")],
+      ["git push origin *", join(root, ".mu", "config.local.json")],
+    ]);
+    const user = saved[0];
+    if (!user) throw new Error("missing user rule");
+    await profile.forgetPermission?.(user);
+    const userConfig = JSON.parse(await readFile(join(home, ".mu", "config.json"), "utf8"));
+    expect(userConfig).toEqual({ model: "openai/gpt-5.1" });
+  });
+
+  test("configured denies hold in every mode, full access included", async () => {
     const root = await scratch();
     await mkdir(join(root, ".mu"), { recursive: true });
-    await writeFile(join(root, ".mu", "config.json"), JSON.stringify({ model: "openai/gpt-5.1" }));
-    await rememberAllow(root, "write", "*");
-    const config = await loadProjectConfig(root);
-    expect(config.model).toBe("openai/gpt-5.1");
-    expect(config.permissions?.length).toBe(1);
+    await writeFile(
+      join(root, ".mu", "config.json"),
+      JSON.stringify({
+        permissions: [{ permission: "bash", pattern: "git push *", action: "deny" }],
+      }),
+    );
+    const profile = await codingProfile({ root, home: await scratch() });
+    for (const mode of profile.permissionModes ?? []) {
+      const rules = [...profile.permissionDefaults, ...mode.rules];
+      expect(evaluate(rules, "bash", "git push origin main")).toBe("deny");
+    }
+    const yolo = profile.permissionModes?.find((mode) => mode.id === "yolo");
+    expect(evaluate([...profile.permissionDefaults, ...(yolo?.rules ?? [])], "bash", "ls")).toBe(
+      "allow",
+    );
   });
 });
 

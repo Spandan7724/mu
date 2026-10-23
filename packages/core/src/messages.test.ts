@@ -6,7 +6,7 @@ import {
   toAiMessages,
   userMessage,
 } from "./messages.ts";
-import { evaluate, type PermissionRule } from "./permission.ts";
+import { evaluate, evaluateTargets, type PermissionRule, permissionOutcome } from "./permission.ts";
 
 describe("messages", () => {
   test("custom messages render as tagged user content, never system prompt edits", () => {
@@ -93,5 +93,68 @@ describe("permission engine", () => {
   test("wildcards span newlines in multi-line commands", () => {
     const multi: PermissionRule[] = [{ permission: "bash", pattern: "rm *", action: "deny" }];
     expect(evaluate(multi, "bash", "rm -rf x\ny")).toBe("deny");
+  });
+
+  test("a trailing ' *' also matches the bare prefix, but not a longer word", () => {
+    const prefix: PermissionRule[] = [
+      { permission: "bash", pattern: "publish draft *", action: "allow" },
+    ];
+    expect(evaluate(prefix, "bash", "publish draft")).toBe("allow");
+    expect(evaluate(prefix, "bash", "publish draft --now")).toBe("allow");
+    expect(evaluate(prefix, "bash", "publish draftx")).toBe("ask");
+  });
+
+  test("an exact target matches only an identical pattern or a lone *", () => {
+    const prefix: PermissionRule[] = [{ permission: "bash", pattern: "echo *", action: "allow" }];
+    expect(evaluate(prefix, "bash", "echo $(id)", { exact: true })).toBe("ask");
+    expect(
+      evaluate(
+        [{ permission: "bash", pattern: "echo $(id)", action: "allow" }],
+        "bash",
+        "echo $(id)",
+        { exact: true },
+      ),
+    ).toBe("allow");
+    expect(
+      evaluate([{ permission: "*", pattern: "*", action: "allow" }], "bash", "echo $(id)", {
+        exact: true,
+      }),
+    ).toBe("allow");
+  });
+
+  test("targets: any deny denies, all allowed allows, the rest are asked about", () => {
+    const targets: PermissionRule[] = [
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "bash:inspect", pattern: "*", action: "allow" },
+      { permission: "bash", pattern: "npm test *", action: "allow" },
+      { permission: "bash", pattern: "rm *", action: "deny" },
+    ];
+    expect(
+      evaluateTargets(targets, "bash", [
+        { permission: "bash", pattern: "npm test" },
+        { permission: "bash:inspect", pattern: "tail -5" },
+      ]).action,
+    ).toBe("allow");
+    const asked = evaluateTargets(targets, "bash", [
+      { permission: "bash", pattern: "npm test" },
+      { permission: "bash", pattern: "curl x", remember: "curl *" },
+    ]);
+    expect(asked.action).toBe("ask");
+    expect(asked.asked.map((target) => target.pattern)).toEqual(["curl x"]);
+    expect(
+      evaluateTargets(targets, "bash", [
+        { permission: "bash", pattern: "curl x" },
+        { permission: "bash", pattern: "rm -rf y" },
+      ]),
+    ).toEqual({ action: "deny", asked: [] });
+  });
+
+  test("a reply message is trimmed and kept only when present", () => {
+    expect(permissionOutcome("allow")).toEqual({ outcome: "allow" });
+    expect(permissionOutcome({ outcome: "deny", message: "  use pnpm  " })).toEqual({
+      outcome: "deny",
+      message: "use pnpm",
+    });
+    expect(permissionOutcome({ outcome: "deny", message: " " })).toEqual({ outcome: "deny" });
   });
 });

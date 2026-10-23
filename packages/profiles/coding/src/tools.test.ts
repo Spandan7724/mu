@@ -134,6 +134,19 @@ describe("read", () => {
 });
 
 describe("write", () => {
+  test("write and edit are judged by their root-relative path", async () => {
+    const root = await scratch();
+    const state = new FileState();
+    const write = writeTool({ root, state });
+    const edit = editTool({ root, state });
+    const edits = [{ oldString: "a", newString: "b" }];
+    expect(write.permissionPattern?.({ path: "src/a.ts", content: "" })).toBe("src/a.ts");
+    expect(write.permissionPattern?.({ path: join(root, "src", "b.ts"), content: "" })).toBe(
+      "src/b.ts",
+    );
+    expect(edit.permissionPattern?.({ path: "./src/../src/c.ts", edits })).toBe("src/c.ts");
+  });
+
   test("permission preview shows a new file as additions", async () => {
     const root = await scratch();
     const details = await permissionDetails(writeTool({ root, state: new FileState() }), {

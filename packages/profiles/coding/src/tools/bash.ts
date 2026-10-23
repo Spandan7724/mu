@@ -9,6 +9,7 @@ import { tool } from "mu";
 import { z } from "zod";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
 import { isInspectionShellCommand, isSingleRipgrepCommand } from "../shell-inspection.ts";
+import { shellPermissionTargets } from "../shell-permissions.ts";
 import { plainTerminalText } from "../terminal-text.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
 
@@ -192,6 +193,8 @@ export function bashTool(deps: BashDeps) {
     permissionScope: ({ command, run_in_background }) =>
       run_in_background !== true && isInspectionShellCommand(command) ? "bash:inspect" : "bash",
     permissionPattern: ({ command }) => command,
+    permissionTargets: ({ command, run_in_background }) =>
+      shellPermissionTargets(command, { background: run_in_background === true }),
     canBackground: ({ run_in_background }) =>
       run_in_background !== true && deps.processes !== undefined,
     description:

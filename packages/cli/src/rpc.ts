@@ -20,7 +20,10 @@ export type RpcOp = (
       type: "permission_reply";
       requestId: string;
       outcome: "allow" | "deny";
-      remember?: boolean | undefined;
+      // true saves the allow; "session" keeps it until the process exits.
+      remember?: boolean | "session" | undefined;
+      // With a denial: why, or what to do instead, for the model.
+      message?: string | undefined;
     }
   | { type: "resume"; sessionId: string }
   | { type: "command"; text: string }
@@ -81,7 +84,12 @@ export interface RpcDeps {
   // Created per input op so each prompt is its own run.
   agent: Agent;
   // Resolves a pending permission ask; returns false when the id is unknown.
-  resolvePermission?: (requestId: string, outcome: "allow" | "deny", remember?: boolean) => boolean;
+  resolvePermission?: (
+    requestId: string,
+    outcome: "allow" | "deny",
+    remember?: boolean | "session",
+    message?: string,
+  ) => boolean;
   cancelPermissions?: () => void;
   resumeSession?: (sessionId: string) => Promise<void>;
   runCommand?: (text: string) => Promise<CommandResult>;
@@ -108,7 +116,8 @@ const rpcOpSchema = z.discriminatedUnion("type", [
       type: z.literal("permission_reply"),
       requestId: z.string().min(1).max(256),
       outcome: z.enum(["allow", "deny"]),
-      remember: z.boolean().optional(),
+      remember: z.union([z.boolean(), z.literal("session")]).optional(),
+      message: z.string().max(10_000).optional(),
     })
     .strict(),
   z.object({ type: z.literal("resume"), sessionId: z.string().min(1).max(512) }).strict(),
@@ -265,7 +274,8 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           break;
 
         case "permission_reply": {
-          const ok = deps.resolvePermission?.(op.requestId, op.outcome, op.remember) ?? false;
+          const ok =
+            deps.resolvePermission?.(op.requestId, op.outcome, op.remember, op.message) ?? false;
           if (!ok) reject(op, `unknown permission request: ${op.requestId}`);
           else accept(op);
           break;

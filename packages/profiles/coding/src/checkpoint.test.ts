@@ -8,7 +8,6 @@ import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "mu";
 import { partialCheckpointNotice, ShadowCheckpointProvider } from "./checkpoint.ts";
 import { codingProfile } from "./index.ts";
-import { loadProjectConfig } from "./permissions.ts";
 
 async function scratch(): Promise<string> {
   return mkdtemp(join(tmpdir(), "mu-ckpt-"));
@@ -938,7 +937,9 @@ describe("turn-level agent undo", () => {
     });
 
     await agent.run("create app.py");
-    expect(await loadProjectConfig(root)).toMatchObject({
+    expect(
+      JSON.parse(await readFile(join(root, ".mu", "config.local.json"), "utf8")),
+    ).toMatchObject({
       permissions: [{ permission: "bash", pattern: "npm test*", action: "allow" }],
     });
 
@@ -947,7 +948,9 @@ describe("turn-level agent undo", () => {
     expect(undone.data?.files.map((file) => file.path)).toEqual(["app.py"]);
     await expect(access(join(root, "app.py"))).rejects.toThrow();
     // The turn's edit is gone; the user's own decision is not.
-    expect(await loadProjectConfig(root)).toMatchObject({
+    expect(
+      JSON.parse(await readFile(join(root, ".mu", "config.local.json"), "utf8")),
+    ).toMatchObject({
       permissions: [{ permission: "bash", pattern: "npm test*", action: "allow" }],
     });
   });

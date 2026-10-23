@@ -4,7 +4,7 @@ import type { Command } from "./commands.ts";
 import type { AgentEvent } from "./events.ts";
 import type { ToolRenderer } from "./extensions.ts";
 import type { AgentMessage, CustomMessage } from "./messages.ts";
-import type { PermissionRule } from "./permission.ts";
+import type { PermissionRule, SavedPermissionRule } from "./permission.ts";
 import type { AnyTool } from "./tools.ts";
 
 // Which way a mode moves the gate relative to the profile's defaults. A profile
@@ -81,6 +81,9 @@ export interface Profile {
   permissionModes?: PermissionMode[];
   defaultPermissionMode?: string;
   rememberPermission?: (permission: string, pattern: string) => void | Promise<void>;
+  // Rules the profile keeps in its configuration, and their removal.
+  savedPermissions?: () => SavedPermissionRule[] | Promise<SavedPermissionRule[]>;
+  forgetPermission?: (rule: SavedPermissionRule) => void | Promise<void>;
   renderers?: Record<string, ToolRenderer>;
   commands?: Command[];
   // Opaque per-domain environment (coding fills in directory/repo facts;

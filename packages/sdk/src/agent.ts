@@ -35,15 +35,18 @@ import {
   type ExtensionHost,
   estimateTextTokens,
   estimateTokens,
-  evaluate,
+  evaluateTargets,
   isContextTooLongResult,
   type LoopConfig,
   MemorySessionStore,
   MICROCOMPACT_THRESHOLD,
   microcompact,
+  type PermissionReply,
   type PermissionRequest,
   type PermissionRule,
+  type PermissionTarget,
   type ProfileRuntime,
+  permissionOutcome,
   runLoop,
   SESSION_VERSION,
   type SessionStore,
@@ -80,7 +83,7 @@ export interface AgentOptions {
   tools?: AnyTool[];
   permissions?: PermissionRule[];
   // Library default is DENY: an unattended process must never hang on a prompt.
-  onPermission?: (request: PermissionRequest) => Promise<"allow" | "deny">;
+  onPermission?: (request: PermissionRequest) => Promise<PermissionReply>;
   budget?: Budget;
   session?: SessionStore;
   sessionId?: string;
@@ -2132,9 +2135,18 @@ export class Agent {
       } catch {
         // A broken profile projection must not bypass the generic permission rules.
       }
-      const permissionTargets =
-        permission === info.toolCall.name ? [info.toolCall.name] : [info.toolCall.name, permission];
-      const action = evaluate(this.effectivePermissionRules(), permissionTargets, pattern);
+      let targets: PermissionTarget[] = [{ permission, pattern }];
+      try {
+        const projected = selectedTool?.permissionTargets?.(args);
+        if (projected && projected.length > 0) targets = projected;
+      } catch {
+        // Unprojectable arguments are judged by the call's single scope and pattern.
+      }
+      const { action, asked } = evaluateTargets(
+        this.effectivePermissionRules(),
+        info.toolCall.name,
+        targets,
+      );
       const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
       if (action === "allow") {
         return rewritten;
@@ -2153,10 +2165,14 @@ export class Agent {
         pattern,
         description: details?.description ?? `Run ${info.toolCall.name}`,
         ...(details?.preview ? { preview: details.preview } : {}),
+        allowRules: asked.map((target) => ({
+          permission: target.permission ?? info.toolCall.name,
+          pattern: target.remember ?? target.pattern,
+        })),
       };
       emit({ type: "permission_asked", request });
       // Default DENY: never hang an unattended process on an unanswered ask.
-      let outcome: "allow" | "deny" = "deny";
+      let decision: { outcome: "allow" | "deny"; message?: string } = { outcome: "deny" };
       if (this.options.onPermission && !this.controller.signal.aborted) {
         const signal = this.controller.signal;
         let onAbort: (() => void) | undefined;
@@ -2165,18 +2181,22 @@ export class Agent {
           signal.addEventListener("abort", onAbort, { once: true });
         });
         try {
-          outcome = await Promise.race([this.options.onPermission(request), aborted]);
+          decision = permissionOutcome(
+            await Promise.race([this.options.onPermission(request), aborted]),
+          );
         } finally {
           if (onAbort) signal.removeEventListener("abort", onAbort);
         }
       }
-      emit({ type: "permission_resolved", requestId: request.id, outcome });
-      if (outcome === "allow") {
+      emit({ type: "permission_resolved", requestId: request.id, outcome: decision.outcome });
+      if (decision.outcome === "allow") {
         return rewritten;
       }
       return {
         block: true,
-        reason: `Permission denied for ${info.toolCall.name}`,
+        reason: decision.message
+          ? `Permission denied for ${info.toolCall.name}. The user said: ${decision.message}`
+          : `Permission denied for ${info.toolCall.name}`,
       };
     };
 
@@ -2664,13 +2684,17 @@ export class Agent {
     );
   }
 
-  private async resolveChildPermission(request: PermissionRequest): Promise<"allow" | "deny"> {
+  private async resolveChildPermission(request: PermissionRequest): Promise<PermissionReply> {
     this.publishEvent({ type: "permission_asked", request });
-    const outcome = this.options.onPermission
+    const reply = this.options.onPermission
       ? await this.options.onPermission(request).catch(() => "deny" as const)
       : "deny";
-    this.publishEvent({ type: "permission_resolved", requestId: request.id, outcome });
-    return outcome;
+    this.publishEvent({
+      type: "permission_resolved",
+      requestId: request.id,
+      outcome: permissionOutcome(reply).outcome,
+    });
+    return reply;
   }
 
   private publishEvent(event: AgentEvent): void {

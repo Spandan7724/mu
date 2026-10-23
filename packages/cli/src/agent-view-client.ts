@@ -171,7 +171,8 @@ export class AgentViewClient {
           type: "permission_reply";
           requestId: string;
           outcome: "allow" | "deny";
-          remember?: boolean | undefined;
+          remember?: boolean | "session" | undefined;
+          message?: string | undefined;
         }
       | { type: "abort" }
       | { type: "stop_subagent"; subagentId: string }

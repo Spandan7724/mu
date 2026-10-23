@@ -454,6 +454,79 @@ describe("permissions", () => {
     expect(ran).toBe(false);
   });
 
+  test("a denial message reaches the model with the error", async () => {
+    const result = await agentWith(dangerProvider(), {
+      tools: [dangerTool(() => {})],
+      permissions: [{ permission: "*", pattern: "*", action: "ask" }],
+      onPermission: async () => ({ outcome: "deny", message: "use the staging copy" }),
+    }).run("go");
+    const toolResult = result.messages.find((m) => m.role === "toolResult");
+    const text =
+      toolResult?.role === "toolResult" && toolResult.content[0]?.type === "text"
+        ? toolResult.content[0].text
+        : "";
+    expect(text).toContain("The user said: use the staging copy");
+  });
+
+  test("a call with several targets asks only about those not allowed", async () => {
+    let request: PermissionRequest | undefined;
+    let ran = false;
+    const multi = tool({
+      name: "danger",
+      description: "runs several steps",
+      inputSchema: z.object({ x: z.number() }),
+      permissionTargets: () => [
+        { pattern: "safe step" },
+        { permission: "danger:net", pattern: "fetch a", remember: "fetch *" },
+      ],
+      execute: () => {
+        ran = true;
+        return "ran";
+      },
+    });
+    await agentWith(dangerProvider(), {
+      tools: [multi],
+      permissions: [
+        { permission: "*", pattern: "*", action: "ask" },
+        { permission: "danger", pattern: "safe step", action: "allow" },
+      ],
+      onPermission: async (asked: PermissionRequest) => {
+        request = asked;
+        return "allow";
+      },
+    }).run("go");
+    expect(ran).toBe(true);
+    expect(request?.allowRules).toEqual([{ permission: "danger:net", pattern: "fetch *" }]);
+  });
+
+  test("a denied target blocks the call without asking", async () => {
+    let asked = false;
+    let ran = false;
+    const multi = tool({
+      name: "danger",
+      description: "runs several steps",
+      inputSchema: z.object({ x: z.number() }),
+      permissionTargets: () => [{ pattern: "ok" }, { pattern: "bad" }],
+      execute: () => {
+        ran = true;
+        return "ran";
+      },
+    });
+    await agentWith(dangerProvider(), {
+      tools: [multi],
+      permissions: [
+        { permission: "*", pattern: "*", action: "ask" },
+        { permission: "danger", pattern: "bad", action: "deny" },
+      ],
+      onPermission: async () => {
+        asked = true;
+        return "allow";
+      },
+    }).run("go");
+    expect(asked).toBe(false);
+    expect(ran).toBe(false);
+  });
+
   test("allow rules skip the callback entirely", async () => {
     let ran = false;
     let asked = false;

@@ -88,12 +88,20 @@ export type {
   PermissionAction,
   PermissionField,
   PermissionPreview,
+  PermissionReply,
   PermissionRequest,
   PermissionRule,
   PermissionSection,
+  PermissionTarget,
+  SavedPermissionRule,
   ToolPermissionDetails,
 } from "./permission.ts";
-export { evaluate, permissionPreviewLines } from "./permission.ts";
+export {
+  evaluate,
+  evaluateTargets,
+  permissionOutcome,
+  permissionPreviewLines,
+} from "./permission.ts";
 export type {
   ManagedProcessHandle,
   ProcessEvents,

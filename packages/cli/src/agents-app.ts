@@ -737,9 +737,15 @@ export async function runAgentView(
             void client.sessionOp(sessionId, { type: "thinking", level }).catch(showError),
           onCyclePermissionMode: () =>
             void client.sessionOp(sessionId, { type: "cycle_permission_mode" }).catch(showError),
-          onPermissionReply: (requestId, outcome, remember) =>
+          onPermissionReply: (requestId, outcome, remember, _source, message) =>
             void client
-              .sessionOp(sessionId, { type: "permission_reply", requestId, outcome, remember })
+              .sessionOp(sessionId, {
+                type: "permission_reply",
+                requestId,
+                outcome,
+                remember,
+                ...(message ? { message } : {}),
+              })
               .catch(showError),
         },
       });

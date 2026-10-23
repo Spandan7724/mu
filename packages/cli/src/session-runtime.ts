@@ -7,10 +7,12 @@ import {
   loadMarkdownCommands,
   optionsFromProfile,
   type PermissionMode,
+  type PermissionReply,
   type PermissionRequest,
   type PermissionRule,
   type Profile,
   registryWithCoreCommands,
+  type SavedPermissionRule,
   subagentsExtension,
   toCommand,
 } from "mu";
@@ -64,11 +66,25 @@ export interface CliSessionRuntime {
   permissionModes: readonly PermissionMode[];
   warnings: string[];
   pendingPermissions: ReadonlyMap<string, PermissionRequest>;
-  resolvePermission(requestId: string, outcome: "allow" | "deny", remember?: boolean): boolean;
+  // `true` saves the allow rules through the profile; "session" keeps them
+  // until the process exits. A message reaches the model with a denial.
+  resolvePermission(
+    requestId: string,
+    outcome: "allow" | "deny",
+    remember?: PermissionRemember,
+    message?: string,
+  ): boolean;
+  // Saved rules followed by this session's, whose source is SESSION_RULES.
+  permissionRules(): Promise<SavedPermissionRule[]>;
+  forgetPermissionRule(rule: SavedPermissionRule): Promise<void>;
   cyclePermissionMode(): string | undefined;
   setPermissionMode(id: string): string | undefined;
   cancelPermissions(): void;
 }
+
+export type PermissionRemember = boolean | "session";
+
+export const SESSION_RULES = "session";
 
 export async function createCliSessionRuntime(
   options: SessionRuntimeOptions,
@@ -101,7 +117,14 @@ export async function createCliSessionRuntime(
   }
 
   const basePermissions: PermissionRule[] = [...(resolved.permissions ?? [])];
+  const sessionRules: PermissionRule[] = [];
   let activePermissionMode: PermissionMode | undefined;
+  // Rebuilt rather than appended to, so a mode's final rules (configured denies
+  // among them) stay last when an approval adds an allow.
+  const currentRules = (): PermissionRule[] =>
+    options.allowAll && !activePermissionMode
+      ? [...basePermissions, { permission: "*", pattern: "*", action: "allow" }]
+      : rulesForPermissionMode(basePermissions, activePermissionMode);
   if (profile) {
     activePermissionMode = options.allowAll
       ? profile.permissionModes?.find((candidate) => candidate.tone === "unrestricted")
@@ -112,12 +135,7 @@ export async function createCliSessionRuntime(
               ? savedPermissionMode(profile, await loadUserConfig(undefined, () => {}))
               : undefined),
         );
-    resolved = {
-      ...resolved,
-      permissions: options.allowAll
-        ? [...basePermissions, { permission: "*", pattern: "*", action: "allow" }]
-        : rulesForPermissionMode(basePermissions, activePermissionMode),
-    };
+    resolved = { ...resolved, permissions: currentRules() };
   } else if (options.permissionMode) {
     throw new Error("--permission-mode requires a profile with permission modes");
   }
@@ -138,7 +156,7 @@ export async function createCliSessionRuntime(
 
   const pending = new Map<
     string,
-    { request: PermissionRequest; resolve: (outcome: "allow" | "deny") => void }
+    { request: PermissionRequest; resolve: (reply: PermissionReply) => void }
   >();
   const modelInfo = typeof model === "string" ? findModel(model) : model;
   const thinkingLevel =
@@ -162,7 +180,7 @@ export async function createCliSessionRuntime(
     ...(options.permissions === "forward"
       ? {
           onPermission: (request: PermissionRequest) =>
-            new Promise<"allow" | "deny">((resolve) =>
+            new Promise<PermissionReply>((resolve) =>
               pending.set(request.id, { request, resolve }),
             ),
         }
@@ -227,42 +245,67 @@ export async function createCliSessionRuntime(
     get pendingPermissions() {
       return new Map([...pending].map(([id, value]) => [id, value.request]));
     },
-    resolvePermission: (requestId, outcome, remember) => {
+    resolvePermission: (requestId, outcome, remember, message) => {
       const item = pending.get(requestId);
       if (!item) return false;
       pending.delete(requestId);
       if (outcome === "allow" && remember) {
-        const rule = {
-          permission: item.request.permission,
-          pattern: item.request.pattern,
-          action: "allow" as const,
-        };
-        basePermissions.push(rule);
-        agent.addPermissionRule(rule);
-        void Promise.resolve(profile?.rememberPermission?.(rule.permission, rule.pattern)).catch(
-          (error) =>
+        const rules = (
+          item.request.allowRules ?? [
+            { permission: item.request.permission, pattern: item.request.pattern },
+          ]
+        ).map((rule) => ({ ...rule, action: "allow" as const }));
+        basePermissions.push(...rules);
+        if (remember === "session") sessionRules.push(...rules);
+        agent.setPermissions(currentRules());
+        if (remember === true) {
+          void (async () => {
+            for (const rule of rules) {
+              await profile?.rememberPermission?.(rule.permission, rule.pattern);
+            }
+          })().catch((error) =>
             options.onDiagnostic?.(
               `could not remember permission: ${error instanceof Error ? error.message : String(error)}`,
             ),
-        );
+          );
+        }
       }
-      item.resolve(outcome);
+      item.resolve(message && outcome === "deny" ? { outcome, message } : outcome);
       return true;
+    },
+    permissionRules: async () => [
+      ...((await profile?.savedPermissions?.()) ?? []),
+      ...sessionRules.map((rule) => ({ ...rule, source: SESSION_RULES })),
+    ],
+    forgetPermissionRule: async (rule) => {
+      const same = (candidate: PermissionRule) =>
+        candidate.permission === rule.permission &&
+        candidate.pattern === rule.pattern &&
+        candidate.action === rule.action;
+      if (rule.source === SESSION_RULES) {
+        const index = sessionRules.findLastIndex(same);
+        if (index !== -1) sessionRules.splice(index, 1);
+      } else {
+        await profile?.forgetPermission?.(rule);
+      }
+      const index = basePermissions.findLastIndex(same);
+      if (index !== -1) basePermissions.splice(index, 1);
+      agent.setPermissions(currentRules());
     },
     cyclePermissionMode: () => {
       if (!profile) return undefined;
       const next = nextPermissionMode(profile.permissionModes ?? [], activePermissionMode);
       if (!next) return undefined;
-      agent.setPermissions(rulesForPermissionMode(basePermissions, next));
       activePermissionMode = next;
+      agent.setPermissions(currentRules());
       return next.label;
     },
     setPermissionMode: (id) => {
       if (!profile) return undefined;
       const next = (profile.permissionModes ?? []).find((mode) => mode.id === id);
       if (!next) return undefined;
-      agent.setPermissions(rulesForPermissionMode(basePermissions, next));
       activePermissionMode = next;
+      agent.setPermissions(currentRules());
       return next.label;
     },
     cancelPermissions: () => {

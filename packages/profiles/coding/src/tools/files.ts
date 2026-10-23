@@ -100,6 +100,16 @@ function display(root: string, path: string): string {
   return rel === "" ? "." : rel;
 }
 
+// Root-relative with forward slashes, so a rule like `src/*` reads the same on
+// every platform. Execution still enforces the root.
+function permissionPath(root: string, path: string): string {
+  try {
+    return display(root, resolveInRoot(root, path)).split(sep).join("/");
+  } catch {
+    return resolve(root, path);
+  }
+}
+
 // A trailing newline ends the last line rather than starting another.
 function fileLines(text: string): string[] {
   const lines = text.split("\n");
@@ -188,6 +198,7 @@ export function writeTool(deps: ToolDeps) {
     name: "write",
     changesState: true,
     changedResources: ({ path }) => [checkpointResource(deps.root, path)],
+    permissionPattern: ({ path }) => permissionPath(deps.root, path),
     description:
       "Write a complete file, creating it or replacing its contents. To change part of an existing file, prefer edit.",
     inputSchema: z.object({
@@ -575,6 +586,7 @@ export function editTool(deps: ToolDeps) {
     name: "edit",
     changesState: true,
     changedResources: ({ path }) => [checkpointResource(deps.root, path)],
+    permissionPattern: ({ path }) => permissionPath(deps.root, path),
     description:
       "Replace exact strings in a file. Each oldString must appear exactly once unless that edit sets replaceAll. Pass several edits to change one file in a single call. Read the file first.",
     inputSchema: z.object({

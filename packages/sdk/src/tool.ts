@@ -1,4 +1,4 @@
-import type { AnyTool, Tool, ToolPermissionDetails, ToolResult } from "@mu/core";
+import type { AnyTool, PermissionTarget, Tool, ToolPermissionDetails, ToolResult } from "@mu/core";
 import { errorResult } from "@mu/core";
 import { z } from "zod";
 
@@ -18,6 +18,7 @@ export interface ToolDefinition<Schema extends z.ZodType> {
   changedResources?: (args: z.infer<Schema>) => string[];
   permissionScope?: (args: z.infer<Schema>) => string;
   permissionPattern?: (args: z.infer<Schema>) => string;
+  permissionTargets?: (args: z.infer<Schema>) => PermissionTarget[];
   permissionDetails?: (
     args: z.infer<Schema>,
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;
@@ -126,6 +127,15 @@ export function tool<Schema extends z.ZodType>(
             return parsed.success
               ? (definition.permissionPattern?.(parsed.data) ?? JSON.stringify(rawArgs))
               : JSON.stringify(rawArgs);
+          },
+        }
+      : {}),
+    ...(definition.permissionTargets
+      ? {
+          permissionTargets: (rawArgs) => {
+            const parsed = parseArgs(rawArgs);
+            if (!parsed.success) throw new Error(`Invalid arguments for ${definition.name}`);
+            return definition.permissionTargets?.(parsed.data) ?? [];
           },
         }
       : {}),

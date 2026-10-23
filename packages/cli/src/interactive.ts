@@ -37,13 +37,15 @@ import {
   type MarkdownCommandRun,
   type ModelInfo,
   type PermissionMode,
+  type PermissionReply,
+  type PermissionRule,
   providerConfig,
   readAuthFile,
   removeStoredCredential,
   type SideConversation,
-  saveApiKey,
   type SubagentKind,
   type SubagentsCommandData,
+  saveApiKey,
   startSideConversation,
   type ThinkingLevel,
   toCommand,
@@ -322,9 +324,13 @@ export async function runInteractive(
     string,
     {
       request: Parameters<NonNullable<AgentOptions["onPermission"]>>[0];
-      resolve: (outcome: "allow" | "deny") => void;
+      resolve: (reply: PermissionReply) => void;
     }
   >();
+  // A side conversation's approvals last only as long as it does.
+  let sideAllowRules: PermissionRule[] = [];
+  const sideRules = (mode: PermissionMode | undefined) =>
+    rulesForPermissionMode([...basePermissions, ...sideAllowRules], mode);
   let activeShell: Promise<void> | undefined;
   let shellController: AbortController | undefined;
   let loginController: AbortController | undefined;
@@ -433,24 +439,27 @@ export async function runInteractive(
         });
       },
       onCyclePermissionMode: () => cyclePermissionMode(),
-      onPermissionReply: (id, outcome, remember, source) => {
+      onPermissionReply: (id, outcome, remember, source, message) => {
         if (source === "side") {
           const pending = sidePermissions.get(id);
           if (!pending || !sideConversation) return;
           sidePermissions.delete(id);
           if (outcome === "allow" && remember) {
-            sideConversation.agent.addPermissionRule({
-              permission: pending.request.permission,
-              pattern: pending.request.pattern,
-              action: "allow",
-            });
+            sideAllowRules.push(
+              ...(
+                pending.request.allowRules ?? [
+                  { permission: pending.request.permission, pattern: pending.request.pattern },
+                ]
+              ).map((rule) => ({ ...rule, action: "allow" as const })),
+            );
+            sideConversation.agent.setPermissions(sideRules(sidePermissionMode));
           }
-          pending.resolve(outcome);
+          pending.resolve(message && outcome === "deny" ? { outcome, message } : outcome);
           return;
         }
         const pending = runtime.pendingPermissions.get(id);
         if (!pending) return;
-        runtime.resolvePermission(id, outcome, remember);
+        runtime.resolvePermission(id, outcome, remember, message);
       },
       onCloseSide: () => void closeSideConversation(),
     },
@@ -911,11 +920,14 @@ export async function runInteractive(
   }
 
   function applyPermissionMode(mode: PermissionMode, source = app.activeConversation): void {
-    const target = source === "side" ? sideConversation?.agent : agent;
-    if (!target) return;
-    target.setPermissions(rulesForPermissionMode(basePermissions, mode));
-    if (source === "side") sidePermissionMode = mode;
-    else activePermissionMode = mode;
+    if (source === "side") {
+      if (!sideConversation) return;
+      sideConversation.agent.setPermissions(sideRules(mode));
+      sidePermissionMode = mode;
+    } else {
+      runtime.setPermissionMode(mode.id);
+      activePermissionMode = mode;
+    }
     app.setPermissionMode(mode, source);
     const saved = source !== "side" && profile !== undefined;
     commitLines(formatPermissionMode(mode, depth, saved), source);
@@ -962,10 +974,9 @@ export async function runInteractive(
       const restrictive = (profile?.permissionModes ?? []).find(
         (mode) => mode.tone === "restrictive",
       );
-      const permissions = restrictive
-        ? rulesForPermissionMode(basePermissions, restrictive)
-        : rulesForPermissionMode(basePermissions, activePermissionMode);
+      sideAllowRules = [];
       sidePermissionMode = restrictive ?? activePermissionMode;
+      const permissions = sideRules(sidePermissionMode);
       const conversation = startSideConversation(
         {
           ...resolved,
@@ -974,7 +985,7 @@ export async function runInteractive(
           extensions,
           permissions,
           onPermission: (request) =>
-            new Promise<"allow" | "deny">((resolve) => {
+            new Promise<PermissionReply>((resolve) => {
               sidePermissions.set(request.id, { request, resolve });
             }),
         },

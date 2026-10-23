@@ -97,7 +97,8 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
             type: z.literal("permission_reply"),
             requestId: z.string().min(1).max(256),
             outcome: z.enum(["allow", "deny"]),
-            remember: z.boolean().optional(),
+            remember: z.union([z.boolean(), z.literal("session")]).optional(),
+            message: z.string().max(10_000).optional(),
           })
           .strict(),
         z.object({ type: z.literal("abort") }).strict(),

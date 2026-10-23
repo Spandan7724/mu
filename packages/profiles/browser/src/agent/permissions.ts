@@ -182,6 +182,14 @@ export function loadRememberedPermissions(
   return [];
 }
 
+function saveRememberedPermissions(home: string, rules: PermissionRule[]): void {
+  const path = rememberedPermissionsPath(home);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ rules }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
+}
+
 // "Always allow" is host-scoped: the pattern is the page (or target) host.
 export function rememberAllow(home: string, permission: string, pattern: string): PermissionRule[] {
   const rules = loadRememberedPermissions(home);
@@ -190,10 +198,14 @@ export function rememberAllow(home: string, permission: string, pattern: string)
   ) {
     rules.push({ permission, pattern, action: "allow" });
   }
-  const path = rememberedPermissionsPath(home);
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify({ rules }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, path);
+  saveRememberedPermissions(home, rules);
   return rules;
+}
+
+export function forgetRemembered(home: string, permission: string, pattern: string): void {
+  const rules = loadRememberedPermissions(home);
+  const kept = rules.filter(
+    (existing) => existing.permission !== permission || existing.pattern !== pattern,
+  );
+  if (kept.length !== rules.length) saveRememberedPermissions(home, kept);
 }

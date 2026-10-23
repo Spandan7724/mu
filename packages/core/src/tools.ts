@@ -1,5 +1,5 @@
 import type { ToolResultContent, Usage } from "@mu/ai";
-import type { ToolPermissionDetails } from "./permission.ts";
+import type { PermissionTarget, ToolPermissionDetails } from "./permission.ts";
 
 export interface ToolResult {
   content: ToolResultContent[];
@@ -34,6 +34,9 @@ export interface Tool<Args = Record<string, unknown>> {
   permissionScope?: (args: Args) => string;
   // Profile-owned value matched by permission rules and persisted by "always allow".
   permissionPattern?: (args: Args) => string;
+  // Every value the call is judged by, when one pattern cannot speak for the
+  // whole call. Replaces scope and pattern for evaluation only.
+  permissionTargets?: (args: Args) => PermissionTarget[];
   permissionDetails?: (
     args: Args,
   ) => ToolPermissionDetails | undefined | Promise<ToolPermissionDetails | undefined>;

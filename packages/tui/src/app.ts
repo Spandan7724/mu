@@ -119,11 +119,14 @@ export interface AppCallbacks {
   // Present only for a conversation attached from agent view. Plain mu omits
   // it, so Left remains ordinary editor navigation there.
   onDetach?: () => void;
+  // `remember`: true keeps the allow across sessions, "session" until exit.
+  // A message tells the model why it was denied.
   onPermissionReply?: (
     requestId: string,
     outcome: "allow" | "deny",
-    remember: boolean,
+    remember: boolean | "session",
     source: ConversationSource,
+    message?: string,
   ) => void;
   onCommand?: (text: string) => void;
   onThinkingChange?: (level: string) => void;

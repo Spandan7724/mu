@@ -20,13 +20,17 @@ import {
 } from "./context.ts";
 import {
   CODING_PERMISSION_DEFAULTS,
-  CODING_PERMISSION_MODES,
   checkpointSettingsSchema,
+  codingPermissionModes,
   configPath,
+  forgetPermission,
   instructionSettingsSchema,
   layerPermissions,
+  loadPermissionsFile,
   loadProjectConfig,
+  localConfigPath,
   rememberAllow,
+  savedPermissions,
 } from "./permissions.ts";
 import {
   CODING_COUNSEL_PROMPT,
@@ -159,6 +163,25 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   const configDiagnostics: string[] = [];
   const projectConfig = await loadProjectConfig(root, (message) => configDiagnostics.push(message));
   const userConfig = await loadUserConfig(home, (message) => configDiagnostics.push(message));
+  const userConfigPath = join(home, ".mu", "config.json");
+  // In $HOME the user and project config are one file.
+  const sharesUserConfig = userConfigPath === configPath(root);
+  const permissionFiles = [
+    ...(sharesUserConfig ? [] : [userConfigPath]),
+    configPath(root),
+    localConfigPath(root),
+  ];
+  const warn = (message: string) => configDiagnostics.push(message);
+  const [userPermissions, localPermissions] = await Promise.all([
+    sharesUserConfig ? [] : loadPermissionsFile(userConfigPath, warn),
+    loadPermissionsFile(localConfigPath(root), warn),
+  ]);
+  // Layered: profile defaults ← user ← project ← local. Later layers win.
+  const configuredPermissions = layerPermissions(
+    userPermissions,
+    projectConfig.permissions,
+    localPermissions,
+  );
   const instructionLoader = new InstructionLoader({
     root,
     home,
@@ -275,10 +298,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     name: "coding",
     toolset,
     promptFor: codingPrompt,
-    permissionDefaults: layerPermissions(CODING_PERMISSION_DEFAULTS, projectConfig.permissions),
-    permissionModes: CODING_PERMISSION_MODES,
+    permissionDefaults: layerPermissions(CODING_PERMISSION_DEFAULTS, configuredPermissions),
+    permissionModes: codingPermissionModes(configuredPermissions),
     defaultPermissionMode: "default",
     rememberPermission: (permission, pattern) => rememberAllow(root, permission, pattern),
+    savedPermissions: () => savedPermissions(permissionFiles),
+    forgetPermission,
     environment,
     contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
     sideBoundary: () => CODING_SIDE_BOUNDARY,
@@ -379,8 +404,10 @@ export {
 export {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
+  codingPermissionModes,
   layerPermissions,
   loadProjectConfig,
+  localConfigPath,
   rememberAllow,
 } from "./permissions.ts";
 export { codingPrompt } from "./prompts.ts";
@@ -391,6 +418,7 @@ export {
   parseInspectionCommands,
   type ShellCommandClassification,
 } from "./shell-inspection.ts";
+export { shellPermissionTargets } from "./shell-permissions.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export {

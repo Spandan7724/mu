@@ -32,7 +32,7 @@ function harness(
   const steers: string[] = [];
   const followUps: string[] = [];
   const commands: string[] = [];
-  const replies: { id: string; outcome: string; remember: boolean }[] = [];
+  const replies: { id: string; outcome: string; remember: boolean | "session" }[] = [];
   let aborted = false;
   let exited = false;
 

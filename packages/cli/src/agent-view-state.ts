@@ -25,6 +25,15 @@ export const permissionRequestSchema = z.object({
   pattern: z.string().max(MAX_AGENT_VIEW_PROMPT_CHARS),
   description: z.string().max(MAX_AGENT_VIEW_ERROR_CHARS),
   preview: z.unknown().optional(),
+  allowRules: z
+    .array(
+      z.object({
+        permission: z.string().min(1).max(256),
+        pattern: z.string().max(MAX_AGENT_VIEW_PROMPT_CHARS),
+      }),
+    )
+    .max(256)
+    .optional(),
 });
 
 export const managedSessionRecordSchema = z
