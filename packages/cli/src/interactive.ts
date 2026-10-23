@@ -1,4 +1,5 @@
 import { readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { bashTool } from "@mu/profile-coding";
 import {
@@ -79,7 +80,7 @@ import {
   resumePickerItems,
   SESSION_TITLE_MAX_LENGTH,
 } from "./session-picker.ts";
-import { createCliSessionRuntime } from "./session-runtime.ts";
+import { createCliSessionRuntime, SESSION_RULES } from "./session-runtime.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
@@ -178,6 +179,18 @@ export function formatSubagentsOutput(data: SubagentsCommandData, depth: ColorDe
 // A trailing blank, not a leading one: shift+tab commits one of these per press,
 // and the composer sits flush against the transcript, so one line below each
 // notice separates a run of them from each other and the last from the box.
+const SAVED_RULES = "\u0000saved-rules";
+
+// Where a saved rule lives, in the words the user would use for it.
+function ruleSource(source: string): string {
+  if (source === SESSION_RULES) return "this session";
+  const home = homedir();
+  if (source === join(process.cwd(), ".mu", "config.local.json")) return "local";
+  if (source === join(process.cwd(), ".mu", "config.json")) return "project";
+  if (source === join(home, ".mu", "config.json")) return "user";
+  return source.startsWith(`${home}/`) ? `~/${relative(home, source)}` : source;
+}
+
 export function formatPermissionMode(
   mode: PermissionMode,
   depth: ColorDepth,
@@ -639,18 +652,72 @@ export async function runInteractive(
       if (modes.length === 0) {
         return { handled: true, message: "This profile does not define permission modes." };
       }
-      app.openPicker({
-        title: "update permissions",
-        items: modes.map((mode) => ({
-          label: mode.label,
-          description: `${mode.description}${mode.id === currentMode?.id ? " · current" : ""}`,
-        })),
-        onChoose: (label) => {
-          const mode = modes.find((candidate) => candidate.label === label);
-          if (mode) applyPermissionMode(mode, source);
-        },
-        onBack: () => app.openCommandMenu(),
-      });
+      const openModes = async (): Promise<void> => {
+        const rules = await runtime.permissionRules();
+        app.openPicker({
+          title: "update permissions",
+          items: [
+            ...modes.map((mode) => ({
+              label: mode.label,
+              description: `${mode.description}${mode.id === currentMode?.id ? " · current" : ""}`,
+            })),
+            ...(rules.length > 0
+              ? [
+                  {
+                    label: "saved rules",
+                    description: `${rules.length} ${rules.length === 1 ? "rule" : "rules"}`,
+                    value: SAVED_RULES,
+                  },
+                ]
+              : []),
+          ],
+          onChoose: (value) => {
+            if (value === SAVED_RULES) {
+              void openRules();
+              return;
+            }
+            const mode = modes.find((candidate) => candidate.label === value);
+            if (mode) applyPermissionMode(mode, source);
+          },
+          onBack: () => app.openCommandMenu(),
+        });
+        paint();
+      };
+      const openRules = async (): Promise<void> => {
+        const rules = await runtime.permissionRules();
+        if (rules.length === 0) {
+          await openModes();
+          return;
+        }
+        app.openPicker({
+          title: "saved rules",
+          items: rules.map((rule, index) => ({
+            label: `${rule.permission}  ${rule.pattern}`,
+            description: `${rule.action} · ${ruleSource(rule.source)}`,
+            value: String(index),
+          })),
+          onChoose: () => {},
+          onDelete: (value) => {
+            const rule = rules[Number(value)];
+            if (!rule) return;
+            void (async () => {
+              try {
+                await runtime.forgetPermissionRule(rule);
+                sideConversation?.agent.setPermissions(sideRules(sidePermissionMode));
+                await openRules();
+              } catch (error) {
+                commitLines([
+                  `  could not remove the rule: ${error instanceof Error ? error.message : String(error)}`,
+                ]);
+                paint();
+              }
+            })();
+          },
+          onBack: () => void openModes(),
+        });
+        paint();
+      };
+      void openModes();
       return { handled: true };
     },
   });

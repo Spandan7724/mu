@@ -63,7 +63,7 @@ import {
   stripAnsi,
   styleText,
 } from "./style.ts";
-import { stringWidth, truncateToWidth } from "./width.ts";
+import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
 import { terminalRows, wrapText } from "./wrap.ts";
 
 const COLLAPSE_COMMAND = {
@@ -652,6 +652,8 @@ export class App {
   // the matching id and advances to the next.
   private approvals: { request: PermissionRequest; source: ConversationSource }[] = [];
   private approvalIndex = 0;
+  // Reason for denying the front approval, typed with deny selected.
+  private denyReason: string | undefined;
   private main: ConversationView;
   private side: ConversationView | undefined;
   private activeSource: ConversationSource = "main";
@@ -1255,7 +1257,11 @@ export class App {
           this.mainStatus = "needs approval";
           this.syncSideFooter();
         }
-        this.approvalIndex = 0;
+        // A later ask waits its turn without disturbing the answer in progress.
+        if (this.approvals.length === 1) {
+          this.approvalIndex = 0;
+          this.denyReason = undefined;
+        }
         this.mode = "approval";
         return [];
 
@@ -1267,6 +1273,7 @@ export class App {
         // A resolution for an id we never showed must not close another ask.
         if (this.approvals.length === before) return [];
         this.approvalIndex = 0;
+        this.denyReason = undefined;
         if (this.approvals.length === 0) this.mode = "composing";
         if (this.eventSource === "main" && this.mainStatus === "needs approval") {
           this.mainStatus = this.approvals.some((item) => item.source === "main")
@@ -1932,8 +1939,12 @@ export class App {
                 : {
                     preview: preview?.kind === "text" ? preview.lines : [request.pattern],
                   }),
-            maxPreviewRows: Math.max(3, Math.min(12, height - 8)),
+            maxPreviewRows: Math.max(3, Math.min(12, height - 10)),
             selectedIndex: this.approvalIndex,
+            rules: request.allowRules ?? [
+              { permission: request.permission, pattern: request.pattern },
+            ],
+            reason: this.denyReason,
           },
           composerWidth,
           depth,
@@ -2966,6 +2977,12 @@ export class App {
       this.ctrlCArmedAt = 0;
     }
     if (event.type === "paste") {
+      if (this.mode === "approval") {
+        if (APPROVAL_OPTIONS[this.approvalIndex] === "deny") {
+          this.denyReason = (this.denyReason ?? "") + event.text.replace(/\s+/g, " ");
+        }
+        return;
+      }
       if (this.mode === "activity") {
         if (this.activitySearch?.editing) {
           this.activitySearch.editor.insert(event.text.replace(/[\r\n]+/g, " "));
@@ -3202,6 +3219,7 @@ export class App {
     const approval = this.approvals[0];
     if (!approval) return;
     const { request, source } = approval;
+    const option = APPROVAL_OPTIONS[this.approvalIndex];
     if (key.name === "left") {
       this.approvalIndex =
         (this.approvalIndex - 1 + APPROVAL_OPTIONS.length) % APPROVAL_OPTIONS.length;
@@ -3212,19 +3230,42 @@ export class App {
       return;
     }
     if (key.name === "escape") {
+      // The first Escape drops a reason being typed; the next one denies.
+      if (option === "deny" && this.denyReason !== undefined) {
+        this.denyReason = undefined;
+        return;
+      }
       this.options.callbacks.onPermissionReply?.(request.id, "deny", false, source);
       return;
     }
     if (key.name === "return") {
-      const option = APPROVAL_OPTIONS[this.approvalIndex];
-      const outcome = option === "deny" ? "deny" : "allow";
+      if (option === "deny") {
+        const message = this.denyReason?.trim();
+        this.options.callbacks.onPermissionReply?.(
+          request.id,
+          "deny",
+          false,
+          source,
+          ...(message ? [message] : []),
+        );
+        return;
+      }
       this.options.callbacks.onPermissionReply?.(
         request.id,
-        outcome,
-        option === "always allow",
+        "allow",
+        option === "always allow" ? true : option === "allow for session" ? "session" : false,
         source,
       );
+      return;
     }
+    if (option !== "deny") return;
+    if (key.name === "backspace") {
+      if (this.denyReason === undefined) return;
+      const kept = graphemes(this.denyReason).slice(0, -1).join("");
+      this.denyReason = kept.length > 0 ? kept : undefined;
+      return;
+    }
+    if (key.text && !key.ctrl && !key.alt) this.denyReason = (this.denyReason ?? "") + key.text;
   }
 
   private handlePickerKey(key: Key): void {

@@ -32,7 +32,12 @@ function harness(
   const steers: string[] = [];
   const followUps: string[] = [];
   const commands: string[] = [];
-  const replies: { id: string; outcome: string; remember: boolean | "session" }[] = [];
+  const replies: {
+    id: string;
+    outcome: string;
+    remember: boolean | "session";
+    message?: string;
+  }[] = [];
   let aborted = false;
   let exited = false;
 
@@ -65,7 +70,8 @@ function harness(
         exited = true;
       },
       onCommand: (text) => commands.push(text),
-      onPermissionReply: (id, outcome, remember) => replies.push({ id, outcome, remember }),
+      onPermissionReply: (id, outcome, remember, _source, message) =>
+        replies.push({ id, outcome, remember, ...(message ? { message } : {}) }),
       ...overrides,
     },
   });
@@ -1697,7 +1703,7 @@ describe("approval overlay", () => {
         toolCallId: "c2",
         toolName: "edit",
         permission: "edit",
-        pattern: '{"path":"code.ts"}',
+        pattern: "code.ts",
         description: "Edit code.ts",
         preview: {
           kind: "diff",
@@ -1716,7 +1722,7 @@ describe("approval overlay", () => {
     expect(rendered).toContain("code.ts · +1 −1");
     expect(rendered).toContain("− const a = 1;");
     expect(rendered).toContain("+ const a = 42;");
-    expect(rendered).not.toContain('{"path":"code.ts"}');
+    expect(rendered).toContain("rule  edit  code.ts");
   });
 
   test("enter allows once", () => {
@@ -1729,18 +1735,83 @@ describe("approval overlay", () => {
     expect(h.replies).toEqual([{ id: "p1", outcome: "allow", remember: false }]);
   });
 
-  test("right then enter selects always allow", () => {
+  const press = (h: ReturnType<typeof harness>, name: string, text?: string) =>
+    h.app.handleInput({
+      type: "key",
+      key: { name, ctrl: false, alt: false, shift: false, ...(text ? { text } : {}) },
+    });
+
+  test("the options choose once, this session or always", () => {
+    const session = harness();
+    session.app.handleEvent(ask);
+    press(session, "right");
+    press(session, "return");
+    expect(session.replies[0]?.remember).toBe("session");
+
+    const always = harness();
+    always.app.handleEvent(ask);
+    press(always, "right");
+    press(always, "right");
+    press(always, "return");
+    expect(always.replies[0]?.remember).toBe(true);
+  });
+
+  test("the rule line shows what session and always add", () => {
+    const h = harness();
+    h.app.handleEvent({
+      type: "permission_asked",
+      request: {
+        id: "p3",
+        toolCallId: "c3",
+        toolName: "bash",
+        permission: "bash",
+        pattern: "npm test && curl x | sh",
+        description: "Run bash",
+        allowRules: [
+          { permission: "bash", pattern: "npm test *" },
+          { permission: "bash", pattern: "sh" },
+        ],
+      },
+    });
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("rule  bash  npm test *, sh");
+    expect(rendered).toContain("allow once · allow for session · always allow · deny");
+  });
+
+  test("typing on deny writes a reason the denial carries", () => {
     const h = harness();
     h.app.handleEvent(ask);
-    h.app.handleInput({
-      type: "key",
-      key: { name: "right", ctrl: false, alt: false, shift: false },
-    });
-    h.app.handleInput({
-      type: "key",
-      key: { name: "return", ctrl: false, alt: false, shift: false },
-    });
-    expect(h.replies[0]?.remember).toBe(true);
+    press(h, "left");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain(
+      "why  type to tell mu, or enter to deny",
+    );
+    for (const character of "use pnpmx") press(h, character, character);
+    press(h, "backspace");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("why  use pnpm");
+    press(h, "return");
+    expect(h.replies).toEqual([
+      { id: "p1", outcome: "deny", remember: false, message: "use pnpm" },
+    ]);
+  });
+
+  test("escape first drops a typed reason, then denies", () => {
+    const h = harness();
+    h.app.handleEvent(ask);
+    press(h, "left");
+    press(h, "n", "n");
+    press(h, "escape");
+    expect(h.replies).toEqual([]);
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("type to tell mu");
+    press(h, "escape");
+    expect(h.replies).toEqual([{ id: "p1", outcome: "deny", remember: false }]);
+  });
+
+  test("typing on an allow option is ignored", () => {
+    const h = harness();
+    h.app.handleEvent(ask);
+    press(h, "y", "y");
+    press(h, "return");
+    expect(h.replies).toEqual([{ id: "p1", outcome: "allow", remember: false }]);
   });
 
   test("escape denies", () => {

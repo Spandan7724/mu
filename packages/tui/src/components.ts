@@ -626,9 +626,53 @@ export interface ApprovalData {
   sections?: ApprovalSection[];
   maxPreviewRows?: number;
   selectedIndex: number;
+  // What "allow for session" and "always allow" add.
+  rules?: { permission: string; pattern: string }[];
+  // The denial reason being typed; undefined until the user starts typing on deny.
+  reason?: string | undefined;
 }
 
-export const APPROVAL_OPTIONS = ["allow once", "always allow", "deny"] as const;
+export const APPROVAL_OPTIONS = [
+  "allow once",
+  "allow for session",
+  "always allow",
+  "deny",
+] as const;
+
+function approvalRule(
+  rules: { permission: string; pattern: string }[],
+  width: number,
+  depth: ColorDepth,
+): string {
+  const clean = (text: string) => sanitizeUntrusted(text).replace(/[\r\n\t]+/g, " ");
+  const permissions = [...new Set(rules.map((rule) => rule.permission))];
+  const shared = permissions.length === 1 ? `${clean(permissions[0] ?? "")}  ` : "";
+  const patterns = rules
+    .map((rule) =>
+      styleText(
+        shared ? clean(rule.pattern) : `${clean(rule.permission)} ${clean(rule.pattern)}`,
+        {
+          code: true,
+        },
+        depth,
+      ),
+    )
+    .join(dim(", ", depth));
+  return truncateToWidth(`${MARGIN}${dim(`rule  ${shared}`, depth)}${patterns}`, width);
+}
+
+// Shown under the options while deny is selected; the end of a long reason stays in view.
+function approvalReason(reason: string | undefined, width: number, depth: ColorDepth): string {
+  const label = `${MARGIN}${dim("why  ", depth)}`;
+  if (reason === undefined) return label + dim("type to tell mu, or enter to deny", depth);
+  const room = Math.max(2, width - stringWidth(label) - 1);
+  const clean = sanitizeUntrusted(reason).replace(/[\r\n\t]+/g, " ");
+  let shown = clean;
+  while (stringWidth(shown) > (shown === clean ? room : room - 1) && shown.length > 0) {
+    shown = graphemes(shown).slice(1).join("");
+  }
+  return `${label}${shown !== clean ? "…" : ""}${shown}${BLOCK_CURSOR_ON} ${BLOCK_CURSOR_OFF}`;
+}
 
 // Never a modal box — same quiet layout language as everything else.
 export function approvalOverlay(data: ApprovalData, width: number, depth: ColorDepth): string[] {
@@ -654,10 +698,16 @@ export function approvalOverlay(data: ApprovalData, width: number, depth: ColorD
     // The preview is a command string or diff — never trusted.
     out.push(line);
   }
-  const options = APPROVAL_OPTIONS.map((option, i) =>
-    i === data.selectedIndex ? accent(option, depth) : dim(option, depth),
-  ).join(dim(` ${GLYPHS.separator} `, depth));
-  out.push(MARGIN + options);
+  if (data.rules && data.rules.length > 0) out.push(approvalRule(data.rules, width, depth));
+  const options =
+    MARGIN +
+    APPROVAL_OPTIONS.map((option, i) =>
+      i === data.selectedIndex ? accent(option, depth) : dim(option, depth),
+    ).join(dim(` ${GLYPHS.separator} `, depth));
+  out.push(options);
+  if (APPROVAL_OPTIONS[data.selectedIndex] === "deny") {
+    out.push(approvalReason(data.reason, width, depth));
+  }
   return out;
 }
 
