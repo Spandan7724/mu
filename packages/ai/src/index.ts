@@ -44,6 +44,7 @@ export { recordFetch, replayFetch } from "./testing/replay.ts";
 export {
   defaultThinkingLevel,
   supportedThinkingLevels,
+  thinkingEffort,
   thinkingLevelForModel,
 } from "./thinking.ts";
 export * from "./types.ts";

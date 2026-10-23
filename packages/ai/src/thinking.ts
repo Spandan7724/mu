@@ -30,6 +30,11 @@ const EFFORT_RANK: Readonly<Record<string, number>> = {
   ultra: 7,
 };
 
+// Ordinal effort of a level; undefined for a provider-specific level outside this scale.
+export function thinkingEffort(level: ThinkingLevel): number | undefined {
+  return EFFORT_RANK[level];
+}
+
 // An unsupported selection falls back to the model's default, except that a
 // request for reasoning never lands on "off": it takes the closest effort.
 export function thinkingLevelForModel(

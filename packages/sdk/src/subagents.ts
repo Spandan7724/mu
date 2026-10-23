@@ -5,6 +5,7 @@ import {
   supportedThinkingLevels,
   type TextContent,
   type ThinkingLevel,
+  thinkingEffort,
   thinkingLevelForModel,
   type Usage,
 } from "@mu/ai";
@@ -723,40 +724,51 @@ class SubagentManager {
   }
 
   private modelFor(kind: SubagentKind, parent: Agent): ModelInfo {
-    if (kind === "task") return parent.modelInfo;
-    const override =
-      kind === "counsel" ? this.options.counselModel?.(parent) : this.options.searchModel?.(parent);
-    if (override) return override;
-    const candidates = kind === "counsel" ? counselCandidates(parent) : searchCandidates(parent);
-    for (const ref of candidates) {
-      const model = parent.availableModel(ref);
-      if (model) return model;
+    if (kind === "counsel") return this.options.counselModel?.(parent) ?? parent.modelInfo;
+    if (kind === "search" || kind === "recall") {
+      return this.options.searchModel?.(parent) ?? parent.modelInfo;
     }
     return parent.modelInfo;
   }
 
   private thinkingFor(kind: SubagentKind, parent: Agent, model: ModelInfo): ThinkingLevel {
     if (kind === "task") return parent.thinking;
-    const levels = supportedThinkingLevels(model);
-    if (kind === "search" || kind === "recall") {
-      if (levels.includes("low")) return "low";
-      if (model.provider === parent.modelInfo.provider && model.id === parent.modelInfo.id) {
-        return parent.thinking;
-      }
-      return defaultThinkingLevel(model);
-    }
-    const xhigh = levels.indexOf("xhigh");
-    const capped =
-      xhigh === -1
-        ? levels.filter((level) => level !== "max" && level !== "ultra")
-        : levels.slice(0, xhigh + 1);
-    if (capped.length === 0) return defaultThinkingLevel(model);
-    const current = capped.indexOf(parent.thinking);
-    if (current !== -1) return capped[Math.min(current + 1, capped.length - 1)] ?? parent.thinking;
-    if (levels.includes(parent.thinking)) return capped.at(-1) ?? parent.thinking;
-    const base = capped.indexOf(defaultThinkingLevel(model));
-    return capped[Math.min(Math.max(0, base) + 1, capped.length - 1)] ?? parent.thinking;
+    const levels = rankedLevels(model);
+    const chosen = kind === "counsel" ? counselLevel(levels, parent.thinking) : searchLevel(levels);
+    return chosen ?? defaultThinkingLevel(model);
   }
+}
+
+interface RankedLevel {
+  level: ThinkingLevel;
+  effort: number;
+}
+
+const LOW = thinkingEffort("low") ?? 2;
+const HIGH = thinkingEffort("high") ?? 4;
+const XHIGH = thinkingEffort("xhigh") ?? 5;
+
+function rankedLevels(model: ModelInfo): RankedLevel[] {
+  return supportedThinkingLevels(model)
+    .flatMap((level) => {
+      const effort = thinkingEffort(level);
+      return effort === undefined ? [] : [{ level, effort }];
+    })
+    .sort((a, b) => a.effort - b.effort);
+}
+
+// Search and Recall reason at low whatever the parent uses: the lowest supported level
+// at or above low, else the highest the model has.
+function searchLevel(levels: RankedLevel[]): ThinkingLevel | undefined {
+  return (levels.find((candidate) => candidate.effort >= LOW) ?? levels.at(-1))?.level;
+}
+
+// Counsel goes one level above the parent, at least high and at most xhigh; a parent
+// above xhigh keeps its own level. A model without the target takes the nearest below.
+function counselLevel(levels: RankedLevel[], parent: ThinkingLevel): ThinkingLevel | undefined {
+  const own = thinkingEffort(parent) ?? 0;
+  const target = own > XHIGH ? own : Math.min(Math.max(own + 1, HIGH), XHIGH);
+  return (levels.findLast((candidate) => candidate.effort <= target) ?? levels[0])?.level;
 }
 
 function withSessionTools(tools: AnyTool[], session: TaskSubagentSession | undefined): AnyTool[] {
@@ -885,28 +897,6 @@ export function formatSubagentRoutes(
       ];
     }),
   ];
-}
-
-function refs(provider: string, ids: string[]): string[] {
-  return ids.map((id) => `${provider}/${id}`);
-}
-
-function searchCandidates(parent: Agent): string[] {
-  const { provider } = parent.modelInfo;
-  if (provider === "anthropic") return refs(provider, ["claude-sonnet-5"]);
-  if (provider === "openai" || provider === "openai-codex") {
-    return refs(provider, ["gpt-5.6-terra"]);
-  }
-  return [];
-}
-
-function counselCandidates(parent: Agent): string[] {
-  const { provider } = parent.modelInfo;
-  if (provider === "anthropic") return refs(provider, ["claude-opus-5", "claude-sonnet-5"]);
-  if (provider === "openai" || provider === "openai-codex") {
-    return refs(provider, ["gpt-5.6-sol"]);
-  }
-  return [];
 }
 
 export function subagentsExtension(options: SubagentExtensionOptions): Extension {

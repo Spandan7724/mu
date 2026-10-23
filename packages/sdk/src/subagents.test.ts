@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelInfo } from "@mu/ai";
+import type { ModelInfo, ThinkingLevel } from "@mu/ai";
 import {
   CommandRegistry,
   customMessage,
@@ -231,7 +231,7 @@ describe("managed subagents", () => {
     expect(failures.every((message) => message.isError)).toBe(true);
   });
 
-  test("search selects Terra at low reasoning and receives only inspection tools", async () => {
+  test("search runs on the parent model at low reasoning and receives only inspection tools", async () => {
     const provider = new FakeProvider([
       {
         content: [
@@ -318,7 +318,7 @@ describe("managed subagents", () => {
     );
   });
 
-  test("counsel selects the stronger same-provider model and raises reasoning one level", async () => {
+  test("counsel runs on the parent model and reasons one level higher", async () => {
     const provider = new FakeProvider([
       {
         content: [
@@ -358,7 +358,7 @@ describe("managed subagents", () => {
     );
     expect(details(parent, "counsel")).toMatchObject({
       kind: "counsel",
-      model: "openai-codex/gpt-5.6-sol",
+      model: "openai-codex/gpt-5.6-terra",
       thinkingLevel: "high",
     });
   });
@@ -366,69 +366,40 @@ describe("managed subagents", () => {
   test.each([
     "search",
     "recall",
-  ])("%s uses configured fast models and otherwise retains the parent model", async (kind) => {
-    const cases: { parentModel: ModelInfo; expectedModel: string; expectedThinking: string }[] = [
+  ])("%s runs on the parent model at low reasoning whatever the parent's level", async (kind) => {
+    const provider = new FakeProvider([
       {
-        parentModel: { ...fakeModel, provider: "openai", id: "gpt-5.6-sol" },
-        expectedModel: "openai/gpt-5.6-terra",
-        expectedThinking: "low",
+        content: [
+          { type: "toolCall", id: `${kind}-1`, name: kind, arguments: { query: "Trace it" } },
+        ],
       },
-      {
-        parentModel: { ...fakeModel, provider: "anthropic", id: "claude-opus-5" },
-        expectedModel: "anthropic/claude-sonnet-5",
-        expectedThinking: "low",
-      },
-      {
-        parentModel: { ...fakeModel, provider: "google", id: "gemini-2.5-pro" },
-        expectedModel: "google/gemini-2.5-pro",
-        expectedThinking: "low",
-      },
-      {
-        parentModel: {
-          ...fakeModel,
-          provider: "custom",
-          id: "reasoner",
-          thinkingLevels: ["high", "xhigh"],
-          defaultThinkingLevel: "high",
-        },
-        expectedModel: "custom/reasoner",
-        expectedThinking: "high",
-      },
-    ];
+      { content: [{ type: "text", text: "Found." }] },
+      { content: [{ type: "text", text: "Done." }] },
+    ]);
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: { ...codexTerra, provider: "google", id: "gemini-2.5-pro" },
+      thinkingLevel: "xhigh",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+      }),
+    );
 
-    for (const { parentModel, expectedModel, expectedThinking } of cases) {
-      const provider = new FakeProvider([
-        {
-          content: [
-            {
-              type: "toolCall",
-              id: `${kind}-1`,
-              name: kind,
-              arguments: { query: "Trace it" },
-            },
-          ],
-        },
-        { content: [{ type: "text", text: "Found." }] },
-        { content: [{ type: "text", text: "Done." }] },
-      ]);
-      const host = new ExtensionHost();
-      const parent = new Agent({ provider, model: parentModel, extensions: host });
-      await host.register(
-        subagentsExtension({
-          parent: () => parent,
-          coding: { inspectionTools: [] },
-          inspectionPermissions: [],
-        }),
-      );
+    await parent.run(`Ask ${kind} to trace it`);
 
-      await parent.run(`Ask ${kind} to trace it`);
-
-      expect(details(parent, kind).model).toBe(expectedModel);
-      expect(details(parent, kind).thinkingLevel).toBe(expectedThinking);
-    }
+    expect(details(parent, kind)).toMatchObject({
+      model: "google/gemini-2.5-pro",
+      thinkingLevel: "low",
+    });
   });
 
-  test("counsel retains a Google parent model and caps reasoning at xhigh", async () => {
+  test("counsel keeps a parent level above xhigh", async () => {
     const model: ModelInfo = {
       ...fakeModel,
       provider: "google",
@@ -469,7 +440,7 @@ describe("managed subagents", () => {
 
     expect(details(parent, "counsel")).toMatchObject({
       model: "google/gemini-2.5-pro",
-      thinkingLevel: "xhigh",
+      thinkingLevel: "max",
     });
   });
 
@@ -948,20 +919,83 @@ describe("/subagents", () => {
     expect(await routes(host)).toEqual([
       { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "medium" },
       { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
-      { kind: "counsel", model: "gpt-5.6-sol", thinkingLevel: "high" },
+      { kind: "counsel", model: "gpt-5.6-terra", thinkingLevel: "high" },
       { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
     ]);
     await parent.run("consult");
     expect(details(parent, "counsel")).toMatchObject({
-      model: "openai-codex/gpt-5.6-sol",
+      model: "openai-codex/gpt-5.6-terra",
       thinkingLevel: "high",
     });
 
     parent.setThinking("high");
     expect((await routes(host)).find((route) => route.kind === "counsel")).toEqual({
       kind: "counsel",
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-terra",
       thinkingLevel: "xhigh",
+    });
+  });
+
+  const levelsOf = async (model: ModelInfo, thinkingLevel: ThinkingLevel) => {
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider: new FakeProvider([]),
+      model,
+      thinkingLevel,
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+      }),
+    );
+    return Object.fromEntries(
+      (await routes(host)).map((route) => [route.kind, route.thinkingLevel]),
+    );
+  };
+  const full: ModelInfo = {
+    ...fakeModel,
+    thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+  };
+
+  test.each([
+    ["none", "high"],
+    ["minimal", "high"],
+    ["low", "high"],
+    ["medium", "high"],
+    ["high", "xhigh"],
+    ["xhigh", "xhigh"],
+    ["max", "max"],
+    ["ultra", "ultra"],
+  ])("counsel for a parent at %s reasons at %s; task copies the parent", async (own, counsel) => {
+    expect(await levelsOf(full, own)).toEqual({
+      task: own,
+      search: "low",
+      counsel,
+      recall: "low",
+    });
+  });
+
+  test("a model without the target level takes the nearest supported one", async () => {
+    expect(
+      await levelsOf({ ...fakeModel, thinkingLevels: ["low", "medium", "high"] }, "high"),
+    ).toMatchObject({ counsel: "high", search: "low" });
+    expect(
+      await levelsOf(
+        { ...fakeModel, thinkingLevels: ["none", "minimal", "medium", "high"] },
+        "none",
+      ),
+    ).toMatchObject({ counsel: "high", search: "medium" });
+    expect(await levelsOf({ ...fakeModel, thinkingLevels: ["xhigh", "max"] }, "max")).toMatchObject(
+      { counsel: "max", search: "xhigh" },
+    );
+    expect(await levelsOf({ ...fakeModel, thinking: false }, "off")).toEqual({
+      task: undefined,
+      search: undefined,
+      counsel: undefined,
+      recall: undefined,
     });
   });
 
