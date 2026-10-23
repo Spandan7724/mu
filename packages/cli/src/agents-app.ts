@@ -31,6 +31,7 @@ import {
   ExtensionHost,
   type Profile,
   readAuthFile,
+  type SubagentsCommandData,
   type UndoPointsCommandData,
 } from "mu";
 import cliPackage from "../package.json";
@@ -40,7 +41,11 @@ import type { AgentViewAttachment, AgentViewResponse } from "./agent-view-protoc
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
-import { renderCheckpointCommand, renderDiffCommand } from "./interactive.ts";
+import {
+  formatSubagentsOutput,
+  renderCheckpointCommand,
+  renderDiffCommand,
+} from "./interactive.ts";
 import { modelPickerItems } from "./model-picker.ts";
 import { createRendererRegistry } from "./presentation.ts";
 import { DEFAULT_PROFILE, resolveProfile } from "./profiles.ts";
@@ -825,6 +830,7 @@ export async function runAgentView(
         | { kind: "fork-points"; points: { id: string; description: string }[] }
         | { kind: "compaction"; status: string }
         | { kind: "permission-mode"; label: string }
+        | SubagentsCommandData
         | undefined;
       if (data?.kind === "permission-mode") {
         const mode = active.snapshot.permissionModes?.find((item) => item.label === data.label);
@@ -865,6 +871,8 @@ export async function runAgentView(
             void client.sessionOp(sessionId, { type: "command", text: `/fork ${entryId}` }),
           onBack: () => active?.app.openCommandMenu(),
         });
+      } else if (data?.kind === "subagents") {
+        active.app.appendTranscript(formatSubagentsOutput(data, depth));
       } else if (data?.kind !== "compaction" || data.status === "queued") {
         if (response.message) {
           active.app.appendTranscript(

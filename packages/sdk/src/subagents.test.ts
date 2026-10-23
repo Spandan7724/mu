@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ModelInfo } from "@mu/ai";
 import {
+  CommandRegistry,
   customMessage,
   ExtensionHost,
   MemorySessionStore,
@@ -15,6 +16,7 @@ import {
   type SubagentDetails,
   type SubagentExtensionOptions,
   type SubagentProgressUpdate,
+  type SubagentsCommandData,
   subagentsExtension,
 } from "./subagents.ts";
 import { tool } from "./tool.ts";
@@ -910,5 +912,107 @@ describe("managed subagents", () => {
 
     expect(result.reason).toBe("aborted");
     expect(details(parent, "task").reason).toBe("aborted");
+  });
+});
+
+describe("/subagents", () => {
+  const command = { inject: () => {}, print: () => {}, getModel: () => "", setModel: () => {} };
+  const routes = async (host: ExtensionHost) =>
+    ((await host.commands.execute("/subagents", command)).data as SubagentsCommandData).routes;
+
+  test("names each role's model and reasoning level as a run would pick them", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "counsel-1", name: "counsel", arguments: { question: "Q" } },
+        ],
+      },
+      { content: [{ type: "text", text: "A" }] },
+      { content: [{ type: "text", text: "Done." }] },
+    ]);
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: codexTerra,
+      thinkingLevel: "medium",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+      }),
+    );
+
+    expect(await routes(host)).toEqual([
+      { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "medium" },
+      { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
+      { kind: "counsel", model: "gpt-5.6-sol", thinkingLevel: "high" },
+      { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
+    ]);
+    await parent.run("consult");
+    expect(details(parent, "counsel")).toMatchObject({
+      model: "openai-codex/gpt-5.6-sol",
+      thinkingLevel: "high",
+    });
+
+    parent.setThinking("high");
+    expect((await routes(host)).find((route) => route.kind === "counsel")).toEqual({
+      kind: "counsel",
+      model: "gpt-5.6-sol",
+      thinkingLevel: "xhigh",
+    });
+  });
+
+  test("lists only registered roles and omits the level for a model without reasoning", async () => {
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider: new FakeProvider([]),
+      model: { ...fakeModel, thinking: false },
+      extensions: host,
+    });
+    await host.register(subagentsExtension({ parent: () => parent }));
+
+    const result = await host.commands.execute("/subagents", command);
+    expect((result.data as SubagentsCommandData).routes).toEqual([
+      { kind: "task", model: "fake-1" },
+    ]);
+    expect(result.message).toBe(
+      [
+        "Subagents — ask mu in plain language:",
+        "",
+        "  task  fake-1",
+        "    Independent implementation or checks. Say “Delegate X or use subagents to do X.”",
+        "    Add “in the background” to keep working meanwhile; ask for its status, or to redirect or stop it.",
+      ].join("\n"),
+    );
+  });
+
+  test("a role the profile already provides is left out, and a profile command keeps the name", async () => {
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider: new FakeProvider([]),
+      model: fakeModel,
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+        excludeTools: ["task", "recall"],
+      }),
+    );
+    expect((await routes(host)).map((route) => route.kind)).toEqual(["search", "counsel"]);
+
+    const registry = new CommandRegistry();
+    registry.register({
+      name: "subagents",
+      description: "custom",
+      run: () => ({ handled: true, message: "custom" }),
+    });
+    for (const registered of host.commands.list()) registry.register(registered);
+    expect((await registry.execute("/subagents", command)).message).toBe("custom");
   });
 });

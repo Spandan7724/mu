@@ -5,6 +5,7 @@ import {
   supportedThinkingLevels,
   type TextContent,
   type ThinkingLevel,
+  thinkingLevelForModel,
   type Usage,
 } from "@mu/ai";
 import {
@@ -50,6 +51,19 @@ export interface SubagentProgressUpdate {
     | { type: "assistant_start" }
     | { type: "text_delta"; text: string }
     | { type: "message"; message: AgentMessage };
+}
+
+// The model a role would run on if called now; thinkingLevel is absent for a model
+// without reasoning levels.
+export interface SubagentRoute {
+  kind: SubagentKind;
+  model: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
+export interface SubagentsCommandData {
+  kind: "subagents";
+  routes: SubagentRoute[];
 }
 
 // What a `task` call started with run_in_background returns in place of a result.
@@ -212,8 +226,7 @@ class SubagentManager {
       const parent = this.options.parent();
       if (kind === "task" && this.options.taskSession)
         session = await this.options.taskSession(description, signal);
-      const model = this.modelFor(kind, parent);
-      const thinkingLevel = this.thinkingFor(kind, parent, model);
+      const { model, thinkingLevel } = this.resolve(kind, parent);
       const tools = withSessionTools(this.toolsFor(kind, parent), session);
       child = parent.createChild({
         model,
@@ -693,6 +706,22 @@ class SubagentManager {
     return [base, profilePrompt?.trim()].filter(Boolean).join("\n\n");
   }
 
+  route(kind: SubagentKind): SubagentRoute {
+    const { model, thinkingLevel } = this.resolve(kind, this.options.parent());
+    return { kind, model: model.id, ...(model.thinking ? { thinkingLevel } : {}) };
+  }
+
+  private resolve(
+    kind: SubagentKind,
+    parent: Agent,
+  ): { model: ModelInfo; thinkingLevel: ThinkingLevel } {
+    const model = this.modelFor(kind, parent);
+    return {
+      model,
+      thinkingLevel: thinkingLevelForModel(model, this.thinkingFor(kind, parent, model)),
+    };
+  }
+
   private modelFor(kind: SubagentKind, parent: Agent): ModelInfo {
     if (kind === "task") return parent.modelInfo;
     const override =
@@ -825,6 +854,39 @@ function notificationText(job: BackgroundJob): string {
   return `${header}\n\n${outcomeText(job)}`;
 }
 
+const ROLE_HELP: Record<SubagentKind, string[]> = {
+  task: [
+    "Independent implementation or checks. Say “Delegate X or use subagents to do X.”",
+    "Add “in the background” to keep working meanwhile; ask for its status, or to redirect or stop it.",
+  ],
+  search: ["Read-only code investigation. Say “Use Search to trace X.”"],
+  counsel: ["Second opinion on hard decisions. Say “Ask Counsel about X.”"],
+  recall: ["Past sessions, not current files. Must say “Ask Recall about X.”"],
+};
+
+export interface SubagentRoutesStyle {
+  name?: (kind: SubagentKind, text: string) => string;
+  route?: (text: string) => string;
+}
+
+export function formatSubagentRoutes(
+  routes: readonly SubagentRoute[],
+  style: SubagentRoutesStyle = {},
+): string[] {
+  const column = Math.max(0, ...routes.map((route) => route.kind.length)) + 2;
+  return [
+    "Subagents — ask mu in plain language:",
+    "",
+    ...routes.flatMap((route) => {
+      const text = [route.model, route.thinkingLevel].filter(Boolean).join(" · ");
+      return [
+        `  ${style.name?.(route.kind, route.kind) ?? route.kind}${" ".repeat(column - route.kind.length)}${style.route?.(text) ?? text}`,
+        ...ROLE_HELP[route.kind].map((line) => `    ${line}`),
+      ];
+    }),
+  ];
+}
+
 function refs(provider: string, ids: string[]): string[] {
   return ids.map((id) => `${provider}/${id}`);
 }
@@ -853,9 +915,29 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
   }
   const manager = new SubagentManager(options);
   const excluded = new Set(options.excludeTools ?? []);
+  const kinds: SubagentKind[] = [
+    ...(excluded.has("task") ? [] : (["task"] as const)),
+    ...(options.coding
+      ? (["search", "counsel", "recall"] as const).filter((kind) => !excluded.has(kind))
+      : []),
+  ];
   return {
     name: "subagents",
     activate(api) {
+      if (kinds.length > 0)
+        api.registerCommand({
+          name: "subagents",
+          description: "List subagents, the model each runs on, and how to ask for it",
+          fallback: true,
+          run: () => {
+            const routes = kinds.map((kind) => manager.route(kind));
+            return {
+              handled: true,
+              message: formatSubagentRoutes(routes).join("\n"),
+              data: { kind: "subagents", routes } satisfies SubagentsCommandData,
+            };
+          },
+        });
       if (!excluded.has("task")) {
         api.registerTool(
           tool({

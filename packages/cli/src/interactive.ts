@@ -32,6 +32,7 @@ import {
   customMessage,
   type DiffCommandData,
   defaultModelId,
+  formatSubagentRoutes,
   loadMarkdownCommands,
   type MarkdownCommandRun,
   type ModelInfo,
@@ -41,6 +42,8 @@ import {
   removeStoredCredential,
   type SideConversation,
   saveApiKey,
+  type SubagentKind,
+  type SubagentsCommandData,
   startSideConversation,
   type ThinkingLevel,
   toCommand,
@@ -149,7 +152,7 @@ export function formatInstructionsOutput(message: string): string[] {
   return ["", `  ${message}`, ""];
 }
 
-const SUBAGENT_NAME_STYLES: Record<string, Style> = {
+const SUBAGENT_NAME_STYLES: Record<SubagentKind, Style> = {
   task: { task: true },
   search: { toolRead: true },
   counsel: { counsel: true },
@@ -160,17 +163,12 @@ export function stoppedBackgroundNotice(stopped: string[]): string {
   return `stopped background work ${stopped.join(", ")}; its result is kept in the previous session`;
 }
 
-export function formatSubagentsOutput(message: string, depth: ColorDepth): string[] {
+export function formatSubagentsOutput(data: SubagentsCommandData, depth: ColorDepth): string[] {
   return [
-    ...message
-      .trimEnd()
-      .split("\n")
-      .map((line) => {
-        if (line.length === 0) return "";
-        const match = /^ {2}(task|search|counsel|recall)(?= \(| —)/.exec(line);
-        if (!match?.[1]) return `  ${line}`;
-        return `  ${line.replace(match[1], styleText(match[1], SUBAGENT_NAME_STYLES[match[1]] ?? {}, depth))}`;
-      }),
+    ...formatSubagentRoutes(data.routes, {
+      name: (kind, text) => styleText(text, SUBAGENT_NAME_STYLES[kind], depth),
+      route: (text) => styleText(text, { dim: true }, depth),
+    }).map((line) => (line ? `  ${line}` : "")),
     "",
   ];
 }
@@ -1339,6 +1337,7 @@ export async function runInteractive(
       | { kind: "fork-points"; points: { id: string; description: string }[] }
       | { kind: "compaction"; status: string }
       | MarkdownCommandRun
+      | SubagentsCommandData
       | undefined;
     if (data?.kind === "checkpoint") {
       if (data.action === "undo" && data.prompt !== undefined) {
@@ -1385,13 +1384,13 @@ export async function runInteractive(
     } else if (data?.kind === "compaction" && data.status !== "queued") {
       // Standalone compaction reports its durable boundary through AgentEvent;
       // avoid printing the same outcome twice in the interactive transcript.
+    } else if (data?.kind === "subagents") {
+      commitLines(formatSubagentsOutput(data, depth), source);
     } else if (result.message) {
       commitLines(
         parsed?.name === "instructions"
           ? formatInstructionsOutput(result.message)
-          : parsed?.name === "subagents"
-            ? formatSubagentsOutput(result.message, depth)
-            : [`  ${result.message}`],
+          : [`  ${result.message}`],
         source,
       );
     }
