@@ -151,10 +151,16 @@ runs on, and an example of how to invoke it. Every subagent uses your current mo
 default: `task` at your reasoning level, `search` and `recall` at `low`, and `counsel` one
 level above yours (at least `high`, at most `xhigh`). The editor that opens under the list
 sets a different model (any provider you are logged into or have a key for) and/or level
-for `search`, `counsel` or `recall`; it is saved in `~/.mu/config.json`:
+for `task`, `search`, `counsel` or `recall`. Choices apply to the coding profile and are
+saved in `~/.mu/config.json`:
 
 ```json
-"subagents": { "counsel": { "model": "openai-codex/gpt-6-astra", "thinking": "xhigh" } }
+"subagents": {
+  "coding": {
+    "task": { "model": "openai-codex/gpt-5.6-terra" },
+    "counsel": { "model": "openai-codex/gpt-6-astra", "thinking": "xhigh" }
+  }
+}
 ```
 
 Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate

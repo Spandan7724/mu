@@ -54,9 +54,7 @@ export interface SubagentProgressUpdate {
     | { type: "message"; message: AgentMessage };
 }
 
-export type SpecialistKind = Exclude<SubagentKind, "task">;
-
-// A caller's choice for one specialist. Either field alone is allowed: a model alone keeps
+// A caller's choice for one role. Either field alone is allowed: a model alone keeps
 // the role's reasoning rule, a level alone applies to the parent's model. `unavailable`
 // names a choice that could not be honoured, so the role runs on its default.
 export interface SubagentRouteOverride {
@@ -103,9 +101,9 @@ interface SubagentExtensionBaseOptions {
   // A profile's per-child resources for task subagents (any profile, not only coding).
   taskSession?: ProfileSubagents["taskSession"];
   excludeTools?: readonly string[];
-  // Consulted on every specialist call and /subagents listing, so changes apply at once.
+  // Consulted on every subagent call and /subagents listing, so changes apply at once.
   routeOverride?: (
-    kind: SpecialistKind,
+    kind: SubagentKind,
     parent: Agent,
   ) => SubagentRouteOverride | undefined | Promise<SubagentRouteOverride | undefined>;
 }
@@ -738,7 +736,7 @@ class SubagentManager {
     kind: SubagentKind,
     parent: Agent,
   ): Promise<{ model: ModelInfo; thinkingLevel: ThinkingLevel; override?: SubagentRouteOverride }> {
-    const override = kind === "task" ? undefined : await this.options.routeOverride?.(kind, parent);
+    const override = await this.options.routeOverride?.(kind, parent);
     const model = override?.model ?? parent.modelInfo;
     const thinkingLevel = thinkingLevelForModel(
       model,
@@ -756,8 +754,8 @@ export function subagentThinking(
   model: ModelInfo,
   parentThinking: ThinkingLevel,
 ): ThinkingLevel {
-  if (kind === "task") return parentThinking;
   const levels = rankedLevels(model);
+  if (kind === "task") return nearestLevel(levels, parentThinking);
   const chosen = kind === "counsel" ? counselLevel(levels, parentThinking) : searchLevel(levels);
   return chosen ?? defaultThinkingLevel(model);
 }

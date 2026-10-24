@@ -1097,7 +1097,7 @@ describe("subagent route overrides", () => {
       { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
     ]);
     expect(result.message).toContain("  counsel  gpt-6-astra · max · set");
-    expect(asked).not.toContain("task");
+    expect(asked).toEqual(["task", "search", "counsel", "recall"]);
 
     await parent.run("consult");
     expect(details(parent, "counsel")).toMatchObject({
@@ -1124,7 +1124,9 @@ describe("subagent route overrides", () => {
             ? { model: astra }
             : kind === "counsel"
               ? { thinkingLevel: "medium" }
-              : { thinkingLevel: "ultra" },
+              : kind === "recall"
+                ? { thinkingLevel: "ultra" }
+                : undefined,
       }),
     );
 
@@ -1137,6 +1139,46 @@ describe("subagent route overrides", () => {
       // gpt-5.6-terra tops out at xhigh, so a pinned ultra lands on the nearest level.
       { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "xhigh", pinned: true },
     ]);
+  });
+
+  test("a pinned task model reaches the child; without a level it keeps the nearest to yours", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "task-1",
+            name: "task",
+            arguments: { description: "survey", prompt: "Survey the code" },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "Surveyed." }] },
+      { content: [{ type: "text", text: "Done." }] },
+    ]);
+    const small: ModelInfo = { ...codexTerra, id: "glm-5.3", thinkingLevels: ["low", "high"] };
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: codexTerra,
+      thinkingLevel: "xhigh",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        routeOverride: (kind) => (kind === "task" ? { model: small } : undefined),
+      }),
+    );
+
+    expect(
+      ((await host.commands.execute("/subagents", command)).data as SubagentsCommandData).routes,
+    ).toEqual([{ kind: "task", model: "glm-5.3", thinkingLevel: "high", pinned: true }]);
+    await parent.run("delegate");
+    expect(details(parent, "task")).toMatchObject({
+      model: "openai-codex/glm-5.3",
+      thinkingLevel: "high",
+    });
   });
 
   test("an unavailable pin runs the role's default and names what was configured", async () => {

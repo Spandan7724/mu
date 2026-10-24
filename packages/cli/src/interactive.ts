@@ -1172,13 +1172,14 @@ export async function runInteractive(
   }
 
   // /subagents opens this under its listing: role, then model, then reasoning. Routing
-  // reads the saved choice on every call, so nothing else needs to be told.
+  // reads the saved choice on every call, so nothing else needs to be told. Choices are
+  // the coding profile's own; other profiles keep their default routing.
+  const pinProfile = profile?.name === "coding" ? profile.name : undefined;
   function openSubagentRoles(routes: SubagentRoute[], source: ConversationSource): void {
-    const specialists = routes.filter(
-      (route): route is SubagentRoute & { kind: PinnableSubagent } => route.kind !== "task",
-    );
+    if (!pinProfile) return;
+    const specialists = routes as (SubagentRoute & { kind: PinnableSubagent })[];
     if (specialists.length === 0) return;
-    const anySet = Object.keys(readSubagentPins()).length > 0;
+    const anySet = Object.keys(readSubagentPins(pinProfile)).length > 0;
     app.openPicker({
       title: "change a subagent's model · esc close",
       items: [
@@ -1215,7 +1216,7 @@ export async function runInteractive(
     source: ConversationSource,
   ): Promise<void> {
     const auth = await readAuthFile().catch(() => ({ providers: {} }) as const);
-    const current = readSubagentPins()[kind]?.model;
+    const current = pinProfile ? readSubagentPins(pinProfile)[kind]?.model : undefined;
     const main = agent.modelInfo;
     app.openPicker({
       title: `model for ${kind}`,
@@ -1270,7 +1271,7 @@ export async function runInteractive(
       return;
     }
     const roleDefault = thinkingLevelForModel(model, subagentThinking(kind, model, agent.thinking));
-    const pinned = readSubagentPins()[kind]?.thinking;
+    const pinned = pinProfile ? readSubagentPins(pinProfile)[kind]?.thinking : undefined;
     app.openPicker({
       title: `reasoning for ${kind} on ${model.id}`,
       items: [
@@ -1278,9 +1279,10 @@ export async function runInteractive(
           label: "role default",
           value: "",
           description:
-            kind !== "counsel"
+            kind === "search" || kind === "recall"
               ? roleDefault
-              : (thinkingEffort(agent.thinking) ?? 0) > (thinkingEffort("xhigh") ?? 5)
+              : kind === "task" ||
+                  (thinkingEffort(agent.thinking) ?? 0) > (thinkingEffort("xhigh") ?? 5)
                 ? `${roleDefault} · same as yours`
                 : `${roleDefault} · one above yours, high to xhigh`,
         },
@@ -1307,8 +1309,9 @@ export async function runInteractive(
     pin: SubagentPin | undefined,
     source: ConversationSource,
   ): Promise<void> {
+    if (!pinProfile) return;
     try {
-      await saveSubagentPin(kind, pin);
+      await saveSubagentPin(pinProfile, kind, pin);
     } catch (error) {
       commitLines(
         [`  could not save: ${error instanceof Error ? error.message : String(error)}`, ""],
@@ -1687,7 +1690,9 @@ export async function runInteractive(
   const startupNotices = [
     ...runtime.warnings,
     ...(checkpointNotice ? [checkpointNotice] : []),
-    ...(profile?.subagents ? await unavailableSubagentPins({ extensions }) : []),
+    ...(profile?.name === "coding"
+      ? await unavailableSubagentPins({ profile: profile.name, extensions })
+      : []),
   ];
   if (startupNotices.length > 0) commitLines([...startupNotices.map((line) => `  ${line}`), ""]);
   void modelCatalog?.ensureFresh().then((refresh) => {

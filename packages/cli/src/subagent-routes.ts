@@ -8,13 +8,14 @@ import {
   providerConfig,
   providerEnvVars,
   readAuthFile,
-  type SpecialistKind,
+  type SubagentKind,
   type SubagentRouteOverride,
   type ThinkingLevel,
 } from "mu";
 import { readSubagentPins, type SubagentPins, userConfigPath } from "./config.ts";
 
 export interface SubagentRouteSources {
+  profile: string;
   extensions: ExtensionHost;
   configFile?: string;
   authFile?: string;
@@ -60,9 +61,9 @@ function pinnedModel(
 // the role runs on its default instead of failing the call.
 export function subagentRouteOverride(
   sources: SubagentRouteSources,
-): (kind: SpecialistKind, parent: Agent) => Promise<SubagentRouteOverride | undefined> {
+): (kind: SubagentKind, parent: Agent) => Promise<SubagentRouteOverride | undefined> {
   return async (kind) => {
-    const pin = readSubagentPins(sources.configFile ?? userConfigPath())[kind];
+    const pin = readSubagentPins(sources.profile, sources.configFile ?? userConfigPath())[kind];
     if (!pin?.model && !pin?.thinking) return undefined;
     const thinkingLevel = pin.thinking as ThinkingLevel | undefined;
     if (!pin.model) return thinkingLevel ? { thinkingLevel } : undefined;
@@ -78,7 +79,7 @@ export function subagentRouteOverride(
 
 export async function unavailableSubagentPins(
   sources: SubagentRouteSources,
-  pins: SubagentPins = readSubagentPins(sources.configFile ?? userConfigPath()),
+  pins: SubagentPins = readSubagentPins(sources.profile, sources.configFile ?? userConfigPath()),
 ): Promise<string[]> {
   const entries = Object.entries(pins).filter(([, pin]) => pin?.model);
   if (entries.length === 0) return [];

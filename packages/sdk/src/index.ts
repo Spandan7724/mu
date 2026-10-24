@@ -180,7 +180,6 @@ export {
 } from "./structured-output.ts";
 export type {
   BackgroundSubagentDetails,
-  SpecialistKind,
   SubagentDetails,
   SubagentExtensionOptions,
   SubagentKind,

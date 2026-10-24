@@ -199,7 +199,14 @@ export async function createCliSessionRuntime(
       ...(profile?.name === "coding" && profile.subagents ? { coding: profile.subagents } : {}),
       inspectionPermissions: rulesForPermissionMode(basePermissions, restrictiveMode),
       excludeTools: existingTools,
-      routeOverride: subagentRouteOverride({ extensions: loaded.host }),
+      ...(profile?.name === "coding"
+        ? {
+            routeOverride: subagentRouteOverride({
+              profile: profile.name,
+              extensions: loaded.host,
+            }),
+          }
+        : {}),
     }),
   );
 
