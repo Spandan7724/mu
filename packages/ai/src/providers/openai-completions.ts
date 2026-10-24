@@ -142,7 +142,8 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
     messages: convertMessages(ctx.messages, ctx.systemPrompt),
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: opts?.maxTokens ?? model.maxOutput,
+    [model.provider === "inception" ? "max_completion_tokens" : "max_tokens"]:
+      opts?.maxTokens ?? model.maxOutput,
   };
   if (ctx.tools && ctx.tools.length > 0) {
     body.tools = ctx.tools.map((tool) => ({
@@ -159,7 +160,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
   if (opts?.sessionId) {
     if (model.provider === "openrouter") {
       body.user = opts.sessionId;
-    } else {
+    } else if (model.provider !== "inception") {
       body.prompt_cache_key = opts.sessionId;
     }
   }

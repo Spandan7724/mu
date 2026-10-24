@@ -99,14 +99,18 @@ are still recorded as session context.
 ## Providers
 
 Account sign-in is available for OpenAI Codex/ChatGPT, GitHub Copilot, Kimi Code,
-OpenRouter, and xAI. API-key routes include Anthropic, OpenAI, Google, Z.AI Coding Plan,
-Qwen Token Plan, and providers supported by Mu's shared OpenAI-compatible and
-Gemini-compatible transports. Anthropic subscription OAuth is not supported.
+OpenRouter, and xAI. API-key routes include Anthropic, OpenAI, Google, Inception Labs,
+Z.AI Coding Plan, Qwen Token Plan, and providers supported by Mu's shared OpenAI-compatible
+and Gemini-compatible transports. Anthropic subscription OAuth is not supported.
 
 OpenAI API-key models use the `openai/*` namespace. ChatGPT-plan models use
 `openai-codex/*`; the credentials are separate and may coexist. Both routes receive
 provider-hosted web search automatically. Other providers currently run without web
 search.
+
+For Inception Labs, use `/login` → API key → Inception Labs or set `INCEPTION_API_KEY`,
+then run `mu --model inception/mercury-3`. Mercury 2.5 and Mercury 2 are also supported;
+`/thinking` selects `instant`, `low`, `medium`, or `high` reasoning.
 
 A local `llama-server` is discovered at `http://127.0.0.1:8000` and exposed as
 `llama-cpp/<alias>`. Set `LLAMA_CPP_BASE_URL` or `LLAMA_CPP_API_KEY` when needed.

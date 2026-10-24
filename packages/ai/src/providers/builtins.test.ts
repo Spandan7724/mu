@@ -54,6 +54,7 @@ describe("built-in LLM providers", () => {
       "google-vertex",
       "groq",
       "huggingface",
+      "inception",
       "kimi-coding",
       "llama-cpp",
       "minimax",
@@ -149,6 +150,124 @@ describe("built-in LLM providers", () => {
       cacheWriteTokens: 4,
       outputTokens: 3,
     });
+  });
+
+  test("streams Inception reasoning and usage with documented request fields", async () => {
+    const model = findModel("inception/mercury-3") as ModelInfo;
+    const capture: { url?: string; headers?: Headers; body?: Record<string, unknown> } = {};
+    const result = await getProvider("inception")
+      .stream(model, context, {
+        getCredentials: async () => ({ type: "apiKey", apiKey: "inception-key" }),
+        fetch: completionFetch(capture),
+        thinkingLevel: "instant",
+        maxTokens: 2048,
+        sessionId: "session-id",
+      })
+      .result();
+
+    expect(capture.url).toBe("https://api.inceptionlabs.ai/v1/chat/completions");
+    expect(capture.headers?.get("authorization")).toBe("Bearer inception-key");
+    expect(capture.body).toMatchObject({
+      model: "mercury-3",
+      stream: true,
+      stream_options: { include_usage: true },
+      max_completion_tokens: 2048,
+      reasoning_effort: "instant",
+      tool_choice: "auto",
+      tools: [{ type: "function", function: { name: "lookup" } }],
+    });
+    expect(capture.body).not.toHaveProperty("max_tokens");
+    expect(capture.body).not.toHaveProperty("prompt_cache_key");
+    expect(capture.body).not.toHaveProperty("diffusing");
+    expect(result.content).toEqual([
+      { type: "thinking", thinking: "think" },
+      { type: "text", text: "hello" },
+    ]);
+    expect(result.usage).toMatchObject({
+      inputTokens: 6,
+      cacheReadTokens: 2,
+      cacheWriteTokens: 4,
+      outputTokens: 3,
+    });
+    expect(result.usage.costUsd).toBeCloseTo((6 * 0.1 + 2 * 0.01 + 3 * 0.35) / 1_000_000);
+  });
+
+  test("round-trips streamed Inception tool calls and results", async () => {
+    const model = findModel("inception/mercury-2.5") as ModelInfo;
+    const bodies: Array<Record<string, unknown>> = [];
+    const mockFetch = (async (_input: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      const events =
+        bodies.length === 1
+          ? [
+              {
+                choices: [
+                  {
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: "call_1",
+                          function: { name: "lookup", arguments: '{"query":' },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              {
+                choices: [
+                  {
+                    delta: { tool_calls: [{ index: 0, function: { arguments: '"Mercury"}' } }] },
+                    finish_reason: "tool_calls",
+                  },
+                ],
+              },
+            ]
+          : [{ choices: [{ delta: { content: "Found it" }, finish_reason: "stop" }] }];
+      return new Response(
+        [...events.map((event) => `data: ${JSON.stringify(event)}`), "data: [DONE]", ""].join(
+          "\n\n",
+        ),
+      );
+    }) as typeof fetch;
+    const provider = getProvider("inception");
+    const first = await provider
+      .stream(model, context, { apiKey: "key", fetch: mockFetch })
+      .result();
+    expect(first.stopReason).toBe("toolUse");
+    expect(first.content).toEqual([
+      { type: "toolCall", id: "call_1", name: "lookup", arguments: { query: "Mercury" } },
+    ]);
+    const result = await provider
+      .stream(
+        model,
+        {
+          ...context,
+          messages: [
+            ...context.messages,
+            first,
+            {
+              role: "toolResult",
+              toolCallId: "call_1",
+              toolName: "lookup",
+              content: [{ type: "text", text: "Mercury result" }],
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        },
+        { apiKey: "key", fetch: mockFetch },
+      )
+      .result();
+    expect(bodies[0]?.max_completion_tokens).toBe(65536);
+    expect(bodies[1]?.messages).toContainEqual({
+      role: "tool",
+      tool_call_id: "call_1",
+      content: "Mercury result",
+    });
+    expect(result.content).toEqual([{ type: "text", text: "Found it" }]);
+    expect(result.stopReason).toBe("end");
   });
 
   test("OpenAI-compatible requests attach tool-result images as multimodal user content", async () => {

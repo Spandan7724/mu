@@ -21,6 +21,7 @@ export function defaultThinkingLevel(model: ModelInfo): ThinkingLevel {
 const EFFORT_RANK: Readonly<Record<string, number>> = {
   off: 0,
   none: 0,
+  instant: 0,
   minimal: 1,
   low: 2,
   medium: 3,

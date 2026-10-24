@@ -32,6 +32,56 @@ describe("catalog", () => {
     expect(model?.pricing.input).toBe(5);
   });
 
+  test("bundles documented Inception models and reasoning defaults", () => {
+    for (const [id, contextWindow, maxOutput, defaultThinkingLevel] of [
+      ["mercury-3", 1_000_000, 131_072, "low"],
+      ["mercury-2.5", 260_000, 65_536, "medium"],
+      ["mercury-2", 128_000, 50_000, "medium"],
+    ] as const) {
+      expect(findModel(`inception/${id}`)).toMatchObject({
+        provider: "inception",
+        api: "openai-completions",
+        modalities: ["text"],
+        contextWindow,
+        maxOutput,
+        thinking: true,
+        thinkingLevels: ["instant", "low", "medium", "high"],
+        defaultThinkingLevel,
+      });
+    }
+  });
+
+  test("discovers Inception public metadata without losing documented reasoning levels", async () => {
+    const discovered = await discoverModels({
+      providers: [],
+      fetch: async () =>
+        Response.json({
+          inception: {
+            models: {
+              "mercury-3": {
+                tool_call: true,
+                reasoning: true,
+                reasoning_options: [{ type: "effort", values: ["low", "medium", "high"] }],
+                limit: { context: 1_000_000, output: 131_072 },
+                modalities: { input: ["text"], output: ["text"] },
+                cost: { input: 0.1, output: 0.35, cache_read: 0.01 },
+              },
+              "mercury-edit-2": { tool_call: false, limit: { context: 32000, output: 8192 } },
+            },
+          },
+        }),
+    });
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toMatchObject({
+      provider: "inception",
+      id: "mercury-3",
+      baseUrl: "https://api.inceptionlabs.ai/v1",
+      thinkingLevels: ["instant", "low", "medium", "high"],
+      defaultThinkingLevel: "low",
+      pricing: { input: 0.1, output: 0.35, cacheRead: 0.01, cacheWrite: 0 },
+    });
+  });
+
   test("finds model by bare id", () => {
     expect(findModel("gemini-2.5-pro")?.provider).toBe("google");
   });
@@ -202,6 +252,9 @@ describe("cost", () => {
 describe("credential-aware default model", () => {
   test("prefers a provider the user actually has a key for", () => {
     expect(defaultModelRef({ OPENAI_API_KEY: "x" })).toBe("openai/gpt-5.6-sol");
+    expect(defaultModelRef({ INCEPTION_API_KEY: "x" })).toBe("inception/mercury-3");
+    expect(defaultModelRef({}, ["inception"])).toBe("inception/mercury-3");
+    expect(defaultModelId("inception")).toBe("mercury-3");
     expect(defaultModelRef({ ANTHROPIC_API_KEY: "x" }).startsWith("anthropic/")).toBe(true);
     expect(defaultModelRef({ GEMINI_API_KEY: "x" }).startsWith("google/")).toBe(true);
   });
@@ -223,6 +276,8 @@ describe("credential-aware default model", () => {
   test("reports per-provider credential availability", () => {
     expect(providerHasCredentials("openai", { OPENAI_API_KEY: "x" })).toBe(true);
     expect(providerHasCredentials("openai", {})).toBe(false);
+    expect(providerHasCredentials("inception", { INCEPTION_API_KEY: "x" })).toBe(true);
+    expect(providerHasCredentials("inception", {})).toBe(false);
     expect(providerHasCredentials("openai-codex", { OPENAI_API_KEY: "x" })).toBe(false);
     expect(providerHasCredentials("llama-cpp", {})).toBe(true);
     // An unknown/custom provider is not gated on a key we do not know about.

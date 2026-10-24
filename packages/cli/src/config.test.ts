@@ -81,6 +81,19 @@ describe("user model configuration", () => {
     );
   });
 
+  test("an Inception login and environment key default to Mercury 3", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-inception-default-"));
+    const file = join(root, "config.json");
+    const authFile = join(root, "auth.json");
+    expect(await resolveCliModel(undefined, file, authFile, { INCEPTION_API_KEY: "env-key" })).toBe(
+      "inception/mercury-3",
+    );
+    await saveApiKey("inception", "stored-key", { authFile });
+    expect(await resolveCliModel(undefined, file, authFile, {})).toBe("inception/mercury-3");
+    await saveDefaultModel("inception/mercury-2.5", file);
+    expect(await resolveCliModel(undefined, file, authFile, {})).toBe("inception/mercury-2.5");
+  });
+
   test("an unavailable saved model falls back to the catalog default", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-stale-model-"));
     const file = join(root, "config.json");

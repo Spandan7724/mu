@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { thinkingLevelForModel } from "./thinking.ts";
+import { thinkingEffort, thinkingLevelForModel } from "./thinking.ts";
 import type { ModelInfo } from "./types.ts";
 
 const base: ModelInfo = {
@@ -32,6 +32,11 @@ describe("thinkingLevelForModel", () => {
 
   test("an unknown effort value falls back to the default", () => {
     expect(thinkingLevelForModel(base, "turbo")).toBe("off");
+  });
+
+  test("ranks Inception instant below deliberative effort", () => {
+    expect(thinkingEffort("instant")).toBe(0);
+    expect(thinkingEffort("low")).toBeGreaterThan(thinkingEffort("instant") as number);
   });
 
   test("non-reasoning models only offer off", () => {

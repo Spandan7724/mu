@@ -27,6 +27,7 @@ const PUBLIC_PROVIDER_SOURCES: ReadonlyArray<{
   { source: "google-vertex", providers: ["google-vertex"] },
   { source: "groq", providers: ["groq"] },
   { source: "huggingface", providers: ["huggingface"] },
+  { source: "inception", providers: ["inception"] },
   { source: "kimi-for-coding", providers: ["kimi-coding"] },
   { source: "minimax", providers: ["minimax"] },
   { source: "mistral", providers: ["mistral"] },
@@ -249,7 +250,11 @@ function toModelInfo(provider: string, model: JsonObject): ModelInfo | undefined
   const modalities: ModelInfo["modalities"] = ["text"];
   if (inputModalities.includes("image")) modalities.push("image");
   const thinking = model.reasoning === true;
-  const levels = thinking ? thinkingLevels(model) : undefined;
+  const knownInception =
+    provider === "inception"
+      ? bundledModels.find((entry) => entry.provider === provider && entry.id === model.id)
+      : undefined;
+  const levels = thinking ? (knownInception?.thinkingLevels ?? thinkingLevels(model)) : undefined;
   const route = routedModel(provider, model);
   if (!route) return undefined;
 
@@ -264,6 +269,9 @@ function toModelInfo(provider: string, model: JsonObject): ModelInfo | undefined
     modalities,
     ...(thinking ? { thinking: true } : {}),
     ...(levels ? { thinkingLevels: levels } : {}),
+    ...(knownInception?.defaultThinkingLevel
+      ? { defaultThinkingLevel: knownInception.defaultThinkingLevel }
+      : {}),
     ...(thinking && provider === "anthropic" ? { thinkingMode: thinkingMode(model) } : {}),
     pricing: {
       input: finiteNumber(cost.input) ?? 0,
@@ -482,6 +490,7 @@ const DEFAULT_MODEL_IDS: Readonly<Record<string, string>> = {
   google: "gemini-2.5-pro",
   "github-copilot": "gpt-5.3-codex",
   "kimi-coding": "kimi-for-coding",
+  inception: "mercury-3",
   xai: "grok-4.3",
 };
 

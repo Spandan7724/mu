@@ -98,6 +98,7 @@ export function providerName(provider: string): string {
     openai: "OpenAI",
     "openai-codex": "OpenAI",
     google: "Google",
+    inception: "Inception Labs",
     "github-copilot": "GitHub Copilot",
     "kimi-coding": "Kimi Code",
     openrouter: "OpenRouter",
