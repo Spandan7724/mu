@@ -13,6 +13,7 @@ import { FakeProvider, fakeModel, type ScriptedTurn } from "@mu/core/testing/fak
 import { z } from "zod";
 import { Agent } from "./agent.ts";
 import {
+  matchModel,
   type SubagentDetails,
   type SubagentExtensionOptions,
   type SubagentProgressUpdate,
@@ -1211,5 +1212,170 @@ describe("subagent route overrides", () => {
     expect(result.message).toContain(
       "  counsel  gpt-5.6-terra · xhigh · anthropic/claude-opus-5-5 unavailable",
     );
+  });
+});
+
+describe("a model chosen for one call", () => {
+  const command = { inject: () => {}, print: () => {}, getModel: () => "", setModel: () => {} };
+  const at = (provider: string, id: string, name?: string): ModelInfo => ({
+    ...codexTerra,
+    provider,
+    id,
+    ...(name ? { name } : {}),
+  });
+  const catalog = [
+    at("zai", "glm-5.3", "GLM-5.3"),
+    at("zai", "glm-5.3-flash"),
+    at("openrouter", "z-ai/glm-5.3"),
+    at("openai-codex", "gpt-5.6-terra"),
+    {
+      ...at("openai-codex", "gpt-6-astra", "GPT-6-Astra"),
+      thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+    },
+    at("anthropic", "claude-opus-5"),
+    at("anthropic", "claude-opus-5-5"),
+  ];
+  const ref = (found: ReturnType<typeof matchModel>) =>
+    "model" in found
+      ? `${found.model.provider}/${found.model.id}`
+      : found.matches.map((model) => `${model.provider}/${model.id}`);
+
+  test("matching prefers exact names, then the parent's provider, and returns ties whole", () => {
+    expect(ref(matchModel("openrouter/z-ai/glm-5.3", catalog))).toBe("openrouter/z-ai/glm-5.3");
+    expect(ref(matchModel("glm 5.3 flash", catalog))).toBe("zai/glm-5.3-flash");
+    expect(ref(matchModel("GPT 6 Astra", catalog))).toBe("openai-codex/gpt-6-astra");
+    expect(ref(matchModel("terra", catalog))).toBe("openai-codex/gpt-5.6-terra");
+    expect(ref(matchModel("glm 5.3", catalog))).toEqual(["zai/glm-5.3", "openrouter/z-ai/glm-5.3"]);
+    expect(ref(matchModel("glm 5.3", catalog, "zai"))).toBe("zai/glm-5.3");
+    expect(ref(matchModel("opus", catalog))).toEqual([
+      "anthropic/claude-opus-5",
+      "anthropic/claude-opus-5-5",
+    ]);
+    expect(ref(matchModel("gemini", catalog))).toEqual([]);
+  });
+
+  async function setUp(
+    turns: ScriptedTurn[],
+    routeOverride?: SubagentExtensionOptions["routeOverride"],
+  ) {
+    const provider = new FakeProvider(turns);
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: codexTerra,
+      thinkingLevel: "medium",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+        modelChoices: () => catalog,
+        ...(routeOverride ? { routeOverride } : {}),
+      }),
+    );
+    return { provider, parent, host };
+  }
+  const call = (name: string, args: Record<string, unknown>): ScriptedTurn => ({
+    content: [{ type: "toolCall", id: `${name}-1`, name, arguments: args }],
+  });
+  const text = (value: string): ScriptedTurn => ({ content: [{ type: "text", text: value }] });
+
+  test("a named model and level reach the child and win over a configured pin", async () => {
+    const { parent } = await setUp(
+      [
+        call("task", {
+          description: "survey",
+          prompt: "Survey",
+          model: "gpt 6 astra",
+          thinking: "max",
+        }),
+        text("Surveyed."),
+        text("Done."),
+      ],
+      (kind) =>
+        kind === "task" ? { model: at("zai", "glm-5.3"), thinkingLevel: "low" } : undefined,
+    );
+
+    await parent.run("survey with astra at max");
+
+    expect(details(parent, "task")).toMatchObject({
+      model: "openai-codex/gpt-6-astra",
+      thinkingLevel: "max",
+      ownModel: true,
+    });
+  });
+
+  test("a level alone applies to the role's usual model", async () => {
+    const { parent } = await setUp([
+      call("counsel", { question: "Q", thinking: "low" }),
+      text("A"),
+      text("Done."),
+    ]);
+
+    await parent.run("ask counsel at low");
+
+    expect(details(parent, "counsel")).toMatchObject({
+      model: "openai-codex/gpt-5.6-terra",
+      thinkingLevel: "low",
+    });
+    expect(details(parent, "counsel").ownModel).toBeUndefined();
+  });
+
+  test.each([
+    ["an unavailable model", { model: "gemini 9" }, 'No model you can use matches "gemini 9"'],
+    ["an ambiguous model", { model: "opus" }, "anthropic/claude-opus-5, anthropic/claude-opus-5-5"],
+    ["an unknown level", { thinking: "turbo" }, '"turbo" is not a reasoning level'],
+  ])("%s starts nothing and says why", async (_name, choice, message) => {
+    const { parent, provider } = await setUp([
+      call("search", { query: "Trace it", ...choice }),
+      text("Understood."),
+    ]);
+
+    await parent.run("search with a model");
+
+    const result = parent.session
+      .messagesAt()
+      .find((entry) => entry.role === "toolResult" && entry.toolName === "search");
+    expect(result?.role === "toolResult" && result.isError).toBe(true);
+    expect(JSON.stringify(result?.role === "toolResult" ? result.content : [])).toContain(
+      message.replaceAll('"', '\\"'),
+    );
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  test("a background task keeps the model it was asked for", async () => {
+    const { parent } = await setUp([
+      call("task", {
+        description: "bg",
+        prompt: "Work",
+        run_in_background: true,
+        model: "glm 5.3 flash",
+      }),
+      text("Started."),
+      text("Worked."),
+      text("Noted."),
+    ]);
+
+    await parent.run("background on glm flash");
+    await Bun.sleep(50);
+
+    const background = parent.session
+      .messagesAt()
+      .find((entry) => entry.role === "custom" && entry.customType === "background_subagent");
+    expect(JSON.stringify(background)).toContain("zai/glm-5.3-flash");
+  });
+
+  test("every role offers the arguments, with the explicit-only policy", async () => {
+    const { parent, host } = await setUp([]);
+    for (const name of ["task", "search", "counsel", "recall"]) {
+      const candidate = parent.tools.find((entry) => entry.name === name);
+      expect(candidate?.description).toContain(
+        "only when the user names a model or reasoning level",
+      );
+      expect(JSON.stringify(candidate?.inputSchema)).toContain("Only when the user names a model");
+    }
+    expect((await host.commands.execute("/subagents", command)).handled).toBe(true);
   });
 });

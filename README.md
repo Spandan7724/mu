@@ -163,6 +163,11 @@ saved in `~/.mu/config.json`:
 }
 ```
 
+You can also name a model or level for a single request, for example **“launch 3 subagents
+to survey the codebase and use terra at low reasoning for them”**. Mu matches the name
+against the models you can use; if it isn't available, or matches several, nothing starts
+and the agent says so instead of running on a different model.
+
 Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate
 retained sessions and branches from this project. Recall reads recorded history, not the
 workspace, and returns session/entry citations. Its explicit-only invocation policy is an

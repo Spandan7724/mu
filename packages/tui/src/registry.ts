@@ -618,6 +618,7 @@ export interface SubagentProgressState {
   description: string;
   model: string;
   thinkingLevel: string;
+  ownModel?: boolean;
   messages: AgentMessage[];
   answer: string;
 }
@@ -673,6 +674,7 @@ export function updateSubagentProgress(
     description: update.description,
     model: update.model,
     thinkingLevel: update.thinkingLevel,
+    ...(update.ownModel ? { ownModel: true } : {}),
     messages: previous?.messages ?? [],
     answer: previous?.answer ?? "",
   };
@@ -910,6 +912,8 @@ function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
     const compactTask = kind === "task" && !info.expanded;
     const summary = compactTask
       ? [
+          // A delegation off the main model says which one; otherwise the row stays quiet.
+          state?.ownModel ? state.model : "",
           callCount > 0 ? `${callCount} action${callCount === 1 ? "" : "s"}` : "",
           details ? formatDuration(details.durationMs) : (formatDuration(info.elapsedMs) ?? "0ms"),
         ]

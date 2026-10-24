@@ -511,3 +511,42 @@ describe("subagent transcript rendering", () => {
     expect(expanded).not.toContain("recalled history");
   });
 });
+
+test("a compact task row names the model only when it is not the main one", () => {
+  const renderer = subagentRenderers.task;
+  if (!renderer) throw new Error("missing task renderer");
+  const taskResult = (ownModel: boolean): ToolResultMessage => ({
+    role: "toolResult",
+    toolCallId: "task-1",
+    toolName: "task",
+    content: [{ type: "text", text: "Surveyed." }],
+    details: {
+      type: "subagent",
+      kind: "task",
+      description: "Survey the parser",
+      model: ownModel ? "zai/glm-5.3" : "openai-codex/gpt-6.1-sol",
+      thinkingLevel: "high",
+      ...(ownModel ? { ownModel } : {}),
+      durationMs: 1200,
+      reason: "done",
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      messages: [],
+    },
+    isError: false,
+    timestamp: 1,
+  });
+  const row = (ownModel: boolean) =>
+    stripAnsi(
+      renderer(
+        {
+          toolName: "task",
+          args: { description: "Survey the parser" },
+          result: taskResult(ownModel),
+        },
+        { width: 100, depth: "none" },
+      )[0] ?? "",
+    );
+
+  expect(row(true)).toContain("zai/glm-5.3");
+  expect(row(false)).not.toContain("gpt-6.1-sol");
+});

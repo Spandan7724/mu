@@ -47,6 +47,17 @@ async function readAuth(authFile: string): Promise<Pick<AuthFile, "providers">> 
   return readAuthFile({ authFile }).catch(() => ({ providers: {} }));
 }
 
+// What a subagent call's `model` argument is matched against.
+export async function usableModels(
+  sources: Omit<SubagentRouteSources, "profile">,
+): Promise<ModelInfo[]> {
+  return pinnableModels(
+    sources.extensions,
+    await readAuth(sources.authFile ?? defaultAuthFile()),
+    sources.env,
+  );
+}
+
 function pinnedModel(
   ref: string,
   sources: SubagentRouteSources,
