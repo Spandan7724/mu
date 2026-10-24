@@ -4663,6 +4663,24 @@ describe("command popup filtering", () => {
     expect(commands).toEqual(["/model anthropic"]);
   });
 
+  test("history recalls the command chosen from the popup, not the filter text", () => {
+    const h = harness();
+    h.app.setCommands([{ label: "model" }, { label: "compact" }]);
+    feed(h.app, "/");
+    press(h.app, "down");
+    press(h.app, "return");
+    feed(h.app, "/mo");
+    press(h.app, "return");
+    expect(h.commands).toEqual(["/compact", "/model"]);
+
+    press(h.app, "up");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("/model");
+    press(h.app, "up");
+    const rendered = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(rendered).toContain("/compact");
+    expect(rendered).not.toContain("/model");
+  });
+
   test("tab on an empty command list leaves the popup alone", () => {
     const h = harness();
     h.app.setCommands([{ label: "model" }]);

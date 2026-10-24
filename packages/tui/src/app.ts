@@ -3498,11 +3498,13 @@ export class App {
       const typed = this.editor.text;
       const selected = this.commandList.selected;
       this.mode = "composing";
-      this.editor.submit();
       // Text the user typed wins when it carries arguments or names a command
       // the popup has filtered away; the highlighted item is only a shortcut.
       const hasArgs = typed.trim().includes(" ");
       const command = hasArgs || !selected ? typed.trim() : `/${selected.label}`;
+      // History keeps the command that ran, not the filter text that chose it.
+      this.editor.setText(command);
+      this.editor.submit();
       if (command.length > 1 && !this.handleLocalCommand(command)) {
         this.options.callbacks.onCommand?.(command);
       }
