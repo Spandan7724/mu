@@ -176,6 +176,21 @@ export function stoppedBackgroundNotice(stopped: string[]): string {
   return `stopped background work ${stopped.join(", ")}; its result is kept in the previous session`;
 }
 
+// What `/thinking <args>` asks for: a level to set, a message, or (no level) the picker.
+export function thinkingCommandChoice(
+  modelId: string,
+  levels: readonly ThinkingLevel[],
+  args: string,
+): { level?: ThinkingLevel } | { message: string } {
+  if (levels.length < 2) return { message: `${modelId} has no reasoning levels to choose from.` };
+  const wanted = args.trim().toLowerCase();
+  if (!wanted) return {};
+  const level = levels.find((candidate) => candidate.toLowerCase() === wanted);
+  return level
+    ? { level }
+    : { message: `${modelId} has no "${wanted}" level. Choose one of: ${levels.join(", ")}.` };
+}
+
 export function formatSubagentsOutput(data: SubagentsCommandData, depth: ColorDepth): string[] {
   return [
     ...formatSubagentRoutes(data.routes, {
@@ -491,6 +506,54 @@ export async function runInteractive(
   for (const markdown of await loadMarkdownCommands({ projectDir: process.cwd() })) {
     commands.register(toCommand(markdown));
   }
+  // The same change as ctrl+t, for when the key does not reach mu: `/thinking high` sets
+  // it, a bare `/thinking` lists the model's levels.
+  const applyThinking = async (level: ThinkingLevel, source: ConversationSource) => {
+    const target = activeAgent();
+    target.setThinking(level);
+    app.setThinking(target.thinking, target.thinkingLevels, source);
+    try {
+      await saveThinkingLevel(target.modelRef, target.thinking);
+      commitLines(
+        [`  thinking set to ${target.thinking} · saved for ${target.modelInfo.id}`],
+        source,
+      );
+    } catch (error) {
+      commitLines(
+        [
+          `  thinking set to ${target.thinking}`,
+          `  could not save thinking level: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+        source,
+      );
+    }
+  };
+  commands.register({
+    name: "thinking",
+    description: "Set the reasoning level for the active model",
+    run: async (ctx) => {
+      const source = app.activeConversation;
+      const target = activeAgent();
+      const levels = target.thinkingLevels;
+      const choice = thinkingCommandChoice(target.modelInfo.id, levels, ctx.args);
+      if ("message" in choice) return { handled: true, message: choice.message };
+      if (choice.level) {
+        await applyThinking(choice.level, source);
+        return { handled: true };
+      }
+      app.openPicker({
+        title: `thinking for ${target.modelInfo.id}`,
+        items: levels.map((level) => ({
+          label: level,
+          value: level,
+          ...(level === target.thinking ? { description: "current" } : {}),
+        })),
+        onChoose: (level) => void applyThinking(level as ThinkingLevel, source),
+        onBack: () => app.openCommandMenu(),
+      });
+      return { handled: true };
+    },
+  });
   // /model and /resume open selection lists rather than needing exact typing.
   commands.register({
     name: "model",

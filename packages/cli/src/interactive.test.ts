@@ -24,6 +24,7 @@ import {
   renderCheckpointCommand,
   renderDiffCommand,
   startNewInteractiveSession,
+  thinkingCommandChoice,
 } from "./interactive.ts";
 
 test("terminal title identifies mu and the working directory", () => {
@@ -485,4 +486,16 @@ test("subagent output marks a configured role and an unavailable choice in its d
   expect(lines.map(stripAnsi)[4]).toBe(
     "    counsel  gpt-6.1-sol · xhigh · anthropic/claude-opus-5-5 unavailable",
   );
+});
+
+test("/thinking sets a level the model has, explains one it lacks, and opens the list bare", () => {
+  const levels = ["low", "medium", "high", "xhigh"];
+  expect(thinkingCommandChoice("gpt-6.1-sol", levels, " High ")).toEqual({ level: "high" });
+  expect(thinkingCommandChoice("gpt-6.1-sol", levels, "")).toEqual({});
+  expect(thinkingCommandChoice("gpt-6.1-sol", levels, "ultra")).toEqual({
+    message: 'gpt-6.1-sol has no "ultra" level. Choose one of: low, medium, high, xhigh.',
+  });
+  expect(thinkingCommandChoice("glm-5.1", ["off"], "high")).toEqual({
+    message: "glm-5.1 has no reasoning levels to choose from.",
+  });
 });
