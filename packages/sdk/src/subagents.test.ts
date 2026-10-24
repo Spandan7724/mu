@@ -18,6 +18,7 @@ import {
   type SubagentExtensionOptions,
   type SubagentProgressUpdate,
   type SubagentsCommandData,
+  similarModels,
   subagentsExtension,
 } from "./subagents.ts";
 import { tool } from "./tool.ts";
@@ -1240,18 +1241,26 @@ describe("a model chosen for one call", () => {
       ? `${found.model.provider}/${found.model.id}`
       : found.matches.map((model) => `${model.provider}/${model.id}`);
 
-  test("matching prefers exact names, then the parent's provider, and returns ties whole", () => {
+  test("matching prefers exact names and returns every tie, whichever provider is main", () => {
     expect(ref(matchModel("openrouter/z-ai/glm-5.3", catalog))).toBe("openrouter/z-ai/glm-5.3");
     expect(ref(matchModel("glm 5.3 flash", catalog))).toBe("zai/glm-5.3-flash");
     expect(ref(matchModel("GPT 6 Astra", catalog))).toBe("openai-codex/gpt-6-astra");
     expect(ref(matchModel("terra", catalog))).toBe("openai-codex/gpt-5.6-terra");
     expect(ref(matchModel("glm 5.3", catalog))).toEqual(["zai/glm-5.3", "openrouter/z-ai/glm-5.3"]);
-    expect(ref(matchModel("glm 5.3", catalog, "zai"))).toBe("zai/glm-5.3");
     expect(ref(matchModel("opus", catalog))).toEqual([
       "anthropic/claude-opus-5",
       "anthropic/claude-opus-5-5",
     ]);
     expect(ref(matchModel("gemini", catalog))).toEqual([]);
+  });
+
+  test("a name that matches nothing suggests close ones, swaps and typos included", () => {
+    const refs = (query: string) =>
+      similarModels(query, catalog).map((model) => `${model.provider}/${model.id}`);
+    expect(refs("terrra")).toEqual(["openai-codex/gpt-5.6-terra"]);
+    expect(refs("gtp 6 astra")).toEqual(["openai-codex/gpt-6-astra"]);
+    expect(refs("glm 5.33")).toContain("zai/glm-5.3");
+    expect(refs("gemini")).toEqual([]);
   });
 
   async function setUp(
@@ -1324,10 +1333,41 @@ describe("a model chosen for one call", () => {
   });
 
   test.each([
-    ["an unavailable model", { model: "gemini 9" }, 'No model you can use matches "gemini 9"'],
-    ["an ambiguous model", { model: "opus" }, "anthropic/claude-opus-5, anthropic/claude-opus-5-5"],
-    ["an unknown level", { thinking: "turbo" }, '"turbo" is not a reasoning level'],
-  ])("%s starts nothing and says why", async (_name, choice, message) => {
+    [
+      "the same model from several providers",
+      { model: "glm 5.3" },
+      [
+        '"glm 5.3" matches several models the user can use:',
+        "- zai/glm-5.3 (GLM-5.3) · reasoning: low, medium, high, xhigh",
+        "- openrouter/z-ai/glm-5.3",
+        "Do not pick one yourself: ask the user which one they want and which reasoning level",
+      ],
+    ],
+    [
+      "several versions, with the level already given",
+      { model: "opus", thinking: "high" },
+      [
+        "- anthropic/claude-opus-5 ·",
+        "- anthropic/claude-opus-5-5 ·",
+        "ask the user which one they want, then",
+      ],
+    ],
+    [
+      "a misspelled model",
+      { model: "terrra" },
+      [
+        'No model the user can use is called "terrra". Close names:',
+        "- openai-codex/gpt-5.6-terra",
+        "run nothing until they confirm",
+      ],
+    ],
+    [
+      "an unavailable model",
+      { model: "gemini 9" },
+      ['No model the user can use matches "gemini 9"', "do not run on another model"],
+    ],
+    ["an unknown level", { thinking: "turbo" }, ['"turbo" is not a reasoning level']],
+  ])("%s starts nothing and says what to ask", async (_name, choice, fragments) => {
     const { parent, provider } = await setUp([
       call("search", { query: "Trace it", ...choice }),
       text("Understood."),
@@ -1338,10 +1378,13 @@ describe("a model chosen for one call", () => {
     const result = parent.session
       .messagesAt()
       .find((entry) => entry.role === "toolResult" && entry.toolName === "search");
-    expect(result?.role === "toolResult" && result.isError).toBe(true);
-    expect(JSON.stringify(result?.role === "toolResult" ? result.content : [])).toContain(
-      message.replaceAll('"', '\\"'),
-    );
+    if (result?.role !== "toolResult") throw new Error("missing search result");
+    expect(result.isError).toBe(true);
+    const message = result.content
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("");
+    for (const fragment of fragments) expect(message).toContain(fragment);
+    if ("thinking" in choice) expect(message).not.toContain("which reasoning level");
     expect(provider.requests).toHaveLength(2);
   });
 

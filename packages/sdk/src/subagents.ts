@@ -139,7 +139,7 @@ const DELEGATION_TOOLS = new Set([
 const PROGRESS_INTERVAL_MS = 80;
 
 const CHOICE_POLICY =
-  " Set model or thinking only when the user names a model or reasoning level for this delegation; never choose one yourself. If the call reports the model is unavailable or ambiguous, tell the user or ask them instead of retrying without it.";
+  " Set model or thinking only when the user names a model or reasoning level for this delegation; never choose one yourself. When the call reports the name is ambiguous, misspelled or unavailable, ask the user as it says and wait for their answer; never pick a provider or version for them or retry without it.";
 const callChoiceSchema = {
   model: z
     .string()
@@ -799,33 +799,38 @@ class SubagentManager {
   }
 
   // Turns a call's `model`/`thinking` arguments into a choice, or the message the model
-  // gets back instead of a silently substituted model.
+  // gets back instead of a substituted model. Anything short of one clear match sends the
+  // question back to the user: the agent is told to ask, never to pick.
   private async choose(asked: CallArguments): Promise<SubagentCallChoice | string> {
     const choice: SubagentCallChoice = {};
-    if (asked.model) {
-      const parent = this.options.parent();
-      const models = await (this.options.modelChoices?.(parent) ??
-        listModels().filter((model) => model.provider === parent.modelInfo.provider));
-      const found = matchModel(asked.model, models, parent.modelInfo.provider);
-      if ("model" in found) choice.model = found.model;
-      else if (found.matches.length === 0) {
-        const providers = [...new Set(models.map((model) => model.provider))].join(", ");
-        return `No model you can use matches "${asked.model}"${providers ? `; the usable models come from ${providers}` : ""}. Nothing was started. Tell the user it is unavailable rather than running on another model.`;
-      } else {
-        const refs = found.matches
-          .slice(0, MAX_MATCHES)
-          .map((model) => `${model.provider}/${model.id}`)
-          .join(", ");
-        return `"${asked.model}" matches several models you can use: ${refs}${found.matches.length > MAX_MATCHES ? ", …" : ""}. Nothing was started. Call again with the exact provider/id, or ask the user which one they meant.`;
-      }
-    }
     if (asked.thinking) {
       if (thinkingEffort(asked.thinking) === undefined) {
         return `"${asked.thinking}" is not a reasoning level. Nothing was started. Use one of: none, minimal, low, medium, high, xhigh, max, ultra.`;
       }
       choice.thinkingLevel = asked.thinking;
     }
-    return choice;
+    if (!asked.model) return choice;
+    const parent = this.options.parent();
+    const models = await (this.options.modelChoices?.(parent) ??
+      listModels().filter((model) => model.provider === parent.modelInfo.provider));
+    const found = matchModel(asked.model, models);
+    if ("model" in found) return { ...choice, model: found.model };
+    const level = asked.thinking ? "" : " and which reasoning level (or the role's default)";
+    const retry = `call again with model set to the exact provider/id${asked.thinking ? "" : " and thinking set to the level they chose, if any"}`;
+    if (found.matches.length > 0) {
+      const shown = found.matches.slice(0, MAX_MATCHES).map(describeModel).join("\n");
+      const more =
+        found.matches.length > MAX_MATCHES
+          ? `\n…and ${found.matches.length - MAX_MATCHES} more, so ask the user to name it more exactly.`
+          : "";
+      return `"${asked.model}" matches several models the user can use:\n${shown}${more}\nNothing was started. Do not pick one yourself: ask the user which one they want${level}, then ${retry}.`;
+    }
+    const close = similarModels(asked.model, models);
+    if (close.length > 0) {
+      return `No model the user can use is called "${asked.model}". Close names:\n${close.map(describeModel).join("\n")}\nNothing was started. Ask the user whether they meant one of these${level}; run nothing until they confirm, then ${retry}.`;
+    }
+    const providers = [...new Set(models.map((model) => model.provider))].join(", ");
+    return `No model the user can use matches "${asked.model}"${providers ? `; their models come from ${providers}` : ""}. Nothing was started. Tell the user it is unavailable and ask them to check the name or log in to a provider that offers it; do not run on another model.`;
   }
 }
 
@@ -847,35 +852,78 @@ interface CallArguments {
 }
 
 const MAX_MATCHES = 8;
+const MAX_SUGGESTIONS = 5;
 const squash = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, "");
+const modelNames = (model: ModelInfo) => [
+  model.id,
+  model.id.split("/").at(-1) ?? "",
+  model.name ?? "",
+];
 
-// Matches what the user called a model against the models they can use: an exact ref or
-// id (ignoring case and punctuation, and a router prefix such as `z-ai/`) beats a partial
-// one, and among equals the parent's provider wins. Anything still ambiguous is returned
-// whole so the caller can ask instead of guessing.
+function describeModel(model: ModelInfo): string {
+  const levels = model.thinking ? supportedThinkingLevels(model).join(", ") : "none";
+  return `- ${model.provider}/${model.id}${model.name ? ` (${model.name})` : ""} · reasoning: ${levels}`;
+}
+
+// Matches what the user called a model against the models they can use, from whatever
+// catalog is current: an exact provider/id, else an exact id or name ignoring case,
+// punctuation and a router prefix such as `z-ai/`, else a partial name. More than one
+// candidate at the winning step — the same model from several providers, or several
+// versions — is returned whole so the user can be asked.
 export function matchModel(
   query: string,
   models: readonly ModelInfo[],
-  preferProvider?: string,
 ): { model: ModelInfo } | { matches: ModelInfo[] } {
-  const wanted = squash(query);
   const ref = models.find((model) => `${model.provider}/${model.id}` === query.trim());
   if (ref) return { model: ref };
+  const wanted = squash(query);
   if (!wanted) return { matches: [] };
-  const names = (model: ModelInfo) => [
-    model.id,
-    model.id.split("/").at(-1) ?? "",
-    model.name ?? "",
-  ];
-  const exact = models.filter((model) => names(model).some((name) => squash(name) === wanted));
+  const exact = models.filter((model) => modelNames(model).some((name) => squash(name) === wanted));
   const pool =
     exact.length > 0
       ? exact
-      : models.filter((model) => names(model).some((name) => squash(name).includes(wanted)));
-  if (pool.length === 1 && pool[0]) return { model: pool[0] };
-  const preferred = pool.filter((model) => model.provider === preferProvider);
-  if (preferred.length === 1 && preferred[0]) return { model: preferred[0] };
-  return { matches: pool };
+      : models.filter((model) => modelNames(model).some((name) => squash(name).includes(wanted)));
+  return pool.length === 1 && pool[0] ? { model: pool[0] } : { matches: pool };
+}
+
+// Likely meant-to-be names for a query that matched nothing: within a small edit distance
+// of a model's id, name, or one word of its id (so "terrra" finds gpt-5.6-terra).
+export function similarModels(query: string, models: readonly ModelInfo[]): ModelInfo[] {
+  const wanted = squash(query);
+  if (wanted.length < 3) return [];
+  const limit = Math.max(1, Math.floor(wanted.length / 4));
+  return models
+    .map((model) => {
+      const words = (model.id.split("/").at(-1) ?? model.id).split(/[^A-Za-z0-9.]+/);
+      const distance = Math.min(
+        ...[...modelNames(model), ...words].map((name) => editDistance(wanted, squash(name))),
+      );
+      return { model, distance };
+    })
+    .filter((entry) => entry.distance <= limit)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, MAX_SUGGESTIONS)
+    .map((entry) => entry.model);
+}
+
+// Optimal string alignment distance: insertions, deletions, substitutions and adjacent
+// swaps each cost one, so "gtp" is one step from "gpt".
+function editDistance(a: string, b: string): number {
+  const rows = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const row = rows[i] as number[];
+      const above = rows[i - 1] as number[];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min((above[j] ?? 0) + 1, (row[j - 1] ?? 0) + 1, (above[j - 1] ?? 0) + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        row[j] = Math.min(row[j] ?? 0, ((rows[i - 2] as number[])[j - 2] ?? 0) + 1);
+      }
+    }
+  }
+  return (rows[a.length] as number[])[b.length] ?? 0;
 }
 
 interface RankedLevel {

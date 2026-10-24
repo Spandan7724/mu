@@ -165,8 +165,10 @@ saved in `~/.mu/config.json`:
 
 You can also name a model or level for a single request, for example **“launch 3 subagents
 to survey the codebase and use terra at low reasoning for them”**. Mu matches the name
-against the models you can use; if it isn't available, or matches several, nothing starts
-and the agent says so instead of running on a different model.
+against the models you can use. If several match (the same model from more than one
+provider you are logged into, or several versions such as “sol”), the agent asks which one
+and at what reasoning level; a misspelling gets a “did you mean …?”. Nothing starts until
+you answer, and it never runs on a model you did not choose.
 
 Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate
 retained sessions and branches from this project. Recall reads recorded history, not the
