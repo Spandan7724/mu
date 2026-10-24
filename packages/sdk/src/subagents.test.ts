@@ -1366,7 +1366,11 @@ describe("a model chosen for one call", () => {
       { model: "gemini 9" },
       ['No model the user can use matches "gemini 9"', "do not run on another model"],
     ],
-    ["an unknown level", { thinking: "turbo" }, ['"turbo" is not a reasoning level']],
+    [
+      "an unknown level",
+      { thinking: "turbo" },
+      ['"turbo" is not a reasoning level', "none, instant, minimal"],
+    ],
   ])("%s starts nothing and says what to ask", async (_name, choice, fragments) => {
     const { parent, provider } = await setUp([
       call("search", { query: "Trace it", ...choice }),

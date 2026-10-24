@@ -6,6 +6,7 @@ import {
   supportedThinkingLevels,
   type TextContent,
   type ThinkingLevel,
+  THINKING_EFFORTS,
   thinkingEffort,
   thinkingLevelForModel,
   type Usage,
@@ -805,7 +806,7 @@ class SubagentManager {
     const choice: SubagentCallChoice = {};
     if (asked.thinking) {
       if (thinkingEffort(asked.thinking) === undefined) {
-        return `"${asked.thinking}" is not a reasoning level. Nothing was started. Use one of: none, minimal, low, medium, high, xhigh, max, ultra.`;
+        return `"${asked.thinking}" is not a reasoning level. Nothing was started. Use one of: ${THINKING_EFFORTS.join(", ")}.`;
       }
       choice.thinkingLevel = asked.thinking;
     }

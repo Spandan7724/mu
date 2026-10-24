@@ -31,6 +31,8 @@ const EFFORT_RANK: Readonly<Record<string, number>> = {
   ultra: 7,
 };
 
+export const THINKING_EFFORTS: readonly ThinkingLevel[] = Object.keys(EFFORT_RANK);
+
 // Ordinal effort of a level; undefined for a provider-specific level outside this scale.
 export function thinkingEffort(level: ThinkingLevel): number | undefined {
   return EFFORT_RANK[level];
