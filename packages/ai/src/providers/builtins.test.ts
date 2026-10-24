@@ -54,7 +54,6 @@ describe("built-in LLM providers", () => {
       "google-vertex",
       "groq",
       "huggingface",
-      "inception",
       "kimi-coding",
       "llama-cpp",
       "minimax",
