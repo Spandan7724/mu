@@ -463,3 +463,26 @@ describe("interactive model catalog", () => {
     expect(preferredProviderModel("groq", models)?.id).toBe("first-listed");
   });
 });
+
+test("subagent output marks a configured role and an unavailable choice in its dim route", () => {
+  const lines = formatSubagentsOutput(
+    {
+      kind: "subagents",
+      routes: [
+        { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low", pinned: true },
+        {
+          kind: "counsel",
+          model: "gpt-6.1-sol",
+          thinkingLevel: "xhigh",
+          unavailable: "anthropic/claude-opus-5-5",
+        },
+      ],
+    },
+    "truecolor",
+  );
+
+  expect(lines[2]).toContain(styleText("gpt-5.6-terra · low · set", { dim: true }, "truecolor"));
+  expect(lines.map(stripAnsi)[4]).toBe(
+    "    counsel  gpt-6.1-sol · xhigh · anthropic/claude-opus-5-5 unavailable",
+  );
+});

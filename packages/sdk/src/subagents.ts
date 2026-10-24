@@ -54,12 +54,25 @@ export interface SubagentProgressUpdate {
     | { type: "message"; message: AgentMessage };
 }
 
+export type SpecialistKind = Exclude<SubagentKind, "task">;
+
+// A caller's choice for one specialist. Either field alone is allowed: a model alone keeps
+// the role's reasoning rule, a level alone applies to the parent's model. `unavailable`
+// names a choice that could not be honoured, so the role runs on its default.
+export interface SubagentRouteOverride {
+  model?: ModelInfo;
+  thinkingLevel?: ThinkingLevel;
+  unavailable?: string;
+}
+
 // The model a role would run on if called now; thinkingLevel is absent for a model
 // without reasoning levels.
 export interface SubagentRoute {
   kind: SubagentKind;
   model: string;
   thinkingLevel?: ThinkingLevel;
+  pinned?: boolean;
+  unavailable?: string;
 }
 
 export interface SubagentsCommandData {
@@ -90,8 +103,11 @@ interface SubagentExtensionBaseOptions {
   // A profile's per-child resources for task subagents (any profile, not only coding).
   taskSession?: ProfileSubagents["taskSession"];
   excludeTools?: readonly string[];
-  searchModel?: (parent: Agent) => ModelInfo | undefined;
-  counselModel?: (parent: Agent) => ModelInfo | undefined;
+  // Consulted on every specialist call and /subagents listing, so changes apply at once.
+  routeOverride?: (
+    kind: SpecialistKind,
+    parent: Agent,
+  ) => SubagentRouteOverride | undefined | Promise<SubagentRouteOverride | undefined>;
 }
 
 export type SubagentExtensionOptions = SubagentExtensionBaseOptions &
@@ -227,7 +243,7 @@ class SubagentManager {
       const parent = this.options.parent();
       if (kind === "task" && this.options.taskSession)
         session = await this.options.taskSession(description, signal);
-      const { model, thinkingLevel } = this.resolve(kind, parent);
+      const { model, thinkingLevel } = await this.resolve(kind, parent);
       const tools = withSessionTools(this.toolsFor(kind, parent), session);
       child = parent.createChild({
         model,
@@ -707,36 +723,43 @@ class SubagentManager {
     return [base, profilePrompt?.trim()].filter(Boolean).join("\n\n");
   }
 
-  route(kind: SubagentKind): SubagentRoute {
-    const { model, thinkingLevel } = this.resolve(kind, this.options.parent());
-    return { kind, model: model.id, ...(model.thinking ? { thinkingLevel } : {}) };
-  }
-
-  private resolve(
-    kind: SubagentKind,
-    parent: Agent,
-  ): { model: ModelInfo; thinkingLevel: ThinkingLevel } {
-    const model = this.modelFor(kind, parent);
+  async route(kind: SubagentKind): Promise<SubagentRoute> {
+    const { model, thinkingLevel, override } = await this.resolve(kind, this.options.parent());
     return {
-      model,
-      thinkingLevel: thinkingLevelForModel(model, this.thinkingFor(kind, parent, model)),
+      kind,
+      model: model.id,
+      ...(model.thinking ? { thinkingLevel } : {}),
+      ...(override?.model || override?.thinkingLevel ? { pinned: true } : {}),
+      ...(override?.unavailable ? { unavailable: override.unavailable } : {}),
     };
   }
 
-  private modelFor(kind: SubagentKind, parent: Agent): ModelInfo {
-    if (kind === "counsel") return this.options.counselModel?.(parent) ?? parent.modelInfo;
-    if (kind === "search" || kind === "recall") {
-      return this.options.searchModel?.(parent) ?? parent.modelInfo;
-    }
-    return parent.modelInfo;
+  private async resolve(
+    kind: SubagentKind,
+    parent: Agent,
+  ): Promise<{ model: ModelInfo; thinkingLevel: ThinkingLevel; override?: SubagentRouteOverride }> {
+    const override = kind === "task" ? undefined : await this.options.routeOverride?.(kind, parent);
+    const model = override?.model ?? parent.modelInfo;
+    const thinkingLevel = thinkingLevelForModel(
+      model,
+      override?.thinkingLevel
+        ? nearestLevel(rankedLevels(model), override.thinkingLevel)
+        : subagentThinking(kind, model, parent.thinking),
+    );
+    return { model, thinkingLevel, ...(override ? { override } : {}) };
   }
+}
 
-  private thinkingFor(kind: SubagentKind, parent: Agent, model: ModelInfo): ThinkingLevel {
-    if (kind === "task") return parent.thinking;
-    const levels = rankedLevels(model);
-    const chosen = kind === "counsel" ? counselLevel(levels, parent.thinking) : searchLevel(levels);
-    return chosen ?? defaultThinkingLevel(model);
-  }
+// The level a role reasons at on `model` when nothing is configured for it.
+export function subagentThinking(
+  kind: SubagentKind,
+  model: ModelInfo,
+  parentThinking: ThinkingLevel,
+): ThinkingLevel {
+  if (kind === "task") return parentThinking;
+  const levels = rankedLevels(model);
+  const chosen = kind === "counsel" ? counselLevel(levels, parentThinking) : searchLevel(levels);
+  return chosen ?? defaultThinkingLevel(model);
 }
 
 interface RankedLevel {
@@ -769,6 +792,14 @@ function counselLevel(levels: RankedLevel[], parent: ThinkingLevel): ThinkingLev
   const own = thinkingEffort(parent) ?? 0;
   const target = own > XHIGH ? own : Math.min(Math.max(own + 1, HIGH), XHIGH);
   return (levels.findLast((candidate) => candidate.effort <= target) ?? levels[0])?.level;
+}
+
+// A configured level the model lacks lands on the nearest supported one below it, else
+// the lowest above; a level outside the effort scale is left for the model to normalise.
+function nearestLevel(levels: RankedLevel[], wanted: ThinkingLevel): ThinkingLevel {
+  const effort = thinkingEffort(wanted);
+  if (effort === undefined || levels.some((candidate) => candidate.level === wanted)) return wanted;
+  return (levels.findLast((candidate) => candidate.effort <= effort) ?? levels[0])?.level ?? wanted;
 }
 
 function withSessionTools(tools: AnyTool[], session: TaskSubagentSession | undefined): AnyTool[] {
@@ -890,7 +921,13 @@ export function formatSubagentRoutes(
     "Subagents — ask mu in plain language:",
     "",
     ...routes.flatMap((route) => {
-      const text = [route.model, route.thinkingLevel].filter(Boolean).join(" · ");
+      const text = [
+        route.model,
+        route.thinkingLevel,
+        route.unavailable ? `${route.unavailable} unavailable` : route.pinned ? "set" : undefined,
+      ]
+        .filter(Boolean)
+        .join(" · ");
       return [
         `  ${style.name?.(route.kind, route.kind) ?? route.kind}${" ".repeat(column - route.kind.length)}${style.route?.(text) ?? text}`,
         ...ROLE_HELP[route.kind].map((line) => `    ${line}`),
@@ -919,8 +956,8 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
           name: "subagents",
           description: "List subagents, the model each runs on, and how to ask for it",
           fallback: true,
-          run: () => {
-            const routes = kinds.map((kind) => manager.route(kind));
+          run: async () => {
+            const routes = await Promise.all(kinds.map((kind) => manager.route(kind)));
             return {
               handled: true,
               message: formatSubagentRoutes(routes).join("\n"),

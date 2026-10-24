@@ -32,6 +32,7 @@ import {
   resolveProfile,
   sessionStoreForProfile,
 } from "./profiles.ts";
+import { subagentRouteOverride } from "./subagent-routes.ts";
 
 export interface SessionRuntimeOptions {
   cwd: string;
@@ -198,6 +199,7 @@ export async function createCliSessionRuntime(
       ...(profile?.name === "coding" && profile.subagents ? { coding: profile.subagents } : {}),
       inspectionPermissions: rulesForPermissionMode(basePermissions, restrictiveMode),
       excludeTools: existingTools,
+      routeOverride: subagentRouteOverride({ extensions: loaded.host }),
     }),
   );
 

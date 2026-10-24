@@ -45,10 +45,15 @@ import {
   removeStoredCredential,
   type SideConversation,
   type SubagentKind,
+  type SubagentRoute,
   type SubagentsCommandData,
   saveApiKey,
   startSideConversation,
+  subagentThinking,
+  supportedThinkingLevels,
   type ThinkingLevel,
+  thinkingEffort,
+  thinkingLevelForModel,
   toCommand,
   type UndoPointsCommandData,
 } from "mu";
@@ -57,8 +62,12 @@ import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-vi
 import type { ParsedArgs } from "./args.ts";
 import {
   applySavedThinking,
+  type PinnableSubagent,
+  readSubagentPins,
+  type SubagentPin,
   saveDefaultModel,
   savePermissionMode,
+  saveSubagentPin,
   saveThinkingLevel,
 } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
@@ -81,6 +90,7 @@ import {
   SESSION_TITLE_MAX_LENGTH,
 } from "./session-picker.ts";
 import { createCliSessionRuntime, SESSION_RULES } from "./session-runtime.ts";
+import { pinnableModels, unavailableSubagentPins } from "./subagent-routes.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
 
@@ -1161,6 +1171,175 @@ export async function runInteractive(
     });
   }
 
+  // /subagents opens this under its listing: role, then model, then reasoning. Routing
+  // reads the saved choice on every call, so nothing else needs to be told.
+  function openSubagentRoles(routes: SubagentRoute[], source: ConversationSource): void {
+    const specialists = routes.filter(
+      (route): route is SubagentRoute & { kind: PinnableSubagent } => route.kind !== "task",
+    );
+    if (specialists.length === 0) return;
+    const anySet = Object.keys(readSubagentPins()).length > 0;
+    app.openPicker({
+      title: "change a subagent's model · esc close",
+      items: [
+        ...specialists.map((route) => ({
+          label: route.kind,
+          value: route.kind,
+          description: [
+            route.model,
+            route.thinkingLevel,
+            route.unavailable
+              ? `${route.unavailable} unavailable`
+              : route.pinned
+                ? "set"
+                : "default",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        })),
+        ...(anySet
+          ? [{ label: "reset all", value: "", description: "every subagent back to its default" }]
+          : []),
+      ],
+      onChoose: (value) => {
+        if (value) void openSubagentModels(value as PinnableSubagent, routes, source);
+        else void saveSubagentChoice(undefined, undefined, source);
+      },
+    });
+    paint();
+  }
+
+  async function openSubagentModels(
+    kind: PinnableSubagent,
+    routes: SubagentRoute[],
+    source: ConversationSource,
+  ): Promise<void> {
+    const auth = await readAuthFile().catch(() => ({ providers: {} }) as const);
+    const current = readSubagentPins()[kind]?.model;
+    const main = agent.modelInfo;
+    app.openPicker({
+      title: `model for ${kind}`,
+      filterable: true,
+      items: [
+        {
+          label: "main model",
+          value: "",
+          description: ["follows /model", main.id, current ? "" : "current"]
+            .filter(Boolean)
+            .join(" · "),
+        },
+        ...pinnableModels(extensions, auth).map((model) => {
+          const ref = `${model.provider}/${model.id}`;
+          const credential = (auth.providers as Record<string, { type: "apiKey" | "oauth" }>)[
+            model.provider
+          ];
+          const description = modelPickerDescription(
+            model,
+            credential?.type ??
+              (extensions.models.has(ref)
+                ? "extension"
+                : providerConfig(model.provider)?.auth === "none"
+                  ? "local"
+                  : "apiKey"),
+          );
+          return {
+            label: ref,
+            value: ref,
+            description: current === ref ? `${description} · current` : description,
+          };
+        }),
+      ],
+      onChoose: (value) => {
+        const model = value ? agent.availableModel(value) : main;
+        if (model) openSubagentLevels(kind, value || undefined, model, routes, source);
+      },
+      onBack: () => openSubagentRoles(routes, source),
+    });
+    paint();
+  }
+
+  function openSubagentLevels(
+    kind: PinnableSubagent,
+    modelRef: string | undefined,
+    model: ModelInfo,
+    routes: SubagentRoute[],
+    source: ConversationSource,
+  ): void {
+    if (!model.thinking) {
+      void saveSubagentChoice(kind, modelRef ? { model: modelRef } : undefined, source);
+      return;
+    }
+    const roleDefault = thinkingLevelForModel(model, subagentThinking(kind, model, agent.thinking));
+    const pinned = readSubagentPins()[kind]?.thinking;
+    app.openPicker({
+      title: `reasoning for ${kind} on ${model.id}`,
+      items: [
+        {
+          label: "role default",
+          value: "",
+          description:
+            kind !== "counsel"
+              ? roleDefault
+              : (thinkingEffort(agent.thinking) ?? 0) > (thinkingEffort("xhigh") ?? 5)
+                ? `${roleDefault} · same as yours`
+                : `${roleDefault} · one above yours, high to xhigh`,
+        },
+        ...supportedThinkingLevels(model).map((level) => ({
+          label: level,
+          value: level,
+          ...(pinned === level ? { description: "current" } : {}),
+        })),
+      ],
+      onChoose: (value) => {
+        const pin: SubagentPin = {
+          ...(modelRef ? { model: modelRef } : {}),
+          ...(value ? { thinking: value } : {}),
+        };
+        void saveSubagentChoice(kind, pin.model || pin.thinking ? pin : undefined, source);
+      },
+      onBack: () => void openSubagentModels(kind, routes, source),
+    });
+    paint();
+  }
+
+  async function saveSubagentChoice(
+    kind: PinnableSubagent | undefined,
+    pin: SubagentPin | undefined,
+    source: ConversationSource,
+  ): Promise<void> {
+    try {
+      await saveSubagentPin(kind, pin);
+    } catch (error) {
+      commitLines(
+        [`  could not save: ${error instanceof Error ? error.message : String(error)}`, ""],
+        source,
+      );
+      return;
+    }
+    if (!kind) {
+      commitLines(["  subagents reset to their defaults · saved", ""], source);
+      return;
+    }
+    const model = (pin?.model && agent.availableModel(pin.model)) || agent.modelInfo;
+    const thinking = model.thinking
+      ? thinkingLevelForModel(
+          model,
+          (pin?.thinking as ThinkingLevel | undefined) ??
+            subagentThinking(kind, model, agent.thinking),
+        )
+      : undefined;
+    const route = [model.id, thinking].filter(Boolean).join(" · ");
+    commitLines(
+      [
+        pin
+          ? `  ${kind} set to ${route} · saved`
+          : `  ${kind} back to its default · ${route} · saved`,
+        "",
+      ],
+      source,
+    );
+  }
+
   function openLoginMethodPicker(): void {
     app.openPicker({
       title: "Select authentication method:",
@@ -1464,6 +1643,7 @@ export async function runInteractive(
       // avoid printing the same outcome twice in the interactive transcript.
     } else if (data?.kind === "subagents") {
       commitLines(formatSubagentsOutput(data, depth), source);
+      openSubagentRoles(data.routes, source);
     } else if (result.message) {
       commitLines(
         parsed?.name === "instructions"
@@ -1504,7 +1684,11 @@ export async function runInteractive(
     commitLines(app.banner());
   }
   const checkpointNotice = agent.checkpointUnavailable ?? agent.checkpointNotice;
-  const startupNotices = [...runtime.warnings, ...(checkpointNotice ? [checkpointNotice] : [])];
+  const startupNotices = [
+    ...runtime.warnings,
+    ...(checkpointNotice ? [checkpointNotice] : []),
+    ...(profile?.subagents ? await unavailableSubagentPins({ extensions }) : []),
+  ];
   if (startupNotices.length > 0) commitLines([...startupNotices.map((line) => `  ${line}`), ""]);
   void modelCatalog?.ensureFresh().then((refresh) => {
     if (exiting || !refresh.ok) return;

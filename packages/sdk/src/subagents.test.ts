@@ -1050,3 +1050,124 @@ describe("/subagents", () => {
     expect((await registry.execute("/subagents", command)).message).toBe("custom");
   });
 });
+
+describe("subagent route overrides", () => {
+  const command = { inject: () => {}, print: () => {}, getModel: () => "", setModel: () => {} };
+  const astra: ModelInfo = {
+    ...codexTerra,
+    id: "gpt-6-astra",
+    thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
+  };
+
+  test("a pinned model and level reach the child and show as set", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "counsel-1", name: "counsel", arguments: { question: "Q" } },
+        ],
+      },
+      { content: [{ type: "text", text: "A" }] },
+      { content: [{ type: "text", text: "Done." }] },
+    ]);
+    const asked: string[] = [];
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider,
+      model: codexTerra,
+      thinkingLevel: "low",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+        routeOverride: (kind) => {
+          asked.push(kind);
+          return kind === "counsel" ? { model: astra, thinkingLevel: "max" } : undefined;
+        },
+      }),
+    );
+
+    const result = await host.commands.execute("/subagents", command);
+    expect((result.data as SubagentsCommandData).routes).toEqual([
+      { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "low" },
+      { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
+      { kind: "counsel", model: "gpt-6-astra", thinkingLevel: "max", pinned: true },
+      { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
+    ]);
+    expect(result.message).toContain("  counsel  gpt-6-astra · max · set");
+    expect(asked).not.toContain("task");
+
+    await parent.run("consult");
+    expect(details(parent, "counsel")).toMatchObject({
+      model: "openai-codex/gpt-6-astra",
+      thinkingLevel: "max",
+    });
+  });
+
+  test("a model alone keeps the role's rule; a level alone applies to the parent's model", async () => {
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider: new FakeProvider([]),
+      model: codexTerra,
+      thinkingLevel: "medium",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+        routeOverride: (kind) =>
+          kind === "search"
+            ? { model: astra }
+            : kind === "counsel"
+              ? { thinkingLevel: "medium" }
+              : { thinkingLevel: "ultra" },
+      }),
+    );
+
+    expect(
+      ((await host.commands.execute("/subagents", command)).data as SubagentsCommandData).routes,
+    ).toEqual([
+      { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "medium" },
+      { kind: "search", model: "gpt-6-astra", thinkingLevel: "low", pinned: true },
+      { kind: "counsel", model: "gpt-5.6-terra", thinkingLevel: "medium", pinned: true },
+      // gpt-5.6-terra tops out at xhigh, so a pinned ultra lands on the nearest level.
+      { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "xhigh", pinned: true },
+    ]);
+  });
+
+  test("an unavailable pin runs the role's default and names what was configured", async () => {
+    const host = new ExtensionHost();
+    const parent = new Agent({
+      provider: new FakeProvider([]),
+      model: codexTerra,
+      thinkingLevel: "high",
+      extensions: host,
+    });
+    await host.register(
+      subagentsExtension({
+        parent: () => parent,
+        coding: { inspectionTools: [] },
+        inspectionPermissions: [],
+        routeOverride: async (kind) =>
+          kind === "counsel" ? { unavailable: "anthropic/claude-opus-5-5" } : undefined,
+      }),
+    );
+
+    const result = await host.commands.execute("/subagents", command);
+    expect(
+      (result.data as SubagentsCommandData).routes.find((route) => route.kind === "counsel"),
+    ).toEqual({
+      kind: "counsel",
+      model: "gpt-5.6-terra",
+      thinkingLevel: "xhigh",
+      unavailable: "anthropic/claude-opus-5-5",
+    });
+    expect(result.message).toContain(
+      "  counsel  gpt-5.6-terra · xhigh · anthropic/claude-opus-5-5 unavailable",
+    );
+  });
+});

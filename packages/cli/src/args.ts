@@ -257,7 +257,7 @@ Coding agent (default, or --profile coding)
     /instructions [reload]
                      show the loaded instruction files, or reload them
     /reload          reload instruction files
-    /subagents       list subagents, their models, and how to ask for each one
+    /subagents       list subagents and their models; change a subagent's model
 
 Browser agent (mu browser, or --profile browser)
   Navigates, reads, clicks, types, fills forms, uploads and downloads in real tabs, keeps

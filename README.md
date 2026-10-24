@@ -146,11 +146,20 @@ The default profile provides:
 - durable JSONL session trees, transcript export, and context compaction;
 - managed `task` delegation plus coding-specific `search`, `counsel`, and `recall` subagents.
 
-Run `/subagents` for a brief description of each subagent and an example of how to invoke it.
+Run `/subagents` for a brief description of each subagent, the model and reasoning level it
+runs on, and an example of how to invoke it. Every subagent uses your current model by
+default: `task` at your reasoning level, `search` and `recall` at `low`, and `counsel` one
+level above yours (at least `high`, at most `xhigh`). The editor that opens under the list
+sets a different model (any provider you are logged into or have a key for) and/or level
+for `search`, `counsel` or `recall`; it is saved in `~/.mu/config.json`:
+
+```json
+"subagents": { "counsel": { "model": "openai-codex/gpt-6-astra", "thinking": "xhigh" } }
+```
+
 Ask explicitly, for example **“Ask Recall why we rejected SQLite”**, to investigate
 retained sessions and branches from this project. Recall reads recorded history, not the
-workspace, and returns session/entry citations. It uses Search's same-provider model
-routing, with the current model as fallback. Its explicit-only invocation policy is an
+workspace, and returns session/entry citations. Its explicit-only invocation policy is an
 instruction to the parent model, not a separate classifier or authorization gate.
 Other projects and separate clones/worktrees are not automatically included. SDK agents
 can recall only history available in their configured session store (in-memory by default).

@@ -20,14 +20,33 @@ export interface UserConfig {
   thinking?: Record<string, string>;
   // Last permission mode chosen in the app, per profile name.
   permissionMode?: Record<string, string>;
+  // Model ref and/or reasoning level chosen per specialized subagent.
+  subagents?: SubagentPins;
   [key: string]: unknown;
 }
+
+export const PINNABLE_SUBAGENTS = ["search", "counsel", "recall"] as const;
+export type PinnableSubagent = (typeof PINNABLE_SUBAGENTS)[number];
+export interface SubagentPin {
+  model?: string;
+  thinking?: string;
+}
+export type SubagentPins = Partial<Record<PinnableSubagent, SubagentPin>>;
 
 const userConfigSchema = z
   .object({
     model: z.string().min(1).optional(),
     thinking: z.record(z.string().min(1), z.string().min(1)).optional(),
     permissionMode: z.record(z.string().min(1), z.string().min(1)).optional(),
+    subagents: z
+      .partialRecord(
+        z.enum(PINNABLE_SUBAGENTS),
+        z.strictObject({
+          model: z.string().min(1).optional(),
+          thinking: z.string().min(1).optional(),
+        }),
+      )
+      .optional(),
   })
   .loose();
 
@@ -44,12 +63,13 @@ function parseConfig(raw: string, file: string): UserConfig {
       .join("; ");
     throw new Error(`Invalid user config at ${file}: ${issues}`);
   }
-  const { model, thinking, permissionMode, ...rest } = result.data;
+  const { model, thinking, permissionMode, subagents, ...rest } = result.data;
   return {
     ...rest,
     ...(model !== undefined ? { model } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(permissionMode !== undefined ? { permissionMode } : {}),
+    ...(subagents !== undefined ? { subagents: subagents as SubagentPins } : {}),
   };
 }
 
@@ -153,6 +173,34 @@ export async function savePermissionMode(
     encoding: "utf8",
     mode: 0o600,
   });
+}
+
+// `undefined` returns the subagent to its default; `kind` undefined resets every subagent.
+export async function saveSubagentPin(
+  kind: PinnableSubagent | undefined,
+  pin: SubagentPin | undefined,
+  file = userConfigPath(),
+): Promise<void> {
+  const { subagents: current, ...config } = await readUserConfig(file);
+  const subagents: SubagentPins = kind ? { ...current } : {};
+  if (kind && pin && (pin.model || pin.thinking)) subagents[kind] = pin;
+  else if (kind) delete subagents[kind];
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    `${JSON.stringify(Object.keys(subagents).length > 0 ? { ...config, subagents } : config, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
+// Read on every subagent call so a change from the TUI, another process or a hand edit
+// applies without a restart. A missing or invalid file means no pins; startup warns.
+export function readSubagentPins(file = userConfigPath()): SubagentPins {
+  try {
+    return parseConfig(readFileSync(file, "utf8"), file).subagents ?? {};
+  } catch {
+    return {};
+  }
 }
 
 export function savedThinkingLevel(

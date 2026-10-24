@@ -86,7 +86,7 @@ user's repository.
 | `/export [path.md]` | Export the complete active branch |
 | `/btw [question]` | Open an ephemeral read-only side conversation |
 | `/instructions [reload]`, `/reload` | Inspect or reload repository instructions |
-| `/subagents` | List subagents, the model and reasoning level each runs on, and how to invoke them |
+| `/subagents` | List subagents, the model and reasoning level each runs on, and how to invoke them; choose a different model or level for search, counsel or recall |
 | `/cost` | Show session token and cost totals |
 | `/keybindings` | Show Mu-specific keyboard controls |
 

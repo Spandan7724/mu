@@ -19,11 +19,13 @@ export {
   findModel,
   listModels,
   providerConfig,
+  providerEnvVars,
   providerHasCredentials,
   refreshModels,
   registerModels,
   registerProvider,
   supportedThinkingLevels,
+  thinkingEffort,
   thinkingLevelForModel,
 } from "@mu/ai";
 // Re-exported so SDK users never need to reach into the kernel packages.
@@ -178,15 +180,17 @@ export {
 } from "./structured-output.ts";
 export type {
   BackgroundSubagentDetails,
+  SpecialistKind,
   SubagentDetails,
   SubagentExtensionOptions,
   SubagentKind,
   SubagentProgressUpdate,
   SubagentRoute,
+  SubagentRouteOverride,
   SubagentRoutesStyle,
   SubagentsCommandData,
 } from "./subagents.ts";
-export { formatSubagentRoutes, subagentsExtension } from "./subagents.ts";
+export { formatSubagentRoutes, subagentsExtension, subagentThinking } from "./subagents.ts";
 export type { TodoItem } from "./todo.ts";
 export { renderTodos, TodoStore, todoTool } from "./todo.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";
