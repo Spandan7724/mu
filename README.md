@@ -144,14 +144,15 @@ The default profile provides:
   Git repository;
 - `/undo`, `/redo`, `/fork`, and `/diff` over the session and its workspace changes;
 - durable JSONL session trees, transcript export, and context compaction;
-- managed `task` delegation plus coding-specific `search`, `counsel`, and `recall` subagents.
+- managed `task` delegation when you ask for subagents, plus coding-specific `counsel` and
+  `recall` subagents.
 
 Run `/subagents` for a brief description of each subagent, the model and reasoning level it
 runs on, and an example of how to invoke it. Every subagent uses your current model by
-default: `task` at your reasoning level, `search` and `recall` at `low`, and `counsel` one
+default: `task` at your reasoning level, `recall` at `low`, and `counsel` one
 level above yours (at least `high`, at most `xhigh`). The editor that opens under the list
 sets a different model (any provider you are logged into or have a key for) and/or level
-for `task`, `search`, `counsel` or `recall`. Choices apply to the coding profile and are
+for `task`, `counsel` or `recall`. Choices apply to the coding profile and are
 saved in `~/.mu/config.json`:
 
 ```json

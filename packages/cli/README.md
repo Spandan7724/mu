@@ -56,12 +56,13 @@ The CLI loads the coding profile by default. It includes:
 - read-before-write checks and diff previews for approvals;
 - shadow-git workspace checkpoints with `/undo`, `/redo`, `/fork`, and `/diff`;
 - durable sessions, automatic context compaction, and Markdown transcript export;
-- managed `task` delegation and coding-specific `search`, `counsel`, and `recall` subagents.
+- managed `task` delegation when you ask for subagents, and coding-specific `counsel` and
+  `recall` subagents.
 
 Explicitly ask **“Ask Recall why we rejected SQLite”** to investigate retained project
 sessions, including compacted history and alternate branches. Recall has only read-only
-history tools, no workspace or network tools, and cites session/entry references. It uses
-Search's same-provider model routing with the current model as fallback. Explicit-only
+history tools, no workspace or network tools, and cites session/entry references. It runs on
+the current model at `low` reasoning unless pinned under `/subagents`. Explicit-only
 invocation is a parent-model instruction, not a classifier or runtime authorization gate.
 Separate project directories, including other clones/worktrees, are not automatically joined.
 
@@ -193,7 +194,7 @@ console.log(result.reason, result.usage);
 
 `createAgent()` adds managed `task` delegation. With `profile: "coding"`, it also loads
 the shipped coding tools, project instructions, permissions, checkpoints, background
-runtime, and `search`/`counsel`/`recall` specialists. Recall can access only history in the
+runtime, and `counsel`/`recall` specialists. Recall can access only history in the
 configured session store; SDK agents use an in-memory store by default.
 
 ```ts
