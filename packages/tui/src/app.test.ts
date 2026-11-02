@@ -2872,6 +2872,113 @@ describe("activity disclosure", () => {
   });
 });
 
+describe("transcript review scrolling", () => {
+  const scroll = (app: App, direction: "up" | "down", times = 1) => {
+    for (let index = 0; index < times; index++) {
+      app.handleInput({ type: "scroll", direction, column: 1, row: 1 });
+    }
+  };
+  const visible = (app: App) => app.renderFrame().transcript.map(stripAnsi);
+  const longSession = (turns: number) => {
+    const { app } = harness();
+    app.setSize(60, 20);
+    for (let turn = 0; turn < turns; turn++) {
+      app.handleEvent({
+        type: "message_end",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `question ${turn}` }],
+          timestamp: 1,
+        },
+      });
+      app.handleEvent({
+        type: "tool_execution_start",
+        toolCallId: `r${turn}`,
+        toolName: "read",
+        args: { path: `f${turn}.ts` },
+      });
+      app.handleEvent({
+        type: "tool_execution_end",
+        toolCallId: `r${turn}`,
+        result: {
+          role: "toolResult",
+          toolCallId: `r${turn}`,
+          toolName: "read",
+          content: [{ type: "text", text: "x" }],
+          details: { lines: 1 },
+          isError: false,
+          timestamp: 1,
+        },
+      });
+      app.handleEvent({ type: "message_end", message: assistant(`answer ${turn}`) });
+    }
+    return app;
+  };
+
+  test("review is one alternate screen that opens at the bottom", () => {
+    const app = longSession(12);
+    expect(app.renderFrame().alternate).toBeUndefined();
+    feed(app, "\u000f");
+    const frame = app.renderFrame();
+    expect(frame.alternate).toBe(true);
+    expect(frame.transcript.length + frame.managed.length).toBe(20);
+    expect(visible(app).some((line) => line.includes("answer 11"))).toBe(true);
+    expect(visible(app).some((line) => line.includes("❯ read f11.ts"))).toBe(true);
+  });
+
+  test("the wheel scrolls the view three rows a tick and leaves the selection alone", () => {
+    const app = longSession(12);
+    feed(app, "\u000f");
+    const bottom = visible(app);
+    scroll(app, "up");
+    const scrolled = visible(app);
+    expect(scrolled.slice(3)).toEqual(bottom.slice(0, -3));
+
+    scroll(app, "up", 4);
+    expect(visible(app).some((line) => line.includes("❯"))).toBe(false);
+
+    scroll(app, "up", 100);
+    expect(visible(app).some((line) => line.includes("question 0"))).toBe(true);
+    scroll(app, "down", 100);
+    expect(visible(app)).toEqual(bottom);
+  });
+
+  test("a key brings an off-screen selection back with the least scrolling", () => {
+    const app = longSession(12);
+    feed(app, "\u000f");
+    scroll(app, "up", 5);
+    press(app, "up");
+    const rows = visible(app);
+    expect(rows.at(-1)).toContain("❯ read f10.ts");
+
+    press(app, "up");
+    expect(visible(app)).toEqual(
+      rows.map((line) => line.replace("❯", "›").replace(/› read f9/, "❯ read f9")),
+    );
+  });
+
+  test("a view on the bottom follows new rows; a scrolled view stays put", () => {
+    const app = longSession(12);
+    feed(app, "\u000f");
+    visible(app);
+    app.handleEvent({ type: "message_end", message: assistant("late answer") });
+    expect(visible(app).some((line) => line.includes("late answer"))).toBe(true);
+
+    scroll(app, "up", 2);
+    const reading = visible(app);
+    app.handleEvent({ type: "message_end", message: assistant("later answer") });
+    expect(visible(app)).toEqual(reading);
+  });
+
+  test("the wheel does nothing outside review", () => {
+    const app = longSession(3);
+    const before = app.renderFrame();
+    scroll(app, "up", 3);
+    expect(app.renderFrame().transcript).toEqual(before.transcript);
+    expect(app.editor.text).toBe("");
+  });
+});
+
 describe("superseded plans", () => {
   const plan = (statuses: ("completed" | "in_progress" | "pending")[]) =>
     statuses.map((status, index) => ({ content: `task ${index + 1}`, status }));
@@ -3341,6 +3448,30 @@ describe("terminal safety", () => {
     expect(output).toContain("\u001b[?2004l");
   });
 
+  test("the alternate screen carries mouse reporting and restore turns both off", () => {
+    const { io, written } = fakeIo();
+    const terminal = new Terminal(io);
+    terminal.start();
+    terminal.setAlternateScreen(true);
+    terminal.setAlternateScreen(true);
+    expect(written.filter((data) => data.includes("\u001b[?1049h"))).toHaveLength(1);
+    expect(written.join("")).toContain("\u001b[?1000h\u001b[?1006h");
+
+    terminal.restore();
+    const restored = written.join("");
+    expect(restored.indexOf("\u001b[?1000l")).toBeLessThan(restored.indexOf("\u001b[?1049l"));
+    expect(restored.indexOf("\u001b[?1049l")).toBeLessThan(restored.lastIndexOf("\u001b[?25h"));
+    expect(terminal.isAlternateScreen).toBe(false);
+  });
+
+  test("restore without the alternate screen never leaves it", () => {
+    const { io, written } = fakeIo();
+    const terminal = new Terminal(io);
+    terminal.start();
+    terminal.restore();
+    expect(written.join("")).not.toContain("\u001b[?1049l");
+  });
+
   test("restore is idempotent", () => {
     const { io } = fakeIo();
     const terminal = new Terminal(io);
@@ -3385,9 +3516,11 @@ describe("terminal safety", () => {
 describe("full-screen renderer", () => {
   class VirtualScreen {
     readonly scrollback: string[] = [];
-    readonly lines: string[];
+    lines: string[];
     private row = 0;
     private column = 0;
+    // The main screen while the alternate one is shown (?1049h).
+    private main: { lines: string[]; row: number; column: number } | undefined;
 
     constructor(private height: number) {
       this.lines = Array.from({ length: height }, () => "");
@@ -3428,8 +3561,17 @@ describe("full-screen renderer", () => {
       } else if (command === "B") {
         this.row = Math.min(this.height - 1, this.row + count);
       } else if (command === "H") {
+        const [row = 1, column = 1] = params.split(";").map((part) => Number(part) || 1);
+        this.row = row - 1;
+        this.column = column - 1;
+      } else if (params === "?1049" && command === "h" && !this.main) {
+        this.main = { lines: this.lines, row: this.row, column: this.column };
+        this.lines = Array.from({ length: this.height }, () => "");
         this.row = 0;
         this.column = 0;
+      } else if (params === "?1049" && command === "l" && this.main) {
+        ({ lines: this.lines, row: this.row, column: this.column } = this.main);
+        this.main = undefined;
       } else if (command === "K") {
         this.lines[this.row] = "";
       } else if (command === "J") {
@@ -3448,8 +3590,13 @@ describe("full-screen renderer", () => {
         this.row += 1;
         return;
       }
-      this.scrollback.push(this.lines.shift() ?? "");
+      const top = this.lines.shift() ?? "";
+      if (!this.main) this.scrollback.push(top);
       this.lines.push("");
+    }
+
+    get alternate(): boolean {
+      return this.main !== undefined;
     }
   }
 
@@ -3764,6 +3911,48 @@ describe("full-screen renderer", () => {
     expect(rendered).not.toContain("tool compact");
     expect(rendered.indexOf("output 6")).toBeLessThan(rendered.indexOf("final response"));
     expect(rendered.slice(-3)).toEqual(["final response", "rule", "composer"]);
+  });
+
+  test("review draws on the alternate screen and leaves the main screen and scrollback as they were", () => {
+    const { app } = harness();
+    app.setSize(60, 12);
+    const screen = new VirtualScreen(12);
+    const writes: string[] = [];
+    const renderer = new FullScreenRenderer(
+      new Terminal({
+        write: (data) => {
+          writes.push(data);
+          screen.write(data);
+        },
+        columns: 60,
+        rows: 12,
+        isTty: true,
+      }),
+      0,
+    );
+    for (let turn = 0; turn < 8; turn++) {
+      app.handleEvent({ type: "message_end", message: assistant(`answer ${turn}`) });
+    }
+    renderer.renderNow(app.renderFrame());
+    const scrollback = [...screen.scrollback];
+    const lines = [...screen.lines];
+    expect(scrollback.length).toBeGreaterThan(0);
+
+    feed(app, "\u000f");
+    renderer.renderNow(app.renderFrame());
+    expect(screen.alternate).toBe(true);
+    expect(screen.lines.some((line) => line.includes("answer 7"))).toBe(true);
+    app.handleInput({ type: "scroll", direction: "up", column: 1, row: 1 });
+    renderer.renderNow(app.renderFrame());
+    expect(screen.scrollback).toEqual(scrollback);
+
+    writes.length = 0;
+    feed(app, "\u000f");
+    renderer.renderNow(app.renderFrame());
+    expect(screen.alternate).toBe(false);
+    expect(screen.scrollback).toEqual(scrollback);
+    expect(screen.lines).toEqual(lines);
+    expect(writes.join("")).not.toContain("\u001b[3J");
   });
 
   test("repeated long tool expansion never overlays or duplicates the final response", () => {

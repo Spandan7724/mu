@@ -8,6 +8,33 @@ function keys(events: InputEvent[]): string[] {
 }
 
 describe("InputDecoder", () => {
+  test("decodes SGR wheel reports as scroll events, with or without modifiers", () => {
+    const events = new InputDecoder().push(`${ESC}[<64;10;5M${ESC}[<65;3;7M${ESC}[<84;1;1M`);
+    expect(events).toEqual([
+      { type: "scroll", direction: "up", column: 10, row: 5 },
+      { type: "scroll", direction: "down", column: 3, row: 7 },
+      { type: "scroll", direction: "up", column: 1, row: 1 },
+    ]);
+  });
+
+  test("consumes clicks, releases and horizontal wheel without producing keys", () => {
+    const events = new InputDecoder().push(`${ESC}[<0;4;4M${ESC}[<0;4;4m${ESC}[<66;1;1Mx`);
+    expect(events.map((event) => event.type)).toEqual(["unknown", "unknown", "unknown", "key"]);
+    expect(keys(events)).toEqual(["x"]);
+  });
+
+  test("waits for a mouse report split across reads", () => {
+    const decoder = new InputDecoder();
+    expect(decoder.push(`${ESC}[<64;1`)).toEqual([]);
+    expect(decoder.push(";2M")).toEqual([{ type: "scroll", direction: "up", column: 1, row: 2 }]);
+  });
+
+  test("a malformed mouse report is dropped instead of stalling input", () => {
+    const events = new InputDecoder().push(`${ESC}[<6xa`);
+    expect(events[0]).toEqual({ type: "unknown", raw: `${ESC}[<6x` });
+    expect(keys(events)).toEqual(["a"]);
+  });
+
   test("decodes printable characters with their text", () => {
     const events = new InputDecoder().push("hi");
     expect(keys(events)).toEqual(["h", "i"]);

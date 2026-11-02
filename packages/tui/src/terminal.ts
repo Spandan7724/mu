@@ -9,6 +9,12 @@ const END_SYNC = "\u001b[?2026l";
 const BRACKETED_PASTE_ON = "\u001b[?2004h";
 const BRACKETED_PASTE_OFF = "\u001b[?2004l";
 
+// The alternate screen leaves the main screen and its scrollback untouched until
+// it is left. Mouse reporting (SGR encoding) is only ever on with it, so the main
+// screen keeps native selection and wheel scrollback.
+const ALTERNATE_SCREEN_ON = "\u001b[?1049h\u001b[?1000h\u001b[?1006h";
+const ALTERNATE_SCREEN_OFF = "\u001b[?1006l\u001b[?1000l\u001b[?1049l";
+
 // Ask the terminal to report modified keys the legacy encoding collapses into a
 // single byte — Ctrl/Shift+Enter otherwise arrive as a bare CR, indistinguishable
 // from Enter. Two mechanisms because none is universal: the kitty keyboard
@@ -54,6 +60,7 @@ export function nodeTerminalIo(): TerminalIo {
 
 export class Terminal {
   private active = false;
+  private alternate = false;
   private cleanupHandlers: (() => void)[] = [];
   private restoreOnce = () => this.restore();
 
@@ -119,11 +126,22 @@ export class Terminal {
   restore(): void {
     if (!this.active) return;
     this.active = false;
+    this.setAlternateScreen(false);
     // Disable the keyboard protocols before restoring the cursor so a late key
     // release cannot leak an escape sequence onto the restored screen.
     this.io.write(KEYBOARD_PROTOCOL_OFF + BRACKETED_PASTE_OFF + SHOW_CURSOR);
     this.io.setRawMode?.(false);
     for (const cleanup of this.cleanupHandlers.splice(0)) cleanup();
+  }
+
+  get isAlternateScreen(): boolean {
+    return this.alternate;
+  }
+
+  setAlternateScreen(enabled: boolean): void {
+    if (this.alternate === enabled) return;
+    this.alternate = enabled;
+    this.io.write(enabled ? ALTERNATE_SCREEN_ON : ALTERNATE_SCREEN_OFF);
   }
 
   // Synchronized output: the terminal renders the whole frame at once instead

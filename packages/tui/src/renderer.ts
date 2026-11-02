@@ -8,6 +8,9 @@ export interface RenderFrame {
   // Conservative flattened row at which changes may begin. The renderer
   // ignores this hint when the transcript segment identity changed.
   readonly dirtyFrom: number;
+  // Exactly one screen, drawn on the alternate screen. The main screen's frame
+  // and scrollback stay as they were and resume diffing once this ends.
+  readonly alternate?: boolean;
 }
 
 // Retains the complete physical screen as immutable segments. Ordinary tail changes
@@ -20,6 +23,8 @@ export class FullScreenRenderer {
   private pending: (() => RenderFrame) | undefined;
   private lastWidth: number;
   private lastHeight: number;
+  private alternateRows: readonly string[] | undefined;
+  private alternateSize = "";
 
   constructor(
     private terminal: Terminal,
@@ -54,6 +59,11 @@ export class FullScreenRenderer {
   }
 
   private paint(frame: RenderFrame): void {
+    if (frame.alternate) {
+      this.paintAlternate(frame);
+      return;
+    }
+    if (this.terminal.isAlternateScreen) this.leaveAlternate();
     const widthChanged = this.terminal.columns !== this.lastWidth;
     const heightChanged = this.terminal.rows !== this.lastHeight;
     this.lastWidth = this.terminal.columns;
@@ -102,6 +112,34 @@ export class FullScreenRenderer {
     this.terminal.frame(body);
   }
 
+  // Repaints only changed rows, each at an absolute position: this screen has no
+  // scrollback, so nothing above it can go stale.
+  private paintAlternate(frame: RenderFrame): void {
+    const height = this.terminal.rows;
+    const rows = [...frame.transcript, ...frame.managed].slice(0, height);
+    const size = `${this.terminal.columns}x${height}`;
+    const previous = this.alternateRows;
+    this.terminal.setAlternateScreen(true);
+    this.alternateRows = rows;
+    if (!previous || size !== this.alternateSize) {
+      this.alternateSize = size;
+      this.terminal.frame(`\u001b[H\u001b[2J${rows.join("\r\n")}`);
+      return;
+    }
+    let body = "";
+    for (let index = 0; index < Math.max(rows.length, previous.length); index++) {
+      const row = rows[index];
+      if (row === previous[index]) continue;
+      body += `\u001b[${index + 1};1H${CURSOR.clearLine}${row ?? ""}`;
+    }
+    if (body) this.terminal.frame(body);
+  }
+
+  private leaveAlternate(): void {
+    this.alternateRows = undefined;
+    this.terminal.setAlternateScreen(false);
+  }
+
   private fullRender(frame: RenderFrame): void {
     this.previous = frame;
     this.viewportTop = Math.max(0, frameRowCount(frame) - this.terminal.rows);
@@ -118,6 +156,7 @@ export class FullScreenRenderer {
 
   clear(): void {
     this.cancelPending();
+    if (this.terminal.isAlternateScreen) this.leaveAlternate();
     this.previous = undefined;
     this.viewportTop = 0;
     this.terminal.frame(CLEAR_SCREEN_AND_SCROLLBACK);

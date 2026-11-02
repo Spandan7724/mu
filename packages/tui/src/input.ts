@@ -13,6 +13,7 @@ export interface Key {
 
 export type InputEvent =
   | { type: "key"; key: Key }
+  | { type: "scroll"; direction: "up" | "down"; column: number; row: number }
   | { type: "paste"; text: string }
   | { type: "unknown"; raw: string };
 
@@ -151,6 +152,8 @@ export class InputDecoder {
     // Lone ESC with nothing after it yet — could still become a sequence.
     if (buffer.length === 1) return undefined;
 
+    if (buffer.startsWith("\u001b[<")) return this.decodeMouse(buffer);
+
     if (buffer[1] === "[") {
       // The ESC prefix is already verified, so match the remainder — that
       // keeps the control character out of the pattern itself.
@@ -234,6 +237,32 @@ export class InputDecoder {
       type: "key",
       key: { name: SIMPLE[char] ?? char, ctrl: false, alt: true, shift: false },
     };
+  }
+
+  // SGR mouse report: ESC [ < button ; column ; row, then M (press) or m (release).
+  // Only the vertical wheel is an event; every other report is consumed whole.
+  private decodeMouse(buffer: string): InputEvent | undefined {
+    const match = /^\[<(\d+);(\d+);(\d+)([Mm])/.exec(buffer.slice(1));
+    if (!match) {
+      if (/^\[<[\d;]*$/.test(buffer.slice(1))) return undefined;
+      const end = buffer.slice(3).search(/[^\d;]/);
+      const raw = buffer.slice(0, end < 0 ? buffer.length : 3 + end + 1);
+      this.buffer = buffer.slice(raw.length);
+      return { type: "unknown", raw };
+    }
+    const raw = buffer.slice(0, 1 + match[0].length);
+    this.buffer = buffer.slice(raw.length);
+    // Bits 4, 8 and 16 are the shift, alt and ctrl modifiers.
+    const button = Number(match[1]) & ~28;
+    if (match[4] === "M" && (button === 64 || button === 65)) {
+      return {
+        type: "scroll",
+        direction: button === 64 ? "up" : "down",
+        column: Number(match[2]),
+        row: Number(match[3]),
+      };
+    }
+    return { type: "unknown", raw };
   }
 
   // Flushes a lone pending ESC as the Escape key. Call on an idle timer: a real

@@ -237,6 +237,7 @@ const TASK_LIVE_TAIL_SCAN = 200;
 const TASK_PARTIAL_CHARS = 2_000;
 const LIVE_TOOL_OUTPUT_LINES = 50;
 const LIVE_TOOL_TAIL_LINES = 4;
+const REVIEW_WHEEL_ROWS = 3;
 // How long a backgroundable call runs before its row offers ctrl+z.
 export const BACKGROUND_HINT_MS = 5_000;
 const PENDING_INPUT_ROWS = 3;
@@ -647,6 +648,11 @@ export class App {
   private spinner = new Spinner();
   private commandList = new SelectList([]);
   private mode: AppMode = "composing";
+  // Review's first visible row. The wheel moves it alone; a key press brings the
+  // selection back into view, and a view resting on the bottom follows new rows.
+  private reviewTop = 0;
+  private reviewAtBottom = true;
+  private reviewReveal = false;
   // A parallel-safe tool batch can raise several asks at once, so they queue
   // rather than overwriting each other. One is shown; resolving removes only
   // the matching id and advances to the next.
@@ -821,6 +827,7 @@ export class App {
   }
 
   setSize(width: number, height: number): void {
+    if (width !== this.options.width) this.reviewReveal = true;
     this.options.width = width;
     this.options.height = height;
   }
@@ -1597,12 +1604,22 @@ export class App {
             )
           : this.reviewRows();
       const limit = Math.max(1, (this.options.height ?? 24) - managed.length);
-      const selected = Math.max(0, match?.row ?? rows.findIndex((line) => line.includes("❯")));
-      const start = Math.max(0, Math.min(selected - 2, rows.length - limit));
+      const selected = match?.row ?? rows.findIndex((line) => line.includes("❯"));
+      const bottom = Math.max(0, rows.length - limit);
+      let top = this.reviewAtBottom ? bottom : Math.min(this.reviewTop, bottom);
+      if (this.reviewReveal && selected >= 0) {
+        if (selected < top) top = selected;
+        else if (selected >= top + limit) top = selected - limit + 1;
+      }
+      top = Math.max(0, Math.min(top, bottom));
+      this.reviewTop = top;
+      this.reviewAtBottom = top >= bottom;
+      this.reviewReveal = false;
       return {
-        transcript: rows.slice(start, start + limit),
+        transcript: rows.slice(top, top + limit),
         managed,
         dirtyFrom: 0,
+        alternate: true,
       };
     }
     const transcript = this.transcriptRows();
@@ -2753,6 +2770,8 @@ export class App {
     if (this.transcript.length === 0 && nodes.length === 0) return;
     this.activitySelection = latest?.id;
     this.activitySearch = undefined;
+    this.reviewAtBottom = true;
+    this.reviewReveal = true;
     this.mode = "activity";
   }
 
@@ -2985,6 +3004,14 @@ export class App {
     ) {
       this.ctrlCArmedAt = 0;
     }
+    if (event.type === "scroll") {
+      if (this.mode === "activity") {
+        this.reviewTop += event.direction === "up" ? -REVIEW_WHEEL_ROWS : REVIEW_WHEEL_ROWS;
+        this.reviewAtBottom = false;
+      }
+      return;
+    }
+    if (this.mode === "activity" && event.type !== "unknown") this.reviewReveal = true;
     if (event.type === "paste") {
       if (this.mode === "approval") {
         if (APPROVAL_OPTIONS[this.approvalIndex] === "deny") {
