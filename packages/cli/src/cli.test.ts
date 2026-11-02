@@ -436,13 +436,33 @@ describe("runHeadless", () => {
     };
     const thinking = await run("/thinking");
     expect(thinking.code).toBe(EXIT.done);
-    expect(thinking.out).toMatch(/Thinking levels for fake-1: .*\(current\)/);
-    expect((await run("/thinking ultra")).out).toContain('has no "ultra" level');
+    expect(thinking.out).toMatch(/Thinking levels for fake\/fake-1: .*\(current\)/);
+    expect((await run("/thinking high")).out).toContain("--thinking <level>");
     expect((await run("/model")).out).toContain("Current model: fake/fake-1");
-    expect((await run("/model nowhere/none")).out).toContain("is not a usable model");
+    expect((await run("/model openai/gpt-5.1")).out).toContain("--model <ref>");
     expect((await run("/export")).out).toContain("Nothing to export yet.");
     expect((await run("/login")).out).toContain("/login is only available in the interactive app");
     expect((await run("/permissions")).out).toContain("pass --permission-mode or --allow-all");
+  });
+
+  test("--json listings carry structured data a harness can parse", async () => {
+    const listing = async (prompt: string) => {
+      const { out, io: sink } = io();
+      await runHeadless(parseArgs(["-p", prompt, "--json"]), base(new FakeProvider([])), sink);
+      return JSON.parse(out.join("")).data;
+    };
+    expect(await listing("/thinking")).toEqual({
+      kind: "thinking-levels",
+      model: "fake/fake-1",
+      current: "off",
+      levels: expect.arrayContaining(["off", "high"]),
+    });
+    const models = await listing("/model");
+    expect(models).toMatchObject({ kind: "models", current: "fake/fake-1", thinking: "off" });
+    for (const model of models.models) {
+      expect(model.ref).toContain("/");
+      expect(Array.isArray(model.thinkingLevels)).toBe(true);
+    }
   });
 
   test("diff and undo listings print as text", () => {

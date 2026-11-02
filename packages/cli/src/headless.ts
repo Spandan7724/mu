@@ -6,10 +6,11 @@ import {
   type DiffCommandData,
   type HaltReason,
   type MarkdownCommandRun,
+  supportedThinkingLevels,
+  type ThinkingLevel,
   type UndoPointsCommandData,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
-import { saveDefaultModel, saveThinkingLevel, thinkingCommandChoice } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { browserFlags } from "./profiles.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -259,52 +260,58 @@ function registerHeadlessCommands(
           .displayPath,
     }),
   );
+  // Read-only: a one-shot run is configured by its flags, never by saved state.
   commands.register({
     name: "model",
-    description: "List the usable models, or save one as the default: /model [ref]",
+    description: "List the usable models and their reasoning levels",
     run: async (ctx) => {
-      const usable = await usableModels({ extensions: runtime.extensions });
-      const refs = usable.map((model) => `${model.provider}/${model.id}`);
-      const ref = ctx.args.trim();
-      if (!ref) {
-        return {
-          handled: true,
-          message: [
-            `Current model: ${agent.modelRef} · thinking ${agent.thinking}`,
-            ...(refs.length > 0
-              ? ["Usable models:", ...refs.map((candidate) => `  ${candidate}`)]
-              : ["No usable models. Run mu and use /login first."]),
-          ].join("\n"),
-        };
+      if (ctx.args.trim()) {
+        return { handled: true, message: "With -p, choose the model with --model <ref>." };
       }
-      if (!refs.includes(ref)) {
-        return { handled: true, message: `${ref} is not a usable model. Run /model to list them.` };
-      }
-      agent.setModel(ref);
-      await saveDefaultModel(ref);
-      return { handled: true, message: `Model set to ${ref} · saved as default` };
+      const models = (await usableModels({ extensions: runtime.extensions })).map((model) => ({
+        ref: `${model.provider}/${model.id}`,
+        ...(model.name ? { name: model.name } : {}),
+        thinkingLevels: supportedThinkingLevels(model),
+      }));
+      return {
+        handled: true,
+        message: [
+          `Current model: ${agent.modelRef} · thinking ${agent.thinking}`,
+          ...(models.length > 0
+            ? [
+                "Usable models:",
+                ...models.map((model) => `  ${model.ref}  ${model.thinkingLevels.join(", ")}`),
+              ]
+            : ["No usable models. Run mu and use /login first."]),
+        ].join("\n"),
+        data: {
+          kind: "models",
+          current: agent.modelRef,
+          thinking: agent.thinking,
+          models,
+        } satisfies ModelsCommandData,
+      };
     },
   });
   commands.register({
     name: "thinking",
-    description: "Show the reasoning levels, or save one for the model: /thinking [level]",
-    run: async (ctx) => {
-      const levels = agent.thinkingLevels;
-      const choice = thinkingCommandChoice(agent.modelInfo.id, levels, ctx.args);
-      if ("message" in choice) return { handled: true, message: choice.message };
-      if (!choice.level) {
-        return {
-          handled: true,
-          message: `Thinking levels for ${agent.modelInfo.id}: ${levels
-            .map((level) => (level === agent.thinking ? `${level} (current)` : level))
-            .join(", ")}`,
-        };
+    description: "List the reasoning levels of the run's model",
+    run: (ctx) => {
+      if (ctx.args.trim()) {
+        return { handled: true, message: "With -p, choose the level with --thinking <level>." };
       }
-      agent.setThinking(choice.level);
-      await saveThinkingLevel(agent.modelRef, agent.thinking);
+      const levels = agent.thinkingLevels;
       return {
         handled: true,
-        message: `Thinking set to ${agent.thinking} for ${agent.modelInfo.id} · saved`,
+        message: `Thinking levels for ${agent.modelRef}: ${levels
+          .map((level) => (level === agent.thinking ? `${level} (current)` : level))
+          .join(", ")}`,
+        data: {
+          kind: "thinking-levels",
+          model: agent.modelRef,
+          current: agent.thinking,
+          levels,
+        } satisfies ThinkingLevelsCommandData,
       };
     },
   });
@@ -319,6 +326,20 @@ function registerHeadlessCommands(
       }),
     });
   }
+}
+
+export interface ModelsCommandData {
+  kind: "models";
+  current: string;
+  thinking: ThinkingLevel;
+  models: { ref: string; name?: string; thinkingLevels: ThinkingLevel[] }[];
+}
+
+export interface ThinkingLevelsCommandData {
+  kind: "thinking-levels";
+  model: string;
+  current: ThinkingLevel;
+  levels: ThinkingLevel[];
 }
 
 const INTERACTIVE_ONLY: Record<string, string> = {
