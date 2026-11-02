@@ -600,8 +600,8 @@ describe("components", () => {
       frames.push(stripAnsi(spinner.render("none")));
       spinner.tick();
     }
-    expect(frames[0]).toBe("■■··");
-    expect(frames[10]).toBe("···■");
+    expect(frames[0]).toBe("■▪··");
+    expect(frames[8]).toBe("··▪■");
     expect(frames.every((frame) => stringWidth(frame) === 4)).toBe(true);
     expect(stripAnsi(spinner.render("none"))).toBe(frames[0] ?? "");
   });

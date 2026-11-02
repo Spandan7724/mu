@@ -15,6 +15,16 @@ describe("width measurement", () => {
 
   test("emoji take two cells", () => {
     expect(stringWidth("🎉")).toBe(2);
+    expect(stringWidth("⌚")).toBe(2);
+    expect(charWidth("🎉".codePointAt(0) ?? 0)).toBe(2);
+  });
+
+  test("text-default emoji take one cell unless VS16 makes them emoji", () => {
+    for (const symbol of ["▪", "▫", "❤", "©", "™", "↔", "☀", "✔", "🌡"]) {
+      expect(stringWidth(symbol)).toBe(1);
+      expect(stringWidth(`${symbol}\ufe0f`)).toBe(2);
+    }
+    expect(charWidth("▪".codePointAt(0) ?? 0)).toBe(1);
   });
 
   test("combining marks take none", () => {

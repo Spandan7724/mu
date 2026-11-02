@@ -1,11 +1,17 @@
 import { stripAnsi } from "./style.ts";
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-const EMOJI_CLUSTER = /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u;
+// An emoji's width follows its presentation, as terminals draw it: emoji-default
+// characters, and any emoji forced to emoji style by VS16, take two cells;
+// text-default ones such as ▪ ❤ © take one unless VS16 follows.
+const EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u;
+const WIDE_EMOJI_CLUSTER = /\p{Emoji_Presentation}|\p{Emoji}\ufe0f|\p{Regional_Indicator}|\u20e3/u;
+// No emoji-presentation character sits below this code point (⌚).
+const FIRST_EMOJI_PRESENTATION = 0x231a;
 
-// Terminal cell width. Wide (East-Asian W/F) and emoji occupy two columns;
-// combining marks and zero-width joiners occupy none. Getting this wrong is
-// what makes CJK and emoji input break a layout.
+// Terminal cell width. Wide (East-Asian W/F) and emoji-presentation characters
+// occupy two columns; combining marks and zero-width joiners occupy none.
+// Getting this wrong is what makes CJK and emoji input break a layout.
 
 function isCombining(code: number): boolean {
   return (
@@ -33,8 +39,6 @@ function isWide(code: number): boolean {
     (code >= 0xfe30 && code <= 0xfe6f) ||
     (code >= 0xff00 && code <= 0xff60) || // fullwidth forms
     (code >= 0xffe0 && code <= 0xffe6) ||
-    (code >= 0x1f300 && code <= 0x1f64f) || // emoji
-    (code >= 0x1f900 && code <= 0x1f9ff) ||
     (code >= 0x20000 && code <= 0x3fffd)
   );
 }
@@ -43,11 +47,15 @@ export function charWidth(codePoint: number): number {
   if (codePoint === 0x09) return 4;
   if (codePoint < 0x20 || (codePoint >= 0x7f && codePoint < 0xa0)) return 0;
   if (isCombining(codePoint)) return 0;
-  return isWide(codePoint) ? 2 : 1;
+  if (isWide(codePoint)) return 2;
+  return codePoint >= FIRST_EMOJI_PRESENTATION &&
+    EMOJI_PRESENTATION.test(String.fromCodePoint(codePoint))
+    ? 2
+    : 1;
 }
 
 export function graphemeWidth(cluster: string): number {
-  if (EMOJI_CLUSTER.test(cluster)) return 2;
+  if (WIDE_EMOJI_CLUSTER.test(cluster)) return 2;
   let width = 0;
   for (const char of cluster) width += charWidth(char.codePointAt(0) ?? 0);
   return width;

@@ -300,9 +300,7 @@ export function cometSpinner(tick: number, depth: ColorDepth): string {
   const levels = COMET_FRAMES[tick % COMET_PERIOD] ?? [];
   return levels
     .map((level) => {
-      // One glyph for head and trail: the smaller ▪ is emoji-capable and drawn
-      // two cells wide by some terminals.
-      const glyph = level > 0 ? "■" : "·";
+      const glyph = level > 0.7 ? "■" : level > 0 ? "▪" : "·";
       if (depth === "truecolor") {
         const [r, g, b] = cometRgb(level);
         return `${ESC}38;2;${r};${g};${b}m${glyph}${RESET}`;
