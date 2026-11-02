@@ -1,7 +1,20 @@
-import type { AgentOptions, AgentRunOptions, HaltReason, MarkdownCommandRun } from "mu";
+import {
+  type AgentOptions,
+  type AgentRunOptions,
+  type CommandRegistry,
+  customMessage,
+  type DiffCommandData,
+  type HaltReason,
+  type MarkdownCommandRun,
+  type UndoPointsCommandData,
+} from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { saveDefaultModel, saveThinkingLevel, thinkingCommandChoice } from "./config.ts";
+import { transcriptExportCommand } from "./export-command.ts";
 import { browserFlags } from "./profiles.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
+import { unavailableSubagentPins, usableModels } from "./subagent-routes.ts";
+import { saveTranscriptMarkdown } from "./transcript-file.ts";
 
 // Exit codes: 0 done, 1 error, 2 usage/config, 3 halted early (budget/turns),
 // 130 aborted — so callers can branch on how a run ended.
@@ -37,6 +50,7 @@ export async function runHeadless(
       cwd: process.cwd(),
       profile: args.profile,
       model: args.model,
+      thinking: args.thinking,
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       noInstructions: args.noInstructions,
@@ -56,7 +70,11 @@ export async function runHeadless(
   }
   const { agent } = runtime;
 
-  const onSigint = () => agent.stop();
+  let interrupted = false;
+  const onSigint = () => {
+    interrupted = true;
+    agent.stop();
+  };
   process.on("SIGINT", onSigint);
 
   let failure: string | undefined;
@@ -100,6 +118,14 @@ export async function runHeadless(
   });
 
   try {
+    if (runtime.profile?.name === "coding") {
+      for (const notice of await unavailableSubagentPins({
+        profile: runtime.profile.name,
+        extensions: runtime.extensions,
+      }))
+        io.stderr(`mu: ${notice}\n`);
+    }
+    registerHeadlessCommands(runtime.commands, runtime);
     const printed: string[] = [];
     const command = await runtime.commands.execute(args.prompt, {
       inject: () => {},
@@ -127,8 +153,9 @@ export async function runHeadless(
             ...(command.data !== undefined ? { data: command.data } : {}),
           })}\n`,
         );
-      } else if (messages.length > 0) {
-        io.stdout(`${messages.join("\n")}\n`);
+      } else {
+        const text = [...messages, ...commandDataText(command.data)];
+        if (text.length > 0) io.stdout(`${text.join("\n")}\n`);
       }
       return EXIT.done;
     }
@@ -140,7 +167,10 @@ export async function runHeadless(
     let laterRuns = 0;
     let laterReason: HaltReason | undefined;
     let mainDone = false;
+    const runningTasks = new Map<string, string>();
     const stopWatching = agent.subscribe((event) => {
+      if (event.type === "task_started") runningTasks.set(event.taskId, event.command);
+      if (event.type === "task_exited") runningTasks.delete(event.taskId);
       if (!mainDone) return;
       if (event.type === "agent_start") laterRuns++;
       if (event.type !== "agent_end" || event.reason === "done") return;
@@ -149,11 +179,44 @@ export async function runHeadless(
     const result = await agent.run(prompt, runOptions);
     mainDone = true;
     if (!args.json) io.stdout("\n");
-    await agent.waitForSettled();
+    // Tasks the model was already told about are stopped at exit rather than
+    // awaited: a server it left running would otherwise hold the run open.
+    const toldAbout = new Set<string>();
+    for (;;) {
+      await agent.waitForSettled();
+      if (result.reason !== "done" || laterReason || agent.isStopping) break;
+      const waiting = agent.waitingOnUser;
+      if (waiting) {
+        io.stderr(`mu: waiting for you: ${waiting.reason} (ctrl+c to stop)\n`);
+        await waiting.done;
+        continue;
+      }
+      const untold = [...runningTasks].filter(([id]) => !toldAbout.has(id));
+      if (untold.length === 0) break;
+      for (const [id] of untold) toldAbout.add(id);
+      agent.followUp(
+        customMessage(
+          "one_shot_run",
+          `This is a one-shot run: it ends when you end your turn, and background tasks still running then are stopped, so their exits will not reach you. Still running: ${[
+            ...runningTasks,
+          ]
+            .map(([id, command]) => `${id} (${command})`)
+            .join(", ")}. Wait now for any whose result you need; otherwise end your turn.`,
+        ),
+      );
+    }
     stopWatching();
     if (laterRuns > 0 && !args.json) io.stdout("\n");
-    const reason = result.reason === "done" ? (laterReason ?? "done") : result.reason;
+    const reason =
+      result.reason === "done"
+        ? (laterReason ?? (interrupted ? "aborted" : "done"))
+        : result.reason;
 
+    if (args.json) {
+      io.stdout(
+        `${JSON.stringify({ type: "result", reason, sessionId: agent.sessionId, usage: agent.usage })}\n`,
+      );
+    }
     if (reason === "error") {
       io.stderr(`mu: ${failure ?? "the provider returned an error"}\n`);
     } else if (reason !== "done" && reason !== "aborted") {
@@ -177,4 +240,116 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
     (data as { kind?: unknown }).kind === "markdown-command" &&
     typeof (data as { prompt?: unknown }).prompt === "string"
   );
+}
+
+// Commands the terminal app shows as pickers or panels, made usable in one shot.
+function registerHeadlessCommands(
+  commands: CommandRegistry,
+  runtime: Awaited<ReturnType<typeof createCliSessionRuntime>>,
+): void {
+  const { agent } = runtime;
+  commands.register(
+    transcriptExportCommand({
+      getSession: () => agent.session,
+      getSessionId: () => agent.sessionId,
+      getModel: () => agent.modelRef,
+      isRunning: () => agent.isRunning,
+      save: async (markdown, requestedPath, now) =>
+        (await saveTranscriptMarkdown(markdown, { cwd: process.cwd(), requestedPath, now }))
+          .displayPath,
+    }),
+  );
+  commands.register({
+    name: "model",
+    description: "List the usable models, or save one as the default: /model [ref]",
+    run: async (ctx) => {
+      const usable = await usableModels({ extensions: runtime.extensions });
+      const refs = usable.map((model) => `${model.provider}/${model.id}`);
+      const ref = ctx.args.trim();
+      if (!ref) {
+        return {
+          handled: true,
+          message: [
+            `Current model: ${agent.modelRef} · thinking ${agent.thinking}`,
+            ...(refs.length > 0
+              ? ["Usable models:", ...refs.map((candidate) => `  ${candidate}`)]
+              : ["No usable models. Run mu and use /login first."]),
+          ].join("\n"),
+        };
+      }
+      if (!refs.includes(ref)) {
+        return { handled: true, message: `${ref} is not a usable model. Run /model to list them.` };
+      }
+      agent.setModel(ref);
+      await saveDefaultModel(ref);
+      return { handled: true, message: `Model set to ${ref} · saved as default` };
+    },
+  });
+  commands.register({
+    name: "thinking",
+    description: "Show the reasoning levels, or save one for the model: /thinking [level]",
+    run: async (ctx) => {
+      const levels = agent.thinkingLevels;
+      const choice = thinkingCommandChoice(agent.modelInfo.id, levels, ctx.args);
+      if ("message" in choice) return { handled: true, message: choice.message };
+      if (!choice.level) {
+        return {
+          handled: true,
+          message: `Thinking levels for ${agent.modelInfo.id}: ${levels
+            .map((level) => (level === agent.thinking ? `${level} (current)` : level))
+            .join(", ")}`,
+        };
+      }
+      agent.setThinking(choice.level);
+      await saveThinkingLevel(agent.modelRef, agent.thinking);
+      return {
+        handled: true,
+        message: `Thinking set to ${agent.thinking} for ${agent.modelInfo.id} · saved`,
+      };
+    },
+  });
+  for (const [name, hint] of Object.entries(INTERACTIVE_ONLY)) {
+    if (commands.get(name)) continue;
+    commands.register({
+      name,
+      description: "Available in the interactive app",
+      run: () => ({
+        handled: true,
+        message: `/${name} is only available in the interactive app${hint ? `; ${hint}` : ""}.`,
+      }),
+    });
+  }
+}
+
+const INTERACTIVE_ONLY: Record<string, string> = {
+  login: "",
+  logout: "",
+  permissions: "with -p, pass --permission-mode or --allow-all",
+  resume: "with -p, pass --resume <session>",
+  new: "each -p run without --resume starts a new session",
+  rename: "",
+  btw: "",
+  keybindings: "",
+};
+
+export function commandDataText(data: unknown): string[] {
+  if (typeof data !== "object" || data === null) return [];
+  const kind = (data as { kind?: unknown }).kind;
+  if (kind === "diff") {
+    // Hunks are the patch's own lines, headers included.
+    return (data as DiffCommandData).files.flatMap((file) => {
+      const lines = file.hunks.at(-1) === "" ? file.hunks.slice(0, -1) : file.hunks;
+      return lines.length > 0 ? lines : [`${file.path} (+${file.added} -${file.removed})`];
+    });
+  }
+  if (kind === "undo-points") {
+    return [
+      "Undo through a prompt with /undo <n>:",
+      ...(data as UndoPointsCommandData).points.map(
+        (point) =>
+          `  ${point.steps}  ${point.prompt.replace(/\s+/g, " ").trim() || "(empty prompt)"}`,
+      ),
+    ];
+  }
+  return [];
 }

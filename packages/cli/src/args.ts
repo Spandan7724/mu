@@ -17,6 +17,7 @@ export interface ParsedArgs {
   prompt?: string | undefined;
   json: boolean;
   model?: string | undefined;
+  thinking?: string | undefined;
   profile?: string | undefined;
   resumeSessionId?: string | undefined;
   maxTurns?: number | undefined;
@@ -155,6 +156,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
         parsed.model = argv[++i];
         if (!parsed.model) parsed.errors.push("--model requires a value");
         break;
+      case "--thinking":
+        parsed.thinking = argv[++i];
+        if (!parsed.thinking) parsed.errors.push("--thinking requires a level");
+        break;
       case "--profile":
         parsed.profile = argv[++i];
         if (!parsed.profile) parsed.errors.push("--profile requires a value");
@@ -237,7 +242,7 @@ Examples:
 
 Coding agent (default, or --profile coding)
   Works in the current directory: reads, searches, edits and creates files, runs shell
-  commands and background processes, and delegates to subagents (task, search, counsel,
+  commands and background processes, and delegates to subagents (task, counsel,
   recall). Each prompt gets a checkpoint outside your Git repo that /undo can restore.
 
   Permission modes (--permission-mode, /permissions or shift+tab in the app):
@@ -293,6 +298,8 @@ Options for both agents:
       --rpc                  NDJSON mode for other programs (see RPC below)
       --model <ref>          model to use, e.g. anthropic/claude-opus-5 or openai/gpt-5.1
                              (default: "model" in ~/.mu/config.json)
+      --thinking <level>     reasoning level for this run, e.g. low or high
+                             (default: the level last chosen for the model)
       --profile <name>       profile to load: coding, browser, or a module path/package
       --resume <session>     resume an earlier session (interactive, -p or --rpc)
       --permission-mode <mode>

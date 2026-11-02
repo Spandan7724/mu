@@ -428,6 +428,10 @@ export class Agent {
     return [...this.effectivePermissionRules()];
   }
 
+  get waitingOnUser(): { reason: string; done: Promise<void> } | undefined {
+    return this.stopping ? undefined : this.options.runtime?.waitingOnUser?.();
+  }
+
   get backgroundWork(): string[] {
     return [...this.background.keys()].map((work) => work.label);
   }

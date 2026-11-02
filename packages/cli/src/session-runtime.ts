@@ -17,7 +17,12 @@ import {
   toCommand,
 } from "mu";
 import { withStoredCredentials } from "./auth.ts";
-import { loadUserConfig, resolveCliModel, savedThinkingLevel } from "./config.ts";
+import {
+  loadUserConfig,
+  resolveCliModel,
+  savedThinkingLevel,
+  thinkingCommandChoice,
+} from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
 import {
   nextPermissionMode,
@@ -38,6 +43,8 @@ export interface SessionRuntimeOptions {
   cwd: string;
   profile?: string | undefined;
   model?: string | undefined;
+  // A reasoning level for this session only; unknown levels fail startup.
+  thinking?: string | undefined;
   permissionMode?: string | undefined;
   allowAll?: boolean | undefined;
   // Start in the permission mode last chosen in the app when none is given.
@@ -221,6 +228,16 @@ export async function createCliSessionRuntime(
     // the first operation so a worker crash during startup is still visible
     // and resumable through the same profile scope.
     await agent.sessionStore.save(agent.sessionId, agent.session);
+  }
+
+  if (options.thinking) {
+    const choice = thinkingCommandChoice(
+      agent.modelInfo.id,
+      agent.thinkingLevels,
+      options.thinking,
+    );
+    if ("message" in choice) throw new Error(choice.message);
+    if (choice.level) agent.setThinking(choice.level);
   }
 
   const commands = registryWithCoreCommands({

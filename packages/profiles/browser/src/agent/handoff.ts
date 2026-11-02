@@ -27,6 +27,7 @@ function stillHandingOff(url: string): boolean {
 export class Handoffs {
   private host: ProfileRuntimeHost | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private waiting: { reason: string; done: Promise<void>; settle: () => void } | undefined;
 
   constructor(private readonly pollMs = POLL_MS) {}
 
@@ -34,8 +35,14 @@ export class Handoffs {
     this.host = host;
   }
 
+  get pending(): { reason: string; done: Promise<void> } | undefined {
+    return this.waiting && { reason: this.waiting.reason, done: this.waiting.done };
+  }
+
   start(tab: Tab, reason: string): void {
     this.cancel();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.waiting = { reason, done: promise, settle: resolve };
     const from = tab.url;
     let stable = 0;
     let candidate = "";
@@ -49,19 +56,24 @@ export class Handoffs {
       stable = url === candidate ? stable + 1 : 1;
       candidate = url;
       if (stable < STABLE_POLLS) return;
-      this.cancel();
+      const settle = this.waiting?.settle;
+      this.cancel(false);
       this.host?.followUp(
         customMessage(
           "browser-handoff",
           `The user finished the hand-off (${reason}): tab ${tab.tabId} is now at ${JSON.stringify(url)}. Continue the task.`,
         ),
       );
+      // After the follow-up is queued, so a waiter sees the run it starts.
+      settle?.();
     }, this.pollMs);
   }
 
-  cancel(): void {
+  cancel(settle = true): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    if (settle) this.waiting?.settle();
+    this.waiting = undefined;
   }
 }
 
@@ -81,6 +93,17 @@ export function handoffTool(browser: BrowserManager, handoffs: Handoffs) {
     changesState: false,
     permissionScope: () => "browser:observe",
     execute: async ({ reason }, { signal }) => {
+      if (browser.status().headless) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `The browser is running headless, so there is no window to hand to the user. Stop and tell the user what they need to do (${reason}): sign in once with \`mu browser login\`, or rerun without --headless.`,
+            },
+          ],
+          isError: true,
+        };
+      }
       const tab = await browser.activeTab(signal);
       await browser.connection
         ?.send("Target.activateTarget", { targetId: tab.targetId }, { signal, timeoutMs: 3_000 })

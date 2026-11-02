@@ -69,6 +69,7 @@ import {
   savePermissionMode,
   saveSubagentPin,
   saveThinkingLevel,
+  thinkingCommandChoice,
 } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { observeGitBranch } from "./git-branch.ts";
@@ -173,21 +174,6 @@ const SUBAGENT_NAME_STYLES: Record<SubagentKind, Style> = {
 
 export function stoppedBackgroundNotice(stopped: string[]): string {
   return `stopped background work ${stopped.join(", ")}; its result is kept in the previous session`;
-}
-
-// What `/thinking <args>` asks for: a level to set, a message, or (no level) the picker.
-export function thinkingCommandChoice(
-  modelId: string,
-  levels: readonly ThinkingLevel[],
-  args: string,
-): { level?: ThinkingLevel } | { message: string } {
-  if (levels.length < 2) return { message: `${modelId} has no reasoning levels to choose from.` };
-  const wanted = args.trim().toLowerCase();
-  if (!wanted) return {};
-  const level = levels.find((candidate) => candidate.toLowerCase() === wanted);
-  return level
-    ? { level }
-    : { message: `${modelId} has no "${wanted}" level. Choose one of: ${levels.join(", ")}.` };
 }
 
 export function formatSubagentsOutput(data: SubagentsCommandData, depth: ColorDepth): string[] {
@@ -303,6 +289,7 @@ function isMarkdownCommandRun(data: unknown): data is MarkdownCommandRun {
   );
 }
 
+export { thinkingCommandChoice } from "./config.ts";
 export { registerDeclaredRenderers } from "./presentation.ts";
 
 export async function runInteractive(
@@ -322,6 +309,7 @@ export async function runInteractive(
       cwd: process.cwd(),
       profile: args.profile,
       model: args.model,
+      thinking: args.thinking,
       permissionMode: args.permissionMode,
       allowAll: args.allowAll,
       savedPermissionMode: true,

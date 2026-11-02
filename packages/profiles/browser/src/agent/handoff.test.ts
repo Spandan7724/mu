@@ -59,6 +59,7 @@ test("handoff brings the tab forward, ends the turn and starts watching", async 
   const tab = fakeTab("https://www.linkedin.com/login");
   const activated: unknown[] = [];
   const browser = {
+    status: () => ({ headless: false }),
     activeTab: async () => tab,
     connection: {
       send: async (method: string, params: unknown) => void activated.push([method, params]),
@@ -78,4 +79,42 @@ test("handoff brings the tab forward, ends the turn and starts watching", async 
   tab.url = "https://www.linkedin.com/feed/";
   await wait(40);
   expect(woken).toHaveLength(1);
+});
+
+test("a pending hand-off settles once the agent is woken, or when it is cancelled", async () => {
+  const { handoffs, woken } = harness();
+  expect(handoffs.pending).toBeUndefined();
+  const tab = fakeTab("https://example.com/login");
+  handoffs.start(tab, "sign in to example.com");
+  const pending = handoffs.pending;
+  expect(pending?.reason).toBe("sign in to example.com");
+  tab.url = "https://example.com/home";
+  await pending?.done;
+  expect(woken).toHaveLength(1);
+  expect(handoffs.pending).toBeUndefined();
+
+  handoffs.start(fakeTab("https://example.com/login"), "sign in again");
+  const second = handoffs.pending;
+  handoffs.cancel();
+  await second?.done;
+  expect(handoffs.pending).toBeUndefined();
+});
+
+test("a headless browser has no window to hand over, so handoff fails without waiting", async () => {
+  const browser = {
+    status: () => ({ headless: true }),
+    activeTab: async () => {
+      throw new Error("not reached");
+    },
+  } as unknown as BrowserManager;
+  const { handoffs } = harness();
+  const result = await handoffTool(browser, handoffs).execute(
+    "h1",
+    { reason: "sign in to linkedin.com" },
+    new AbortController().signal,
+  );
+  expect(result.isError).toBe(true);
+  expect(result.terminate).toBeUndefined();
+  expect(JSON.stringify(result.content)).toContain("mu browser login");
+  expect(handoffs.pending).toBeUndefined();
 });

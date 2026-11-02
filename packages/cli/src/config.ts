@@ -245,3 +245,18 @@ export function applySavedThinking(
       thinkingLevelForModel(agent.modelInfo, undefined),
   );
 }
+
+// What `/thinking <args>` asks for: a level to set, a message, or (no level) the picker.
+export function thinkingCommandChoice(
+  modelId: string,
+  levels: readonly ThinkingLevel[],
+  args: string,
+): { level?: ThinkingLevel } | { message: string } {
+  if (levels.length < 2) return { message: `${modelId} has no reasoning levels to choose from.` };
+  const wanted = args.trim().toLowerCase();
+  if (!wanted) return {};
+  const level = levels.find((candidate) => candidate.toLowerCase() === wanted);
+  return level
+    ? { level }
+    : { message: `${modelId} has no "${wanted}" level. Choose one of: ${levels.join(", ")}.` };
+}

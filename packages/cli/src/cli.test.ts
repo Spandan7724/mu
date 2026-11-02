@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SESSION_VERSION } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
-import { ExtensionHost, MemorySessionStore, SessionTree, userMessage } from "mu";
+import {
+  customMessage,
+  ExtensionHost,
+  MemorySessionStore,
+  type ProfileRuntime,
+  type ProfileRuntimeHost,
+  SessionTree,
+  userMessage,
+} from "mu";
 import { HELP_TEXT, parseArgs } from "./args.ts";
-import { EXIT, runHeadless } from "./headless.ts";
+import { commandDataText, EXIT, runHeadless } from "./headless.ts";
 
 function io() {
   const out: string[] = [];
@@ -219,7 +230,11 @@ describe("runHeadless", () => {
     const lines = out.join("").trim().split("\n");
     const events = lines.map((line) => JSON.parse(line));
     expect(events[0].type).toBe("agent_start");
-    expect(events[events.length - 1].type).toBe("agent_end");
+    expect(events.at(-2).type).toBe("agent_end");
+    // The closing line names the session so a script can continue it with --resume.
+    expect(events.at(-1)).toMatchObject({ type: "result", reason: "done" });
+    expect(typeof events.at(-1).sessionId).toBe("string");
+    expect(events.at(-1).usage.outputTokens).toBeGreaterThanOrEqual(0);
     // Every line must be independently parseable — this is the RPC wire shape.
     for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
   });
@@ -266,15 +281,11 @@ describe("runHeadless", () => {
   test("built-in commands run headlessly without calling the provider", async () => {
     const provider = new FakeProvider([]);
     const { out, io: sink } = io();
-    const code = await runHeadless(
-      parseArgs(["-p", "/model anthropic/claude-opus-5"]),
-      base(provider),
-      sink,
-    );
+    const code = await runHeadless(parseArgs(["-p", "/cost"]), base(provider), sink);
 
     expect(code).toBe(EXIT.done);
     expect(provider.callCount).toBe(0);
-    expect(out.join("")).toContain("Model set to anthropic/claude-opus-5");
+    expect(out.join("")).toContain("Session usage");
   });
 
   test("a command that submits a prompt, like a skill, runs it headlessly", async () => {
@@ -318,14 +329,13 @@ describe("runHeadless", () => {
   test("headless commands have a JSON result shape", async () => {
     const provider = new FakeProvider([]);
     const { out, io: sink } = io();
-    const code = await runHeadless(parseArgs(["-p", "/model", "--json"]), base(provider), sink);
+    const code = await runHeadless(parseArgs(["-p", "/cost", "--json"]), base(provider), sink);
 
     expect(code).toBe(EXIT.done);
     expect(provider.callCount).toBe(0);
-    expect(JSON.parse(out.join(""))).toEqual({
-      type: "command_result",
-      message: "Current model: fake/fake-1",
-    });
+    const result = JSON.parse(out.join(""));
+    expect(result.type).toBe("command_result");
+    expect(result.message).toStartWith("Session usage");
   });
 
   test("extension commands join the headless registry", async () => {
@@ -395,6 +405,136 @@ describe("runHeadless", () => {
     );
     expect(code).toBe(3);
     expect(err.join("")).toContain("halted early");
+  });
+
+  test("--thinking sets the run's level and rejects one the model lacks", async () => {
+    expect(parseArgs(["-p", "x", "--thinking", "high"]).thinking).toBe("high");
+    expect(parseArgs(["-p", "x", "--thinking"]).errors[0]).toContain("requires a level");
+    const ok = io();
+    expect(
+      await runHeadless(
+        parseArgs(["-p", "ask", "--thinking", "HIGH"]),
+        base(new FakeProvider([{ content: [{ type: "text", text: "hi" }] }])),
+        ok.io,
+      ),
+    ).toBe(EXIT.done);
+    const bad = io();
+    const code = await runHeadless(
+      parseArgs(["-p", "ask", "--thinking", "ultra"]),
+      base(new FakeProvider([])),
+      bad.io,
+    );
+    expect(code).toBe(EXIT.usage);
+    expect(bad.err.join("")).toContain('has no "ultra" level');
+  });
+
+  test("picker commands answer in text, and app-only commands say where they live", async () => {
+    const run = async (prompt: string) => {
+      const { out, io: sink } = io();
+      const code = await runHeadless(parseArgs(["-p", prompt]), base(new FakeProvider([])), sink);
+      return { code, out: out.join("") };
+    };
+    const thinking = await run("/thinking");
+    expect(thinking.code).toBe(EXIT.done);
+    expect(thinking.out).toMatch(/Thinking levels for fake-1: .*\(current\)/);
+    expect((await run("/thinking ultra")).out).toContain('has no "ultra" level');
+    expect((await run("/model")).out).toContain("Current model: fake/fake-1");
+    expect((await run("/model nowhere/none")).out).toContain("is not a usable model");
+    expect((await run("/export")).out).toContain("Nothing to export yet.");
+    expect((await run("/login")).out).toContain("/login is only available in the interactive app");
+    expect((await run("/permissions")).out).toContain("pass --permission-mode or --allow-all");
+  });
+
+  test("diff and undo listings print as text", () => {
+    expect(
+      commandDataText({
+        kind: "diff",
+        files: [
+          {
+            path: "a.txt",
+            added: 1,
+            removed: 0,
+            hunks: ["diff --git a/a.txt b/a.txt", "@@ -0,0 +1 @@", "+hello", ""],
+          },
+          { path: "img.png", added: 0, removed: 0, hunks: [] },
+        ],
+      }),
+    ).toEqual(["diff --git a/a.txt b/a.txt", "@@ -0,0 +1 @@", "+hello", "img.png (+0 -0)"]);
+    expect(
+      commandDataText({
+        kind: "undo-points",
+        points: [{ steps: 1, prompt: "fix\nthe bug", messageCount: 2 }],
+      }),
+    ).toEqual(["Undo through a prompt with /undo <n>:", "  1  fix the bug"]);
+  });
+
+  test("background tasks left running get one chance to be awaited, then the run ends", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-headless-root-"));
+    const home = await mkdtemp(join(tmpdir(), "mu-headless-home-"));
+    const provider = new FakeProvider([
+      {
+        content: [
+          {
+            type: "toolCall",
+            id: "c1",
+            name: "bash",
+            arguments: { command: "sleep 30", run_in_background: true },
+          },
+        ],
+      },
+      { content: [{ type: "text", text: "started; I'll report when it exits" }] },
+      { content: [{ type: "text", text: "leaving it" }] },
+    ]);
+    const { out, io: sink } = io();
+    const started = Date.now();
+    try {
+      const code = await runHeadless(
+        parseArgs(["-p", "run it", "--allow-all", "--model", "openai/gpt-5.1"]),
+        { provider, session: new MemorySessionStore() },
+        sink,
+        { profileOptions: { root, home } },
+      );
+      expect(code).toBe(EXIT.done);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(provider.callCount).toBe(3);
+    const notice = JSON.stringify(provider.requests[2]?.messages.at(-1));
+    expect(notice).toContain("one-shot run");
+    expect(notice).toContain("task_1 (sleep 30)");
+    expect(out.join("")).toContain("leaving it");
+  }, 30_000);
+
+  test("waits for a step only the user can finish, then runs the turn it wakes", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "over to you" }] },
+      { content: [{ type: "text", text: "signed in, continuing" }] },
+    ]);
+    let host: ProfileRuntimeHost | undefined;
+    let waiting: { reason: string; done: Promise<void> } | undefined;
+    const runtime: ProfileRuntime = {
+      attach: (attached) => {
+        host = attached;
+      },
+      waitingOnUser: () => waiting,
+    };
+    const { promise, resolve } = Promise.withResolvers<void>();
+    waiting = { reason: "sign in to example.com", done: promise };
+    setTimeout(() => {
+      waiting = undefined;
+      host?.followUp(customMessage("handoff", "the page moved on"));
+      resolve();
+    }, 30);
+    const { out, err, io: sink } = io();
+
+    const code = await runHeadless(parseArgs(["-p", "go"]), { ...base(provider), runtime }, sink);
+
+    expect(code).toBe(EXIT.done);
+    expect(err.join("")).toContain("mu: waiting for you: sign in to example.com");
+    expect(provider.callCount).toBe(2);
+    expect(out.join("")).toContain("signed in, continuing");
   });
 
   test("a missing prompt exits 2", async () => {

@@ -167,6 +167,7 @@ async function main(): Promise<number> {
           cwd: process.cwd(),
           profile: args.profile,
           model: args.model,
+          thinking: args.thinking,
           permissionMode: args.permissionMode,
           allowAll: args.allowAll,
           noInstructions: args.noInstructions,

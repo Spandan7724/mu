@@ -229,7 +229,11 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   const toolset = toolsFor(browser, state, todos);
   const runtime: ProfileRuntime = {
     attach: (host) => handoffs.attach(host),
-    stop: () => browser.stop(),
+    waitingOnUser: () => handoffs.pending,
+    stop: () => {
+      handoffs.cancel();
+      browser.stop();
+    },
     shutdown: () => {
       handoffs.cancel();
       return browser.shutdown();

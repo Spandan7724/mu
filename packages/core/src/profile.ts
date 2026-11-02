@@ -41,6 +41,10 @@ export interface ProfileRuntime {
   resize?: (cols: number, rows: number) => void;
   // Stops one running task the user chose; false when there is no such task.
   stopTask?: (taskId: string) => boolean;
+  // Something only the user can finish that will wake the agent when done.
+  // One-shot surfaces wait on `done` rather than exit; it also settles if the
+  // wait is cancelled.
+  waitingOnUser?: () => { reason: string; done: Promise<void> } | undefined;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;
 }
