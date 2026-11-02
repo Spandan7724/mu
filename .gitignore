@@ -3,6 +3,7 @@ docs/
 TODO.md
 CODE_REVIEW.md
 scripts/benchmarks/
+mu_eval/
 
 node_modules/
 dist/

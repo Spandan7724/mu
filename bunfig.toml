@@ -5,3 +5,4 @@ minimumReleaseAge = 4320
 
 [test]
 preload = ["./scripts/test-preload.ts"]
+pathIgnorePatterns = ["mu_eval/**"]
