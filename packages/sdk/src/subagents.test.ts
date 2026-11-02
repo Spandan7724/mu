@@ -40,7 +40,7 @@ function details(agent: Agent, name: string): SubagentDetails {
 }
 
 describe("managed subagents", () => {
-  test("Recall uses Search routing, reads prior sessions, and cannot access workspace context or hosted search", async () => {
+  test("Recall reasons at low, reads prior sessions, and cannot access workspace context or hosted search", async () => {
     const store = new MemorySessionStore();
     const old = new SessionTree({
       type: "session",
@@ -233,15 +233,15 @@ describe("managed subagents", () => {
     expect(failures.every((message) => message.isError)).toBe(true);
   });
 
-  test("search runs on the parent model at low reasoning and receives only inspection tools", async () => {
+  test("counsel receives only inspection tools and none of the parent's context", async () => {
     const provider = new FakeProvider([
       {
         content: [
           {
             type: "toolCall",
-            id: "search-1",
-            name: "search",
-            arguments: { query: "Trace the parser end to end" },
+            id: "counsel-1",
+            name: "counsel",
+            arguments: { question: "Is the parser boundary right?" },
           },
         ],
       },
@@ -277,47 +277,13 @@ describe("managed subagents", () => {
       }),
     );
 
-    await parent.run("investigate");
+    await parent.run("ask counsel");
 
     expect(provider.requests[1]?.tools?.map((candidate) => candidate.name)).toEqual(["inspect"]);
     expect(JSON.stringify(provider.requests[1]?.messages)).not.toContain(
       "do not expose this bootstrap message",
     );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Answer one directed engineering question within its stated scope",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Instructions to edit or implement, update todo/plan state, run builds, tests",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Similar terminology or shared infrastructure alone does not put another subsystem in scope",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "do not reread unchanged content",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Begin with one concise paragraph, with no heading",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "bulleted list containing only the material source locations",
-    );
-    expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Do not include investigation chronology, commands run, raw search matches",
-    );
-    expect(details(parent, "search")).toMatchObject({
-      kind: "search",
-      model: "openai-codex/gpt-5.6-terra",
-      thinkingLevel: "low",
-      reason: "done",
-    });
-    const search = parent.tools.find((candidate) => candidate.name === "search");
-    expect(search?.description).toContain(
-      "do not add categories of files, evidence, or related systems",
-    );
-    expect(search?.description).toContain("preserve those citations when answering the user");
-    expect(JSON.stringify(search?.inputSchema)).toContain(
-      "do not add categories of files or evidence the user did not request",
-    );
+    expect(parent.tools.some((candidate) => candidate.name === "search")).toBe(false);
   });
 
   test("counsel runs on the parent model and reasons one level higher", async () => {
@@ -366,7 +332,6 @@ describe("managed subagents", () => {
   });
 
   test.each([
-    "search",
     "recall",
   ])("%s runs on the parent model at low reasoning whatever the parent's level", async (kind) => {
     const provider = new FakeProvider([
@@ -721,9 +686,9 @@ describe("managed subagents", () => {
         content: [
           {
             type: "toolCall",
-            id: "search-1",
-            name: "search",
-            arguments: { query: "Inspect the workspace" },
+            id: "counsel-1",
+            name: "counsel",
+            arguments: { question: "Inspect the workspace" },
           },
         ],
       },
@@ -738,7 +703,7 @@ describe("managed subagents", () => {
         ],
       },
       { content: [{ type: "text", text: "The command was denied." }] },
-      { content: [{ type: "text", text: "Search finished." }] },
+      { content: [{ type: "text", text: "Counsel finished." }] },
     ]);
     let ran = false;
     let asked = false;
@@ -771,7 +736,7 @@ describe("managed subagents", () => {
       }),
     );
 
-    await parent.run("search safely");
+    await parent.run("consult safely");
 
     expect(ran).toBe(false);
     expect(asked).toBe(false);
@@ -920,7 +885,6 @@ describe("/subagents", () => {
 
     expect(await routes(host)).toEqual([
       { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "medium" },
-      { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
       { kind: "counsel", model: "gpt-5.6-terra", thinkingLevel: "high" },
       { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
     ]);
@@ -974,7 +938,6 @@ describe("/subagents", () => {
   ])("counsel for a parent at %s reasons at %s; task copies the parent", async (own, counsel) => {
     expect(await levelsOf(full, own)).toEqual({
       task: own,
-      search: "low",
       counsel,
       recall: "low",
     });
@@ -983,19 +946,18 @@ describe("/subagents", () => {
   test("a model without the target level takes the nearest supported one", async () => {
     expect(
       await levelsOf({ ...fakeModel, thinkingLevels: ["low", "medium", "high"] }, "high"),
-    ).toMatchObject({ counsel: "high", search: "low" });
+    ).toMatchObject({ counsel: "high", recall: "low" });
     expect(
       await levelsOf(
         { ...fakeModel, thinkingLevels: ["none", "minimal", "medium", "high"] },
         "none",
       ),
-    ).toMatchObject({ counsel: "high", search: "medium" });
+    ).toMatchObject({ counsel: "high", recall: "medium" });
     expect(await levelsOf({ ...fakeModel, thinkingLevels: ["xhigh", "max"] }, "max")).toMatchObject(
-      { counsel: "max", search: "xhigh" },
+      { counsel: "max", recall: "xhigh" },
     );
     expect(await levelsOf({ ...fakeModel, thinking: false }, "off")).toEqual({
       task: undefined,
-      search: undefined,
       counsel: undefined,
       recall: undefined,
     });
@@ -1040,7 +1002,7 @@ describe("/subagents", () => {
         excludeTools: ["task", "recall"],
       }),
     );
-    expect((await routes(host)).map((route) => route.kind)).toEqual(["search", "counsel"]);
+    expect((await routes(host)).map((route) => route.kind)).toEqual(["counsel"]);
 
     const registry = new CommandRegistry();
     registry.register({
@@ -1094,12 +1056,11 @@ describe("subagent route overrides", () => {
     const result = await host.commands.execute("/subagents", command);
     expect((result.data as SubagentsCommandData).routes).toEqual([
       { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "low" },
-      { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
       { kind: "counsel", model: "gpt-6-astra", thinkingLevel: "max", pinned: true },
       { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low" },
     ]);
     expect(result.message).toContain("  counsel  gpt-6-astra · max · set");
-    expect(asked).toEqual(["task", "search", "counsel", "recall"]);
+    expect(asked).toEqual(["task", "counsel", "recall"]);
 
     await parent.run("consult");
     expect(details(parent, "counsel")).toMatchObject({
@@ -1122,11 +1083,11 @@ describe("subagent route overrides", () => {
         coding: { inspectionTools: [] },
         inspectionPermissions: [],
         routeOverride: (kind) =>
-          kind === "search"
+          kind === "recall"
             ? { model: astra }
             : kind === "counsel"
               ? { thinkingLevel: "medium" }
-              : kind === "recall"
+              : kind === "task"
                 ? { thinkingLevel: "ultra" }
                 : undefined,
       }),
@@ -1135,11 +1096,10 @@ describe("subagent route overrides", () => {
     expect(
       ((await host.commands.execute("/subagents", command)).data as SubagentsCommandData).routes,
     ).toEqual([
-      { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "medium" },
-      { kind: "search", model: "gpt-6-astra", thinkingLevel: "low", pinned: true },
-      { kind: "counsel", model: "gpt-5.6-terra", thinkingLevel: "medium", pinned: true },
       // gpt-5.6-terra tops out at xhigh, so a pinned ultra lands on the nearest level.
-      { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "xhigh", pinned: true },
+      { kind: "task", model: "gpt-5.6-terra", thinkingLevel: "xhigh", pinned: true },
+      { kind: "counsel", model: "gpt-5.6-terra", thinkingLevel: "medium", pinned: true },
+      { kind: "recall", model: "gpt-6-astra", thinkingLevel: "low", pinned: true },
     ]);
   });
 
@@ -1373,16 +1333,16 @@ describe("a model chosen for one call", () => {
     ],
   ])("%s starts nothing and says what to ask", async (_name, choice, fragments) => {
     const { parent, provider } = await setUp([
-      call("search", { query: "Trace it", ...choice }),
+      call("counsel", { question: "Weigh it", ...choice }),
       text("Understood."),
     ]);
 
-    await parent.run("search with a model");
+    await parent.run("counsel with a model");
 
     const result = parent.session
       .messagesAt()
-      .find((entry) => entry.role === "toolResult" && entry.toolName === "search");
-    if (result?.role !== "toolResult") throw new Error("missing search result");
+      .find((entry) => entry.role === "toolResult" && entry.toolName === "counsel");
+    if (result?.role !== "toolResult") throw new Error("missing counsel result");
     expect(result.isError).toBe(true);
     const message = result.content
       .map((block) => (block.type === "text" ? block.text : ""))
@@ -1416,7 +1376,7 @@ describe("a model chosen for one call", () => {
 
   test("every role offers the arguments, with the explicit-only policy", async () => {
     const { parent, host } = await setUp([]);
-    for (const name of ["task", "search", "counsel", "recall"]) {
+    for (const name of ["task", "counsel", "recall"]) {
       const candidate = parent.tools.find((entry) => entry.name === name);
       expect(candidate?.description).toContain(
         "only when the user names a model or reasoning level",

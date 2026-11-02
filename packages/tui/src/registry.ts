@@ -25,6 +25,8 @@ import { wrapLine, wrapText } from "./wrap.ts";
 const COMPACT_OUTPUT_LINES = 5;
 const COMPACT_DIFF_LINES = 9;
 export const EXPANDED_OUTPUT_LINES = 200;
+// Sessions saved before the search subagent was removed still hold its rows.
+type RenderedSubagentKind = SubagentKind | "search";
 const SUBAGENT_KINDS: ReadonlySet<string> = new Set(["task", "search", "recall", "counsel"]);
 
 export interface ToolRenderInfo {
@@ -614,7 +616,7 @@ function subagentDetails(info: ToolRenderInfo): SubagentDetails | undefined {
 
 export interface SubagentProgressState {
   type: "subagent-progress-state";
-  kind: SubagentKind;
+  kind: RenderedSubagentKind;
   description: string;
   model: string;
   thinkingLevel: string;
@@ -700,7 +702,7 @@ function subagentProgress(info: ToolRenderInfo): SubagentProgressState | undefin
 }
 
 const SUBAGENT_ACTIONS: Record<
-  SubagentKind,
+  RenderedSubagentKind,
   { running: string; completed: string; tone: NonNullable<ToolCellOptions["tone"]> }
 > = {
   task: { running: "delegating", completed: "delegated", tone: "task" },
@@ -709,7 +711,7 @@ const SUBAGENT_ACTIONS: Record<
   counsel: { running: "consulting counsel", completed: "consulted counsel", tone: "counsel" },
 };
 
-function subagentDescription(info: ToolRenderInfo, kind: SubagentKind): string {
+function subagentDescription(info: ToolRenderInfo, kind: RenderedSubagentKind): string {
   return (
     firstString(info.args, kind === "task" ? ["description", "prompt"] : ["query", "question"]) ??
     kind
@@ -751,7 +753,11 @@ function subagentToolCalls(messages: AgentMessage[], running: boolean): Subagent
   });
 }
 
-function subagentPrompt(info: ToolRenderInfo, kind: SubagentKind, fallback: string): string {
+function subagentPrompt(
+  info: ToolRenderInfo,
+  kind: RenderedSubagentKind,
+  fallback: string,
+): string {
   return firstString(info.args, kind === "task" ? ["prompt"] : ["query", "question"]) ?? fallback;
 }
 
@@ -899,7 +905,7 @@ function latestChildStep(
   return step ? `${location} ${GLYPHS.separator} ${step}` : location;
 }
 
-function makeSubagentRenderer(kind: SubagentKind): ToolRendererFn {
+function makeSubagentRenderer(kind: RenderedSubagentKind): ToolRendererFn {
   const renderer: ToolRendererFn = (info, ctx, registry) => {
     const details = subagentDetails(info);
     const progress = subagentProgress(info);

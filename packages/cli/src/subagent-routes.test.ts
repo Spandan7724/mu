@@ -39,16 +39,16 @@ describe("subagent pins in user config", () => {
       { model: "openai-codex/gpt-5.6-terra", thinking: "xhigh" },
       configFile,
     );
-    await saveSubagentPin("coding", "search", { thinking: "medium" }, configFile);
+    await saveSubagentPin("coding", "recall", { thinking: "medium" }, configFile);
     expect(readSubagentPins("coding", configFile)).toEqual({
       counsel: { model: "openai-codex/gpt-5.6-terra", thinking: "xhigh" },
-      search: { thinking: "medium" },
+      recall: { thinking: "medium" },
     });
 
     await saveSubagentPin("coding", "counsel", undefined, configFile);
     expect(await loadUserConfig(configFile)).toEqual({
       model: "openai-codex/gpt-5.6-sol",
-      subagents: { coding: { search: { thinking: "medium" } } },
+      subagents: { coding: { recall: { thinking: "medium" } } },
     });
 
     await saveSubagentPin("coding", undefined, undefined, configFile);
@@ -66,6 +66,30 @@ describe("subagent pins in user config", () => {
     expect(await loadUserConfig(configFile, (message) => warnings.push(message))).toEqual({});
     expect(warnings[0]).toContain("subagents");
     expect(readSubagentPins("coding", configFile)).toEqual({});
+  });
+
+  test("a pin for the removed search role is dropped and the rest of the config still loads", async () => {
+    const { configFile } = await scratch();
+    await Bun.write(
+      configFile,
+      JSON.stringify({
+        model: "openai-codex/gpt-6.1-sol",
+        subagents: {
+          coding: {
+            search: { model: "openai-codex/gpt-5.6-terra", thinking: "low" },
+            counsel: { thinking: "xhigh" },
+          },
+        },
+      }),
+    );
+    const warnings: string[] = [];
+
+    expect(await loadUserConfig(configFile, (message) => warnings.push(message))).toEqual({
+      model: "openai-codex/gpt-6.1-sol",
+      subagents: { coding: { counsel: { thinking: "xhigh" } } },
+    });
+    expect(warnings).toEqual([]);
+    expect(readSubagentPins("coding", configFile)).toEqual({ counsel: { thinking: "xhigh" } });
   });
 });
 
@@ -92,7 +116,7 @@ describe("subagent route override", () => {
 
     expect(override?.model?.id).toBe("gpt-5.6-terra");
     expect(override?.thinkingLevel).toBe("high");
-    expect(await subagentRouteOverride(sources)("search", parent)).toBeUndefined();
+    expect(await subagentRouteOverride(sources)("recall", parent)).toBeUndefined();
   });
 
   test("task can be pinned like the other roles, and another profile's pin is ignored", async () => {
@@ -128,7 +152,7 @@ describe("subagent route override", () => {
     );
     await saveSubagentPin(
       "coding",
-      "search",
+      "recall",
       { model: "openai-codex/gpt-0-gone" },
       sources.configFile,
     );
@@ -138,7 +162,7 @@ describe("subagent route override", () => {
     });
     expect(await unavailableSubagentPins(sources)).toEqual([
       "counsel is set to anthropic/claude-opus-5, which is not available; using its default",
-      "search is set to openai-codex/gpt-0-gone, which is not available; using its default",
+      "recall is set to openai-codex/gpt-0-gone, which is not available; using its default",
     ]);
   });
 

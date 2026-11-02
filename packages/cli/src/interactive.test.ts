@@ -54,7 +54,6 @@ test("subagent output colors each name, dims its route, and leaves one blank row
       kind: "subagents",
       routes: [
         { kind: "task", model: "gpt-6.1-sol", thinkingLevel: "high" },
-        { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low" },
         { kind: "counsel", model: "gpt-5.6-sol", thinkingLevel: "xhigh" },
         { kind: "recall", model: "glm-5.1" },
       ],
@@ -66,17 +65,14 @@ test("subagent output colors each name, dims its route, and leaves one blank row
   // hue the palette currently gives that role.
   expect(colored[2]).toContain(styleText("task", { task: true }, "truecolor"));
   expect(colored[2]).toContain(styleText("gpt-6.1-sol · high", { dim: true }, "truecolor"));
-  expect(colored[5]).toContain(styleText("search", { toolRead: true }, "truecolor"));
-  expect(colored[7]).toContain(styleText("counsel", { counsel: true }, "truecolor"));
-  expect(colored[9]).toContain(styleText("recall", { toolRead: true }, "truecolor"));
+  expect(colored[5]).toContain(styleText("counsel", { counsel: true }, "truecolor"));
+  expect(colored[7]).toContain(styleText("recall", { toolRead: true }, "truecolor"));
   expect(colored.map(stripAnsi)).toEqual([
     "  Subagents — ask mu in plain language:",
     "",
     "    task     gpt-6.1-sol · high",
     "      Independent implementation or checks. Say “Delegate X or use subagents to do X.”",
     "      Add “in the background” to keep working meanwhile; ask for its status, or to redirect or stop it.",
-    "    search   gpt-5.6-terra · low",
-    "      Read-only code investigation. Say “Use Search to trace X.”",
     "    counsel  gpt-5.6-sol · xhigh",
     "      Second opinion on hard decisions. Say “Ask Counsel about X.”",
     "    recall   glm-5.1",
@@ -469,7 +465,7 @@ test("subagent output marks a configured role and an unavailable choice in its d
     {
       kind: "subagents",
       routes: [
-        { kind: "search", model: "gpt-5.6-terra", thinkingLevel: "low", pinned: true },
+        { kind: "recall", model: "gpt-5.6-terra", thinkingLevel: "low", pinned: true },
         {
           kind: "counsel",
           model: "gpt-6.1-sol",

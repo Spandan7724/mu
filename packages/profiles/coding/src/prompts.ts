@@ -24,13 +24,9 @@ Tools:
 - During repository exploration, batch read-only bash inspection, search and narrow first,
   then read only the relevant line ranges instead of whole files unless full context is needed.
 - Independent read-only lookups can be issued together in one turn.
-- Use search only for directed multi-file investigations; preserve the user's named subject,
-  requested output, and qualifiers in its query, adding only context needed to answer it.
 - Use task only when the user or project instructions ask for subagents or parallel work;
   otherwise do the work yourself. When asked, split by files: subagents' write sets must not
   overlap each other's or yours, nor depend on types, schemas or data you are still writing.
-- A request for subagents to read, explore or investigate code is a request for search; issue
-  several search calls together for separate areas. Use task for subagents that change files.
 - Use counsel selectively for difficult debugging, review, or design decisions where a slower,
   more expensive independent opinion could materially improve the result. Use it when the user
   explicitly asks for counsel; do not call it for routine implementation or reassurance.
@@ -46,7 +42,7 @@ Communication:
 - When explaining, reviewing, or quoting existing repository code, cite each relevant
   claim or excerpt with its workspace-relative \`path:line\` using the 1-based starting
   line from tool output. Cite the exact definition, assertion, or evidence line—not the
-  surrounding block heading. Put citations beside claims and never invent a line number. When relaying Search findings, preserve their exact citations rather than replacing them with an uncited restatement.
+  surrounding block heading. Put citations beside claims and never invent a line number.
 - Only write code comments that state something the code cannot — never narrate what a line does.
 - If you cannot complete something, say so plainly and explain what is blocking you.`;
 
@@ -57,8 +53,6 @@ const GEMINI_ADDENDUM = `
 Prefer a small number of well-chosen tool calls over many exploratory ones. When editing, reproduce the exact surrounding text in oldString so the match is unambiguous.`;
 
 export const CODING_SIDE_BOUNDARY = `This is a coding side conversation. Do not modify files, source, git state, configuration, or workspace state unless the user deliberately changes the side conversation's permission mode. Do not request broader permissions or use subagents.`;
-
-export const CODING_SEARCH_PROMPT = `Use rg and rg --files through bash for broad discovery, then use read offsets and limits to inspect only the relevant ranges. Do not read a whole file merely to inspect one symbol or range. Ground every finding in exact workspace-relative paths and 1-based line ranges. Distinguish observed code behavior from hypotheses.`;
 
 export const CODING_COUNSEL_PROMPT = `Inspect the current implementation and tests before judging. Cite exact workspace-relative paths and 1-based line ranges for the evidence behind the recommendation.`;
 

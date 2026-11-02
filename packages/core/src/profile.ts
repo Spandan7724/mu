@@ -62,7 +62,6 @@ export interface ProfileSubagents {
   // Tools a read-only investigator may use. Their permission rules remain the
   // enforcement boundary; this list only limits the child's visible toolset.
   inspectionTools: string[];
-  searchPrompt?: string;
   counselPrompt?: string;
   // Exact header environment fields identifying the history scope. Without
   // these, recall is limited to the invoking session.

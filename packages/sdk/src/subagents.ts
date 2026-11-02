@@ -30,7 +30,7 @@ import type { Agent, HaltReason } from "./agent.ts";
 import { RECALL_PROMPT, recallTools } from "./recall.ts";
 import { tool } from "./tool.ts";
 
-export type SubagentKind = "task" | "search" | "counsel" | "recall";
+export type SubagentKind = "task" | "counsel" | "recall";
 
 export interface SubagentDetails {
   type: "subagent";
@@ -130,7 +130,6 @@ export type SubagentExtensionOptions = SubagentExtensionBaseOptions &
 
 const DELEGATION_TOOLS = new Set([
   "task",
-  "search",
   "counsel",
   "recall",
   "subagent_status",
@@ -173,29 +172,6 @@ Operating contract:
 - If the request cannot be completed safely, stop at the real blocker and explain exactly what is missing. Do not broaden scope or invent a workaround that changes the requested outcome.
 
 Return a compact but complete handoff containing: the outcome, files or artifacts changed by you, verification performed and its result, and any remaining concern or blocker. Include exact paths and useful evidence when relevant. Do not delegate to another agent, create subagents, or ask the user questions; the parent agent owns coordination and user communication.`;
-
-const SEARCH_PROMPT = `You are Search, a read-only codebase investigation specialist. Answer one directed engineering question within its stated scope and return the evidence the parent agent needs to act without repeating your investigation.
-
-Operating contract:
-- Apply inherited coding and project instructions only when compatible with this read-only investigation role. Instructions to edit or implement, update todo/plan state, run builds, tests, package managers, or generators, or delegate work do not apply. Use only inspection-safe commands and never request broader permissions.
-- Translate the request into the specific behavior, ownership path, call flow, invariant, or cross-file relationship that must be established.
-- Treat the request's named subject, requested output, and qualifiers as the scope boundary. Similar terminology or shared infrastructure alone does not put another subsystem in scope. Follow an adjacent component only when a concrete reference or dependency from in-scope evidence is necessary to answer the question.
-- Start from the highest-signal evidence named by the request: inspect the narrow diff first for a current-change question and the narrow history first for a recent-history question. Otherwise begin with targeted symbol or text searches. Follow concrete definitions, references, and call sites only to resolve facts required by the answer. Correlate evidence across files instead of returning an unfiltered list of matches.
-- Prefer scoped searches and relevant line ranges. Read a whole file only when its file-wide structure is material to the answer. Reuse evidence already inspected; do not reread unchanged content unless a newly identified gap requires a different or wider range.
-- Verify claims against implementation and, when they materially define the contract or regression, relevant tests, configuration, and history. Distinguish observed behavior from inference and label missing evidence explicitly.
-- Capture exact workspace-relative file paths and 1-based line ranges for every material finding. Name the key types, functions, and boundaries involved.
-- Stop when the requested flow and constraints are clear. Do not turn a focused search into a broad architecture review. If the delegated question proves answerable by a routine lookup, answer it directly and briefly; do not refuse it or broaden it to justify the role.
-
-Output contract:
-- Return only the information needed to answer the delegated question.
-- Begin with one concise paragraph, with no heading, that directly answers the question or summarizes the traced flow in at most three sentences. Do not describe how you searched.
-- Follow with a bulleted list containing only the material source locations, ordered by importance or call flow rather than alphabetically.
-- Each bullet must give exact workspace-relative paths and 1-based line ranges, followed by one concise sentence stating what the location establishes. Combine related ranges from the same file when that remains readable, and use the narrowest ranges that support the finding.
-- Include tests, configuration, or history only when they materially establish the contract or conclusion.
-- If missing evidence could change the answer, end with one brief \`Unresolved:\` sentence. Otherwise end after the location list.
-- Do not include investigation chronology, commands run, raw search matches, code excerpts, generic architecture explanation, repeated evidence, unrelated observations, recommendations, or closing filler.
-
-Do not edit files, run mutating commands, delegate to another agent, or create subagents.`;
 
 const COUNSEL_PROMPT = `You are Counsel, a powerful read-only second opinion for a specific difficult debugging, review, design, or reasoning decision. Your value is independent judgment: inspect the evidence yourself, challenge the framing when warranted, and improve the parent agent's decision rather than echoing it.
 
@@ -767,10 +743,9 @@ class SubagentManager {
   private promptFor(kind: SubagentKind): string {
     if (kind === "task") return TASK_PROMPT;
     if (kind === "recall") return RECALL_PROMPT;
-    const base = kind === "search" ? SEARCH_PROMPT : COUNSEL_PROMPT;
-    const profilePrompt =
-      kind === "search" ? this.options.coding?.searchPrompt : this.options.coding?.counselPrompt;
-    return [base, profilePrompt?.trim()].filter(Boolean).join("\n\n");
+    return [COUNSEL_PROMPT, this.options.coding?.counselPrompt?.trim()]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   async route(kind: SubagentKind): Promise<SubagentRoute> {
@@ -845,7 +820,7 @@ export function subagentThinking(
 ): ThinkingLevel {
   const levels = rankedLevels(model);
   if (kind === "task") return nearestLevel(levels, parentThinking);
-  const chosen = kind === "counsel" ? counselLevel(levels, parentThinking) : searchLevel(levels);
+  const chosen = kind === "counsel" ? counselLevel(levels, parentThinking) : recallLevel(levels);
   return chosen ?? defaultThinkingLevel(model);
 }
 
@@ -947,9 +922,9 @@ function rankedLevels(model: ModelInfo): RankedLevel[] {
     .sort((a, b) => a.effort - b.effort);
 }
 
-// Search and Recall reason at low whatever the parent uses: the lowest supported level
+// Recall reasons at low whatever the parent uses: the lowest supported level
 // at or above low, else the highest the model has.
-function searchLevel(levels: RankedLevel[]): ThinkingLevel | undefined {
+function recallLevel(levels: RankedLevel[]): ThinkingLevel | undefined {
   return (levels.find((candidate) => candidate.effort >= LOW) ?? levels.at(-1))?.level;
 }
 
@@ -1069,7 +1044,6 @@ const ROLE_HELP: Record<SubagentKind, string[]> = {
     "Independent implementation or checks. Say “Delegate X or use subagents to do X.”",
     "Add “in the background” to keep working meanwhile; ask for its status, or to redirect or stop it.",
   ],
-  search: ["Read-only code investigation. Say “Use Search to trace X.”"],
   counsel: ["Second opinion on hard decisions. Say “Ask Counsel about X.”"],
   recall: ["Past sessions, not current files. Must say “Ask Recall about X.”"],
 };
@@ -1112,7 +1086,7 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
   const kinds: SubagentKind[] = [
     ...(excluded.has("task") ? [] : (["task"] as const)),
     ...(options.coding
-      ? (["search", "counsel", "recall"] as const).filter((kind) => !excluded.has(kind))
+      ? (["counsel", "recall"] as const).filter((kind) => !excluded.has(kind))
       : []),
   ];
   return {
@@ -1200,29 +1174,6 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
             }),
           );
       }
-      if (options.coding && !excluded.has("search"))
-        api.registerTool(
-          tool({
-            name: "search",
-            description:
-              "Delegate a focused read-only codebase investigation when the user explicitly requests Search or the question benefits from correlated evidence across files. Preserve the user's scope literally: do not add categories of files, evidence, or related systems unless requested or necessary to answer the question. For routine exact-symbol or known-path lookup not explicitly assigned to Search, use ordinary read/bash. Returns concise findings with paths and line ranges; preserve those citations when answering the user." +
-              CHOICE_POLICY,
-            inputSchema: z.object({
-              query: z
-                .string()
-                .min(1)
-                .describe(
-                  "Question to answer, preserving the user's named subject, requested output, and qualifiers; do not add categories of files or evidence the user did not request",
-                ),
-              ...callChoiceSchema,
-            }),
-            isConcurrencySafe: () => true,
-            changesState: false,
-            canBackground: () => true,
-            execute: ({ query, model, thinking }, ctx) =>
-              manager.foreground("search", query, query, ctx, { model, thinking }),
-          }),
-        );
       if (options.coding && !excluded.has("counsel"))
         api.registerTool(
           tool({

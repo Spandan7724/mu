@@ -25,7 +25,9 @@ export interface UserConfig {
   [key: string]: unknown;
 }
 
-export const PINNABLE_SUBAGENTS = ["task", "search", "counsel", "recall"] as const;
+export const PINNABLE_SUBAGENTS = ["task", "counsel", "recall"] as const;
+// Pins for removed roles are dropped rather than invalidating the whole config.
+const RETIRED_SUBAGENTS = new Set(["search"]);
 export type PinnableSubagent = (typeof PINNABLE_SUBAGENTS)[number];
 export interface SubagentPin {
   model?: string;
@@ -41,12 +43,20 @@ const userConfigSchema = z
     subagents: z
       .record(
         z.string().min(1),
-        z.partialRecord(
-          z.enum(PINNABLE_SUBAGENTS),
-          z.strictObject({
-            model: z.string().min(1).optional(),
-            thinking: z.string().min(1).optional(),
-          }),
+        z.preprocess(
+          (pins) =>
+            pins && typeof pins === "object" && !Array.isArray(pins)
+              ? Object.fromEntries(
+                  Object.entries(pins).filter(([role]) => !RETIRED_SUBAGENTS.has(role)),
+                )
+              : pins,
+          z.partialRecord(
+            z.enum(PINNABLE_SUBAGENTS),
+            z.strictObject({
+              model: z.string().min(1).optional(),
+              thinking: z.string().min(1).optional(),
+            }),
+          ),
         ),
       )
       .optional(),

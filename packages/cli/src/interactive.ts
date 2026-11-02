@@ -167,7 +167,6 @@ export function formatInstructionsOutput(message: string): string[] {
 
 const SUBAGENT_NAME_STYLES: Record<SubagentKind, Style> = {
   task: { task: true },
-  search: { toolRead: true },
   counsel: { counsel: true },
   recall: { toolRead: true },
 };
@@ -1342,7 +1341,7 @@ export async function runInteractive(
           label: "role default",
           value: "",
           description:
-            kind === "search" || kind === "recall"
+            kind === "recall"
               ? roleDefault
               : kind === "task" ||
                   (thinkingEffort(agent.thinking) ?? 0) > (thinkingEffort("xhigh") ?? 5)
