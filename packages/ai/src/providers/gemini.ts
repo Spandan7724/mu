@@ -222,7 +222,7 @@ export function streamGemini(
       }
     };
 
-    for await (const sse of iterateSse(responseBody, opts?.signal)) {
+    for await (const sse of iterateSse(responseBody, opts?.signal, opts?.idleTimeoutMs)) {
       if (!sse.data) continue;
       const chunk = JSON.parse(sse.data) as Json;
       const candidate = (chunk.candidates as Json[] | undefined)?.[0];

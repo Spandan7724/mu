@@ -185,6 +185,69 @@ describe("codexClientVersion", () => {
 });
 
 describe("streamOpenAI", () => {
+  function streamOf(events: unknown[]) {
+    const replay = replayFetch({
+      interactions: [
+        {
+          request: { method: "POST", url: "https://api.openai.com/v1/responses" },
+          response: {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+            body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+          },
+        },
+      ],
+    });
+    return streamOpenAI(model, ctx, { apiKey: "test", fetch: replay.fetch });
+  }
+
+  test("an overload reported mid-stream ends the turn as a classified, retryable error", async () => {
+    const stream = streamOf([
+      {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "message", id: "m1" },
+      },
+      { type: "response.output_text.delta", output_index: 0, delta: "Working" },
+      {
+        type: "error",
+        error: {
+          type: "service_unavailable_error",
+          code: "server_is_overloaded",
+          headers: { "x-retry-metadata": "NO_MORE_RETRY", "retry-after": "302" },
+          message: "Our servers are currently overloaded. Please try again later.",
+        },
+        sequence_number: 167,
+      },
+    ]);
+    let errorKind: string | undefined;
+    for await (const event of stream) if (event.type === "error") errorKind = event.errorKind;
+    const message = await stream.result();
+    expect(errorKind).toBe("overloaded");
+    expect(message).toMatchObject({
+      stopReason: "error",
+      errorKind: "overloaded",
+      retryAfterMs: 302_000,
+      errorMessage:
+        "Our servers are currently overloaded. Please try again later. (server_is_overloaded)",
+    });
+  });
+
+  test("response.failed keeps its usage and classifies the error code", async () => {
+    const stream = streamOf([
+      {
+        type: "response.failed",
+        response: {
+          usage: { input_tokens: 10, output_tokens: 0 },
+          error: { code: "server_is_overloaded", message: "overloaded" },
+        },
+      },
+    ]);
+    const message = await stream.result();
+    expect(message.errorKind).toBe("overloaded");
+    expect(message.usage.inputTokens).toBe(10);
+  });
+
   test("strips citation markup split across deltas and separates reasoning summary parts", async () => {
     const responseEvents = [
       {

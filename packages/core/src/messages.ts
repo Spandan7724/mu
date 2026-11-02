@@ -63,10 +63,15 @@ export function renderCustomMessage(message: CustomMessage): UserMessage {
 
 // Boundary conversion: the transcript type the kernel works in → the wire type
 // the provider layer accepts.
+// A failed assistant attempt is kept in the transcript but never sent back: its
+// content is incomplete and may hold tool calls that were never run.
 export function toAiMessages(messages: AgentMessage[]): AiMessage[] {
-  return messages.map((message) =>
-    message.role === "custom" ? renderCustomMessage(message) : message,
-  );
+  const out: AiMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "assistant" && message.stopReason === "error") continue;
+    out.push(message.role === "custom" ? renderCustomMessage(message) : message);
+  }
+  return out;
 }
 
 export function userMessage(text: string): UserMessage {

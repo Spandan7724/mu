@@ -1,3 +1,5 @@
+import { AiError } from "./errors.ts";
+
 export interface SseEvent {
   event: string | null;
   data: string;
@@ -28,9 +30,35 @@ function decodeLine(line: string, state: SseState): SseEvent | null {
   return null;
 }
 
+// A stream silent this long is treated as dropped. Remote providers send
+// keepalives well inside it; 0 disables the limit (local servers may stay quiet
+// through long prompt processing).
+export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+async function within<T>(read: Promise<T>, idleTimeoutMs: number): Promise<T> {
+  if (idleTimeoutMs <= 0) return read;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const idle = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new AiError(
+          "network",
+          `stream stalled: no data from the provider for ${Math.round(idleTimeoutMs / 1000)}s`,
+        ),
+      );
+    }, idleTimeoutMs);
+  });
+  try {
+    return await Promise.race([read, idle]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function* iterateSse(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
+  idleTimeoutMs = DEFAULT_STREAM_IDLE_TIMEOUT_MS,
 ): AsyncGenerator<SseEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -53,7 +81,14 @@ export async function* iterateSse(
   try {
     while (true) {
       if (signal?.aborted) throw new Error("Request was aborted");
-      const { value, done } = await reader.read();
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await within(reader.read(), idleTimeoutMs);
+      } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
+      }
+      const { value, done } = chunk;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       yield* drain();

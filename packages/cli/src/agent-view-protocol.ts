@@ -334,6 +334,15 @@ export const agentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("notices_held"), count: z.number().int().nonnegative() }).strict(),
   z
     .object({
+      type: z.literal("provider_retry"),
+      attempt: z.number().int().positive(),
+      maxAttempts: z.number().int().positive(),
+      delayMs: z.number().nonnegative(),
+      errorMessage: eventString,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("thinking_adjusted"),
       model: z.string().min(1).max(1024),
       requested: z.string().min(1).max(128),

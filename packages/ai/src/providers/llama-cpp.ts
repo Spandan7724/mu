@@ -134,6 +134,6 @@ async function probeLlamaCpp(
 
 export const llamaCpp: Provider = {
   id: "llama-cpp",
-  stream: streamOpenAICompletions,
+  stream: (model, ctx, opts) => streamOpenAICompletions(model, ctx, { idleTimeoutMs: 0, ...opts }),
   discoverModels: discoverLlamaCppModels,
 };

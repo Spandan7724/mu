@@ -1,4 +1,4 @@
-import { classifyHttpError } from "../errors.ts";
+import { classifyHttpError, classifyStreamError } from "../errors.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -452,7 +452,7 @@ export function streamOpenAI(
     let sawFunctionCall = false;
     const responseBody = response.body as ReadableStream<Uint8Array>;
 
-    for await (const sse of iterateSse(responseBody, opts?.signal)) {
+    for await (const sse of iterateSse(responseBody, opts?.signal, opts?.idleTimeoutMs)) {
       if (!sse.data || sse.data === "[DONE]") continue;
       const event = JSON.parse(sse.data) as Json;
       const type = event.type as string;
@@ -641,12 +641,10 @@ export function streamOpenAI(
           const reason = (resp.incomplete_details as Json | undefined)?.reason as string;
           output.stopReason = reason === "max_output_tokens" ? "length" : "end";
         } else {
-          const err = resp.error as Json | undefined;
-          output.stopReason = "error";
-          output.errorMessage = (err?.message as string) ?? "response failed";
+          throw classifyStreamError(resp.error ?? {}, "response failed");
         }
       } else if (type === "error") {
-        throw new Error((event.message as string) ?? sse.data);
+        throw classifyStreamError(event, sse.data);
       }
     }
   });

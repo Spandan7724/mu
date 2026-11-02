@@ -5,12 +5,15 @@ import {
   defaultModelRef,
   findModel,
   getProvider,
+  MAX_TURN_RETRIES,
   type ModelInfo,
   type PromptSection,
   type Provider,
+  sleep,
   supportedThinkingLevels,
   type ThinkingLevel,
   thinkingLevelForModel,
+  turnRetryDelayMs,
   type Usage,
   zeroUsage,
 } from "@mu/ai";
@@ -306,6 +309,8 @@ export class Agent {
   private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
   private recoveryAttempted = false;
+  // Transient-error retries of the current turn; reset once a turn completes.
+  private turnRetries = 0;
   private reactiveRecoveryPending = false;
   private pendingCheckpoint: { beforeEntryId: string | null; beforeRef: string } | undefined;
   // Profile-runtime tasks still running; they may change state outside any tool call.
@@ -680,6 +685,7 @@ export class Agent {
     this.compacting = false;
     this.compactorOverride = undefined;
     this.recoveryAttempted = false;
+    this.turnRetries = 0;
     this.reactiveRecoveryPending = false;
     this.steering = [];
     this.followUps = [];
@@ -741,6 +747,7 @@ export class Agent {
     this.compacting = false;
     this.compactorOverride = undefined;
     this.recoveryAttempted = false;
+    this.turnRetries = 0;
     this.reactiveRecoveryPending = false;
     this.steering = [];
     this.followUps = [];
@@ -1905,6 +1912,7 @@ export class Agent {
     // Reactive recovery is "retry once per overflow", not once per Agent: a
     // long session must still be able to recover hours later.
     this.recoveryAttempted = false;
+    this.turnRetries = 0;
     this.reactiveRecoveryPending = false;
 
     const host = this.options.extensions;
@@ -2517,16 +2525,33 @@ export class Agent {
       // Layer 3 — reactive recovery. The provider rejected the request for
       // being too long: compact, then let the loop try once more rather than
       // ending the run. Exactly one attempt, so a real failure still surfaces.
-      recoverFromError: (message) => {
-        if (this.recoveryAttempted || !isContextTooLongResult(message)) return false;
-        this.recoveryAttempted = true;
-        this.compactRequested = true;
-        this.reactiveRecoveryPending = true;
-        emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
+      recoverFromError: async (message) => {
+        if (isContextTooLongResult(message)) {
+          if (this.recoveryAttempted) return false;
+          this.recoveryAttempted = true;
+          this.compactRequested = true;
+          this.reactiveRecoveryPending = true;
+          emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
+          return true;
+        }
+        // Transient failures (overload, rate limit, dropped or stalled stream)
+        // re-run the turn from the last committed state after the server's wait.
+        const delayMs = turnRetryDelayMs(message, this.turnRetries);
+        if (delayMs === undefined) return false;
+        this.turnRetries++;
+        emit({
+          type: "provider_retry",
+          attempt: this.turnRetries,
+          maxAttempts: MAX_TURN_RETRIES,
+          delayMs,
+          errorMessage: message.errorMessage ?? "the provider returned an error",
+        });
+        await sleep(delayMs, this.controller.signal).catch(() => {});
         return true;
       },
       shouldStopAfterTurn: async (turn: TurnInfo) => {
         this.recoveryAttempted = false;
+        this.turnRetries = 0;
         for (const result of turn.toolResults) {
           if (!result.usage) continue;
           this.totals = addUsage(this.totals, result.usage);

@@ -700,3 +700,72 @@ describe("layer 3 — reactive recovery", () => {
     expect(endEvent?.type === "compaction_end" && endEvent.tokensFreed).toBeGreaterThan(0);
   });
 });
+
+describe("transient provider errors", () => {
+  const overloaded = {
+    content: [
+      { type: "text" as const, text: "Let me check" },
+      { type: "toolCall" as const, id: "half", name: "read", arguments: { path: "a" } },
+    ],
+    errorMessage: "Our servers are currently overloaded. (server_is_overloaded)",
+    errorKind: "overloaded" as const,
+    retryAfterMs: 5,
+  };
+
+  test("a turn that fails mid-stream waits the server's time and runs again", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "step one" }] },
+      overloaded,
+      { content: [{ type: "text", text: "finished" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    await agent.run("first");
+    const events: AgentEvent[] = [];
+    const stream = agent.stream("second");
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(result.reason).toBe("done");
+    expect(result.text).toBe("finished");
+    expect(events.filter((event) => event.type === "provider_retry")).toEqual([
+      {
+        type: "provider_retry",
+        attempt: 1,
+        maxAttempts: 4,
+        delayMs: 5,
+        errorMessage: overloaded.errorMessage,
+      },
+    ]);
+    // The retry resends the committed state: no half-streamed tool call.
+    expect(provider.requests[2]?.messages).toEqual(provider.requests[1]?.messages);
+    const sent = JSON.stringify(provider.requests[2]?.messages);
+    expect(sent).not.toContain("half");
+  });
+
+  test("retries are bounded, then the real error surfaces", async () => {
+    const provider = new FakeProvider(Array.from({ length: 10 }, () => overloaded));
+    const agent = new Agent({ provider, model: fakeModel });
+    const result = await agent.run("hopeless");
+    expect(result.reason).toBe("error");
+    expect(result.error).toBe(overloaded.errorMessage);
+    expect(provider.callCount).toBe(5);
+  });
+
+  test("a wait longer than the cap is not sat out", async () => {
+    const provider = new FakeProvider([{ ...overloaded, retryAfterMs: 3 * 60 * 60_000 }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const result = await agent.run("usage limit");
+    expect(result.reason).toBe("error");
+    expect(provider.callCount).toBe(1);
+  });
+
+  test("stopping during the wait ends the run as aborted", async () => {
+    const provider = new FakeProvider([{ ...overloaded, retryAfterMs: 60_000 }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const stream = agent.stream("stop me");
+    for await (const event of stream) if (event.type === "provider_retry") agent.stop();
+    const result = await stream.result();
+    expect(result.reason).toBe("aborted");
+    expect(provider.callCount).toBe(1);
+  });
+});

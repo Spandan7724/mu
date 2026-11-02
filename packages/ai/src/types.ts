@@ -1,3 +1,5 @@
+import type { AiErrorKind } from "./errors.ts";
+
 export interface TextContent {
   type: "text";
   text: string;
@@ -76,6 +78,9 @@ export interface AssistantMessage {
   usage: Usage; // ALWAYS present (zeroed on error)
   stopReason: StopReason;
   errorMessage?: string;
+  // Set with stopReason "error" when the provider failure was classified.
+  errorKind?: AiErrorKind;
+  retryAfterMs?: number;
   timestamp: number;
 }
 
@@ -201,6 +206,8 @@ export interface StreamOpts {
   thinkingLevel?: ThinkingLevel;
   signal?: AbortSignal;
   maxRetries?: number;
+  // Longest silence tolerated mid-stream before it counts as dropped; 0 disables.
+  idleTimeoutMs?: number;
   headers?: Record<string, string>;
   // Injectable for the record/replay test harness.
   fetch?: typeof fetch;

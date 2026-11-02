@@ -53,7 +53,7 @@ import {
   WEB_SEARCH_TOOL,
 } from "./registry.ts";
 import type { RenderFrame } from "./renderer.ts";
-import { stripCitationMarkup } from "./sanitize.ts";
+import { sanitizeUntrusted, stripCitationMarkup } from "./sanitize.ts";
 import {
   AGENT_LABEL,
   type ColorDepth,
@@ -1379,6 +1379,15 @@ export class App {
       case "notices_held":
         this.view.heldNotices = event.count;
         return [];
+
+      case "provider_retry": {
+        const text = `retrying · ${sanitizeUntrusted(event.errorMessage)}; next attempt in ${formatDuration(event.delayMs)} (${event.attempt} of ${event.maxAttempts})`;
+        const lines = wrapText(text, Math.max(20, this.ctx.width - MARGIN.length)).map(
+          (line) => MARGIN + styleText(line, { dim: true }, this.ctx.depth),
+        );
+        this.appendTranscript(lines);
+        return lines;
+      }
 
       case "thinking_adjusted": {
         const reason = event.inferredModel ? " (not in mu's model catalog)" : "";

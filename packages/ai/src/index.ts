@@ -13,7 +13,13 @@ export {
 } from "./catalog.ts";
 export { addUsage, computeCostUsd, zeroUsage } from "./cost.ts";
 export type { AiErrorKind } from "./errors.ts";
-export { AiError, classifyHttpError, isContextTooLongMessage } from "./errors.ts";
+export {
+  AiError,
+  classifyHttpError,
+  classifyStreamError,
+  isContextTooLongMessage,
+  isRetryableErrorKind,
+} from "./errors.ts";
 export { parseJsonWithRepair, parsePartialJson, repairJson, salvageToolArgs } from "./json.ts";
 export {
   builtinProviderConfigs,
@@ -36,7 +42,13 @@ export {
 export { openaiCompletions, streamOpenAICompletions } from "./providers/openai-completions.ts";
 export { getProvider, providers, registerProvider } from "./registry.ts";
 export type { RetryOpts } from "./retry.ts";
-export { withRetries } from "./retry.ts";
+export {
+  MAX_TURN_RETRIES,
+  MAX_TURN_RETRY_DELAY_MS,
+  sleep,
+  turnRetryDelayMs,
+  withRetries,
+} from "./retry.ts";
 export type { SseEvent } from "./sse.ts";
 export { iterateSse } from "./sse.ts";
 export { AssistantStream, EventStream } from "./stream.ts";

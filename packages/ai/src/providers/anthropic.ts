@@ -1,3 +1,4 @@
+import { classifyStreamError } from "../errors.ts";
 import { salvageToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
@@ -215,8 +216,8 @@ export function streamAnthropic(
     const blocks = new Map<number, BlockState>();
     const responseBody = response.body as ReadableStream<Uint8Array>;
 
-    for await (const sse of iterateSse(responseBody, opts?.signal)) {
-      if (sse.event === "error") throw new Error(sse.data);
+    for await (const sse of iterateSse(responseBody, opts?.signal, opts?.idleTimeoutMs)) {
+      if (sse.event === "error") throw classifyStreamError(sse.data, sse.data);
       if (!sse.data) continue;
       const event = JSON.parse(sse.data) as Json;
       const type = event.type as string;

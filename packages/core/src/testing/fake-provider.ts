@@ -1,4 +1,5 @@
 import {
+  type AiErrorKind,
   type AssistantContent,
   type AssistantMessage,
   AssistantStream,
@@ -16,6 +17,8 @@ export interface ScriptedTurn {
   content: AssistantContent[];
   stopReason?: StopReason;
   errorMessage?: string;
+  errorKind?: AiErrorKind;
+  retryAfterMs?: number;
   usage?: Partial<Usage>;
   // Resolves before the stream produces anything — lets a test await mid-turn.
   delayMs?: number;
@@ -133,7 +136,14 @@ export class FakeProvider implements Provider {
       if (turn.errorMessage) {
         output.stopReason = "error";
         output.errorMessage = turn.errorMessage;
-        stream.push({ type: "error", reason: "error", error: output });
+        if (turn.errorKind) output.errorKind = turn.errorKind;
+        if (turn.retryAfterMs !== undefined) output.retryAfterMs = turn.retryAfterMs;
+        stream.push({
+          type: "error",
+          reason: "error",
+          ...(turn.errorKind ? { errorKind: turn.errorKind } : {}),
+          error: output,
+        });
       } else {
         stream.push({ type: "done", message: output });
       }

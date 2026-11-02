@@ -114,6 +114,15 @@ export type AgentEvent =
       exitCode: number | null;
       status?: "exited" | "killed";
     }
+  // A turn failed on a transient provider error (overload, rate limit, dropped
+  // or stalled stream); the turn runs again after `delayMs`.
+  | {
+      type: "provider_retry";
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+    }
   // Background results waiting for the user's next message after they stopped a run.
   | { type: "notices_held"; count: number }
   // The model does not offer the selected thinking level, so requests use

@@ -69,6 +69,12 @@ export async function runHeadless(
     ) {
       failure = event.message.errorMessage;
     }
+    if (event.type === "provider_retry" && !args.json) {
+      const seconds = Math.round(event.delayMs / 1000);
+      io.stderr(
+        `mu: ${event.errorMessage}; retrying in ${seconds}s (${event.attempt} of ${event.maxAttempts})\n`,
+      );
+    }
     if (event.type === "thinking_adjusted" && !args.json) {
       io.stderr(
         `mu: ${event.model} does not offer thinking ${event.requested}${event.inferredModel ? " (not in mu's model catalog)" : ""}; using ${event.level}\n`,

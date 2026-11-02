@@ -220,7 +220,7 @@ export function streamOpenAICompletions(
     const knownToolNames = new Set(ctx.tools?.map((tool) => tool.name) ?? []);
     const responseBody = response.body as ReadableStream<Uint8Array>;
 
-    for await (const sse of iterateSse(responseBody, opts?.signal)) {
+    for await (const sse of iterateSse(responseBody, opts?.signal, opts?.idleTimeoutMs)) {
       if (!sse.data || sse.data === "[DONE]") continue;
       const event = JSON.parse(sse.data) as Json;
       const usage = event.usage as Json | undefined;

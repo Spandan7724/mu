@@ -40,6 +40,10 @@ export function driveStream(
     } catch (error) {
       output.stopReason = opts?.signal?.aborted ? "aborted" : "error";
       output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+      if (output.stopReason === "error" && error instanceof AiError) {
+        output.errorKind = error.kind;
+        if (error.retryAfterMs !== undefined) output.retryAfterMs = error.retryAfterMs;
+      }
       stream.push({
         type: "error",
         reason: output.stopReason,

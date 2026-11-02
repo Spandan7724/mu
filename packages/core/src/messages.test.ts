@@ -26,6 +26,20 @@ describe("messages", () => {
     expect(converted.every((m) => m.role !== ("custom" as never))).toBe(true);
   });
 
+  test("failed assistant attempts stay out of the request", () => {
+    const user = userMessage("hello");
+    const failed = {
+      role: "assistant" as const,
+      content: [{ type: "toolCall" as const, id: "c1", name: "read", arguments: {} }],
+      model: "fake/fake-1",
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "error" as const,
+      errorMessage: "overloaded",
+      timestamp: 2,
+    };
+    expect(toAiMessages([user, failed])).toEqual([user]);
+  });
+
   test("images pass through custom message rendering unchanged", () => {
     const message = {
       role: "custom" as const,
