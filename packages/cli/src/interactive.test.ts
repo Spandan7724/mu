@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { CODING_PERMISSION_MODES } from "@mu/profile-coding";
 import { App, RendererRegistry, stripAnsi, styleText, wrapText } from "@mu/tui";
 import {
   Agent,
@@ -13,7 +12,6 @@ import {
   availableModels,
   formatAuthUrl,
   formatInstructionsOutput,
-  formatPermissionMode,
   formatResumeHint,
   formatSubagentsOutput,
   formatTerminalTitle,
@@ -79,48 +77,6 @@ test("subagent output colors each name, dims its route, and leaves one blank row
     "      Past sessions, not current files. Must say “Ask Recall about X.”",
     "",
   ]);
-});
-
-describe("permission mode notice", () => {
-  const modeFor = (id: string) => {
-    const mode = CODING_PERMISSION_MODES.find((candidate) => candidate.id === id);
-    if (!mode) throw new Error(`no such mode: ${id}`);
-    return mode;
-  };
-
-  const line = (mode: ReturnType<typeof modeFor>, depth: "truecolor" | "none") =>
-    formatPermissionMode(mode, depth)[0] ?? "";
-
-  test("the mode stays legible without colour", () => {
-    // Bold carries the distinction when hue cannot, and NO_COLOR keeps the text.
-    for (const mode of CODING_PERMISSION_MODES) {
-      expect(line(mode, "truecolor")).toContain("[1;");
-      expect(line(mode, "none")).toBe(`  permissions set to ${mode.label} · this session`);
-    }
-  });
-
-  test("a mode that is remembered for new sessions says so", () => {
-    for (const mode of CODING_PERMISSION_MODES) {
-      expect(formatPermissionMode(mode, "none", true)[0]).toBe(
-        `  permissions set to ${mode.label} · saved for new sessions`,
-      );
-    }
-  });
-
-  test("one blank line below keeps a run of mode changes apart", () => {
-    // shift+tab commits one of these per press, so without the gap consecutive
-    // notices stack into a solid block — and the composer sits flush under the
-    // last one. Exactly one line, so cycling does not open a growing hole.
-    for (const mode of CODING_PERMISSION_MODES) {
-      expect(formatPermissionMode(mode, "none")).toHaveLength(2);
-      expect(formatPermissionMode(mode, "none")[1]).toBe("");
-    }
-    const cycled = CODING_PERMISSION_MODES.flatMap((mode) =>
-      formatPermissionMode(mode, "none"),
-    ).join("\n");
-    expect(cycled).not.toMatch(/this session\n {2}permissions/);
-    expect(cycled).not.toContain("\n\n\n");
-  });
 });
 
 describe("account login url", () => {

@@ -16,7 +16,6 @@ import {
   formatKeybindings,
   hyperlink,
   InputDecoder,
-  PERMISSION_TONE_STYLES,
   type PickerRequest,
   type RenderFrame,
   type Style,
@@ -186,9 +185,6 @@ export function formatSubagentsOutput(data: SubagentsCommandData, depth: ColorDe
   ];
 }
 
-// A trailing blank, not a leading one: shift+tab commits one of these per press,
-// and the composer sits flush against the transcript, so one line below each
-// notice separates a run of them from each other and the last from the box.
 const SAVED_RULES = "\u0000saved-rules";
 
 // Where a saved rule lives, in the words the user would use for it.
@@ -199,25 +195,6 @@ function ruleSource(source: string): string {
   if (source === join(process.cwd(), ".mu", "config.json")) return "project";
   if (source === join(home, ".mu", "config.json")) return "user";
   return source.startsWith(`${home}/`) ? `~/${relative(home, source)}` : source;
-}
-
-export function formatPermissionMode(
-  mode: PermissionMode,
-  depth: ColorDepth,
-  saved = false,
-): string[] {
-  // Bold as well as coloured: the four modes have to stay apart under NO_COLOR
-  // and for anyone who does not separate them by hue.
-  const style = {
-    ...(mode.tone ? PERMISSION_TONE_STYLES[mode.tone] : { accent: true }),
-    bold: true,
-  };
-  const suffix = styleText(
-    saved ? " · saved for new sessions" : " · this session",
-    { dim: true },
-    depth,
-  );
-  return [`  permissions set to ${styleText(mode.label, style, depth)}${suffix}`, ""];
 }
 
 export async function initializeInteractiveSession(
@@ -1056,9 +1033,7 @@ export async function runInteractive(
       activePermissionMode = mode;
     }
     app.setPermissionMode(mode, source);
-    const saved = source !== "side" && profile !== undefined;
-    commitLines(formatPermissionMode(mode, depth, saved), source);
-    if (!saved || !profile) return;
+    if (source === "side" || !profile) return;
     void savePermissionMode(profile.name, mode.id).catch((error: unknown) => {
       commitLines([
         `  could not save permission mode: ${error instanceof Error ? error.message : String(error)}`,
