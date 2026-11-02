@@ -5,8 +5,8 @@ import {
   type ModelInfo,
   supportedThinkingLevels,
   type TextContent,
-  type ThinkingLevel,
   THINKING_EFFORTS,
+  type ThinkingLevel,
   thinkingEffort,
   thinkingLevelForModel,
   type Usage,
@@ -139,6 +139,8 @@ const DELEGATION_TOOLS = new Set([
 ]);
 const PROGRESS_INTERVAL_MS = 80;
 
+const TASK_DESCRIPTION =
+  "Delegate a self-contained work unit to a subagent, which starts with none of your context. Call task only when the user, your operating instructions, project instructions (such as AGENTS.md) or a skill ask for subagents, delegation or parallel agent work, in any wording. Requests for depth, thoroughness, research or careful work do not count, and neither does your own view that delegating would help. When delegation is asked for, plan first and keep the next blocking step yourself; give each subagent a concrete, complete brief, and give subagents that change files write sets that do not overlap with each other or with yours. Multiple calls in one turn run concurrently, and a normal call returns only when the subagent has finished. Set run_in_background when you have independent work of your own to do meanwhile: the call returns a subagent id at once, you are notified when it finishes, and subagent_status, subagent_send, and subagent_stop manage it. Do not redo a subagent's work. Use subagent_send to pass on a change in the user's request, not to complete a brief; if a subagent needs repeated correction, stop it and do the unit yourself.";
 const CHOICE_POLICY =
   " Set model or thinking only when the user names a model or reasoning level for this delegation; never choose one yourself. When the call reports the name is ambiguous, misspelled or unavailable, ask the user as it says and wait for their answer; never pick a provider or version for them or retry without it.";
 const callChoiceSchema = {
@@ -1134,9 +1136,7 @@ export function subagentsExtension(options: SubagentExtensionOptions): Extension
         api.registerTool(
           tool({
             name: "task",
-            description:
-              "Delegate a substantial, self-contained work unit to a subagent. Use for independently owned implementation or verification work, especially when several workstreams can proceed concurrently. Do not use for trivial edits or work that depends on another unfinished task. Multiple calls in one turn run concurrently, and a normal call returns only when the subagent has finished. Set run_in_background to keep working while it runs: the call returns a subagent id at once, you are notified when it finishes, and subagent_status, subagent_send, and subagent_stop manage it. Run in the background only work that does not touch what you will do meanwhile." +
-              CHOICE_POLICY,
+            description: TASK_DESCRIPTION + CHOICE_POLICY,
             inputSchema: z.object({
               description: z.string().min(1).describe("A short activity label"),
               prompt: z

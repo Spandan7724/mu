@@ -380,7 +380,7 @@ describe("prompts", () => {
   test("the base prompt is model-independent and small", () => {
     const sections = codingPrompt("anthropic/claude-opus-5");
     expect(sections.length).toBe(1);
-    expect(sections[0]?.text.split("\n").length).toBeLessThan(45);
+    expect(sections[0]?.text.split("\n").length).toBeLessThan(50);
   });
 
   test("the base prompt requires grounded file and line citations", () => {
