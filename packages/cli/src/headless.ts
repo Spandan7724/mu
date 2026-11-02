@@ -60,6 +60,9 @@ export async function runHeadless(
   process.on("SIGINT", onSigint);
 
   let failure: string | undefined;
+  // A reply's text is printed once it completes: a stream that fails part way
+  // is retried, and stdout must not carry the abandoned attempt.
+  let replyText = "";
   const unsubscribe = agent.subscribe((event) => {
     if (
       event.type === "message_end" &&
@@ -89,7 +92,10 @@ export async function runHeadless(
     if (args.json) {
       io.stdout(`${JSON.stringify(event)}\n`);
     } else if (event.type === "message_update" && event.delta.kind === "text_delta") {
-      io.stdout(event.delta.text);
+      replyText += event.delta.text;
+    } else if (event.type === "message_end" && event.message.role === "assistant") {
+      if (event.message.stopReason !== "error" && replyText) io.stdout(replyText);
+      replyText = "";
     }
   });
 

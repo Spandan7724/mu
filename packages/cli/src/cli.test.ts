@@ -364,6 +364,23 @@ describe("runHeadless", () => {
     expect(err.join("")).toContain("upstream exploded");
   });
 
+  test("a retried turn prints only the attempt that completed", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [{ type: "text", text: "partial words " }],
+        errorMessage: "Our servers are currently overloaded. (server_is_overloaded)",
+        errorKind: "overloaded",
+        retryAfterMs: 1,
+      },
+      { content: [{ type: "text", text: "the answer" }] },
+    ]);
+    const { out, err, io: sink } = io();
+    const code = await runHeadless(parseArgs(["-p", "ask"]), base(provider), sink);
+    expect(code).toBe(EXIT.done);
+    expect(out.join("").trim()).toBe("the answer");
+    expect(err.join("")).toContain("retrying in 0s (1 of 4)");
+  });
+
   test("hitting a budget exits 3", async () => {
     const provider = new FakeProvider(
       Array.from({ length: 5 }, (_, i) => ({
