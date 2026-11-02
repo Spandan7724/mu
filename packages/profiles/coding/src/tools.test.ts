@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnyTool } from "@mu/core";
-import { renderTodos, TodoStore, todoTool } from "mu";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import {
@@ -838,38 +837,6 @@ describe("bash", () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("timed out");
     expect(Date.now() - started).toBeLessThan(3_000);
-  });
-});
-
-describe("todo", () => {
-  test("renders the list and stores it", async () => {
-    const store = new TodoStore();
-    const result = await run(todoTool(store), {
-      items: [
-        { content: "write tests", status: "completed" },
-        { content: "ship it", status: "in_progress" },
-        { content: "celebrate", status: "pending" },
-      ],
-    });
-    const text = textOf(result);
-    expect(text).toContain("[x] write tests");
-    expect(text).toContain("[~] ship it");
-    expect(text).toContain("[ ] celebrate");
-    expect(store.all().length).toBe(3);
-  });
-
-  test("warns when more than one task is in progress", async () => {
-    const result = await run(todoTool(new TodoStore()), {
-      items: [
-        { content: "a", status: "in_progress" },
-        { content: "b", status: "in_progress" },
-      ],
-    });
-    expect(textOf(result)).toContain("one at a time");
-  });
-
-  test("renders an empty list", () => {
-    expect(renderTodos([])).toBe("(no tasks)");
   });
 });
 

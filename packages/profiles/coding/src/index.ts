@@ -10,7 +10,6 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
-import { TodoStore, todoTool } from "mu";
 import { partialCheckpointNotice, ShadowCheckpointProvider } from "./checkpoint.ts";
 import {
   codingEnvironment,
@@ -55,7 +54,6 @@ export interface CodingProfileOptions {
 
 export interface CodingProfile extends Profile {
   fileState: FileState;
-  todos: TodoStore;
   processes: ProcessManager;
   instructions: InstructionLoader;
 }
@@ -154,7 +152,6 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
   const root = resolve(options.root ?? process.cwd());
   const home = resolve(options.home ?? homedir());
   const fileState = new FileState();
-  const todos = new TodoStore();
   const configDiagnostics: string[] = [];
   const projectConfig = await loadProjectConfig(root, (message) => configDiagnostics.push(message));
   const userConfig = await loadUserConfig(home, (message) => configDiagnostics.push(message));
@@ -230,7 +227,6 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     editTool(deps),
     lsTool(deps),
     bashTool({ root, processes, ...(options.spawn ? { spawn: options.spawn } : {}) }),
-    todoTool(todos),
     ...taskTools(processes, waitingOn),
   ] as AnyTool[];
 
@@ -359,7 +355,6 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     carryoverExtractor: () => ({
       readFiles: fileState.readFiles(),
       modifiedFiles: fileState.modifiedFiles(),
-      todos: todos.all(),
     }),
     scope: () => root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, ""),
     ...(checkpoints ? { checkpointProvider: checkpoints } : {}),
@@ -367,14 +362,11 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...(checkpointNotice ? { checkpointNotice } : {}),
     runtime,
     fileState,
-    todos,
     processes,
     instructions: instructionLoader,
   };
 }
 
-export type { TodoItem } from "mu";
-export { renderTodos, TodoStore, todoTool } from "mu";
 export type { GitRunner, ShadowCheckpointOptions } from "./checkpoint.ts";
 export {
   gitConfigNullDevice,

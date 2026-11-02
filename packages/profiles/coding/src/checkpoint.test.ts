@@ -840,7 +840,7 @@ describe("which coding tools need an after-turn checkpoint", () => {
       const flag = profile.toolset.find((tool) => tool.name === name)?.changesState;
       return typeof flag === "function" ? flag(args) : flag;
     };
-    for (const name of ["read", "ls", "todo", "task_output", "task_list"]) {
+    for (const name of ["read", "ls", "task_output", "task_list"]) {
       expect(changes(name)).toBe(false);
     }
     expect(changes("write")).toBe(true);

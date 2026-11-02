@@ -56,7 +56,6 @@ describe("codingProfile", () => {
       "task_list",
       "task_output",
       "task_write_stdin",
-      "todo",
       "write",
     ]);
   });
@@ -99,7 +98,7 @@ describe("codingProfile", () => {
 
 describe("permission defaults", () => {
   test("read-only tools are allowed without asking", () => {
-    for (const tool of ["read", "ls", "todo"]) {
+    for (const tool of ["read", "ls"]) {
       expect(evaluate(CODING_PERMISSION_DEFAULTS, tool, "anything")).toBe("allow");
     }
   });

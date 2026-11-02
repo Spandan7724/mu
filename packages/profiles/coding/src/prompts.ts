@@ -8,7 +8,6 @@ Approach:
 - Understand before you change: read the relevant files and search the codebase rather than guessing at names or APIs.
 - Make the smallest change that fully solves the problem. Match the surrounding code's style, naming and idiom.
 - Verify your work. Run the project's tests or build when they exist, and report honestly if something fails.
-- For multi-step work, keep the todo list current so the user can follow along.
 
 Tools:
 - Read a file before editing or overwriting it.
