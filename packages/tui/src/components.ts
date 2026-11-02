@@ -5,7 +5,7 @@ import type { PermissionModeTone } from "@mu/core";
 import { type DiffFile, diffCell } from "./cells.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
-import { type ColorDepth, GLYPHS, MARGIN, type Style, styleText } from "./style.ts";
+import { type ColorDepth, cometSpinner, GLYPHS, MARGIN, type Style, styleText } from "./style.ts";
 import { graphemes, stringWidth, truncateToWidth } from "./width.ts";
 import { wrapText } from "./wrap.ts";
 
@@ -427,7 +427,7 @@ export class Spinner {
   private frame = 0;
 
   get glyph(): string {
-    return GLYPHS.spinner[this.frame % GLYPHS.spinner.length] as string;
+    return cometSpinner(this.frame, "none");
   }
 
   get frameIndex(): number {
@@ -439,7 +439,7 @@ export class Spinner {
   }
 
   render(depth: ColorDepth, label = ""): string {
-    const glyph = accent(this.glyph, depth);
+    const glyph = cometSpinner(this.frame, depth);
     return label ? `${glyph} ${dim(label, depth)}` : glyph;
   }
 }

@@ -593,13 +593,17 @@ describe("components", () => {
     }
   });
 
-  test("spinner cycles through the identity glyph frames", () => {
+  test("spinner is a four-cell comet bouncing with a trail", () => {
     const spinner = new Spinner();
-    const first = stripAnsi(spinner.render("none"));
-    spinner.tick();
-    const second = stripAnsi(spinner.render("none"));
-    expect(first).toBe("▸▹▹");
-    expect(second).toBe("▹▸▹");
+    const frames: string[] = [];
+    for (let i = 0; i < 18; i++) {
+      frames.push(stripAnsi(spinner.render("none")));
+      spinner.tick();
+    }
+    expect(frames[0]).toBe("■■··");
+    expect(frames[10]).toBe("···■");
+    expect(frames.every((frame) => stringWidth(frame) === 4)).toBe(true);
+    expect(stripAnsi(spinner.render("none"))).toBe(frames[0] ?? "");
   });
 
   test("queued input is a dim pending user row, wrapped in full and sanitized", () => {

@@ -212,7 +212,7 @@ export const GLYPHS = {
   userMarker: "▸",
   ok: "✓",
   error: "✗",
-  // Not started yet — the spinner's own "not this one" glyph, held still.
+  // Not started yet: the hollow twin of the user marker.
   pending: "▹",
   bullet: "•",
   separator: "·",
@@ -223,7 +223,6 @@ export const GLYPHS = {
   bracketOpen: "╭",
   bracket: "│",
   bracketClose: "╰",
-  spinner: ["▸▹▹", "▹▸▹", "▹▹▸"],
   subagentSpinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 } as const;
 
@@ -262,6 +261,54 @@ export function mutateShimmer(
         else runs.push({ code, text: char });
       }
       return runs.map((run) => `${run.code}${run.text}${RESET}`).join("");
+    })
+    .join("");
+}
+
+// The running spinner: a comet bouncing across four cells with a fading trail. The
+// head eases at each end (cosine), so a frame depends on the tick alone.
+const COMET_CELLS = 4;
+const COMET_PERIOD = 18;
+const COMET_TRAIL = 4;
+const COMET_FRAMES: readonly (readonly number[])[] = Array.from(
+  { length: COMET_PERIOD },
+  (_, tick) => {
+    const levels = new Array<number>(COMET_CELLS).fill(0);
+    for (let age = 0; age < COMET_TRAIL; age++) {
+      const at =
+        ((COMET_CELLS - 1) / 2) * (1 - Math.cos((2 * Math.PI * (tick - age)) / COMET_PERIOD));
+      for (let cell = 0; cell < COMET_CELLS; cell++)
+        if (Math.abs(at - cell) < 0.6)
+          levels[cell] = Math.max(levels[cell] ?? 0, 1 - age / COMET_TRAIL);
+    }
+    return levels;
+  },
+);
+// Truecolor trail fades from the head's lifted accent down to near-background.
+const COMET_FADE_RGB = [22, 48, 45] as const;
+const COMET_PEAK_RGB = [207, 250, 244] as const;
+
+function cometRgb(level: number): readonly number[] {
+  const [from, to, t] =
+    level < 0.75
+      ? [COMET_FADE_RGB, ACCENT_RGB, level / 0.75]
+      : [ACCENT_RGB, COMET_PEAK_RGB, (level - 0.75) / 0.25];
+  return from.map((value, channel) => Math.round(value + ((to[channel] ?? value) - value) * t));
+}
+
+export function cometSpinner(tick: number, depth: ColorDepth): string {
+  const levels = COMET_FRAMES[tick % COMET_PERIOD] ?? [];
+  return levels
+    .map((level) => {
+      // One glyph for head and trail: the smaller ▪ is emoji-capable and drawn
+      // two cells wide by some terminals.
+      const glyph = level > 0 ? "■" : "·";
+      if (depth === "truecolor") {
+        const [r, g, b] = cometRgb(level);
+        return `${ESC}38;2;${r};${g};${b}m${glyph}${RESET}`;
+      }
+      if (level === 0) return styleText(glyph, { dim: true }, depth);
+      return styleText(glyph, { accent: true, dim: level <= 0.7 }, depth);
     })
     .join("");
 }
