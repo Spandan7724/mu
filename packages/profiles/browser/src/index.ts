@@ -5,7 +5,6 @@ import {
   type Profile,
   type ProfileRuntime,
 } from "@mu/core";
-import { TodoStore, todoTool } from "mu";
 import { hostOf } from "./actions/navigate.ts";
 import { Handoffs, handoffTool } from "./agent/handoff.ts";
 import { recordingCommits } from "./agent/ledger.ts";
@@ -43,7 +42,6 @@ import { tabsTool } from "./tools/tabs.ts";
 export interface BrowserProfile extends Profile {
   browser: BrowserManager;
   config: ResolvedBrowserOptions;
-  todos: TodoStore;
   notes: NotesStore;
   ledger: CommitLedger;
 }
@@ -169,10 +167,9 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   let activeModel: string | undefined;
   const state = new BrowserState();
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
-  const todos = new TodoStore();
   // One agent's tools over one lane of the browser: the main agent's, or a sub-task's.
   const handoffs = new Handoffs();
-  const toolsFor = (lane: BrowserManager, laneState: BrowserState, laneTodos: TodoStore) => {
+  const toolsFor = (lane: BrowserManager, laneState: BrowserState) => {
     const deps = {
       browser: lane,
       config,
@@ -201,7 +198,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       interaction.evaluate,
       interaction.clickXy,
       interaction.downloads,
-      todoTool(laneTodos),
       notesTool(laneState),
       ...fileTools(config.workspace),
       delegateTool({
@@ -226,7 +222,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
         ]
       : tools;
   };
-  const toolset = toolsFor(browser, state, todos);
+  const toolset = toolsFor(browser, state);
   const runtime: ProfileRuntime = {
     attach: (host) => handoffs.attach(host),
     waitingOnUser: () => handoffs.pending,
@@ -295,15 +291,15 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     environment,
     contextMessages: async () => [environmentMessage(await environment())],
     sideBoundary: () => BROWSER_SIDE_BOUNDARY,
-    // Each task subagent works in a lane of its own: its own window and tabs, notes
-    // and todo list, with the session's ledger, secrets and data-flow record.
+    // Each task subagent works in a lane of its own: its own window, tabs and notes,
+    // with the session's ledger, secrets and data-flow record.
     subagents: {
       inspectionTools: [],
       taskSession: async (description, signal) => {
         const lane = await browser.openLane(description, signal);
         const laneState = new BrowserState(state.ledger);
         return {
-          tools: toolsFor(lane, laneState, new TodoStore()),
+          tools: toolsFor(lane, laneState),
           prompt: BROWSER_TASK_PROMPT,
           // The brief is written by the main agent, possibly from page text, so it
           // never counts as the user's own words for the data-flow check.
@@ -334,7 +330,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
             active: tab.active,
           })),
         },
-        todo: todos.all(),
         notes: state.notes.entries(),
         commitsAlreadyPerformed: state.ledger.records().map((record) => ({
           at: new Date(record.at).toISOString(),
@@ -349,7 +344,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     scope: () => `browser-${config.browserProfile}`,
     browser,
     config,
-    todos,
     notes: state.notes,
     ledger: state.ledger,
   };

@@ -1238,6 +1238,7 @@ planRenderer.supersedes = true;
 // not import the profile (dependency direction).
 export const codingRenderers: Record<string, ToolRendererFn> = {
   ...taskCheckRenderers,
+  // No profile ships `todo` any more (D82); saved sessions still contain its calls.
   todo: planRenderer,
   read: (info, ctx) => {
     const details = info.result?.details as

@@ -7,7 +7,7 @@ import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent, optionsFromProfile } from "mu";
 import { browserProfile } from "../index.ts";
 
-test("compaction mid-task keeps URL/tabs, todo, notes and the ledger", async () => {
+test("compaction mid-task keeps URL/tabs, notes and the ledger", async () => {
   const profile = await browserProfile({ home: mkdtempSync(join(tmpdir(), "mu-carry-")) });
   const provider = new FakeProvider([
     { content: [{ type: "text", text: "summary of the shopping task" }] },
@@ -35,10 +35,8 @@ test("compaction mid-task keeps URL/tabs, todo, notes and the ledger", async () 
     action: "click",
     target: 'button "Send" [e13]',
   });
-  profile.todos.replace([{ content: "compare mug prices", status: "in_progress" }]);
   const carryover = profile.carryoverExtractor?.([]) as Record<string, unknown>;
   expect(carryover).toMatchObject({
-    todo: [{ content: "compare mug prices", status: "in_progress" }],
     notes: [{ key: "prices", text: "Classic Mug $12.50\nTall Mug $9.99" }],
     commitsAlreadyPerformed: [{ host: "mail.test", target: 'button "Send" [e13]' }],
     browser: { tabs: [] },
@@ -55,7 +53,6 @@ test("compaction mid-task keeps URL/tabs, todo, notes and the ledger", async () 
     .join("\n");
   expect(text).toContain("summary of the shopping task");
   expect(text).toContain("Classic Mug $12.50");
-  expect(text).toContain("compare mug prices");
   expect(text).toContain('button \\"Send\\" [e13]');
   expect(text).toContain("never repeat them");
   await agent.shutdown();

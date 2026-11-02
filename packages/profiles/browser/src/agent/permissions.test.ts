@@ -30,7 +30,6 @@ describe("browser permission modes", () => {
     expect(check(rules, "upload", "browser:upload")).toBe("ask");
     expect(check(rules, "evaluate", "browser:script")).toBe("ask");
     expect(evaluate(rules, "notes", "*")).toBe("allow");
-    expect(evaluate(rules, "todo", "*")).toBe("allow");
     expect(evaluate(rules, "read", "about-me.md")).toBe("allow");
     expect(evaluate(rules, "ls", ".")).toBe("allow");
     expect(evaluate(rules, "write", "about-me.md")).toBe("ask");

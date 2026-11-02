@@ -446,7 +446,7 @@ describe("managed subagents", () => {
       "Own that unit from investigation through completion",
     );
     expect(provider.requests[1]?.systemPrompt?.map((section) => section.text).join("\n")).toContain(
-      "Do not modify shared plan/todo state",
+      "Do not perform workspace-wide state operations",
     );
     const toolResult = result.messages.find(
       (message) => message.role === "toolResult" && message.toolName === "task",

@@ -190,8 +190,6 @@ export type {
   SubagentsCommandData,
 } from "./subagents.ts";
 export { formatSubagentRoutes, subagentsExtension, subagentThinking } from "./subagents.ts";
-export type { TodoItem } from "./todo.ts";
-export { renderTodos, TodoStore, todoTool } from "./todo.ts";
 export type { ToolDefinition, ToolResult } from "./tool.ts";
 export { tool } from "./tool.ts";
 export type {

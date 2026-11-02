@@ -37,7 +37,6 @@ export const BROWSER_PERMISSION_DEFAULTS: PermissionRule[] = [
   rule(SCOPES.delegate, "ask"),
   rule(SCOPES.share, "ask"),
   rule("notes", "allow"),
-  rule("todo", "allow"),
   rule("skill", "allow"),
   rule("mcp_open", "allow"),
   rule("mcp_describe", "allow"),
