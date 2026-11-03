@@ -265,50 +265,39 @@ export function mutateShimmer(
     .join("");
 }
 
-// The running spinner: a comet bouncing across four cells with a fading trail. The
-// head eases at each end (cosine), so a frame depends on the tick alone.
-const COMET_CELLS = 4;
-const COMET_PERIOD = 18;
-const COMET_TRAIL = 4;
-const COMET_FRAMES: readonly (readonly number[])[] = Array.from(
-  { length: COMET_PERIOD },
+// The running spinner: a braille "eater" circling one cell. A frame depends on the tick alone.
+// Braille dot bits in clockwise order round one cell, from the top-left dot.
+const EATER_RING = [0x01, 0x08, 0x10, 0x20, 0x80, 0x40, 0x04, 0x02] as const;
+// The tail grows a dot every half lap until one gap is left, then shrinks back.
+const EATER_STEP = 4;
+const EATER_PERIOD = 12 * EATER_STEP;
+const EATER_FRAMES: readonly { readonly glyph: string; readonly level: number }[] = Array.from(
+  { length: EATER_PERIOD },
   (_, tick) => {
-    const levels = new Array<number>(COMET_CELLS).fill(0);
-    for (let age = 0; age < COMET_TRAIL; age++) {
-      const at =
-        ((COMET_CELLS - 1) / 2) * (1 - Math.cos((2 * Math.PI * (tick - age)) / COMET_PERIOD));
-      for (let cell = 0; cell < COMET_CELLS; cell++)
-        if (Math.abs(at - cell) < 0.6)
-          levels[cell] = Math.max(levels[cell] ?? 0, 1 - age / COMET_TRAIL);
-    }
-    return levels;
+    const phase = Math.floor(tick / EATER_STEP);
+    const length = phase < 6 ? phase + 1 : 12 - phase;
+    let bits = 0;
+    for (let age = 0; age <= length; age++) bits |= EATER_RING[(((tick - age) % 8) + 8) % 8] ?? 0;
+    return { glyph: String.fromCharCode(0x2800 + bits), level: 0.6 + (0.4 * length) / 7 };
   },
 );
-// Truecolor trail fades from the head's lifted accent down to near-background.
-const COMET_FADE_RGB = [22, 48, 45] as const;
-const COMET_PEAK_RGB = [207, 250, 244] as const;
+// Truecolor brightens with tail length, from a dimmed accent up toward near-white.
+const EATER_FADE_RGB = [22, 48, 45] as const;
+const EATER_PEAK_RGB = [207, 250, 244] as const;
 
-function cometRgb(level: number): readonly number[] {
+function eaterRgb(level: number): readonly number[] {
   const [from, to, t] =
     level < 0.75
-      ? [COMET_FADE_RGB, ACCENT_RGB, level / 0.75]
-      : [ACCENT_RGB, COMET_PEAK_RGB, (level - 0.75) / 0.25];
+      ? [EATER_FADE_RGB, ACCENT_RGB, level / 0.75]
+      : [ACCENT_RGB, EATER_PEAK_RGB, (level - 0.75) / 0.25];
   return from.map((value, channel) => Math.round(value + ((to[channel] ?? value) - value) * t));
 }
 
-export function cometSpinner(tick: number, depth: ColorDepth): string {
-  const levels = COMET_FRAMES[tick % COMET_PERIOD] ?? [];
-  return levels
-    .map((level) => {
-      const glyph = level > 0.7 ? "■" : level > 0 ? "▪" : "·";
-      if (depth === "truecolor") {
-        const [r, g, b] = cometRgb(level);
-        return `${ESC}38;2;${r};${g};${b}m${glyph}${RESET}`;
-      }
-      if (level === 0) return styleText(glyph, { dim: true }, depth);
-      return styleText(glyph, { accent: true, dim: level <= 0.7 }, depth);
-    })
-    .join("");
+export function eaterSpinner(tick: number, depth: ColorDepth): string {
+  const frame = EATER_FRAMES[tick % EATER_PERIOD] ?? { glyph: "⠁", level: 1 };
+  if (depth !== "truecolor") return styleText(frame.glyph, { accent: true }, depth);
+  const [r, g, b] = eaterRgb(frame.level);
+  return `${ESC}38;2;${r};${g};${b}m${frame.glyph}${RESET}`;
 }
 
 export const MARGIN = "  ";

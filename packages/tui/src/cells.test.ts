@@ -593,16 +593,16 @@ describe("components", () => {
     }
   });
 
-  test("spinner is a four-cell comet bouncing with a trail", () => {
+  test("spinner is a one-cell braille eater whose tail grows every half lap", () => {
     const spinner = new Spinner();
     const frames: string[] = [];
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 48; i++) {
       frames.push(stripAnsi(spinner.render("none")));
       spinner.tick();
     }
-    expect(frames[0]).toBe("■▪··");
-    expect(frames[8]).toBe("··▪■");
-    expect(frames.every((frame) => stringWidth(frame) === 4)).toBe(true);
+    expect(frames.slice(0, 4)).toEqual(["⠃", "⠉", "⠘", "⠰"]);
+    expect(frames[24]).toBe("⣷");
+    expect(frames.every((frame) => stringWidth(frame) === 1)).toBe(true);
     expect(stripAnsi(spinner.render("none"))).toBe(frames[0] ?? "");
   });
 
