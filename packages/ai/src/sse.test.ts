@@ -34,6 +34,22 @@ describe("iterateSse", () => {
     expect(events).toEqual([{ event: "x", data: "1" }]);
   });
 
+  test("CRLF split across chunks at every boundary yields the same events", async () => {
+    const text =
+      'event: a\r\ndata: {"x":1}\r\n\r\nevent: error\r\ndata: 2\r\ndata: 3\r\n\r\n' +
+      ": ka\r\n\r\ndata: lf\n\ndata: cr\r\rdata: tail\r\n";
+    const expected: SseEvent[] = [
+      { event: "a", data: '{"x":1}' },
+      { event: "error", data: "2\n3" },
+      { event: null, data: "lf" },
+      { event: null, data: "cr" },
+      { event: null, data: "tail" },
+    ];
+    for (let size = 1; size <= text.length; size++) {
+      expect(await collect(text, size)).toEqual(expected);
+    }
+  });
+
   test("joins multi-line data", async () => {
     const events = await collect("data: a\ndata: b\n\n");
     expect(events).toEqual([{ event: null, data: "a\nb" }]);

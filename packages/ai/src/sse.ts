@@ -64,13 +64,23 @@ export async function* iterateSse(
   const decoder = new TextDecoder();
   const state: SseState = { event: null, data: [] };
   let buffer = "";
+  // A chunk ending in \r leaves its line ending undecided; a leading \n in the
+  // next chunk completes that CRLF rather than starting an empty line.
+  let skipLf = false;
 
   const drain = function* (): Generator<SseEvent> {
+    if (skipLf && buffer.length > 0) {
+      if (buffer[0] === "\n") buffer = buffer.slice(1);
+      skipLf = false;
+    }
     let idx = buffer.search(/[\r\n]/);
     while (idx !== -1) {
       const line = buffer.slice(0, idx);
       let next = idx + 1;
-      if (buffer[idx] === "\r" && buffer[next] === "\n") next += 1;
+      if (buffer[idx] === "\r") {
+        if (next === buffer.length) skipLf = true;
+        else if (buffer[next] === "\n") next += 1;
+      }
       buffer = buffer.slice(next);
       const event = decodeLine(line, state);
       if (event) yield event;
