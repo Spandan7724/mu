@@ -11,6 +11,7 @@ import {
   type UndoPointsCommandData,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
+import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { browserFlags } from "./profiles.ts";
 import { createCliSessionRuntime } from "./session-runtime.ts";
@@ -356,6 +357,7 @@ const INTERACTIVE_ONLY: Record<string, string> = {
 export function commandDataText(data: unknown): string[] {
   if (typeof data !== "object" || data === null) return [];
   const kind = (data as { kind?: unknown }).kind;
+  if (isCostReport(data)) return renderCostCommand(data, 80, "none").slice(1, -1);
   if (kind === "diff") {
     // Hunks are the patch's own lines, headers included.
     return (data as DiffCommandData).files.flatMap((file) => {

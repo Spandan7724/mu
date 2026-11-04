@@ -55,6 +55,7 @@ import {
   thinkingLevelForModel,
   toCommand,
   type UndoPointsCommandData,
+  usageDelta,
 } from "mu";
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
@@ -70,6 +71,7 @@ import {
   saveThinkingLevel,
   thinkingCommandChoice,
 } from "./config.ts";
+import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import { transcriptExportCommand } from "./export-command.ts";
 import { observeGitBranch } from "./git-branch.ts";
 import {
@@ -1098,7 +1100,31 @@ export async function runInteractive(
         },
       );
       sideConversation = conversation;
+      let sideCharged = conversation.agent.usage;
+      let sideTurns = 0;
       unsubscribeSide = conversation.agent.subscribe((event) => {
+        if (event.type === "turn_end" && event.message.stopReason !== "error") sideTurns++;
+        if (event.type === "usage_updated") {
+          const usage = usageDelta(event.sessionTotals, sideCharged);
+          sideCharged = event.sessionTotals;
+          if (
+            usage.inputTokens +
+              usage.outputTokens +
+              usage.cacheReadTokens +
+              usage.cacheWriteTokens >
+            0
+          ) {
+            void agent
+              .recordExternalUsage({
+                source: "side",
+                model: conversation.agent.modelRef,
+                usage,
+                turns: sideTurns,
+              })
+              .catch(() => {});
+            sideTurns = 0;
+          }
+        }
         app.handleEvent(event, "side");
         paint();
       });
@@ -1644,6 +1670,8 @@ export async function runInteractive(
       });
     } else if (data?.kind === "diff") {
       commitLines(renderDiffCommand(data, terminal.columns, depth), source);
+    } else if (isCostReport(data)) {
+      commitLines(renderCostCommand(data, terminal.columns, depth), source);
     } else if (data?.kind === "fork-points") {
       app.openPicker({
         title: "fork from",

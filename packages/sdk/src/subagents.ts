@@ -27,6 +27,7 @@ import {
 } from "@mu/core";
 import { z } from "zod";
 import type { Agent, HaltReason } from "./agent.ts";
+import { attachedUsageLines } from "./cost-report.ts";
 import { RECALL_PROMPT, recallTools } from "./recall.ts";
 import { tool } from "./tool.ts";
 
@@ -723,7 +724,11 @@ class SubagentManager {
       await parent.sessionStore.save(job.sessionId, tree);
       return;
     }
-    if (outcome.usage) parent.chargeUsage(outcome.usage);
+    if (outcome.usage)
+      parent.chargeUsage(
+        outcome.usage,
+        attachedUsageLines(outcome.usage, outcome.details, parent.modelRef),
+      );
     if (job.stoppedBy || parent.isStopping) await parent.recordMessage(record);
     else {
       job.queued = record;

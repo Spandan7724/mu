@@ -41,6 +41,7 @@ import type { AgentViewAttachment, AgentViewResponse } from "./agent-view-protoc
 import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
+import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import {
   formatSubagentsOutput,
   renderCheckpointCommand,
@@ -865,6 +866,8 @@ export async function runAgentView(
         });
       } else if (data?.kind === "diff") {
         active.app.appendTranscript(renderDiffCommand(data, terminal.columns, depth));
+      } else if (isCostReport(response.data)) {
+        active.app.appendTranscript(renderCostCommand(response.data, terminal.columns, depth));
       } else if (data?.kind === "fork-points") {
         const sessionId = active.sessionId;
         active.app.openPicker({

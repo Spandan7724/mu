@@ -16,6 +16,7 @@ import {
   environmentMessage,
   InstructionLoader,
   type InstructionSettings,
+  SNAPSHOT_TYPE_PREFIX,
 } from "./context.ts";
 import {
   CODING_PERMISSION_DEFAULTS,
@@ -298,6 +299,8 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     environment,
     contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
     sideBoundary: () => CODING_SIDE_BOUNDARY,
+    contextLabel: (customType) =>
+      customType.startsWith(SNAPSHOT_TYPE_PREFIX) ? "instructions" : undefined,
     subagents: {
       inspectionTools: ["read", "ls", "bash"],
       counselPrompt: CODING_COUNSEL_PROMPT,

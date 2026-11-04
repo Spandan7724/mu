@@ -81,6 +81,7 @@ export type { RenderFrame } from "./renderer.ts";
 export { FullScreenRenderer } from "./renderer.ts";
 export type { ColorDepth, Style, SyntaxRole } from "./style.ts";
 export {
+  AGENT_LABEL,
   detectColorDepth,
   GLYPHS,
   hyperlink,

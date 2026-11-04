@@ -63,6 +63,16 @@ import {
 import type { z } from "zod";
 import { type Budget, type BudgetBreach, checkBudget, totalTokens } from "./budget.ts";
 import {
+  attachedUsageLines,
+  type CostReport,
+  contextBreakdown,
+  EXTERNAL_USAGE_TYPE,
+  type ExternalUsageData,
+  isExternalUsageData,
+  UsageLedger,
+  type UsageLine,
+} from "./cost-report.ts";
+import {
   STRUCTURED_OUTPUT_REMINDERS,
   STRUCTURED_OUTPUT_TOOL,
   StructuredOutputError,
@@ -129,6 +139,8 @@ export interface AgentOptions {
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
+  // Names the /cost context group for a profile's own custom message types.
+  contextLabel?: (customType: string) => string | undefined;
 }
 
 export interface RunResult {
@@ -298,6 +310,8 @@ export class Agent {
   private noticesHeld = false;
   private heldPublished = 0;
   private totals: Usage = zeroUsage();
+  // Same spend as `totals`, split by source and model; every change to one changes both.
+  private ledger = new UsageLedger();
   private compactRequested = false;
   private compactRequestedFocus: string | undefined;
   private queuedManualCompactionFocus: string | undefined;
@@ -521,8 +535,10 @@ export class Agent {
 
   // Provider usage incurred on this Agent's behalf outside its own model turns
   // and tool results, such as a background child that finished between runs.
-  chargeUsage(usage: Usage): void {
+  chargeUsage(usage: Usage, lines?: UsageLine[]): void {
     this.totals = addUsage(this.totals, usage);
+    for (const line of lines ?? [{ source: "other", model: this.modelRef, usage, turns: 0 }])
+      this.ledger.add(line);
     this.claimChildUsage(usage);
     this.publishEvent({
       type: "usage_updated",
@@ -578,6 +594,51 @@ export class Agent {
     while (this.activeExecution) await this.activeExecution.catch(() => {});
     this.tree.appendMessage(message);
     await this.store.save(this._sessionId, this.tree);
+  }
+
+  // Spend made for this session by an agent that keeps no transcript of its own
+  // here (a side conversation). Counted at once; saved, outside the model's context,
+  // once no run is writing the session. A session switched away from gets the
+  // record in its stored copy.
+  async recordExternalUsage(data: ExternalUsageData): Promise<void> {
+    const sessionId = this._sessionId;
+    this.chargeUsage(data.usage, [data]);
+    while (this.activeExecution) await this.activeExecution.catch(() => {});
+    const entry = { type: "custom" as const, customType: EXTERNAL_USAGE_TYPE, data };
+    if (this._sessionId === sessionId) {
+      this.tree.append(entry);
+      // A session with no conversation yet is saved with its first run, not as an empty file.
+      if (this.tree.messagesAt().length > 0) await this.store.save(sessionId, this.tree);
+      return;
+    }
+    const tree = await this.store.load(sessionId);
+    if (!tree) return;
+    tree.append(entry);
+    await this.store.save(sessionId, tree);
+  }
+
+  costReport(): CostReport {
+    const threshold = this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD;
+    return {
+      kind: "cost",
+      totals: this.totals,
+      lines: this.ledger.list(),
+      context: contextBreakdown({
+        systemPrompt: resolveSystemPrompt(this.options.systemPrompt),
+        tools: this.tools.map(({ name, description, inputSchema }) => ({
+          name,
+          description,
+          inputSchema,
+        })),
+        messages: this.tree.messagesAt(),
+        compactions: this.tree.activePath().filter((entry) => entry.type === "compaction").length,
+        tokens: this.lastContextTokens,
+        window: this.model.contextWindow,
+        reported: this.lastContextUsage !== undefined,
+        autoCompactAt: threshold,
+        ...(this.options.contextLabel ? { label: this.options.contextLabel } : {}),
+      }),
+    };
   }
 
   // Switching model also switches provider — they travel together.
@@ -659,25 +720,59 @@ export class Agent {
     // process saw it happen. Entries are stored once and shared by reference
     // across branches, so summing all() can't double-count a shared ancestor.
     let restoredTotals = zeroUsage();
+    this.ledger.clear();
+    const callModels = new Map<string, string>();
+    const restore = (usage: Usage, lines: UsageLine[]) => {
+      restoredTotals = addUsage(restoredTotals, usage);
+      for (const line of lines) this.ledger.add(line);
+    };
     for (const entry of candidate.all()) {
       if (entry.type === "message" && entry.message.role === "assistant") {
-        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+        const message = entry.message;
+        for (const block of message.content)
+          if (block.type === "toolCall") callModels.set(block.id, message.model);
+        restore(message.usage, [
+          {
+            source: "main",
+            model: message.model,
+            usage: message.usage,
+            turns: message.stopReason === "error" ? 0 : 1,
+          },
+        ]);
       } else if (
         entry.type === "message" &&
         entry.message.role === "toolResult" &&
         entry.message.usage
       ) {
-        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+        const message = entry.message;
+        const usage = entry.message.usage;
+        const model = callModels.get(message.toolCallId) ?? this.modelRef;
+        restore(usage, attachedUsageLines(usage, message.details, model));
       } else if (
         entry.type === "message" &&
         entry.message.role === "custom" &&
         entry.message.usage
       ) {
-        restoredTotals = addUsage(restoredTotals, entry.message.usage);
+        const message = entry.message;
+        const usage = entry.message.usage;
+        const lines = attachedUsageLines(usage, message.details, this.modelRef);
+        restore(
+          usage,
+          lines.map((line) => (line.source === "tools" ? { ...line, source: "other" } : line)),
+        );
       } else if (entry.type === "compaction" && entry.usage) {
-        restoredTotals = addUsage(restoredTotals, entry.usage);
+        const model = entry.compactorModel ?? entry.model ?? this.modelRef;
+        restore(entry.usage, [{ source: "compaction", model, usage: entry.usage, turns: 0 }]);
       } else if (entry.type === "compaction-attempt") {
-        restoredTotals = addUsage(restoredTotals, entry.usage);
+        restore(entry.usage, [
+          { source: "compaction", model: entry.compactorModel, usage: entry.usage, turns: 0 },
+        ]);
+      } else if (
+        entry.type === "custom" &&
+        entry.customType === EXTERNAL_USAGE_TYPE &&
+        isExternalUsageData(entry.data)
+      ) {
+        restore(entry.data.usage, [entry.data]);
       }
     }
     this.totals = restoredTotals;
@@ -743,6 +838,7 @@ export class Agent {
       thinkingLevel: this.currentThinking,
     });
     this.totals = zeroUsage();
+    this.ledger.clear();
     this.lastContextUsage = undefined;
     this.compactRequested = false;
     this.compactRequestedFocus = undefined;
@@ -1172,6 +1268,12 @@ export class Agent {
       await this.store.save(this._sessionId, candidateTree);
       this.tree = candidateTree;
       this.totals = addUsage(this.totals, result.usage);
+      this.ledger.add({
+        source: "compaction",
+        model: `${compactor.model.provider}/${compactor.model.id}`,
+        usage: result.usage,
+        turns: 0,
+      });
       usageRecorded = true;
       this.lastContextUsage = undefined;
       this.lastContextPercent =
@@ -1220,6 +1322,12 @@ export class Agent {
         });
         await this.store.save(this._sessionId, this.tree).catch(() => {});
         this.totals = addUsage(this.totals, failedUsage);
+        this.ledger.add({
+          source: "compaction",
+          model: `${compactor.model.provider}/${compactor.model.id}`,
+          usage: failedUsage,
+          turns: 0,
+        });
         emit({
           type: "usage_updated",
           sessionTotals: this.totals,
@@ -2058,10 +2166,12 @@ export class Agent {
 
     const recordUsage = (
       usage: Usage,
+      line: Omit<UsageLine, "usage">,
       messages: AgentMessage[],
       requestMessages?: AgentMessage[],
     ): HaltReason | undefined => {
       this.totals = addUsage(this.totals, usage);
+      this.ledger.add({ ...line, usage });
       if (requestMessages) {
         runContextUsage = {
           usage,
@@ -2456,7 +2566,15 @@ export class Agent {
 
           runContextUsage = undefined;
           this.lastContextUsage = undefined;
-          recordUsage(result.usage, compacted);
+          recordUsage(
+            result.usage,
+            {
+              source: "compaction",
+              model: `${compactor.model.provider}/${compactor.model.id}`,
+              turns: 0,
+            },
+            compacted,
+          );
           usageRecorded = true;
           emit({
             type: "compaction_end",
@@ -2484,7 +2602,15 @@ export class Agent {
               timestamp: Date.now(),
               usage: failedUsage,
             });
-            recordUsage(failedUsage, working);
+            recordUsage(
+              failedUsage,
+              {
+                source: "compaction",
+                model: `${compactor.model.provider}/${compactor.model.id}`,
+                turns: 0,
+              },
+              working,
+            );
           }
           // A failed summarization must not take the run down: carry on
           // uncompacted and let the provider surface any context error.
@@ -2559,11 +2685,22 @@ export class Agent {
         for (const result of turn.toolResults) {
           if (!result.usage) continue;
           this.totals = addUsage(this.totals, result.usage);
+          for (const line of attachedUsageLines(result.usage, result.details, turn.message.model))
+            this.ledger.add(line);
           this.claimChildUsage(result.usage);
         }
         // A finished child whose usage no result carried has nothing left to count.
         for (const child of this.children) if (!child.running) this.children.delete(child);
-        const breach = recordUsage(turn.message.usage, turn.context.messages, turn.requestMessages);
+        const breach = recordUsage(
+          turn.message.usage,
+          {
+            source: "main",
+            model: turn.message.model,
+            turns: turn.message.stopReason === "error" ? 0 : 1,
+          },
+          turn.context.messages,
+          turn.requestMessages,
+        );
         if (breach) {
           return true;
         }
@@ -2739,19 +2876,36 @@ export class Agent {
   // Resuming, starting over, or moving to another window must republish it
   // instead of leaving consumers on a stale figure until the next request.
   private refreshContextAccounting(): void {
+    const messages = this.tree.messagesAt();
     const state = contextState(
       this.model,
-      this.tree.messagesAt(),
+      messages,
       this.lastContextUsage?.usage,
       this.lastContextUsage?.estimatedTokensAtUsage,
     );
-    this.lastContextPercent = state.percent;
-    this.lastContextTokens = state.tokens;
+    // Like a run's own estimate, an unreported context counts the prompt and tools.
+    const overhead =
+      messages.length === 0
+        ? 0
+        : estimateTextTokens(JSON.stringify(resolveSystemPrompt(this.options.systemPrompt))) +
+          estimateTextTokens(
+            JSON.stringify(
+              this.tools.map(({ name, description, inputSchema }) => ({
+                name,
+                description,
+                inputSchema,
+              })),
+            ),
+          );
+    const tokens = Math.max(state.tokens, estimateTokens(messages) + overhead);
+    const percent = state.limit > 0 ? tokens / state.limit : 0;
+    this.lastContextPercent = percent;
+    this.lastContextTokens = tokens;
     this.publishEvent({
       type: "usage_updated",
       sessionTotals: this.totals,
-      contextTokens: state.tokens,
-      contextPercent: state.percent,
+      contextTokens: tokens,
+      contextPercent: percent,
     });
   }
 

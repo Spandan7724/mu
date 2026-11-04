@@ -323,7 +323,7 @@ Slash commands in every session:
   /new             clear the screen and start a new chat
   /btw             open an ephemeral side conversation
   /export [path]   save the transcript as Markdown
-  /cost            token usage and cost for this session
+  /cost            spend by source and model, and what fills the context
   /keybindings     list every key binding
   Markdown commands from ~/.mu/commands and .mu/commands are added as /<name>.
 

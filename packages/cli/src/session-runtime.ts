@@ -242,7 +242,7 @@ export async function createCliSessionRuntime(
 
   const commands = registryWithCoreCommands({
     requestCompaction: (focus) => agent.compactNow(focus),
-    usage: () => ({ ...agent.usage, contextPercent: agent.contextPercent }),
+    costReport: () => agent.costReport(),
     undo: (turnCount) => agent.undo(turnCount),
     undoPoints: () => agent.undoPoints(),
     redo: () => agent.redo(),

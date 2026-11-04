@@ -116,6 +116,15 @@ export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
 export type { DiffCommandData, ForkPoint, UndoPointsCommandData } from "./commands.ts";
 export { coreCommands, registryWithCoreCommands } from "./commands.ts";
+export type {
+  ContextBreakdown,
+  ContextPart,
+  CostReport,
+  ExternalUsageData,
+  UsageLine,
+  UsageSource,
+} from "./cost-report.ts";
+export { usageDelta } from "./cost-report.ts";
 export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";
 export type { FileSessionStoreOptions } from "./file-store.ts";

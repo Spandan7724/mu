@@ -1,6 +1,6 @@
-import type { Usage } from "@mu/ai";
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
 import type { CheckpointActionResult, ManualCompactionResult, UndoPoint } from "./agent.ts";
+import type { CostReport } from "./cost-report.ts";
 
 export interface ForkPoint {
   id: string;
@@ -22,7 +22,7 @@ export interface CoreCommandHooks {
   requestCompaction?: (
     focus?: string,
   ) => ManualCompactionResult | undefined | Promise<ManualCompactionResult | undefined>;
-  usage?: () => Usage & { contextPercent: number };
+  costReport?: () => CostReport;
   undo?: (turnCount?: number) => Promise<CheckpointActionResult>;
   undoPoints?: () => UndoPoint[];
   redo?: () => Promise<CheckpointActionResult>;
@@ -31,22 +31,6 @@ export interface CoreCommandHooks {
   diff?: () => Promise<CheckpointDiffFile[]>;
   // Answers /undo, /redo and /diff when checkpoints are off.
   checkpointUnavailable?: string;
-}
-
-export function formatUsageBreakdown(usage: Usage & { contextPercent: number }): string {
-  const totalTokens =
-    usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
-  const tokens = (value: number) => Math.max(0, Math.trunc(value)).toLocaleString("en-US");
-  return [
-    "Session usage",
-    `  Input tokens:       ${tokens(usage.inputTokens)}`,
-    `  Output tokens:      ${tokens(usage.outputTokens)}`,
-    `  Cache read tokens:  ${tokens(usage.cacheReadTokens)}`,
-    `  Cache write tokens: ${tokens(usage.cacheWriteTokens)}`,
-    `  Total tokens:       ${tokens(totalTokens)}`,
-    `  Cost:               $${(usage.costUsd ?? 0).toFixed(6)}`,
-    `  Active context:     ${(Math.max(0, usage.contextPercent) * 100).toFixed(1)}%`,
-  ].join("\n");
 }
 
 export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
@@ -180,15 +164,12 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     },
     {
       name: "cost",
-      description: "Show token usage and cost for this session",
+      description: "Show token usage, cost and what fills the context",
       run: () => {
-        const usage = hooks.usage?.();
-        return {
-          handled: true,
-          message: usage
-            ? formatUsageBreakdown(usage)
-            : "Usage is reported by the surface that owns the session.",
-        };
+        const report = hooks.costReport?.();
+        return report
+          ? { handled: true, data: report }
+          : { handled: true, message: "Usage is reported by the surface that owns the session." };
       },
     },
   ];

@@ -21,7 +21,13 @@ import {
   restrictsHosts,
 } from "./agent/permissions.ts";
 import { BROWSER_SIDE_BOUNDARY, BROWSER_TASK_PROMPT, browserPrompt } from "./agent/prompts.ts";
-import { BrowserState, type CommitLedger, formatNotes, type NotesStore } from "./agent/state.ts";
+import {
+  BrowserState,
+  type CommitLedger,
+  formatNotes,
+  type NotesStore,
+  STATE_TYPE,
+} from "./agent/state.ts";
 import { defaultLauncher } from "./browser/connect.ts";
 import { BrowserManager } from "./browser/manager.ts";
 import { browserCommands } from "./commands.ts";
@@ -244,6 +250,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
   return {
     name: "browser",
     toolset,
+    contextLabel: (customType) => (customType === STATE_TYPE ? "page state" : undefined),
     promptFor: (modelRef) => {
       activeModel = modelRef;
       return browserPrompt(modelRef);

@@ -97,6 +97,8 @@ export interface Profile {
   contextMessages?: () => Promise<AgentMessage[]> | AgentMessage[];
   // Domain-specific constraints appended to the neutral side-conversation boundary.
   sideBoundary?: () => string;
+  // Names the /cost context group for this profile's own custom message types.
+  contextLabel?: (customType: string) => string | undefined;
   // Optional domain contribution to the profile-independent subagent extension.
   subagents?: ProfileSubagents;
   // Re-evaluates domain context against the active transcript before a run.

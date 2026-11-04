@@ -15,7 +15,7 @@ export const DEFAULT_INSTRUCTION_FALLBACKS = [
 ];
 export const INSTRUCTION_PRIMARY_NAMES = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD"];
 
-const SNAPSHOT_TYPE_PREFIX = "project-instructions-";
+export const SNAPSHOT_TYPE_PREFIX = "project-instructions-";
 const MAX_IMPORT_DEPTH = 5;
 const RULE_FRONTMATTER_SCAN_BYTES = 8 * 1024;
 const TEXT_EXTENSIONS = new Set([

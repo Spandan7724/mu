@@ -285,7 +285,8 @@ describe("runHeadless", () => {
 
     expect(code).toBe(EXIT.done);
     expect(provider.callCount).toBe(0);
-    expect(out.join("")).toContain("Session usage");
+    expect(out.join("")).toContain("Session cost · $0.0000");
+    expect(out.join("")).toContain("Context · ");
   });
 
   test("a command that submits a prompt, like a skill, runs it headlessly", async () => {
@@ -335,7 +336,8 @@ describe("runHeadless", () => {
     expect(provider.callCount).toBe(0);
     const result = JSON.parse(out.join(""));
     expect(result.type).toBe("command_result");
-    expect(result.message).toStartWith("Session usage");
+    expect(result.data.kind).toBe("cost");
+    expect(result.data.totals.inputTokens).toBe(0);
   });
 
   test("extension commands join the headless registry", async () => {
