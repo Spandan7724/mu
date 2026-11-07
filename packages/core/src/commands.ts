@@ -31,6 +31,8 @@ export interface Command {
   fallback?: boolean;
   // Menus list skills after every other command.
   kind?: "skill";
+  // Left out of listings while true; still runs when typed.
+  hidden?: () => boolean;
   // biome-ignore lint/suspicious/noConfusingVoidType: a command may legitimately return nothing
   run: (ctx: CommandContext) => CommandResult | void | Promise<CommandResult | void>;
 }
@@ -47,8 +49,15 @@ export class CommandRegistry {
     return this.commands.get(name);
   }
 
+  // Every registered command, hidden ones included (for copying into another registry).
+  all(): Command[] {
+    return [...this.commands.values()];
+  }
+
   list(): Command[] {
-    return [...this.commands.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.commands.values()]
+      .filter((command) => !command.hidden?.())
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   has(name: string): boolean {

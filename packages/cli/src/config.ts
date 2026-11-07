@@ -9,6 +9,8 @@ import {
   type ModelInfo,
   providerHasCredentials,
   readAuthFile,
+  type SkillState,
+  type SkillStates,
   type ThinkingLevel,
   thinkingLevelForModel,
 } from "mu";
@@ -22,6 +24,8 @@ export interface UserConfig {
   permissionMode?: Record<string, string>;
   // Model ref and/or reasoning level chosen per subagent, per profile name.
   subagents?: Record<string, SubagentPins>;
+  // On/manual/off chosen in /skills, by skill name; absent means the skill's own default.
+  skills?: SkillStates;
   [key: string]: unknown;
 }
 
@@ -60,6 +64,7 @@ const userConfigSchema = z
         ),
       )
       .optional(),
+    skills: z.record(z.string().min(1), z.enum(["on", "manual", "off"])).optional(),
   })
   .loose();
 
@@ -76,13 +81,14 @@ function parseConfig(raw: string, file: string): UserConfig {
       .join("; ");
     throw new Error(`Invalid user config at ${file}: ${issues}`);
   }
-  const { model, thinking, permissionMode, subagents, ...rest } = result.data;
+  const { model, thinking, permissionMode, subagents, skills, ...rest } = result.data;
   return {
     ...rest,
     ...(model !== undefined ? { model } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(subagents !== undefined ? { subagents: subagents as Record<string, SubagentPins> } : {}),
+    ...(skills !== undefined ? { skills } : {}),
   };
 }
 
@@ -215,6 +221,32 @@ export async function saveSubagentPin(
 export function readSubagentPins(profile: string, file = userConfigPath()): SubagentPins {
   try {
     return parseConfig(readFileSync(file, "utf8"), file).subagents?.[profile] ?? {};
+  } catch {
+    return {};
+  }
+}
+
+// `state` undefined returns the skill to its own default.
+export async function saveSkillState(
+  name: string,
+  state: SkillState | undefined,
+  file = userConfigPath(),
+): Promise<void> {
+  const { skills: current, ...config } = await readUserConfig(file);
+  const { [name]: _previous, ...others } = current ?? {};
+  const skills: SkillStates = state ? { ...others, [name]: state } : others;
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    `${JSON.stringify(Object.keys(skills).length > 0 ? { ...config, skills } : config, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 },
+  );
+}
+
+// Read on every skill lookup, like subagent pins. A missing or invalid file means no choices.
+export function readSkillStates(file = userConfigPath()): SkillStates {
+  try {
+    return parseConfig(readFileSync(file, "utf8"), file).skills ?? {};
   } catch {
     return {};
   }

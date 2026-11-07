@@ -13,6 +13,7 @@ import {
   skillRoots,
   skillsExtension,
 } from "mu";
+import { readSkillStates } from "./config.ts";
 
 export interface BuiltInExtensions {
   host: ExtensionHost;
@@ -44,10 +45,11 @@ export async function loadBuiltInExtensions(
   const projectDirs = project ? await projectDirectories(cwd, { home }) : [];
   const projectDir = projectDirs.at(-1);
 
+  const userFile = configOptions.userFile ?? join(home, ".mu", "config.json");
   const roots = skillRoots({ home, projectDirs });
   const catalog = await discoverSkills(roots);
   warnings.push(...catalog.warnings.map((warning) => `skill ${warning}`));
-  await host.register(skillsExtension({ roots, catalog }));
+  await host.register(skillsExtension({ roots, catalog, states: () => readSkillStates(userFile) }));
 
   const config = await loadMcpConfig({
     ...configOptions,
@@ -55,7 +57,6 @@ export async function loadBuiltInExtensions(
     ...(projectDir ? { projectDir } : {}),
   });
   // Problems in other agents' configs are listed by /mcp rather than at every startup.
-  const userFile = configOptions.userFile ?? join(home, ".mu", "config.json");
   const muFiles = new Set([
     userFile,
     ...(projectDir ? [join(projectDir, ".mu", "config.json")] : []),

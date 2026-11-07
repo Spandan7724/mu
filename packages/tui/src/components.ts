@@ -353,6 +353,13 @@ export interface SelectItem {
   label: string;
   description?: string;
   value?: string;
+  // A state glyph before the label and a word after it, each in its own style.
+  mark?: { glyph: string; style: Style };
+  tag?: { text: string; style: Style };
+  // A dim second row under the item while it is selected.
+  detail?: string;
+  // Dim label when not selected (an item that is switched off).
+  muted?: boolean;
 }
 
 export class SelectList {
@@ -398,10 +405,15 @@ export class SelectList {
     );
     const visible = this.items.slice(start, start + this.maxVisible);
 
-    return visible.map((item, i) => {
+    return visible.flatMap((item, i) => {
       const isSelected = start + i === this.index;
-      const available = Math.max(1, width - stringWidth(MARGIN) - 2);
       const separator = ` ${GLYPHS.separator} `;
+      const markWidth = item.mark ? stringWidth(item.mark.glyph) + 1 : 0;
+      const tagText = item.tag ? separator + sanitizeUntrusted(item.tag.text) : "";
+      const available = Math.max(
+        1,
+        width - stringWidth(MARGIN) - 2 - markWidth - stringWidth(tagText),
+      );
       const safeDescription = item.description ? sanitizeUntrusted(item.description) : undefined;
       const descriptionBudget = safeDescription
         ? Math.min(Math.floor(available / 2), stringWidth(separator) + stringWidth(safeDescription))
@@ -414,10 +426,22 @@ export class SelectList {
         sanitizeUntrusted(item.label),
         Math.max(1, available - stringWidth(descriptionText)),
       );
-      const label = isSelected ? accent(safeLabel, depth) : safeLabel;
+      const label = isSelected
+        ? accent(safeLabel, depth)
+        : item.muted
+          ? dim(safeLabel, depth)
+          : safeLabel;
       const marker = isSelected ? accent(GLYPHS.userMarker, depth) : " ";
       const description = descriptionText ? dim(descriptionText, depth) : "";
-      return `${MARGIN}${marker} ${label}${description}`;
+      const mark = item.mark ? `${styleText(item.mark.glyph, item.mark.style, depth)} ` : "";
+      const tag = item.tag
+        ? dim(separator, depth) + styleText(tagText.slice(separator.length), item.tag.style, depth)
+        : "";
+      const row = `${MARGIN}${marker} ${mark}${label}${tag}${description}`;
+      if (!isSelected || !item.detail) return [row];
+      const indent = `${MARGIN}  ${" ".repeat(markWidth)}`;
+      const room = Math.max(1, width - stringWidth(indent));
+      return [row, indent + dim(truncateToWidth(sanitizeUntrusted(item.detail), room), depth)];
     });
   }
 }

@@ -10,6 +10,8 @@ import {
   projectDirectories,
   refreshedSnapshot,
   SKILLS_CONTEXT_TYPE,
+  type SkillStates,
+  type SkillsCommandData,
   skillListing,
   skillRoots,
   skillsExtension,
@@ -140,7 +142,11 @@ describe("skills extension", () => {
       description: "core help",
       run: () => ({ handled: true }),
     });
-    await host.register(skillsExtension({ roots: skillRoots({ home, projectDirs: [project] }) }));
+    await host.register(
+      skillsExtension({
+        roots: skillRoots({ home, projectDirs: [project] }),
+      }),
+    );
     return { host, home };
   }
 
@@ -199,6 +205,79 @@ describe("skills extension", () => {
     const userOnly = (await host.runInputHooks("use $secret"))?.context?.[0]?.content[0];
     expect(userOnly?.type === "text" && userOnly.text).toContain('invoked the skill "secret"');
     expect(await host.runInputHooks("costs $5")).toBeUndefined();
+  });
+});
+
+describe("skill states", () => {
+  async function setupStates(states: SkillStates) {
+    const { home } = await sandbox();
+    await writeSkill(
+      join(home, ".mu", "skills", "release"),
+      "name: release\ndescription: Cut a release",
+    );
+    await writeSkill(
+      join(home, ".mu", "skills", "secret"),
+      "name: secret\ndescription: Only by hand\ndisable-model-invocation: true",
+    );
+    const host = new ExtensionHost();
+    const current = { ...states };
+    await host.register(skillsExtension({ roots: skillRoots({ home }), states: () => current }));
+    return { host, current };
+  }
+  const ctx = {
+    args: "",
+    inject: () => {},
+    print: () => {},
+    getModel: () => "m",
+    setModel: () => {},
+  };
+  const listed = async (host: ExtensionHost) => {
+    const [listing] = await host.runContextProviders([], { sessionId: "s" });
+    const block = listing?.role === "custom" ? listing.content[0] : undefined;
+    return block?.type === "text" ? block.text : "";
+  };
+
+  test("off hides a skill from the model, the menu, $name and its command", async () => {
+    const { host } = await setupStates({ release: "off" });
+    expect(await listed(host)).not.toContain("release");
+    const tool = await host.tools
+      .get("skill")
+      ?.execute("1", { name: "release" }, new AbortController().signal);
+    expect(tool?.isError).toBe(true);
+    expect(await host.runInputHooks("use $release")).toBeUndefined();
+    expect(host.commands.list().map((command) => command.name)).not.toContain("release");
+    expect(host.commands.all().map((command) => command.name)).toContain("release");
+    const run = await host.commands.get("release")?.run(ctx);
+    expect(run && "message" in run ? run.message : "").toContain("is off");
+  });
+
+  test("manual keeps a skill out of the listing but /name and $name still run it", async () => {
+    const { host } = await setupStates({ release: "manual" });
+    expect(await listed(host)).not.toContain("release");
+    expect(host.commands.list().map((command) => command.name)).toContain("release");
+    const run = await host.commands.get("release")?.run(ctx);
+    expect((run as { data?: MarkdownCommandRun }).data?.kind).toBe("markdown-command");
+    expect((await host.runInputHooks("use $release"))?.context).toHaveLength(1);
+  });
+
+  test("on overrides a skill's own disable-model-invocation; changes apply without restart", async () => {
+    const { host, current } = await setupStates({ secret: "on" });
+    expect(await listed(host)).toContain("- secret: Only by hand");
+    current.secret = "off";
+    expect(host.commands.list().map((command) => command.name)).not.toContain("secret");
+  });
+
+  test("/skills returns each skill's state and its own default", async () => {
+    const { host } = await setupStates({ release: "manual" });
+    const result = await host.commands.get("skills")?.run(ctx);
+    const data = (result as { data?: SkillsCommandData }).data;
+    expect(
+      data?.skills.map(({ name, state, defaultState }) => ({ name, state, defaultState })),
+    ).toEqual([
+      { name: "release", state: "manual", defaultState: "on" },
+      { name: "secret", state: "manual", defaultState: "manual" },
+    ]);
+    expect(result && "message" in result ? result.message : "").toContain("manual");
   });
 });
 

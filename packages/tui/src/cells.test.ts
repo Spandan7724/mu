@@ -724,6 +724,31 @@ describe("components", () => {
     expect(visible(list.render(60, "none"))[1]).toBe("  ▸ gpt-5.1");
   });
 
+  test("select list items can carry a mark, a tag and a detail row under the selection", () => {
+    const list = new SelectList([
+      {
+        label: "pdf",
+        description: "user .agents",
+        mark: { glyph: "●", style: { accent: true } },
+        detail: "Read and edit PDF files",
+      },
+      {
+        label: "docx",
+        description: "user .agents",
+        mark: { glyph: "◐", style: { toolMutate: true } },
+        tag: { text: "manual", style: { toolMutate: true } },
+        detail: "Word documents",
+      },
+      { label: "xlsx", mark: { glyph: "○", style: { dim: true } }, muted: true },
+    ]);
+    expect(visible(list.render(60, "none"))).toEqual([
+      "  ▸ ● pdf · user .agents",
+      "      Read and edit PDF files",
+      "    ◐ docx · manual · user .agents",
+      "    ○ xlsx",
+    ]);
+  });
+
   test("select list truncates long session titles to the terminal width", () => {
     const list = new SelectList([
       { label: "implement a much longer first user prompt that cannot fit on one row" },

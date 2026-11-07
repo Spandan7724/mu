@@ -6,9 +6,11 @@ import { type ModelInfo, saveApiKey, type ThinkingLevel } from "mu";
 import {
   applySavedThinking,
   loadUserConfig,
+  readSkillStates,
   resolveCliModel,
   saveDefaultModel,
   savePermissionMode,
+  saveSkillState,
   saveThinkingLevel,
   userConfigPath,
 } from "./config.ts";
@@ -36,6 +38,21 @@ describe("user model configuration", () => {
       theme: "quiet",
       model: "openai/gpt-5.1",
     });
+  });
+
+  test("skill states are saved by name and a skill back at its default is dropped", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-user-config-"));
+    const file = join(root, "config.json");
+    await Bun.write(file, JSON.stringify({ theme: "quiet" }));
+
+    await saveSkillState("pdf", "off", file);
+    await saveSkillState("docx", "manual", file);
+    expect(readSkillStates(file)).toEqual({ pdf: "off", docx: "manual" });
+
+    await saveSkillState("pdf", undefined, file);
+    await saveSkillState("docx", undefined, file);
+    expect(await loadUserConfig(file)).toEqual({ theme: "quiet" });
+    expect(readSkillStates(join(root, "missing.json"))).toEqual({});
   });
 
   test("the saved model becomes the default but an explicit flag wins", async () => {

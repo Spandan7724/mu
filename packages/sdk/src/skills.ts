@@ -285,7 +285,38 @@ const SOURCE_LABEL: Record<SkillSource, string> = {
   opencode: "opencode",
 };
 
-export function describeSkillCatalog(catalog: SkillCatalog): string {
+// on: the model may load it; manual: only `/name` or `$name` run it; off: ignored.
+export type SkillState = "on" | "manual" | "off";
+export type SkillStates = Record<string, SkillState>;
+
+export function defaultSkillState(skill: Skill): SkillState {
+  return skill.disableModelInvocation ? "manual" : "on";
+}
+
+// The skill as the chosen state makes it, or undefined when it is off.
+export function applySkillState(skill: Skill, state: SkillState | undefined): Skill | undefined {
+  if (state === "off") return undefined;
+  if (!state || state === defaultSkillState(skill)) return skill;
+  if (state === "manual") return { ...skill, disableModelInvocation: true, userInvocable: true };
+  return { ...skill, disableModelInvocation: false };
+}
+
+export interface SkillEntry {
+  name: string;
+  description: string;
+  directory: string;
+  scope: SkillScope;
+  source: SkillSource;
+  state: SkillState;
+  defaultState: SkillState;
+}
+
+export interface SkillsCommandData {
+  kind: "skills";
+  skills: SkillEntry[];
+}
+
+export function describeSkillCatalog(catalog: SkillCatalog, states: SkillStates = {}): string {
   if (catalog.skills.length === 0 && catalog.shadowed.length === 0) {
     return "No skills found. Skills live in .mu/skills, .agents/skills, .claude/skills, .codex/skills or .opencode/skills (project or home); install shared ones with `npx skills add <repo>`.";
   }
@@ -294,8 +325,13 @@ export function describeSkillCatalog(catalog: SkillCatalog): string {
   for (const skill of catalog.skills) {
     const flags = [
       `${skill.scope} ${SOURCE_LABEL[skill.source]}`,
-      ...(skill.disableModelInvocation ? ["user only"] : []),
-      ...(!skill.userInvocable ? ["model only"] : []),
+      ...(states[skill.name] === "off"
+        ? ["off"]
+        : (states[skill.name] ?? defaultSkillState(skill)) === "manual"
+          ? ["manual"]
+          : !skill.userInvocable
+            ? ["model only"]
+            : []),
       ...(skill.allowedTools
         ? [`allowed-tools not applied: ${skill.allowedTools.join(", ")}`]
         : []),
@@ -317,6 +353,9 @@ export interface SkillsExtensionOptions {
   roots: SkillRoot[];
   // Preloaded catalog; rescanned before each run either way.
   catalog?: SkillCatalog;
+  // The user's on/manual/off choices by skill name, read on every lookup so a change
+  // applies from the next message.
+  states?: () => SkillStates;
 }
 
 // Re-read so an edited skill takes effect without restarting the session.
@@ -338,7 +377,12 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
     catalog = await discoverSkills(options.roots);
     return catalog;
   };
-  const find = (name: string) => catalog.skills.find((skill) => skill.name === name);
+  const states = options.states ?? ((): SkillStates => ({}));
+  const active = () => {
+    const chosen = states();
+    return catalog.skills.flatMap((skill) => applySkillState(skill, chosen[skill.name]) ?? []);
+  };
+  const find = (name: string) => active().find((skill) => skill.name === name);
 
   return {
     name: "skills",
@@ -346,9 +390,10 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
       if (!options.catalog) await rescan();
       for (const warning of catalog.warnings) api.log(warning);
 
-      api.registerContextProvider(async (messages) =>
-        refreshedSnapshot(messages, SKILLS_CONTEXT_TYPE, skillListing((await rescan()).skills)),
-      );
+      api.registerContextProvider(async (messages) => {
+        await rescan();
+        return refreshedSnapshot(messages, SKILLS_CONTEXT_TYPE, skillListing(active()));
+      });
 
       api.registerTool({
         name: "skill",
@@ -366,7 +411,7 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
           const requested = typeof args.name === "string" ? args.name.replace(/^\$/, "") : "";
           const known = find(requested);
           if (!known || known.disableModelInvocation) {
-            const available = catalog.skills.filter((skill) => !skill.disableModelInvocation);
+            const available = active().filter((skill) => !skill.disableModelInvocation);
             return errorResult(
               `No such skill: ${requested}. Available: ${available.map((skill) => skill.name).join(", ") || "none"}`,
             );
@@ -385,17 +430,43 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
 
       api.registerCommand({
         name: "skills",
-        description: "List discovered skills and where they come from",
-        run: async () => ({ handled: true, message: describeSkillCatalog(await rescan()) }),
+        description: "List skills and turn them on, manual or off",
+        run: async () => {
+          const scanned = await rescan();
+          const chosen = states();
+          const data: SkillsCommandData = {
+            kind: "skills",
+            skills: scanned.skills.map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+              directory: skill.directory,
+              scope: skill.scope,
+              source: skill.source,
+              state: chosen[skill.name] ?? defaultSkillState(skill),
+              defaultState: defaultSkillState(skill),
+            })),
+          };
+          return { handled: true, message: describeSkillCatalog(scanned, chosen), data };
+        },
       });
 
-      for (const skill of catalog.skills.filter((candidate) => candidate.userInvocable)) {
+      // Every discovered skill gets a command so turning one on mid-session needs no
+      // restart; the current state decides whether it is listed and whether it runs.
+      for (const skill of catalog.skills) {
+        const usable = () => find(skill.name)?.userInvocable === true;
         api.registerCommand({
           name: skill.name,
           description: `Skill: ${skill.description}`,
           fallback: true,
           kind: "skill",
+          hidden: () => !usable(),
           run: async (ctx) => {
+            if (!usable()) {
+              return {
+                handled: true,
+                message: `The skill ${skill.name} is ${find(skill.name) ? "model only" : "off"}. Change it in /skills.`,
+              };
+            }
             const args = ctx.args.trim();
             return {
               handled: true,
@@ -409,8 +480,8 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
         });
       }
 
-      // `$name` mentions keep the user's text and attach each named skill's body; the user
-      // naming a user-only skill is an invocation like `/name`.
+      // `$name` mentions keep the user's text and attach each named skill's body; naming a
+      // manual skill is an invocation like `/name`. Off skills are ignored.
       api.onInput(async (text) => {
         const named = new Map<string, Skill>();
         for (const match of text.matchAll(MENTION)) {

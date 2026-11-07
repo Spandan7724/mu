@@ -42,6 +42,7 @@ import {
   readAuthFile,
   removeStoredCredential,
   type SideConversation,
+  type SkillsCommandData,
   type SubagentKind,
   type SubagentRoute,
   type SubagentsCommandData,
@@ -66,9 +67,11 @@ import {
   type SubagentPin,
   saveDefaultModel,
   savePermissionMode,
+  saveSkillState,
   saveSubagentPin,
   saveThinkingLevel,
   thinkingCommandChoice,
+  userConfigPath,
 } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import { transcriptExportCommand } from "./export-command.ts";
@@ -91,6 +94,12 @@ import {
   SESSION_TITLE_MAX_LENGTH,
 } from "./session-picker.ts";
 import { createCliSessionRuntime, SESSION_RULES } from "./session-runtime.ts";
+import {
+  nextSkillState,
+  skillPickerItems,
+  skillPickerSummary,
+  skillPickerTitle,
+} from "./skills-picker.ts";
 import { pinnableModels, unavailableSubagentPins } from "./subagent-routes.ts";
 import { saveTranscriptMarkdown } from "./transcript-file.ts";
 import { formatUserShellRecord, runUserShellCommand } from "./user-shell.ts";
@@ -949,14 +958,16 @@ export async function runInteractive(
     },
   });
 
-  app.setCommands(
-    commands.list().map((c) => ({
-      label: c.name,
-      description: c.description,
-      ...(c.kind ? { kind: c.kind } : {}),
-      ...(c.side ? { side: true } : {}),
-    })),
-  );
+  const refreshCommandMenu = () =>
+    app.setCommands(
+      commands.list().map((c) => ({
+        label: c.name,
+        description: c.description,
+        ...(c.kind ? { kind: c.kind } : {}),
+        ...(c.side ? { side: true } : {}),
+      })),
+    );
+  refreshCommandMenu();
 
   // Layout is intentionally deferred into the renderer's throttled frame.
   // Provider streams often deliver several deltas in one frame interval; an
@@ -1179,6 +1190,50 @@ export async function runInteractive(
       activeShell = undefined;
       paint();
     });
+  }
+
+  // Each choice is saved at once; skill lookups read the file, so it applies from the
+  // next message. Closing prints what changed and refreshes the command menu.
+  function openSkillStates(skills: SkillsCommandData["skills"], source: ConversationSource): void {
+    const before = new Map(skills.map((skill) => [skill.name, skill.state]));
+    const file = userConfigPath();
+    const home = process.env.HOME ?? process.env.USERPROFILE;
+    const shown = home && file.startsWith(home) ? `~${file.slice(home.length)}` : file;
+    // Saves run in order so quick toggles can't overwrite each other's read of the file.
+    let saving = Promise.resolve();
+    const picker: PickerRequest = {
+      title: skillPickerTitle(skills),
+      filterable: true,
+      items: skillPickerItems(skills),
+      onChoose: () => {},
+      onToggle: (name) => {
+        const skill = skills.find((candidate) => candidate.name === name);
+        if (!skill) return;
+        skill.state = nextSkillState(skill.state);
+        app.updatePicker(picker, {
+          title: skillPickerTitle(skills),
+          items: skillPickerItems(skills),
+        });
+        const saved = skill.state === skill.defaultState ? undefined : skill.state;
+        saving = saving
+          .then(() => saveSkillState(name, saved, file))
+          .catch((error) => {
+            commitLines(
+              [
+                `  could not save skill ${name}: ${error instanceof Error ? error.message : String(error)}`,
+              ],
+              source,
+            );
+            paint();
+          });
+      },
+      onCancel: () => {
+        refreshCommandMenu();
+        const summary = skillPickerSummary(before, skills, shown);
+        if (summary) commitLines([`  ${summary}`], source);
+      },
+    };
+    app.openPicker(picker);
   }
 
   // /subagents opens this under its listing: role, then model, then reasoning. Routing
@@ -1608,6 +1663,7 @@ export async function runInteractive(
       | { kind: "compaction"; status: string }
       | MarkdownCommandRun
       | SubagentsCommandData
+      | SkillsCommandData
       | undefined;
     if (data?.kind === "checkpoint") {
       if (data.action === "undo" && data.prompt !== undefined) {
@@ -1659,6 +1715,8 @@ export async function runInteractive(
     } else if (data?.kind === "subagents") {
       commitLines(formatSubagentsOutput(data, depth), source);
       openSubagentRoles(data.routes, source);
+    } else if (data?.kind === "skills" && data.skills.length > 0) {
+      openSkillStates(data.skills, source);
     } else if (result.message) {
       commitLines(
         parsed?.name === "instructions"

@@ -166,13 +166,19 @@ export { startSideConversation } from "./side.ts";
 export type {
   Skill,
   SkillCatalog,
+  SkillEntry,
   SkillRoot,
   SkillRootOptions,
   SkillScope,
   SkillSource,
+  SkillState,
+  SkillStates,
+  SkillsCommandData,
   SkillsExtensionOptions,
 } from "./skills.ts";
 export {
+  applySkillState,
+  defaultSkillState,
   describeSkillCatalog,
   discoverSkills,
   loadSkill,

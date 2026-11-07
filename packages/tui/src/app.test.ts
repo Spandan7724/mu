@@ -4179,6 +4179,31 @@ describe("selection pickers (/model, /resume)", () => {
     expect(h.app.currentMode).toBe("composing");
   });
 
+  test("a toggle picker cycles with space or enter, stays open, and escape closes it", () => {
+    const h = harness();
+    const toggled: string[] = [];
+    let closed = false;
+    h.app.openPicker({
+      title: "turn skills on or off",
+      filterable: true,
+      items: [{ label: "pdf" }, { label: "docx" }],
+      onChoose: () => {},
+      onToggle: (value) => toggled.push(value),
+      onCancel: () => {
+        closed = true;
+      },
+    });
+    feed(h.app, "doc");
+    press(h.app, "space");
+    press(h.app, "return");
+    expect(toggled).toEqual(["docx", "docx"]);
+    expect(h.app.currentMode).toBe("picker");
+    expect(h.app.renderBottom().map(stripAnsi).join("\n")).toContain("turn skills on or off · doc");
+    press(h.app, "escape");
+    expect(closed).toBe(true);
+    expect(h.app.currentMode).toBe("composing");
+  });
+
   test("an open picker can refresh without losing its filter or selection", () => {
     const h = harness();
     const chosen: string[] = [];

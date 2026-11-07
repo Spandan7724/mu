@@ -89,6 +89,8 @@ export interface PickerRequest {
   onDelete?: (value: string) => void;
   onBack?: () => void;
   onCancel?: () => void;
+  // Space and Enter call this and keep the picker open; Escape closes it through onCancel.
+  onToggle?: (value: string) => void;
   filterable?: boolean;
 }
 
@@ -3358,6 +3360,11 @@ export class App {
       this.pickerDeleteValue = undefined;
       this.mode = "composing";
       picker.onDelete(value);
+      return;
+    }
+    if (picker.onToggle && (key.name === "return" || key.name === "space")) {
+      const selected = this.commandList.selected;
+      if (selected) picker.onToggle(selected.value ?? selected.label);
       return;
     }
     if (key.name === "return") {
