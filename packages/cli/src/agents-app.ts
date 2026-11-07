@@ -29,6 +29,8 @@ import {
   type CheckpointActionData,
   type DiffCommandData,
   ExtensionHost,
+  type ForkedCommandData,
+  type ForkPointsCommandData,
   type Profile,
   readAuthFile,
   type SubagentsCommandData,
@@ -42,6 +44,7 @@ import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-sta
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
+import { forkedNotice, forkPickerItems, isForkedCommandData } from "./fork-picker.ts";
 import {
   formatSubagentsOutput,
   renderCheckpointCommand,
@@ -644,6 +647,21 @@ export async function runAgentView(
     paint();
   };
 
+  // The original keeps its row and runtime; the fork opens in its place.
+  const openFork = async (data: ForkedCommandData) => {
+    if (active?.sessionId !== data.sourceSessionId) return;
+    const source = active;
+    active = undefined;
+    await client.detach(source.sessionId).catch(showError);
+    await source.disposePresentation?.().catch(showError);
+    await openAttachment(data.sessionId);
+    const opened = active as ActiveConversation | undefined;
+    if (opened?.sessionId !== data.sessionId) return;
+    opened.app.appendTranscript([`${MARGIN}${forkedNotice(data)}`, ""]);
+    if (data.prompt !== undefined) opened.app.editor.setText(data.prompt);
+    paint();
+  };
+
   const openAttachment = async (sessionId: string) => {
     if (attaching || active) return;
     attaching = true;
@@ -834,7 +852,7 @@ export async function runAgentView(
         | CheckpointActionData
         | DiffCommandData
         | UndoPointsCommandData
-        | { kind: "fork-points"; points: { id: string; description: string }[] }
+        | ForkPointsCommandData
         | { kind: "compaction"; status: string }
         | { kind: "permission-mode"; label: string }
         | SubagentsCommandData
@@ -872,14 +890,15 @@ export async function runAgentView(
         const sessionId = active.sessionId;
         active.app.openPicker({
           title: "fork from",
-          items: data.points.map((point) => ({
-            label: point.id,
-            description: point.description,
-          })),
-          onChoose: (entryId) =>
-            void client.sessionOp(sessionId, { type: "command", text: `/fork ${entryId}` }),
+          items: forkPickerItems(data.points),
+          onChoose: (target) =>
+            void client
+              .sessionOp(sessionId, { type: "command", text: `/fork ${target}` })
+              .catch(showError),
           onBack: () => active?.app.openCommandMenu(),
         });
+      } else if (isForkedCommandData(data)) {
+        void openFork(data);
       } else if (data?.kind === "subagents") {
         active.app.appendTranscript(formatSubagentsOutput(data, depth));
       } else if (data?.kind !== "compaction" || data.status === "queued") {

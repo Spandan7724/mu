@@ -74,6 +74,35 @@ describe("resume picker labels", () => {
     ]);
   });
 
+  test("a fork says which session it came from", async () => {
+    const store = new MemorySessionStore();
+    await store.save("parent", session("parent", "explain js", "2026-07-25T12:00:00.000Z"));
+    const fork = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: "child",
+      createdAt: "2026-07-26T12:00:00.000Z",
+      profile: "coding",
+      environment: {},
+      forkedFrom: { sessionId: "parent", entryId: null },
+    });
+    fork.appendMessage(userMessage("explain ts"));
+    await store.save("child", fork);
+    const orphan = new SessionTree({
+      ...(fork.header as NonNullable<typeof fork.header>),
+      id: "orphan",
+      createdAt: "2026-07-27T12:00:00.000Z",
+      forkedFrom: { sessionId: "deleted", entryId: null },
+    });
+    await store.save("orphan", orphan);
+
+    expect(await resumePickerItems(store)).toEqual([
+      { label: "orphan", value: "orphan", description: "forked from deleted" },
+      { label: "explain ts", value: "child", description: "forked from explain js" },
+      { label: "explain js", value: "parent" },
+    ]);
+  });
+
   test("a corrupt session remains selectable by its id", async () => {
     const items = await resumePickerItems({
       list: async () => ["broken-session"],

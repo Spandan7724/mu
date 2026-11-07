@@ -246,7 +246,7 @@ export async function createCliSessionRuntime(
     undo: (turnCount) => agent.undo(turnCount),
     undoPoints: () => agent.undoPoints(),
     redo: () => agent.redo(),
-    fork: (entryId) => agent.fork(entryId),
+    fork: (beforeEntryId) => agent.createFork(beforeEntryId),
     forkPoints: () => agent.forkPoints(),
     diff: () => agent.sessionDiff(),
     ...(agent.checkpointUnavailable ? { checkpointUnavailable: agent.checkpointUnavailable } : {}),

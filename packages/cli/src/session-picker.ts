@@ -5,12 +5,14 @@ export const SESSION_TITLE_MAX_LENGTH = 120;
 export interface ResumePickerItem {
   label: string;
   value: string;
+  description?: string;
 }
 
 interface DatedResumePickerItem {
   item: ResumePickerItem;
   createdAt: number | undefined;
   position: number;
+  forkedFrom?: string;
 }
 
 export function normalizeSessionTitle(value: string): string {
@@ -61,6 +63,7 @@ export async function resumePickerItems(
           },
           createdAt: sessionCreatedAt(tree),
           position,
+          ...(tree?.header?.forkedFrom ? { forkedFrom: tree.header.forkedFrom.sessionId } : {}),
         };
       } catch {
         return {
@@ -71,6 +74,11 @@ export async function resumePickerItems(
       }
     }),
   );
+  const labels = new Map(datedItems.map(({ item }) => [item.value, item.label]));
+  for (const dated of datedItems) {
+    if (dated.forkedFrom === undefined) continue;
+    dated.item.description = `forked from ${labels.get(dated.forkedFrom) ?? dated.forkedFrom}`;
+  }
   return datedItems
     .sort((left, right) => {
       if (left.createdAt !== undefined && right.createdAt !== undefined) {

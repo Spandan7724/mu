@@ -56,6 +56,7 @@ import {
   SessionTree,
   SUPERSEDE_WITHIN_TURNS,
   shouldCompact,
+  type TreeEntry,
   type TurnInfo,
   type UserContent,
   userMessage,
@@ -172,6 +173,20 @@ export interface CheckpointActionResult {
   data?: CheckpointActionData;
 }
 
+export interface ForkPoint {
+  id: string;
+  prompt: string;
+}
+
+export interface ForkResult {
+  ok: boolean;
+  message: string;
+  sessionId?: string;
+  sourceSessionId?: string;
+  // The prompt the fork stopped before, for the surface to offer again.
+  prompt?: string;
+}
+
 export interface UndoPoint {
   steps: number;
   prompt: string;
@@ -254,6 +269,10 @@ function lastError(messages: AgentMessage[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function promptText(message: AgentMessage): string {
+  return message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
 function createSessionId(): string {
@@ -732,7 +751,14 @@ export class Agent {
       restoredTotals = addUsage(restoredTotals, usage);
       for (const line of lines) this.ledger.add(line);
     };
+    // A fork's copied prefix was paid for by the session it came from.
+    const inheritedThrough = header.forkedFrom?.entryId;
+    let inherited = typeof inheritedThrough === "string" && candidate.has(inheritedThrough);
     for (const entry of candidate.all()) {
+      if (inherited) {
+        if (entry.type !== "session" && entry.id === inheritedThrough) inherited = false;
+        continue;
+      }
       if (entry.type === "message" && entry.message.role === "assistant") {
         const message = entry.message;
         for (const block of message.content)
@@ -1653,59 +1679,95 @@ export class Agent {
     return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
-  forkPoints(): { id: string; description: string }[] {
-    const points: { id: string; description: string }[] = [];
+  // The user prompts on the active branch, newest first; a fork starts before one.
+  forkPoints(): ForkPoint[] {
+    const points: ForkPoint[] = [];
     for (const entry of this.tree.activePath()) {
-      if (entry.type !== "message") continue;
-      const message = entry.message;
-      if (message.role === "toolResult") continue;
-      if (
-        message.role === "assistant" &&
-        message.content.some((block) => block.type === "toolCall")
-      ) {
-        continue;
-      }
-      const text = message.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("")
-        .replace(/\s+/g, " ")
-        .trim();
-      const role = message.role === "assistant" ? "mu" : message.role;
-      points.push({
-        id: entry.id,
-        description: `${role} · ${text.slice(0, 80) || "(no text)"}`,
-      });
+      if (entry.type !== "message" || entry.message.role !== "user") continue;
+      points.push({ id: entry.id, prompt: promptText(entry.message) });
     }
-    return points;
+    return points.reverse();
   }
 
-  async fork(entryId: string): Promise<{ ok: boolean; message: string }> {
+  // Writes a new session holding this conversation up to the fork point and
+  // leaves this one untouched. Without an entry it copies the whole branch;
+  // with one it stops before that prompt and returns the prompt's text.
+  async createFork(beforeEntryId?: string): Promise<ForkResult> {
     if (this.running) return { ok: false, message: "Cannot fork while a run is active." };
     const busy = this.backgroundBlocker("fork");
     if (busy) return { ok: false, message: busy };
-    if (!this.tree.get(entryId)) {
-      return { ok: false, message: `Could not fork: unknown entry ${entryId}.` };
+    const active = this.tree.activePath();
+    let path = active;
+    let prompt: string | undefined;
+    if (beforeEntryId !== undefined) {
+      const index = active.findIndex((entry) => entry.id === beforeEntryId);
+      const entry = active[index];
+      if (!entry || entry.type !== "message" || entry.message.role !== "user") {
+        return {
+          ok: false,
+          message: `Could not fork: ${beforeEntryId} is not a prompt on the current branch.`,
+        };
+      }
+      path = active.slice(0, index);
+      prompt = promptText(entry.message);
+    } else if (!active.some((entry) => entry.type === "message" && entry.message.role === "user")) {
+      return { ok: false, message: "Nothing to fork yet." };
     }
-    const candidate = SessionTree.fromJsonl(this.tree.toJsonl());
-    candidate.fork(entryId);
-    candidate.append({
-      type: "custom",
-      customType: "fork",
-      data: { fromEntryId: this.tree.head, targetEntryId: entryId },
+
+    const header = this.tree.header;
+    const copied: TreeEntry[] = [];
+    for (const entry of path) {
+      // Undo history stays with the original: undoing in the fork must not
+      // restore files the original session's turns depend on.
+      if (entry.type === "checkpoint") continue;
+      if (entry.type === "custom" && entry.customType === "checkpoint-cursor") continue;
+      const copy = structuredClone(entry);
+      if (copy.type === "message") delete copy.checkpointRef;
+      copy.parentId = copied.at(-1)?.id ?? null;
+      copied.push(copy);
+    }
+    const sessionId = createSessionId();
+    const fork = new SessionTree({
+      type: "session",
+      version: SESSION_VERSION,
+      id: sessionId,
+      createdAt: new Date().toISOString(),
+      profile: header?.profile ?? this.options.sessionProfile ?? "default",
+      environment: { ...(header?.environment ?? this.options.sessionEnvironment ?? {}) },
+      forkedFrom: { sessionId: this._sessionId, entryId: copied.at(-1)?.id ?? null },
+    });
+    for (const entry of copied) fork.push(entry);
+    fork.append({
+      type: "settings-change",
+      model: this.modelRef,
+      thinkingLevel: this.currentThinking,
     });
     try {
-      await this.store.save(this._sessionId, candidate);
+      await this.store.save(this._sessionId, this.tree);
+      await this.store.save(sessionId, fork);
     } catch (error) {
       return {
         ok: false,
         message: `Could not fork: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    this.tree = candidate;
-    this.rebuildCheckpointHistory();
-    this.refreshContextAccounting();
-    return { ok: true, message: `Forked from ${entryId}.` };
+    return {
+      ok: true,
+      message: `Forked into ${sessionId}.`,
+      sessionId,
+      sourceSessionId: this._sessionId,
+      ...(prompt !== undefined ? { prompt } : {}),
+    };
+  }
+
+  // createFork, then continues in the new session.
+  async fork(beforeEntryId?: string): Promise<ForkResult> {
+    const result = await this.createFork(beforeEntryId);
+    if (!result.ok || !result.sessionId) return result;
+    const tree = await this.store.load(result.sessionId);
+    if (!tree) return { ok: false, message: `Could not fork: ${result.sessionId} was not saved.` };
+    this.resume(tree);
+    return result;
   }
 
   get contextPercent(): number {

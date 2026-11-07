@@ -375,6 +375,22 @@ describe("jsonl helpers", () => {
     ).toBe(1);
   });
 
+  test("a fork's origin round-trips and a malformed one is rejected", () => {
+    const header = { ...newTree().header, forkedFrom: { sessionId: "s0", entryId: "e9" } };
+    expect(SessionTree.fromJsonl(JSON.stringify(header)).header?.forkedFrom).toEqual({
+      sessionId: "s0",
+      entryId: "e9",
+    });
+    expect(
+      SessionTree.fromJsonl(
+        JSON.stringify({ ...header, forkedFrom: { sessionId: "s0", entryId: null } }),
+      ).header?.forkedFrom?.entryId,
+    ).toBeNull();
+    for (const forkedFrom of [{ sessionId: "", entryId: null }, { sessionId: "s0" }, "s0"]) {
+      expect(() => SessionTree.fromJsonl(JSON.stringify({ ...header, forkedFrom }))).toThrow();
+    }
+  });
+
   test("session titles round-trip and can be removed", () => {
     const tree = newTree();
     tree.setTitle("Fix authentication");

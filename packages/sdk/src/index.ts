@@ -77,6 +77,7 @@ export type {
   CheckpointActionData,
   CheckpointActionResult,
   ChildAgentOptions,
+  ForkResult,
   HaltReason,
   ManualCompactionResult,
   RunResult,
@@ -115,7 +116,13 @@ export type { AuthPageOptions } from "./auth-page.ts";
 export { authErrorPage, authSuccessPage, renderAuthPage } from "./auth-page.ts";
 export type { Budget, BudgetBreach } from "./budget.ts";
 export { checkBudget, totalTokens } from "./budget.ts";
-export type { DiffCommandData, ForkPoint, UndoPointsCommandData } from "./commands.ts";
+export type {
+  DiffCommandData,
+  ForkedCommandData,
+  ForkPoint,
+  ForkPointsCommandData,
+  UndoPointsCommandData,
+} from "./commands.ts";
 export { coreCommands, registryWithCoreCommands } from "./commands.ts";
 export type {
   ContextBreakdown,

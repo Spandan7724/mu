@@ -12,6 +12,8 @@ export type SessionEntry =
       profile: string;
       environment: Record<string, string>;
       title?: string;
+      // Entries up to and including `entryId` were copied from that session.
+      forkedFrom?: { sessionId: string; entryId: string | null };
     }
   | {
       type: "message";
@@ -248,7 +250,14 @@ function assertSessionEntry(value: unknown): asserts value is SessionEntry {
       !string(value.profile) ||
       !record(value.environment) ||
       !Object.values(value.environment).every(string) ||
-      !optional(value.title, nonEmptyString)
+      !optional(value.title, nonEmptyString) ||
+      !optional(
+        value.forkedFrom,
+        (candidate) =>
+          record(candidate) &&
+          nonEmptyString(candidate.sessionId) &&
+          (candidate.entryId === null || nonEmptyString(candidate.entryId)),
+      )
     ) {
       throw new Error("Invalid session header");
     }

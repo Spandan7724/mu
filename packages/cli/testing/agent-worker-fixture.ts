@@ -166,6 +166,18 @@ for await (const chunk of process.stdin) {
         data: { kind: "permission-mode", label: op.id, id: op.id },
       });
       acknowledge(op);
+    } else if (op.type === "command" && op.text.startsWith("/fork")) {
+      write({
+        type: "command_result",
+        message: "Forked into forked-session.",
+        data: {
+          kind: "forked",
+          sessionId: "forked-session",
+          sourceSessionId: sessionId,
+          prompt: "edit me",
+        },
+      });
+      acknowledge(op);
     } else if (op.type === "abort") {
       acknowledge(op);
     } else if (op.type === "shutdown") {

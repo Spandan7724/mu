@@ -317,7 +317,7 @@ Slash commands in every session:
   /logout          remove provider authentication
   /permissions     choose the permission mode
   /compact [focus] summarize older context now, keeping recent work
-  /fork            branch the conversation from an earlier point
+  /fork            new session from an earlier prompt or from here
   /resume          resume an earlier session
   /rename          name the current conversation
   /new             clear the screen and start a new chat

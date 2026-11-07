@@ -3,6 +3,7 @@ import {
   type CheckpointEntry,
   CheckpointHistory,
   type CheckpointProvider,
+  customMessage,
   MemorySessionStore,
   type ProfileRuntime,
   type SessionTree,
@@ -1029,66 +1030,206 @@ describe("undo and redo pair workspace with conversation", () => {
 });
 
 describe("fork", () => {
-  test("branches the session tree from a chosen entry", async () => {
+  async function conversation(session: MemorySessionStore = new MemorySessionStore()) {
+    const checkpoints = new MemoryCheckpoints();
     const provider = new FakeProvider([
-      { content: [{ type: "text", text: "first" }] },
-      { content: [{ type: "text", text: "second" }] },
+      { content: [{ type: "toolCall", id: "c1", name: "write", arguments: { value: "v1" } }] },
+      { content: [{ type: "text", text: "first done" }] },
+      { content: [{ type: "text", text: "second done" }] },
+      { content: [{ type: "text", text: "third done" }] },
+      { content: [{ type: "text", text: "after fork" }] },
     ]);
-    const agent = new Agent({ provider, model: fakeModel });
-    await agent.run("one");
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [writer(checkpoints)],
+      checkpointProvider: checkpoints,
+      session,
+    });
+    agent.session.appendMessage(customMessage("environment", "Session environment: here"));
+    await agent.run("first prompt");
+    await agent.run("second prompt");
+    await agent.run("third prompt");
+    return { agent, session, checkpoints };
+  }
 
-    const entries = agent.session.activePath();
-    const forkPoint = entries[0];
-    expect(forkPoint).toBeDefined();
-
-    const forked = await agent.fork((forkPoint as { id: string }).id);
-    expect(forked.ok).toBe(true);
-    const persisted = await agent.sessionStore.load(agent.sessionId);
-    expect(persisted?.head).toBe(agent.session.head);
-    expect(persisted?.messagesAt()).toHaveLength(1);
-    await agent.run("different direction");
-
-    const texts = agent.session
+  const texts = (tree: SessionTree) =>
+    tree
       .messagesAt()
-      .map((m) =>
-        (m.role === "user" || m.role === "custom") && m.content[0]?.type === "text"
-          ? m.content[0].text
-          : "",
+      .flatMap((message) =>
+        message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
       );
-    expect(texts).toContain("different direction");
-    // The abandoned branch still exists on disk — forking destroys nothing.
-    expect(agent.session.all().length).toBeGreaterThan(agent.session.activePath().length);
+
+  test("lists only user prompts, newest first, never injected context or replies", async () => {
+    const { agent } = await conversation();
+
+    expect(agent.forkPoints().map((point) => point.prompt)).toEqual([
+      "third prompt",
+      "second prompt",
+      "first prompt",
+    ]);
   });
 
-  test("rejects an unknown entry without moving the session", async () => {
-    const agent = new Agent({
-      provider: new FakeProvider([{ content: [{ type: "text", text: "first" }] }]),
-      model: fakeModel,
-    });
-    await agent.run("one");
-    const head = agent.session.head;
+  test("forking before a prompt writes a new session that stops before it", async () => {
+    const { agent, session } = await conversation();
+    const original = agent.session.toJsonl();
+    const originalId = agent.sessionId;
+    const second = agent.forkPoints()[1] as { id: string };
 
-    const result = await agent.fork("foreign-entry");
+    const result = await agent.createFork(second.id);
+
+    expect(result).toMatchObject({
+      ok: true,
+      sourceSessionId: originalId,
+      prompt: "second prompt",
+    });
+    expect(agent.sessionId).toBe(originalId);
+    expect((await session.load(originalId))?.toJsonl()).toBe(original);
+    const fork = (await session.load(result.sessionId as string)) as SessionTree;
+    expect(texts(fork)).toEqual([
+      "Session environment: here",
+      "first prompt",
+      "wrote v1",
+      "first done",
+    ]);
+    expect(fork.header?.forkedFrom?.sessionId).toBe(originalId);
+    expect(fork.header?.profile).toBe(agent.session.header?.profile as string);
+  });
+
+  test("forking here copies the whole conversation and switches to it", async () => {
+    const { agent, session } = await conversation();
+    const originalId = agent.sessionId;
+    const before = texts(agent.session);
+
+    const result = await agent.fork();
+
+    expect(result.ok).toBe(true);
+    expect(result.prompt).toBeUndefined();
+    expect(agent.sessionId).toBe(result.sessionId as string);
+    expect(texts(agent.session)).toEqual(before);
+    await agent.run("new direction");
+    expect(texts(agent.session).slice(-2)).toEqual(["new direction", "after fork"]);
+    expect(texts((await session.load(originalId)) as SessionTree)).toEqual(before);
+  });
+
+  test("a fork starts with no undo history and leaves the workspace alone", async () => {
+    const { agent, checkpoints } = await conversation();
+    expect(agent.undoPoints()).toHaveLength(3);
+
+    await agent.fork();
+
+    expect(checkpoints.state).toBe("v1");
+    expect(agent.undoPoints()).toEqual([]);
+    expect(agent.session.all().some((entry) => entry.type === "checkpoint")).toBe(false);
+    expect(
+      agent.session
+        .all()
+        .some(
+          (entry) =>
+            (entry.type === "message" && entry.checkpointRef !== undefined) ||
+            (entry.type === "custom" && entry.customType === "checkpoint-cursor"),
+        ),
+    ).toBe(false);
+    expect((await agent.undo()).ok).toBe(false);
+  });
+
+  test("a fork's spend counts only what happens after the fork", async () => {
+    const { agent, session } = await conversation();
+    expect(agent.usage.outputTokens).toBeGreaterThan(0);
+
+    const result = await agent.fork();
+    expect(agent.usage.outputTokens).toBe(0);
+    expect(agent.costReport().lines).toEqual([]);
+    await agent.run("new direction");
+    const afterOneTurn = agent.usage.outputTokens;
+    expect(afterOneTurn).toBeGreaterThan(0);
+
+    agent.resume((await session.load(result.sessionId as string)) as SessionTree);
+    expect(agent.usage.outputTokens).toBe(afterOneTurn);
+  });
+
+  test("forking before the first prompt keeps only the injected context", async () => {
+    const { agent, session } = await conversation();
+    const first = agent.forkPoints().at(-1) as { id: string };
+
+    const result = await agent.createFork(first.id);
+
+    expect(result.prompt).toBe("first prompt");
+    const fork = (await session.load(result.sessionId as string)) as SessionTree;
+    expect(texts(fork)).toEqual(["Session environment: here"]);
+  });
+
+  test("the fork keeps the current model and thinking level", async () => {
+    const { agent, session } = await conversation();
+    agent.setThinking("high");
+    const thinking = agent.thinking;
+    const first = agent.forkPoints().at(-1) as { id: string };
+
+    const result = await agent.createFork(first.id);
+
+    const other = new Agent({ provider: new FakeProvider([]), model: fakeModel, session });
+    other.resume((await session.load(result.sessionId as string)) as SessionTree);
+    expect(other.thinking).toBe(thinking);
+    expect((await session.load(agent.sessionId))?.toJsonl()).toBe(agent.session.toJsonl());
+  });
+
+  test("rejects anything but a prompt on the current branch", async () => {
+    const { agent, session } = await conversation();
+    const reply = agent.session
+      .activePath()
+      .find((entry) => entry.type === "message" && entry.message.role === "assistant");
+    const before = (await session.list()).length;
+
+    expect((await agent.createFork("foreign-entry")).ok).toBe(false);
+    expect((await agent.createFork(reply?.id as string)).ok).toBe(false);
+    await agent.undo();
+    expect((await agent.createFork("unused")).ok).toBe(false);
+    const undone = agent.session
+      .all()
+      .find(
+        (entry) =>
+          entry.type === "message" &&
+          entry.message.role === "user" &&
+          !agent.session.activePath().includes(entry),
+      );
+    expect(undone).toBeDefined();
+    expect((await agent.createFork(undone?.id as string)).ok).toBe(false);
+    expect((await session.list()).length).toBe(before);
+  });
+
+  test("an empty conversation has nothing to fork", async () => {
+    const agent = new Agent({ provider: new FakeProvider([]), model: fakeModel });
+
+    expect(agent.forkPoints()).toEqual([]);
+    expect(await agent.createFork()).toEqual({ ok: false, message: "Nothing to fork yet." });
+    expect(await agent.sessionStore.list()).toEqual([]);
+  });
+
+  test("a failed save leaves the agent on its session", async () => {
+    const session = new FailingSessionStore();
+    const { agent } = await conversation(session);
+    const originalId = agent.sessionId;
+    session.fail = true;
+
+    const result = await agent.fork();
 
     expect(result.ok).toBe(false);
-    expect(agent.session.head).toBe(head);
+    expect(result.message).toContain("save failed");
+    expect(agent.sessionId).toBe(originalId);
   });
 
-  test("lists user-visible branch points without incomplete tool calls", async () => {
-    const agent = new Agent({
-      provider: new FakeProvider([
-        { content: [{ type: "toolCall", id: "c1", name: "missing", arguments: {} }] },
-        { content: [{ type: "text", text: "finished" }] },
-      ]),
-      model: fakeModel,
+  test("a compacted conversation forks with the same model-visible context", async () => {
+    const { agent, session } = await conversation();
+    agent.session.append({
+      type: "compaction",
+      summary: "earlier work",
+      firstKeptEntryId: (agent.forkPoints()[0] as { id: string }).id,
     });
-    await agent.run("change direction");
+    const visible = texts(agent.session);
 
-    const points = agent.forkPoints();
+    const result = await agent.createFork();
 
-    expect(points.some((point) => point.description.includes("change direction"))).toBe(true);
-    expect(points.some((point) => point.description.includes("finished"))).toBe(true);
-    expect(points).toHaveLength(2);
+    expect(texts((await session.load(result.sessionId as string)) as SessionTree)).toEqual(visible);
   });
 });
 
@@ -1219,23 +1360,51 @@ describe("commands", () => {
     expect((await registry.execute("/undo", ctx().ctx)).message).toContain("not available");
   });
 
-  test("/fork lists points and invokes a selected entry", async () => {
-    const selected: string[] = [];
+  test("/fork lists prompts and forks before one or from here", async () => {
+    const selected: (string | undefined)[] = [];
     const registry = registryWithCoreCommands({
-      forkPoints: () => [{ id: "e1", description: "user · start here" }],
-      fork: async (entryId) => {
-        selected.push(entryId);
-        return { ok: true, message: `Forked from ${entryId}.` };
+      forkPoints: () => [{ id: "e1", prompt: "start here" }],
+      fork: async (beforeEntryId) => {
+        selected.push(beforeEntryId);
+        return {
+          ok: true,
+          message: "Forked into s2.",
+          sessionId: "s2",
+          sourceSessionId: "s1",
+          ...(beforeEntryId ? { prompt: "start here" } : {}),
+        };
       },
     });
 
     const listing = await registry.execute("/fork", ctx().ctx);
     expect(listing.data).toEqual({
       kind: "fork-points",
-      points: [{ id: "e1", description: "user · start here" }],
+      points: [{ id: "e1", prompt: "start here" }],
     });
-    expect((await registry.execute("/fork e1", ctx().ctx)).message).toBe("Forked from e1.");
-    expect(selected).toEqual(["e1"]);
+    expect((await registry.execute("/fork e1", ctx().ctx)).data).toEqual({
+      kind: "forked",
+      sessionId: "s2",
+      sourceSessionId: "s1",
+      prompt: "start here",
+    });
+    expect((await registry.execute("/fork here", ctx().ctx)).data).toEqual({
+      kind: "forked",
+      sessionId: "s2",
+      sourceSessionId: "s1",
+    });
+    expect(selected).toEqual(["e1", undefined]);
+  });
+
+  test("/fork reports a refusal without data", async () => {
+    const registry = registryWithCoreCommands({
+      forkPoints: () => [],
+      fork: async () => ({ ok: false, message: "Cannot fork while a run is active." }),
+    });
+
+    expect((await registry.execute("/fork", ctx().ctx)).message).toBe("Nothing to fork yet.");
+    const refused = await registry.execute("/fork here", ctx().ctx);
+    expect(refused.message).toBe("Cannot fork while a run is active.");
+    expect(refused.data).toBeUndefined();
   });
 });
 

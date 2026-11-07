@@ -32,6 +32,8 @@ import {
   customMessage,
   type DiffCommandData,
   defaultModelId,
+  type ForkedCommandData,
+  type ForkPointsCommandData,
   formatSubagentRoutes,
   loadMarkdownCommands,
   type MarkdownCommandRun,
@@ -75,6 +77,7 @@ import {
 } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import { transcriptExportCommand } from "./export-command.ts";
+import { forkedNotice, forkPickerItems, isForkedCommandData } from "./fork-picker.ts";
 import { observeGitBranch } from "./git-branch.ts";
 import {
   type AccountLoginProvider,
@@ -1623,6 +1626,28 @@ export async function runInteractive(
     paint();
   }
 
+  async function openFork(data: ForkedCommandData): Promise<void> {
+    try {
+      const tree = await agent.sessionStore.load(data.sessionId);
+      if (!tree) throw new Error("the new session was not saved");
+      if (activeRun || agent.isRunning) throw new Error("a run started before the fork opened");
+      agent.resume(tree);
+      sessionResumable = true;
+      app.setModel(agent.modelRef, agent.contextWindow);
+      app.setThinking(agent.thinking, agent.thinkingLevels);
+      app.replaceTranscript(tree.messagesAt(), app.banner());
+      commitLines([`  ${forkedNotice(data)}`, ""]);
+      if (data.prompt !== undefined) app.editor.setText(data.prompt);
+    } catch (error) {
+      commitLines([
+        `  Could not open fork ${data.sessionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ]);
+    }
+    paint();
+  }
+
   async function runCommand(text: string): Promise<void> {
     const source = app.activeConversation;
     const target = activeAgent();
@@ -1659,7 +1684,7 @@ export async function runInteractive(
       | CheckpointActionData
       | DiffCommandData
       | UndoPointsCommandData
-      | { kind: "fork-points"; points: { id: string; description: string }[] }
+      | ForkPointsCommandData
       | { kind: "compaction"; status: string }
       | MarkdownCommandRun
       | SubagentsCommandData
@@ -1690,19 +1715,12 @@ export async function runInteractive(
     } else if (data?.kind === "fork-points") {
       app.openPicker({
         title: "fork from",
-        items: data.points.map((point) => ({
-          label: point.id,
-          description: point.description,
-        })),
-        onChoose: (entryId) => {
-          void (async () => {
-            const forked = await agent.fork(entryId);
-            commitLines([`  ${forked.message}`]);
-            paint();
-          })();
-        },
+        items: forkPickerItems(data.points),
+        onChoose: (target) => void runCommand(`/fork ${target}`),
         onBack: () => app.openCommandMenu(),
       });
+    } else if (isForkedCommandData(data)) {
+      await openFork(data);
     } else if (isMarkdownCommandRun(data)) {
       beginRun(data.prompt, {
         ...(data.model ? { model: data.model } : {}),

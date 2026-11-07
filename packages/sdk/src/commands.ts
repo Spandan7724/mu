@@ -1,10 +1,26 @@
 import { type CheckpointDiffFile, type Command, CommandRegistry } from "@mu/core";
-import type { CheckpointActionResult, ManualCompactionResult, UndoPoint } from "./agent.ts";
+import type {
+  CheckpointActionResult,
+  ForkPoint,
+  ForkResult,
+  ManualCompactionResult,
+  UndoPoint,
+} from "./agent.ts";
 import type { CostReport } from "./cost-report.ts";
 
-export interface ForkPoint {
-  id: string;
-  description: string;
+export type { ForkPoint } from "./agent.ts";
+
+export interface ForkPointsCommandData {
+  kind: "fork-points";
+  points: ForkPoint[];
+}
+
+// The fork is a new saved session; the surface decides whether to open it.
+export interface ForkedCommandData {
+  kind: "forked";
+  sessionId: string;
+  sourceSessionId: string;
+  prompt?: string;
 }
 
 export interface DiffCommandData {
@@ -26,7 +42,8 @@ export interface CoreCommandHooks {
   undo?: (turnCount?: number) => Promise<CheckpointActionResult>;
   undoPoints?: () => UndoPoint[];
   redo?: () => Promise<CheckpointActionResult>;
-  fork?: (entryId: string) => Promise<{ ok: boolean; message: string }>;
+  // Without an entry the fork copies the whole branch.
+  fork?: (beforeEntryId?: string) => Promise<ForkResult>;
   forkPoints?: () => ForkPoint[];
   diff?: () => Promise<CheckpointDiffFile[]>;
   // Answers /undo, /redo and /diff when checkpoints are off.
@@ -122,21 +139,36 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     },
     {
       name: "fork",
-      description: "Branch the conversation from an earlier point",
+      description: "Start a new session from an earlier prompt or from here",
       run: async (ctx) => {
         if (!hooks.fork) return { handled: true, message: "Fork is not available here." };
-        const entryId = ctx.args.trim();
-        if (!entryId) {
+        const target = ctx.args.trim();
+        if (!target) {
           const points = hooks.forkPoints?.() ?? [];
-          if (points.length === 0) return { handled: true, message: "No branch points yet." };
+          if (points.length === 0) return { handled: true, message: "Nothing to fork yet." };
+          const data: ForkPointsCommandData = { kind: "fork-points", points };
           return {
             handled: true,
-            message: points.map((point) => `${point.id} · ${point.description}`).join("\n"),
-            data: { kind: "fork-points", points },
+            message: [
+              "here · the whole conversation",
+              ...points.map(
+                (point) => `${point.id} · before: ${point.prompt.replace(/\s+/g, " ").trim()}`,
+              ),
+            ].join("\n"),
+            data,
           };
         }
-        const result = await hooks.fork(entryId);
-        return { handled: true, message: result.message };
+        const result = await hooks.fork(target === "here" ? undefined : target);
+        if (!result.ok || !result.sessionId || !result.sourceSessionId) {
+          return { handled: true, message: result.message };
+        }
+        const data: ForkedCommandData = {
+          kind: "forked",
+          sessionId: result.sessionId,
+          sourceSessionId: result.sourceSessionId,
+          ...(result.prompt !== undefined ? { prompt: result.prompt } : {}),
+        };
+        return { handled: true, message: result.message, data };
       },
     },
     {
