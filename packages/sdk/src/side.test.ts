@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { ExtensionHost, MemorySessionStore, userMessage } from "@mu/core";
+import { customMessage, ExtensionHost, MemorySessionStore, userMessage } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
+import { MCP_CONTEXT_TYPE } from "./mcp.ts";
 import { startSideConversation } from "./side.ts";
+import { SKILLS_CONTEXT_TYPE } from "./skills.ts";
+
+const tool = (name: string) => ({
+  name,
+  description: name,
+  inputSchema: { type: "object", properties: {} },
+  execute: async () => ({ content: [{ type: "text" as const, text: name }] }),
+});
 
 describe("side conversations", () => {
   test("inherit context behind a boundary and keep their session in memory", async () => {
@@ -68,6 +77,48 @@ describe("side conversations", () => {
 
     expect(deactivated).toBe(false);
     expect(host.commands.has("borrowed")).toBe(true);
+    await host.shutdown();
+  });
+
+  test("a fixed toolset hides other tools and extension context", async () => {
+    const host = new ExtensionHost();
+    let providerRan = false;
+    await host.register({
+      name: "catalog",
+      activate: (api) => {
+        api.registerTool(tool("skill"));
+        api.registerContextProvider(() => {
+          providerRan = true;
+          return [customMessage(SKILLS_CONTEXT_TYPE, "fresh listing")];
+        });
+      },
+    });
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "ok" }] }]);
+    const side = startSideConversation(
+      { provider, model: fakeModel, tools: [tool("read"), tool("write")], extensions: host },
+      {
+        messages: [
+          userMessage("inherited question"),
+          customMessage(SKILLS_CONTEXT_TYPE, "inherited skill listing"),
+          customMessage(MCP_CONTEXT_TYPE, "inherited mcp listing"),
+          customMessage("instructions", "inherited instructions"),
+        ],
+        tools: ["read"],
+      },
+    );
+
+    expect(side.agent.tools.map((candidate) => candidate.name)).toEqual(["read"]);
+    await side.agent.run("side question");
+    const request = provider.requests[0];
+    expect(request?.tools?.map((candidate) => candidate.name)).toEqual(["read"]);
+    const sent = JSON.stringify(request?.messages);
+    expect(sent).toContain("inherited instructions");
+    expect(sent).not.toContain("inherited skill listing");
+    expect(sent).not.toContain("inherited mcp listing");
+    expect(sent).not.toContain("fresh listing");
+    expect(providerRan).toBe(false);
+
+    await side.close();
     await host.shutdown();
   });
 });

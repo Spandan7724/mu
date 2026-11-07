@@ -1,6 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { PermissionMode, PermissionRule, SavedPermissionRule } from "@mu/core";
+import type {
+  PermissionMode,
+  PermissionRule,
+  ProfileSideAccess,
+  SavedPermissionRule,
+} from "@mu/core";
 import { z } from "zod";
 import type { InstructionSettings } from "./context.ts";
 
@@ -67,6 +72,24 @@ const MODES: PermissionMode[] = [
 export function codingPermissionModes(configured: PermissionRule[] = []): PermissionMode[] {
   const denies = configured.filter((rule) => rule.action === "deny");
   return MODES.map((mode) => ({ ...mode, rules: [...mode.rules, ...denies] }));
+}
+
+const SIDE_TOOLS = ["read", "ls", "bash", "task_output", "task_list"];
+
+// Configured allows do not widen a side conversation; configured denies still hold.
+export function codingSideAccess(configured: PermissionRule[] = []): ProfileSideAccess {
+  return {
+    tools: SIDE_TOOLS,
+    permissions: [
+      { permission: "*", pattern: "*", action: "deny" },
+      { permission: "read", pattern: "*", action: "allow" },
+      { permission: "ls", pattern: "*", action: "allow" },
+      { permission: "bash:inspect", pattern: "*", action: "allow" },
+      { permission: "task_output", pattern: "*", action: "allow" },
+      { permission: "task_list", pattern: "*", action: "allow" },
+      ...configured.filter((rule) => rule.action === "deny"),
+    ],
+  };
 }
 
 export const CODING_PERMISSION_MODES: PermissionMode[] = codingPermissionModes();

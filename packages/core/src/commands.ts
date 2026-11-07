@@ -24,9 +24,9 @@ export interface CommandResult {
 export interface Command {
   name: string; // without the leading slash
   description: string;
-  // Commands that replace or rewind the active durable session are unavailable
-  // in ephemeral side conversations.
-  sessionScoped?: boolean;
+  // Offered in side conversations. Side conversations answer questions, so
+  // commands opt in rather than appearing there by default.
+  side?: boolean;
   // Registered only when no other command already has this name.
   fallback?: boolean;
   // Menus list skills after every other command.

@@ -5100,6 +5100,30 @@ describe("side conversations", () => {
     expect(stripAnsi(app.renderTranscript("side").join("\n"))).toContain("side answer");
   });
 
+  test("the side slash menu lists only commands offered in side conversations", () => {
+    const h = harness();
+    h.app.setCommands([
+      { label: "model", description: "switch model", side: true },
+      { label: "compact", description: "summarize" },
+      { label: "review", description: "Skill: review", kind: "skill" },
+    ]);
+    h.app.openSideConversation("fake/fake-1", 100_000, ["off"]);
+    feed(h.app, "/");
+    const side = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(side).toContain("switch model");
+    expect(side).toContain("collapse");
+    expect(side).not.toContain("summarize");
+    expect(side).not.toContain("review");
+    feed(h.app, "\u001b");
+    h.app.editor.setText("");
+
+    feed(h.app, "\u0002");
+    feed(h.app, "/");
+    const main = h.app.renderBottom().map(stripAnsi).join("\n");
+    expect(main).toContain("summarize");
+    expect(main).toContain("review");
+  });
+
   test("main and side keep independent composer histories", () => {
     const { app } = harness();
     feed(app, "main question\r");

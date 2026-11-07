@@ -8,6 +8,7 @@ import { codingProfile } from "./index.ts";
 import {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
+  codingSideAccess,
   layerPermissions,
   loadProjectConfig,
   rememberAllow,
@@ -138,6 +139,26 @@ describe("permission defaults", () => {
       "allow",
     );
     expect(evaluate(rules("yolo"), "bash", "{}")).toBe("allow");
+  });
+
+  test("side conversations read and inspect but never ask", () => {
+    const access = codingSideAccess([
+      { permission: "bash", pattern: "bun test*", action: "allow" },
+      { permission: "read", pattern: ".env", action: "deny" },
+    ]);
+    const decide = (permission: string | string[], pattern: string) =>
+      evaluate(access.permissions, permission, pattern);
+
+    expect(access.tools).toEqual(["read", "ls", "bash", "task_output", "task_list"]);
+    expect(decide("read", "src/a.ts")).toBe("allow");
+    expect(decide("read", ".env")).toBe("deny");
+    expect(decide(["bash", "bash:inspect"], "git status --short")).toBe("allow");
+    expect(decide("bash", "bun test")).toBe("deny");
+    expect(decide("write", "src/a.ts")).toBe("deny");
+    expect(decide("task_kill", "{}")).toBe("deny");
+    expect(decide("task", "{}")).toBe("deny");
+    expect(decide("skill", "{}")).toBe("deny");
+    expect(decide("mcp_call", "{}")).toBe("deny");
   });
 
   test("project config layers over the profile defaults", () => {

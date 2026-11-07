@@ -22,6 +22,7 @@ import {
   CODING_PERMISSION_DEFAULTS,
   checkpointSettingsSchema,
   codingPermissionModes,
+  codingSideAccess,
   configPath,
   forgetPermission,
   instructionSettingsSchema,
@@ -299,6 +300,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     environment,
     contextMessages: async (): Promise<AgentMessage[]> => [environmentMessage(await environment())],
     sideBoundary: () => CODING_SIDE_BOUNDARY,
+    sideAccess: codingSideAccess(configuredPermissions),
     contextLabel: (customType) =>
       customType.startsWith(SNAPSHOT_TYPE_PREFIX) ? "instructions" : undefined,
     subagents: {
@@ -394,6 +396,7 @@ export {
   CODING_PERMISSION_DEFAULTS,
   CODING_PERMISSION_MODES,
   codingPermissionModes,
+  codingSideAccess,
   layerPermissions,
   loadProjectConfig,
   localConfigPath,

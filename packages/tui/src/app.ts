@@ -69,6 +69,7 @@ import { terminalRows, wrapText } from "./wrap.ts";
 const COLLAPSE_COMMAND = {
   label: "collapse",
   description: "Collapse all expanded tool activity",
+  side: true,
 };
 
 export type AppMode =
@@ -678,7 +679,7 @@ export class App {
   // A first `x` on a running background subagent arms its stop; the second sends it.
   private stopArmedFor: string | undefined;
   private ctrlCArmedAt = 0;
-  private commands: { label: string; description?: string }[] = [COLLAPSE_COMMAND];
+  private commands: { label: string; description?: string; side?: boolean }[] = [COLLAPSE_COMMAND];
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private pickerDeleteValue: string | undefined;
@@ -832,13 +833,21 @@ export class App {
     this.options.height = height;
   }
 
-  setCommands(commands: { label: string; description?: string; kind?: "skill" }[]): void {
+  setCommands(
+    commands: { label: string; description?: string; kind?: "skill"; side?: boolean }[],
+  ): void {
     const listed = commands.filter((command) => command.label !== COLLAPSE_COMMAND.label);
     this.commands = [
       ...listed.filter((command) => command.kind !== "skill"),
       COLLAPSE_COMMAND,
       ...listed.filter((command) => command.kind === "skill"),
     ];
+  }
+
+  private get menuCommands(): { label: string; description?: string }[] {
+    return this.activeSource === "side"
+      ? this.commands.filter((command) => command.side)
+      : this.commands;
   }
 
   get activeConversation(): ConversationSource {
@@ -996,7 +1005,7 @@ export class App {
 
   openCommandMenu(): void {
     this.editor.setText("/");
-    this.commandList.setItems(this.commands);
+    this.commandList.setItems(this.menuCommands);
     this.mode = "select";
   }
 
@@ -3475,8 +3484,8 @@ export class App {
     const query = this.editor.text.slice(1).toLowerCase();
     this.commandList.setItems(
       query.length === 0
-        ? this.commands
-        : this.commands.filter((c) => c.label.toLowerCase().startsWith(query)),
+        ? this.menuCommands
+        : this.menuCommands.filter((c) => c.label.toLowerCase().startsWith(query)),
     );
   }
 

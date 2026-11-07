@@ -118,6 +118,7 @@ export type {
   ProfileFactory,
   ProfileRuntime,
   ProfileRuntimeHost,
+  ProfileSideAccess,
   ProfileSubagents,
   TaskSubagentSession,
 } from "./profile.ts";

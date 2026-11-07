@@ -66,7 +66,6 @@ export function trackCommands(options: TrackCommandOptions): Command[] {
     {
       name: "track",
       description: "Include an ignored file or folder in /undo and /redo, or list included paths",
-      sessionScoped: true,
       run: (ctx) => {
         if (!ctx.args.trim()) {
           return {
@@ -87,7 +86,6 @@ export function trackCommands(options: TrackCommandOptions): Command[] {
     {
       name: "untrack",
       description: "Stop including a path added with /track",
-      sessionScoped: true,
       run: (ctx) => {
         if (!ctx.args.trim()) return { handled: true, message: "Usage: /untrack <path>" };
         return change(

@@ -139,6 +139,10 @@ export interface AgentOptions {
   // Extensions registered on this host observe events and may block/modify
   // tool calls, results and the pre-LLM context.
   extensions?: ExtensionHost;
+  // Every run sees only these tools, extension tools included.
+  toolNames?: string[];
+  // False skips the host's context providers (catalogs for tools this agent lacks).
+  extensionContext?: boolean;
   // Names the /cost context group for a profile's own custom message types.
   contextLabel?: (customType: string) => string | undefined;
 }
@@ -451,10 +455,12 @@ export class Agent {
   }
 
   get tools(): AnyTool[] {
-    return [
+    const tools = [
       ...(this.options.tools ?? []),
       ...(this.options.extensions ? [...this.options.extensions.tools.values()] : []),
     ];
+    const names = this.options.toolNames;
+    return names ? tools.filter((tool) => names.includes(tool.name)) : tools;
   }
 
   availableModel(ref: string): ModelInfo | undefined {
@@ -1228,7 +1234,7 @@ export class Agent {
         (await this.options.refreshContext?.(compacted, {
           sessionId: this._sessionId,
         })) ?? [];
-      if (this.options.extensions) {
+      if (this.options.extensions && this.options.extensionContext !== false) {
         refreshed.push(
           ...(await this.options.extensions.runContextProviders([...compacted, ...refreshed], {
             sessionId: this._sessionId,
@@ -2065,10 +2071,7 @@ export class Agent {
 
     let captured: T | undefined;
     let reminders = 0;
-    let tools: AnyTool[] = [
-      ...(this.options.tools ?? []),
-      ...(host ? [...host.tools.values()] : []),
-    ];
+    let tools: AnyTool[] = this.tools;
     const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     const webSearch = resolveWebSearchBackend(runProvider);
@@ -2122,7 +2125,7 @@ export class Agent {
       (await this.options.refreshContext?.([...seeded, ...initial], {
         sessionId: this._sessionId,
       })) ?? [];
-    if (host) {
+    if (host && this.options.extensionContext !== false) {
       refreshed.push(
         ...(await host.runContextProviders([...seeded, ...initial, ...refreshed], {
           sessionId: this._sessionId,
@@ -2136,7 +2139,8 @@ export class Agent {
       messages: [...seeded, ...initial, ...refreshed],
       ...(tools.length > 0 ? { tools } : {}),
       ...(webSearch.kind === "hosted" &&
-      (!opts?.allowedTools || opts.allowedTools.includes("web_search"))
+      (!opts?.allowedTools || opts.allowedTools.includes("web_search")) &&
+      (!this.options.toolNames || this.options.toolNames.includes("web_search"))
         ? { hostedTools: [webSearch.tool] }
         : {}),
     };

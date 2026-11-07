@@ -13,6 +13,7 @@ export function transcriptExportCommand(options: TranscriptExportCommandOptions)
   return {
     name: "export",
     description: "Save the current chat transcript: /export [path.md]",
+    side: true,
     run: async (ctx) => {
       if (options.isRunning()) {
         return { handled: true, message: "Cannot export during a run." };

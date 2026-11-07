@@ -51,7 +51,7 @@ Be explicit and literal in your tool use. State briefly what you are about to do
 const GEMINI_ADDENDUM = `
 Prefer a small number of well-chosen tool calls over many exploratory ones. When editing, reproduce the exact surrounding text in oldString so the match is unambiguous.`;
 
-export const CODING_SIDE_BOUNDARY = `This is a coding side conversation. Do not modify files, source, git state, configuration, or workspace state unless the user deliberately changes the side conversation's permission mode. Do not request broader permissions or use subagents.`;
+export const CODING_SIDE_BOUNDARY = `This is a read-only coding side conversation for answering questions about the session, the project and what the main agent is doing. You can read files, list directories, run read-only shell commands and read background task output; anything else is denied. When an answer needs a command that changes state or runs a build or tests, say so instead of attempting it.`;
 
 export const CODING_COUNSEL_PROMPT = `Inspect the current implementation and tests before judging. Cite exact workspace-relative paths and 1-based line ranges for the evidence behind the recommendation.`;
 

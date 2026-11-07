@@ -37,8 +37,7 @@ import {
   type MarkdownCommandRun,
   type ModelInfo,
   type PermissionMode,
-  type PermissionReply,
-  type PermissionRule,
+  type ProfileSideAccess,
   providerConfig,
   readAuthFile,
   removeStoredCredential,
@@ -83,7 +82,7 @@ import {
 } from "./login.ts";
 import type { ModelCatalog } from "./model-catalog.ts";
 import { availableModels, modelPickerDescription } from "./model-picker.ts";
-import { nextPermissionMode, rulesForPermissionMode } from "./permissions.ts";
+import { nextPermissionMode } from "./permissions.ts";
 import { createRendererRegistry, profileTagline } from "./presentation.ts";
 import { browserFlags } from "./profiles.ts";
 import {
@@ -306,7 +305,7 @@ export async function runInteractive(
     );
     return 2;
   }
-  const { agent, profile, extensions, commands, basePermissions } = runtime;
+  const { agent, profile, extensions, commands } = runtime;
   const modelRef = agent.modelRef;
   const resolved = runtime.agentOptions;
   let activePermissionMode: PermissionMode | undefined = runtime.permissionMode;
@@ -323,18 +322,6 @@ export async function runInteractive(
   let sideConversation: SideConversation | undefined;
   let unsubscribeSide: (() => void) | undefined;
   let closingSide: Promise<void> | undefined;
-  let sidePermissionMode: PermissionMode | undefined;
-  const sidePermissions = new Map<
-    string,
-    {
-      request: Parameters<NonNullable<AgentOptions["onPermission"]>>[0];
-      resolve: (reply: PermissionReply) => void;
-    }
-  >();
-  // A side conversation's approvals last only as long as it does.
-  let sideAllowRules: PermissionRule[] = [];
-  const sideRules = (mode: PermissionMode | undefined) =>
-    rulesForPermissionMode([...basePermissions, ...sideAllowRules], mode);
   let activeShell: Promise<void> | undefined;
   let shellController: AbortController | undefined;
   let loginController: AbortController | undefined;
@@ -353,10 +340,6 @@ export async function runInteractive(
     agent.stop();
     sideConversation?.agent.stop();
     runtime.cancelPermissions();
-    for (const [id, item] of sidePermissions) {
-      sidePermissions.delete(id);
-      item.resolve("deny");
-    }
   };
 
   const activeAgent = () =>
@@ -444,23 +427,7 @@ export async function runInteractive(
       },
       onCyclePermissionMode: () => cyclePermissionMode(),
       onPermissionReply: (id, outcome, remember, source, message) => {
-        if (source === "side") {
-          const pending = sidePermissions.get(id);
-          if (!pending || !sideConversation) return;
-          sidePermissions.delete(id);
-          if (outcome === "allow" && remember) {
-            sideAllowRules.push(
-              ...(
-                pending.request.allowRules ?? [
-                  { permission: pending.request.permission, pattern: pending.request.pattern },
-                ]
-              ).map((rule) => ({ ...rule, action: "allow" as const })),
-            );
-            sideConversation.agent.setPermissions(sideRules(sidePermissionMode));
-          }
-          pending.resolve(message && outcome === "deny" ? { outcome, message } : outcome);
-          return;
-        }
+        if (source === "side") return;
         const pending = runtime.pendingPermissions.get(id);
         if (!pending) return;
         runtime.resolvePermission(id, outcome, remember, message);
@@ -497,6 +464,7 @@ export async function runInteractive(
   commands.register({
     name: "thinking",
     description: "Set the reasoning level for the active model",
+    side: true,
     run: async (ctx) => {
       const source = app.activeConversation;
       const target = activeAgent();
@@ -524,6 +492,7 @@ export async function runInteractive(
   commands.register({
     name: "model",
     description: "Switch the active model",
+    side: true,
     run: async () => {
       const source = app.activeConversation;
       const target = activeAgent();
@@ -685,8 +654,6 @@ export async function runInteractive(
     name: "permissions",
     description: "Choose what mu is allowed to do",
     run: () => {
-      const source = app.activeConversation;
-      const currentMode = source === "side" ? sidePermissionMode : activePermissionMode;
       const modes = profile?.permissionModes ?? [];
       if (modes.length === 0) {
         return { handled: true, message: "This profile does not define permission modes." };
@@ -698,7 +665,7 @@ export async function runInteractive(
           items: [
             ...modes.map((mode) => ({
               label: mode.label,
-              description: `${mode.description}${mode.id === currentMode?.id ? " · current" : ""}`,
+              description: `${mode.description}${mode.id === activePermissionMode?.id ? " · current" : ""}`,
             })),
             ...(rules.length > 0
               ? [
@@ -716,7 +683,7 @@ export async function runInteractive(
               return;
             }
             const mode = modes.find((candidate) => candidate.label === value);
-            if (mode) applyPermissionMode(mode, source);
+            if (mode) applyPermissionMode(mode);
           },
           onBack: () => app.openCommandMenu(),
         });
@@ -742,7 +709,6 @@ export async function runInteractive(
             void (async () => {
               try {
                 await runtime.forgetPermissionRule(rule);
-                sideConversation?.agent.setPermissions(sideRules(sidePermissionMode));
                 await openRules();
               } catch (error) {
                 commitLines([
@@ -763,7 +729,6 @@ export async function runInteractive(
   commands.register({
     name: "rename",
     description: "Name the current conversation",
-    sessionScoped: true,
     run: async (ctx) => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot rename during a run." };
@@ -804,7 +769,6 @@ export async function runInteractive(
   commands.register({
     name: "resume",
     description: "Resume an earlier session",
-    sessionScoped: true,
     run: async () => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot resume during a run." };
@@ -919,7 +883,6 @@ export async function runInteractive(
   commands.register({
     name: "new",
     description: "Clear the terminal and start a new chat",
-    sessionScoped: true,
     run: () => {
       if (activeRun || agent.isRunning) {
         return { handled: true, message: "Cannot start a new chat during a run." };
@@ -935,6 +898,7 @@ export async function runInteractive(
   commands.register({
     name: "keybindings",
     description: "List every keybinding",
+    side: true,
     run: (ctx) => {
       ctx.print(formatKeybindings());
       return { handled: true };
@@ -956,7 +920,8 @@ export async function runInteractive(
         ).displayPath,
     }),
   );
-  if (profile?.name === "coding") {
+  const sideAccess = profile?.sideAccess;
+  if (sideAccess) {
     commands.register({
       name: "btw",
       description: "Start an ephemeral side conversation",
@@ -964,17 +929,32 @@ export async function runInteractive(
         if (sideConversation || closingSide) {
           return { handled: true, message: "A side conversation is already open." };
         }
-        openSideConversation(ctx.args.trim() || undefined);
+        openSideConversation(sideAccess, ctx.args.trim() || undefined);
         return { handled: true };
       },
     });
   }
+  commands.register({
+    name: "help",
+    description: "List available commands",
+    side: true,
+    run: (ctx) => {
+      const side = app.activeConversation === "side";
+      const lines = commands
+        .list()
+        .filter((command) => !side || command.side)
+        .map((command) => `  /${command.name.padEnd(12)} ${command.description}`);
+      ctx.print(`Available commands:\n${lines.join("\n")}`);
+      return { handled: true };
+    },
+  });
 
   app.setCommands(
     commands.list().map((c) => ({
       label: c.name,
       description: c.description,
       ...(c.kind ? { kind: c.kind } : {}),
+      ...(c.side ? { side: true } : {}),
     })),
   );
 
@@ -1025,17 +1005,11 @@ export async function runInteractive(
     return out;
   }
 
-  function applyPermissionMode(mode: PermissionMode, source = app.activeConversation): void {
-    if (source === "side") {
-      if (!sideConversation) return;
-      sideConversation.agent.setPermissions(sideRules(mode));
-      sidePermissionMode = mode;
-    } else {
-      runtime.setPermissionMode(mode.id);
-      activePermissionMode = mode;
-    }
-    app.setPermissionMode(mode, source);
-    if (source === "side" || !profile) return;
+  function applyPermissionMode(mode: PermissionMode): void {
+    runtime.setPermissionMode(mode.id);
+    activePermissionMode = mode;
+    app.setPermissionMode(mode, "main");
+    if (!profile) return;
     void savePermissionMode(profile.name, mode.id).catch((error: unknown) => {
       commitLines([
         `  could not save permission mode: ${error instanceof Error ? error.message : String(error)}`,
@@ -1045,10 +1019,9 @@ export async function runInteractive(
   }
 
   function cyclePermissionMode(): void {
-    const source = app.activeConversation;
-    const current = source === "side" ? sidePermissionMode : activePermissionMode;
-    const next = nextPermissionMode(profile?.permissionModes ?? [], current);
-    if (next) applyPermissionMode(next, source);
+    if (app.activeConversation === "side") return;
+    const next = nextPermissionMode(profile?.permissionModes ?? [], activePermissionMode);
+    if (next) applyPermissionMode(next);
   }
 
   function beginRun(text: string, options?: AgentRunOptions): void {
@@ -1073,30 +1046,22 @@ export async function runInteractive(
     else activeRun = run;
   }
 
-  function openSideConversation(question?: string): void {
+  function openSideConversation(access: ProfileSideAccess, question?: string): void {
     try {
-      const restrictive = (profile?.permissionModes ?? []).find(
-        (mode) => mode.tone === "restrictive",
-      );
-      sideAllowRules = [];
-      sidePermissionMode = restrictive ?? activePermissionMode;
-      const permissions = sideRules(sidePermissionMode);
       const conversation = startSideConversation(
         {
           ...resolved,
           model: agent.modelRef,
           thinkingLevel: agent.thinking,
           extensions,
-          permissions,
-          onPermission: (request) =>
-            new Promise<PermissionReply>((resolve) => {
-              sidePermissions.set(request.id, { request, resolve });
-            }),
+          permissions: access.permissions,
+          onPermission: () => Promise.resolve("deny"),
         },
         {
           messages: agent.session.messagesAt(),
           ...(profile?.sideBoundary ? { boundary: profile.sideBoundary() } : {}),
-          permissions,
+          permissions: access.permissions,
+          tools: access.tools,
         },
       );
       sideConversation = conversation;
@@ -1134,12 +1099,11 @@ export async function runInteractive(
         conversation.agent.thinkingLevels,
       );
       app.setThinking(conversation.agent.thinking, conversation.agent.thinkingLevels, "side");
-      app.setPermissionMode(sidePermissionMode, "side");
+      app.setPermissionMode({ label: "read-only", tone: "restrictive" }, "side");
       paint();
       if (question) beginRun(question);
     } catch (error) {
       sideConversation = undefined;
-      sidePermissionMode = undefined;
       commitLines(
         [
           `  Could not start side conversation: ${error instanceof Error ? error.message : String(error)}`,
@@ -1156,12 +1120,7 @@ export async function runInteractive(
     app.closeSideConversation();
     unsubscribeSide?.();
     unsubscribeSide = undefined;
-    for (const [id, item] of sidePermissions) {
-      sidePermissions.delete(id);
-      item.resolve("deny");
-    }
     sideConversation = undefined;
-    sidePermissionMode = undefined;
     paint();
     closingSide = conversation.close().finally(() => {
       closingSide = undefined;
@@ -1614,7 +1573,7 @@ export async function runInteractive(
     const target = activeAgent();
     const parsed = commands.parse(text);
     const command = parsed ? commands.get(parsed.name) : undefined;
-    if (source === "side" && command?.sessionScoped) {
+    if (source === "side" && command && !command.side) {
       commitLines([`  /${parsed?.name} is not available in a side conversation.`], source);
       return;
     }

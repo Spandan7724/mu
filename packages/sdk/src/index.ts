@@ -52,6 +52,7 @@ export type {
   PermissionTarget,
   ProfileRuntime,
   ProfileRuntimeHost,
+  ProfileSideAccess,
   SavedPermissionRule,
   SessionStore,
   StreamDelta,

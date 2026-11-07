@@ -72,6 +72,11 @@ export interface ProfileSubagents {
   recallScope?: Record<string, string>;
 }
 
+export interface ProfileSideAccess {
+  tools: string[];
+  permissions: PermissionRule[];
+}
+
 // A profile bundles everything that makes the kernel behave as a particular
 // kind of agent. The kernel knows nothing about what is inside — coding,
 // computer-use and automation profiles are all just this shape.
@@ -97,6 +102,9 @@ export interface Profile {
   contextMessages?: () => Promise<AgentMessage[]> | AgentMessage[];
   // Domain-specific constraints appended to the neutral side-conversation boundary.
   sideBoundary?: () => string;
+  // A side conversation's fixed access: only these tools are visible, and these
+  // rules are final (a side never asks, so anything they do not allow is denied).
+  sideAccess?: ProfileSideAccess;
   // Names the /cost context group for this profile's own custom message types.
   contextLabel?: (customType: string) => string | undefined;
   // Optional domain contribution to the profile-independent subagent extension.

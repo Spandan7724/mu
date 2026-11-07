@@ -5,6 +5,8 @@ import {
   type PermissionRule,
 } from "@mu/core";
 import { Agent, type AgentOptions } from "./agent.ts";
+import { MCP_CONTEXT_TYPE } from "./mcp.ts";
+import { SKILLS_CONTEXT_TYPE } from "./skills.ts";
 
 const SIDE_BOUNDARY = `Side conversation boundary.
 
@@ -16,7 +18,12 @@ export interface SideConversationInput {
   messages: AgentMessage[];
   boundary?: string;
   permissions?: PermissionRule[];
+  // A fixed toolset. The side then also runs without extension context, and the
+  // skill and MCP listings it inherits are dropped.
+  tools?: string[];
 }
+
+const EXTENSION_CONTEXT_TYPES = new Set([SKILLS_CONTEXT_TYPE, MCP_CONTEXT_TYPE]);
 
 export interface SideConversation {
   agent: Agent;
@@ -37,11 +44,17 @@ export function startSideConversation(
     checkpointProvider: _checkpointProvider,
     ...shared
   } = options;
+  const inherited = input.tools
+    ? input.messages.filter(
+        (message) => message.role !== "custom" || !EXTENSION_CONTEXT_TYPES.has(message.customType),
+      )
+    : input.messages;
   const agent = new Agent({
     ...shared,
     session: new MemorySessionStore(),
-    initialMessages: [...input.messages, customMessage("side-conversation-boundary", boundary)],
+    initialMessages: [...inherited, customMessage("side-conversation-boundary", boundary)],
     ...(input.permissions ? { permissions: input.permissions } : {}),
+    ...(input.tools ? { toolNames: input.tools, extensionContext: false } : {}),
   });
   let closed = false;
   return {

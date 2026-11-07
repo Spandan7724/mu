@@ -38,6 +38,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "help",
       description: "List available commands",
+      side: true,
       run: (ctx) => {
         ctx.print("Commands are listed by the registry that owns them.");
         return { handled: true };
@@ -68,7 +69,6 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "compact",
       description: "Summarize older context now while preserving recent work: /compact [focus]",
-      sessionScoped: true,
       run: async (ctx) => {
         if (!hooks.requestCompaction) {
           return { handled: true, message: "Compaction is not available on this surface." };
@@ -81,7 +81,6 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "undo",
       description: "Choose prompts to revert — both the workspace and the conversation",
-      sessionScoped: true,
       run: async (ctx) => {
         if (hooks.checkpointUnavailable)
           return { handled: true, message: hooks.checkpointUnavailable };
@@ -109,7 +108,6 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "redo",
       description: "Re-apply the step that was undone",
-      sessionScoped: true,
       run: async () => {
         if (hooks.checkpointUnavailable)
           return { handled: true, message: hooks.checkpointUnavailable };
@@ -125,7 +123,6 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "fork",
       description: "Branch the conversation from an earlier point",
-      sessionScoped: true,
       run: async (ctx) => {
         if (!hooks.fork) return { handled: true, message: "Fork is not available here." };
         const entryId = ctx.args.trim();
@@ -145,6 +142,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
     {
       name: "diff",
       description: "Show everything this session has changed",
+      side: true,
       run: async () => {
         if (hooks.checkpointUnavailable)
           return { handled: true, message: hooks.checkpointUnavailable };
@@ -181,6 +179,7 @@ export function registryWithCoreCommands(hooks: CoreCommandHooks = {}): CommandR
   registry.register({
     name: "help",
     description: "List available commands",
+    side: true,
     run: (ctx) => {
       const lines = registry.list().map((c) => `  /${c.name.padEnd(12)} ${c.description}`);
       ctx.print(`Available commands:\n${lines.join("\n")}`);
