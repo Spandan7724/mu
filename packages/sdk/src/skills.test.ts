@@ -186,12 +186,18 @@ describe("skills extension", () => {
     );
   });
 
-  test("$name mentions point the model at the skill tool", async () => {
+  test("$name mentions keep the text and attach the skill body once", async () => {
     const { host } = await setup();
-    const directive = await host.runInputHooks("ship it with $release please");
+    const directive = await host.runInputHooks("ship $release, then $release again");
     expect(directive?.text).toBeUndefined();
-    const note = directive?.context?.[0]?.content[0];
-    expect(note?.type === "text" && note.text).toContain("named the skill release");
+    expect(directive?.context).toHaveLength(1);
+    const body = directive?.context?.[0];
+    expect(body?.role === "custom" && body.customType).toBe("skill");
+    const text = body?.content[0];
+    expect(text?.type === "text" && text.text).toContain("with $release");
+    expect(text?.type === "text" && text.text).toContain("Bump, tag, push.");
+    const userOnly = (await host.runInputHooks("use $secret"))?.context?.[0]?.content[0];
+    expect(userOnly?.type === "text" && userOnly.text).toContain('invoked the skill "secret"');
     expect(await host.runInputHooks("costs $5")).toBeUndefined();
   });
 });

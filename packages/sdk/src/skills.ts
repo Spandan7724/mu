@@ -319,6 +319,19 @@ export interface SkillsExtensionOptions {
   catalog?: SkillCatalog;
 }
 
+// Re-read so an edited skill takes effect without restarting the session.
+async function invokedSkill(skill: Skill, invokedAs: string): Promise<CustomMessage> {
+  const fresh = await loadSkill(skill.directory, skill);
+  const current = typeof fresh === "string" ? skill : fresh;
+  return customMessage(
+    "skill",
+    [
+      `The user invoked the skill "${current.name}" with ${invokedAs}; their message follows. Follow the skill for it.`,
+      skillContent(current, await sampleFiles(current.directory)),
+    ].join("\n\n"),
+  );
+}
+
 export function skillsExtension(options: SkillsExtensionOptions): Extension {
   let catalog: SkillCatalog = options.catalog ?? { skills: [], shadowed: [], warnings: [] };
   const rescan = async () => {
@@ -383,42 +396,32 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
           fallback: true,
           kind: "skill",
           run: async (ctx) => {
-            const fresh = await loadSkill(skill.directory, skill);
-            const current = typeof fresh === "string" ? skill : fresh;
             const args = ctx.args.trim();
-            const instructions = customMessage(
-              "skill",
-              [
-                `The user invoked the skill "${current.name}" with /${current.name}; their message follows. Follow the skill for it.`,
-                skillContent(current, await sampleFiles(current.directory)),
-              ].join("\n\n"),
-            );
             return {
               handled: true,
               data: {
                 kind: "markdown-command",
-                prompt: args ? `/${current.name} ${args}` : `/${current.name}`,
-                context: [instructions],
+                prompt: args ? `/${skill.name} ${args}` : `/${skill.name}`,
+                context: [await invokedSkill(skill, `/${skill.name}`)],
               },
             };
           },
         });
       }
 
-      // `$name` mentions keep the user's text and point the model at the skill tool.
-      api.onInput((text) => {
-        const named = [...text.matchAll(MENTION)]
-          .map((match) => find(match[2] ?? ""))
-          .filter((skill): skill is Skill => skill !== undefined && !skill.disableModelInvocation);
-        const unique = [...new Set(named.map((skill) => skill.name))];
-        if (unique.length === 0) return undefined;
+      // `$name` mentions keep the user's text and attach each named skill's body; the user
+      // naming a user-only skill is an invocation like `/name`.
+      api.onInput(async (text) => {
+        const named = new Map<string, Skill>();
+        for (const match of text.matchAll(MENTION)) {
+          const skill = find(match[2] ?? "");
+          if (skill) named.set(skill.name, skill);
+        }
+        if (named.size === 0) return undefined;
         return {
-          context: [
-            customMessage(
-              "system-reminder",
-              `The user named the skill${unique.length === 1 ? "" : "s"} ${unique.join(", ")} in their next message; load ${unique.length === 1 ? "it" : "them"} with the skill tool before acting.`,
-            ),
-          ],
+          context: await Promise.all(
+            [...named.values()].map((skill) => invokedSkill(skill, `$${skill.name}`)),
+          ),
         };
       });
     },
