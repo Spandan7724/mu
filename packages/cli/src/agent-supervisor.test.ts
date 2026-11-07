@@ -800,7 +800,10 @@ describe("agent supervisor", () => {
         4_000,
       );
       expect(client.records.map((row) => row.lastError ?? "")).toEqual(
-        expect.arrayContaining([expect.stringContaining("exited with code 7")]),
+        expect.arrayContaining([
+          expect.stringContaining("exited with code 7"),
+          expect.stringContaining("could not read: event.taskId"),
+        ]),
       );
     } finally {
       client.close();

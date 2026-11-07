@@ -1,5 +1,6 @@
 import { bashTool } from "@mu/profile-coding";
 import { type AgentEvent, customMessage, type MarkdownCommandRun, readAuthFile } from "mu";
+import { MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS } from "./agent-view-protocol.ts";
 import type { ParsedArgs } from "./args.ts";
 import { applySavedThinking, saveThinkingLevel } from "./config.ts";
 import { transcriptExportCommand } from "./export-command.ts";
@@ -53,6 +54,11 @@ async function* fencedWorkerLines(
     const { ownershipToken: _ownershipToken, ...op } = parsed;
     yield JSON.stringify(op);
   }
+}
+
+export function snapshotCommandDescription(description: string): string {
+  if (description.length <= MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS) return description;
+  return `${description.slice(0, MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS - 1).trimEnd()}…`;
 }
 
 export interface AgentWorkerIo {
@@ -219,7 +225,7 @@ export async function runAgentWorker(
           ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.id } : {}),
           commands: runtime.commands.list().map((command) => ({
             label: command.name,
-            description: command.description,
+            description: snapshotCommandDescription(command.description),
             ...(command.kind ? { kind: command.kind } : {}),
           })),
         }),

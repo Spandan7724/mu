@@ -165,6 +165,16 @@ const workerOutSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("shutdown"), ownershipToken: z.string().uuid() }).strict(),
 ]);
 
+function unreadableOutput(error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return error.issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function parseWorkerOutput(
   line: string,
   ownershipToken: string,
@@ -934,6 +944,12 @@ export class AgentSupervisor {
         }
       }
     } catch (error) {
+      if (this.runtimes.get(sessionId) === runtime) {
+        await this.markWorkerFailed(
+          sessionId,
+          `session runtime sent output agent view could not read: ${unreadableOutput(error)}`,
+        ).catch(() => {});
+      }
       runtime.rejectReady(error instanceof Error ? error : new Error(String(error)));
       void this.terminateRuntime(runtime, "SIGTERM");
     }

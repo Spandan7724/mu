@@ -10,6 +10,8 @@ import {
 } from "./agent-view-state.ts";
 
 export const MAX_AGENT_VIEW_LINE_CHARS = 2_000_000;
+// Skills allow 1,024 characters; the worker shortens to this before sending.
+export const MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS = 512;
 export const MANAGED_ENVIRONMENT_KEYS = [
   ...new Set([
     "PATH",
@@ -457,7 +459,7 @@ export const attachmentSchema = z
         z
           .object({
             label: z.string().min(1).max(128),
-            description: z.string().max(512).optional(),
+            description: z.string().max(MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS).optional(),
             kind: z.literal("skill").optional(),
           })
           .strict(),

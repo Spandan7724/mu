@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { builtinProviderConfigs } from "mu";
+import { parseWorkerOutput } from "./agent-supervisor.ts";
 import {
   MANAGED_ENVIRONMENT_KEYS,
+  MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS,
   parseAgentViewRequest,
   parseAgentViewResponse,
 } from "./agent-view-protocol.ts";
+import { snapshotCommandDescription } from "./agent-worker.ts";
 
 describe("agent-view protocol", () => {
   test("requires a matching versioned hello", () => {
@@ -158,5 +161,37 @@ describe("agent-view protocol", () => {
         }),
       ),
     ).toThrow();
+  });
+});
+
+describe("worker snapshots", () => {
+  const token = "10000000-0000-4000-8000-000000000000";
+  const snapshotLine = (description: string) =>
+    JSON.stringify({
+      type: "snapshot",
+      ownershipToken: token,
+      snapshot: {
+        sessionId: "s1",
+        messages: [],
+        model: "fake/fake-1",
+        contextWindow: 10_000,
+        thinking: "off",
+        thinkingLevels: ["off"],
+        usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPercent: 0,
+        isRunning: false,
+        commands: [{ label: "docx", description, kind: "skill" }],
+      },
+    });
+
+  test("a skill description at the skill limit is shortened to one the supervisor accepts", () => {
+    const long = "word ".repeat(205).slice(0, 1024);
+    expect(() => parseWorkerOutput(snapshotLine(long), token)).toThrow();
+
+    const sent = snapshotCommandDescription(long);
+    expect(sent.length).toBeLessThanOrEqual(MAX_AGENT_VIEW_COMMAND_DESCRIPTION_CHARS);
+    expect(sent.endsWith("…")).toBe(true);
+    expect(() => parseWorkerOutput(snapshotLine(sent), token)).not.toThrow();
+    expect(snapshotCommandDescription("short")).toBe("short");
   });
 });
