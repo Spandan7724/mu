@@ -278,30 +278,3 @@ export function createManagedSessionRecord(input: {
     attached: false,
   };
 }
-
-// A fork is an idle row until it is opened; its worker resumes the saved fork.
-export function createForkedSessionRecord(
-  source: ManagedSessionRecord,
-  sessionId: string,
-  now = Date.now(),
-): ManagedSessionRecord {
-  return {
-    ...createManagedSessionRecord({
-      sessionId,
-      scope: source.scope,
-      prompt: source.initialPrompt,
-      cwd: source.workingCwd,
-      profile: source.profile,
-      ...(source.model ? { model: source.model } : {}),
-      ...(source.permissionMode ? { permissionMode: source.permissionMode } : {}),
-      ...(source.noInstructions ? { noInstructions: true } : {}),
-      ...(source.noCheckpoints ? { noCheckpoints: true } : {}),
-      now,
-    }),
-    originCwd: source.originCwd,
-    name: promptName(`fork · ${source.name}`),
-    state: "completed",
-    summary: displaySummary(`forked from ${source.name}`),
-    completedAt: now,
-  };
-}

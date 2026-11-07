@@ -17,7 +17,6 @@ import {
   runtimeMetadataSchema,
 } from "./agent-view-protocol.ts";
 import {
-  createForkedSessionRecord,
   createManagedSessionRecord,
   displaySummary,
   MAX_AGENT_VIEW_ERROR_CHARS,
@@ -37,7 +36,6 @@ import {
   updateSessionOwnershipWorker,
 } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
-import { isForkedCommandData } from "./fork-picker.ts";
 
 interface WorkerSnapshot {
   sessionId: string;
@@ -903,16 +901,6 @@ export class AgentSupervisor {
             record = { ...record, permissionMode: mode, updatedAt: this.now() };
             this.records.set(sessionId, record);
             await this.persistAndBroadcast(record);
-          }
-          if (
-            record &&
-            isForkedCommandData(out.data) &&
-            out.data.sourceSessionId === sessionId &&
-            !this.records.has(out.data.sessionId)
-          ) {
-            const forked = createForkedSessionRecord(record, out.data.sessionId, this.now());
-            this.records.set(forked.sessionId, forked);
-            await this.persistAndBroadcast(forked);
           }
           if (record) {
             this.broadcast(record.scope, {

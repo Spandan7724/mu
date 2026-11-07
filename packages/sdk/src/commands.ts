@@ -50,6 +50,46 @@ export interface CoreCommandHooks {
   checkpointUnavailable?: string;
 }
 
+// Only surfaces that can open the new session offer /fork.
+function forkCommand(
+  fork: NonNullable<CoreCommandHooks["fork"]>,
+  forkPoints: CoreCommandHooks["forkPoints"],
+): Command {
+  return {
+    name: "fork",
+    description: "Start a new session from an earlier prompt or from here",
+    run: async (ctx) => {
+      const target = ctx.args.trim();
+      if (!target) {
+        const points = forkPoints?.() ?? [];
+        if (points.length === 0) return { handled: true, message: "Nothing to fork yet." };
+        const data: ForkPointsCommandData = { kind: "fork-points", points };
+        return {
+          handled: true,
+          message: [
+            "here · the whole conversation",
+            ...points.map(
+              (point) => `${point.id} · before: ${point.prompt.replace(/\s+/g, " ").trim()}`,
+            ),
+          ].join("\n"),
+          data,
+        };
+      }
+      const result = await fork(target === "here" ? undefined : target);
+      if (!result.ok || !result.sessionId || !result.sourceSessionId) {
+        return { handled: true, message: result.message };
+      }
+      const data: ForkedCommandData = {
+        kind: "forked",
+        sessionId: result.sessionId,
+        sourceSessionId: result.sourceSessionId,
+        ...(result.prompt !== undefined ? { prompt: result.prompt } : {}),
+      };
+      return { handled: true, message: result.message, data };
+    },
+  };
+}
+
 export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
   return [
     {
@@ -137,40 +177,7 @@ export function coreCommands(hooks: CoreCommandHooks = {}): Command[] {
         };
       },
     },
-    {
-      name: "fork",
-      description: "Start a new session from an earlier prompt or from here",
-      run: async (ctx) => {
-        if (!hooks.fork) return { handled: true, message: "Fork is not available here." };
-        const target = ctx.args.trim();
-        if (!target) {
-          const points = hooks.forkPoints?.() ?? [];
-          if (points.length === 0) return { handled: true, message: "Nothing to fork yet." };
-          const data: ForkPointsCommandData = { kind: "fork-points", points };
-          return {
-            handled: true,
-            message: [
-              "here · the whole conversation",
-              ...points.map(
-                (point) => `${point.id} · before: ${point.prompt.replace(/\s+/g, " ").trim()}`,
-              ),
-            ].join("\n"),
-            data,
-          };
-        }
-        const result = await hooks.fork(target === "here" ? undefined : target);
-        if (!result.ok || !result.sessionId || !result.sourceSessionId) {
-          return { handled: true, message: result.message };
-        }
-        const data: ForkedCommandData = {
-          kind: "forked",
-          sessionId: result.sessionId,
-          sourceSessionId: result.sourceSessionId,
-          ...(result.prompt !== undefined ? { prompt: result.prompt } : {}),
-        };
-        return { handled: true, message: result.message, data };
-      },
-    },
+    ...(hooks.fork ? [forkCommand(hooks.fork, hooks.forkPoints)] : []),
     {
       name: "diff",
       description: "Show everything this session has changed",

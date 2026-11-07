@@ -51,6 +51,8 @@ export interface SessionRuntimeOptions {
   savedPermissionMode?: boolean | undefined;
   noInstructions?: boolean | undefined;
   noCheckpoints?: boolean | undefined;
+  // Leaves out /fork where the surface cannot open the new session.
+  noFork?: boolean | undefined;
   browser?: BrowserFlags | undefined;
   // Merged over the options derived from flags (tests and embedders).
   profileOptions?: Record<string, unknown> | undefined;
@@ -246,8 +248,12 @@ export async function createCliSessionRuntime(
     undo: (turnCount) => agent.undo(turnCount),
     undoPoints: () => agent.undoPoints(),
     redo: () => agent.redo(),
-    fork: (beforeEntryId) => agent.createFork(beforeEntryId),
-    forkPoints: () => agent.forkPoints(),
+    ...(options.noFork
+      ? {}
+      : {
+          fork: (beforeEntryId?: string) => agent.createFork(beforeEntryId),
+          forkPoints: () => agent.forkPoints(),
+        }),
     diff: () => agent.sessionDiff(),
     ...(agent.checkpointUnavailable ? { checkpointUnavailable: agent.checkpointUnavailable } : {}),
   });

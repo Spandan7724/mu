@@ -35,6 +35,29 @@ describe("shared CLI session runtime", () => {
     }
   });
 
+  test("/fork is offered unless the surface cannot open the new session", async () => {
+    const runtimes = await Promise.all(
+      [false, true].map((noFork) =>
+        createCliSessionRuntime({
+          cwd: tmpdir(),
+          noFork,
+          permissions: "deny",
+          agentOptions: {
+            provider: new FakeProvider([]),
+            model: fakeModel,
+            tools: [],
+            session: new MemorySessionStore(),
+          },
+        }),
+      ),
+    );
+    try {
+      expect(runtimes.map((runtime) => runtime.commands.has("fork"))).toEqual([true, false]);
+    } finally {
+      await Promise.all(runtimes.map((runtime) => runtime.agent.shutdown()));
+    }
+  });
+
   test("approvals keep configured denies last and session rules can be forgotten", async () => {
     const root = await mkdtemp(join(tmpdir(), "mu-session-runtime-"));
     const home = await mkdtemp(join(tmpdir(), "mu-session-home-"));

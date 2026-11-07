@@ -84,6 +84,7 @@ export async function runAgentWorker(
     allowAll: args.allowAll,
     noInstructions: args.noInstructions,
     noCheckpoints: args.noCheckpoints,
+    noFork: true,
     sessionId: args.workerSessionId,
     resumeSessionId: args.resumeSessionId,
     maxTurns: args.maxTurns,
