@@ -38,7 +38,6 @@ import {
   type ExtensionHost,
   estimateTextTokens,
   estimateTokens,
-  evaluateTargets,
   isContextTooLongResult,
   type LoopConfig,
   MemorySessionStore,
@@ -47,7 +46,6 @@ import {
   type PermissionReply,
   type PermissionRequest,
   type PermissionRule,
-  type PermissionTarget,
   type ProfileRuntime,
   permissionOutcome,
   runLoop,
@@ -73,6 +71,7 @@ import {
   UsageLedger,
   type UsageLine,
 } from "./cost-report.ts";
+import { createPermissionGate } from "./permission-gate.ts";
 import {
   STRUCTURED_OUTPUT_REMINDERS,
   STRUCTURED_OUTPUT_TOOL,
@@ -81,6 +80,7 @@ import {
   structuredOutputReminder,
   structuredOutputTool,
 } from "./structured-output.ts";
+import { TurnChanges } from "./turn-changes.ts";
 import { resolveWebSearchBackend } from "./web-search.ts";
 
 const DEFAULT_PERMISSIONS: PermissionRule[] = [{ permission: "*", pattern: "*", action: "allow" }];
@@ -278,44 +278,6 @@ function promptText(message: AgentMessage): string {
 
 function createSessionId(): string {
   return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
-}
-
-// Tools that do not say, and classifiers that fail, count as changing state:
-// a skipped capture would make the turn's undo silently incomplete.
-function mayChangeState(tool: AnyTool | undefined, args: unknown): boolean {
-  const flag = tool?.changesState;
-  if (flag === undefined) return true;
-  if (typeof flag === "boolean") return flag;
-  try {
-    return flag(args) !== false;
-  } catch {
-    return true;
-  }
-}
-
-// What a state-changing call declares it changes; undefined when it cannot say.
-function declaredResources(tool: AnyTool | undefined, args: unknown): string[] | undefined {
-  const declare = tool?.changedResources;
-  if (!declare) return undefined;
-  try {
-    const resources: unknown = declare(args);
-    return Array.isArray(resources) && resources.every((item) => typeof item === "string")
-      ? resources
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// What a turn's allowed tool calls may have changed. `unknown` is set by a call
-// that may change state without naming every resource it changes. With
-// declared coverage, `uncaptured` holds resources whose prior state could not
-// be recorded, and `capture` serializes those pre-change captures.
-interface TurnChanges {
-  resources: Set<string>;
-  unknown: boolean;
-  uncaptured: Set<string>;
-  capture: Promise<void>;
 }
 
 export class Agent {
@@ -2261,135 +2223,21 @@ export class Agent {
       return breach;
     };
 
-    const turnChanges: TurnChanges = {
-      resources: new Set(),
-      unknown: false,
-      uncaptured: new Set(),
-      capture: Promise.resolve(),
-    };
-    // A resource's state before its first change in the turn joins the
-    // before-turn checkpoint. Taken after the permission decision, so a denied
-    // call records nothing.
-    const captureBeforeChange = async (resources: string[]) => {
-      const provider = this.options.checkpointProvider;
-      if (provider?.coverage !== "declared" || !provider.snapshotResources) return;
-      const snapshotResources = provider.snapshotResources.bind(provider);
-      const fresh = [...new Set(resources)].filter(
-        (resource) => !turnChanges.resources.has(resource),
-      );
-      for (const resource of fresh) turnChanges.resources.add(resource);
-      if (fresh.length === 0) return;
-      turnChanges.capture = turnChanges.capture.then(async () => {
-        const pending = this.pendingCheckpoint;
-        const ref = pending
-          ? await snapshotResources(pending.beforeRef, fresh, "before change").catch(
-              () => undefined,
-            )
-          : undefined;
-        if (pending && ref) pending.beforeRef = ref;
-        // Its change would read as a creation, and undo would delete it.
-        else for (const resource of fresh) turnChanges.uncaptured.add(resource);
-      });
-      await turnChanges.capture;
-    };
-    const gateToolCall = async (
-      info: Parameters<NonNullable<LoopConfig["beforeToolCall"]>>[0],
-    ): Promise<Awaited<ReturnType<NonNullable<LoopConfig["beforeToolCall"]>>>> => {
+    const turnChanges = new TurnChanges(
+      this.options.checkpointProvider,
+      () => this.pendingCheckpoint,
+    );
+    const gateToolCall = createPermissionGate({
+      tools,
+      rules: () => this.effectivePermissionRules(),
+      host,
+      onPermission: this.options.onPermission,
+      signal: this.controller.signal,
+      emit,
       // The structured-output tool is internal plumbing, never gated.
-      if (info.toolCall.name === STRUCTURED_OUTPUT_TOOL) return undefined;
-      await checkpointReady;
-
-      let args = info.args;
-      if (host) {
-        const directive = await host.runToolCallHooks({
-          toolName: info.toolCall.name,
-          toolCallId: info.toolCall.id,
-          args,
-        });
-        if (directive?.block) {
-          return { block: true, reason: directive.reason ?? "Blocked by an extension" };
-        }
-        if (directive?.args) args = directive.args;
-      }
-
-      const selectedTool = tools.find((tool) => tool.name === info.toolCall.name);
-      let permission = info.toolCall.name;
-      try {
-        permission = selectedTool?.permissionScope?.(args) ?? permission;
-      } catch {
-        // A broken profile classifier must fall back to the concrete tool.
-      }
-      let pattern = JSON.stringify(args);
-      try {
-        pattern = selectedTool?.permissionPattern?.(args) ?? pattern;
-      } catch {
-        // A broken profile projection must not bypass the generic permission rules.
-      }
-      let targets: PermissionTarget[] = [{ permission, pattern }];
-      try {
-        const projected = selectedTool?.permissionTargets?.(args);
-        if (projected && projected.length > 0) targets = projected;
-      } catch {
-        // Unprojectable arguments are judged by the call's single scope and pattern.
-      }
-      const { action, asked } = evaluateTargets(
-        this.effectivePermissionRules(),
-        info.toolCall.name,
-        targets,
-      );
-      const rewritten = args === info.args ? undefined : { rewrittenArgs: args };
-      if (action === "allow") {
-        return rewritten;
-      }
-      if (action === "deny") {
-        return { block: true, denied: true, reason: `Permission denied for ${info.toolCall.name}` };
-      }
-      const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
-        () => undefined,
-      );
-      const request: PermissionRequest = {
-        id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-        toolCallId: info.toolCall.id,
-        toolName: info.toolCall.name,
-        permission,
-        pattern,
-        description: details?.description ?? `Run ${info.toolCall.name}`,
-        ...(details?.preview ? { preview: details.preview } : {}),
-        allowRules: asked.map((target) => ({
-          permission: target.permission ?? info.toolCall.name,
-          pattern: target.remember ?? target.pattern,
-        })),
-      };
-      emit({ type: "permission_asked", request });
-      // Default DENY: never hang an unattended process on an unanswered ask.
-      let decision: { outcome: "allow" | "deny"; message?: string } = { outcome: "deny" };
-      if (this.options.onPermission && !this.controller.signal.aborted) {
-        const signal = this.controller.signal;
-        let onAbort: (() => void) | undefined;
-        const aborted = new Promise<"deny">((resolve) => {
-          onAbort = () => resolve("deny");
-          signal.addEventListener("abort", onAbort, { once: true });
-        });
-        try {
-          decision = permissionOutcome(
-            await Promise.race([this.options.onPermission(request), aborted]),
-          );
-        } finally {
-          if (onAbort) signal.removeEventListener("abort", onAbort);
-        }
-      }
-      emit({ type: "permission_resolved", requestId: request.id, outcome: decision.outcome });
-      if (decision.outcome === "allow") {
-        return rewritten;
-      }
-      return {
-        block: true,
-        denied: true,
-        reason: decision.message
-          ? `Permission denied for ${info.toolCall.name}. The user said: ${decision.message}`
-          : `Permission denied for ${info.toolCall.name}`,
-      };
-    };
+      exempt: [STRUCTURED_OUTPUT_TOOL],
+      ready: checkpointReady,
+    });
 
     const credentialResolver = this.options.getCredentials;
     const config: LoopConfig = {
@@ -2432,16 +2280,10 @@ export class Agent {
       beforeToolCall: async (info) => {
         const directive = await gateToolCall(info);
         if (!directive?.block && info.toolCall.name !== STRUCTURED_OUTPUT_TOOL) {
-          const selected = tools.find((candidate) => candidate.name === info.toolCall.name);
-          const args = directive?.rewrittenArgs ?? info.args;
-          if (mayChangeState(selected, args)) {
-            const resources = declaredResources(selected, args);
-            if (!resources) turnChanges.unknown = true;
-            else {
-              await captureBeforeChange(resources);
-              for (const resource of resources) turnChanges.resources.add(resource);
-            }
-          }
+          await turnChanges.record(
+            tools.find((candidate) => candidate.name === info.toolCall.name),
+            directive?.rewrittenArgs ?? info.args,
+          );
         }
         return directive;
       },
