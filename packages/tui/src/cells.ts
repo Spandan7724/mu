@@ -49,7 +49,7 @@ function body(ctx: RenderContext): number {
   return Math.max(20, ctx.width - MARGIN.length);
 }
 
-// ▸ user input
+// ▎ user input, the edge on every row
 export interface UserCellOptions {
   // Dim metadata after the text, such as `steered`.
   note?: string;
@@ -63,19 +63,20 @@ export function userCell(
   options: UserCellOptions = {},
 ): string[] {
   const { note, queued } = options;
-  const marker = `${queued ? dim(GLYPHS.pending, ctx.depth) : accent(GLYPHS.userMarker, ctx.depth)} `;
   const suffix = note ? ` ${GLYPHS.separator} ${note}` : "";
   const safe = sanitizeUntrusted(text);
   // Styled per line: wrapping carries a style across breaks but not across newlines.
-  const content = queued
-    ? (safe + suffix)
-        .split("\n")
-        .map((line) => dim(line, ctx.depth))
-        .join("\n")
-    : safe + (suffix ? dim(suffix, ctx.depth) : "");
-  return wrapText(content, body(ctx) - 2, "  ").map((line, i) =>
-    i === 0 ? MARGIN + marker + line : MARGIN + line,
-  );
+  const paint = (line: string) =>
+    queued ? dim(line, ctx.depth) : styleText(line, { user: true }, ctx.depth);
+  const lines = (queued ? safe + suffix : safe).split("\n").map(paint).join("\n");
+  const content = queued || !suffix ? lines : lines + dim(suffix, ctx.depth);
+  const rows = wrapText(content, body(ctx) - 2);
+  if (queued) {
+    const marker = `${dim(GLYPHS.pending, ctx.depth)} `;
+    return rows.map((line, i) => MARGIN + (i === 0 ? marker : "  ") + line);
+  }
+  const edge = `${styleText(GLYPHS.userEdge, { user: true }, ctx.depth)} `;
+  return rows.map((line) => MARGIN + edge + line);
 }
 
 // mu  agent text, hanging indent under the label

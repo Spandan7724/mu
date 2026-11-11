@@ -34,6 +34,10 @@ const ACCENT_256 = 43;
 // drift apart silently.
 const HEADING_RGB = ACCENT_RGB;
 const HEADING_256 = ACCENT_256;
+// The user's own words: the accent's hue lifted toward white so it reads as text
+// and stays apart from `mu`, which keeps the full accent.
+const USER_RGB = [108, 224, 209] as const;
+const USER_256 = 116;
 const LINK_RGB = [59, 130, 246] as const;
 const LINK_256 = 69;
 const CODE_RGB = [212, 212, 212] as const;
@@ -101,6 +105,7 @@ export interface Style {
   green?: boolean;
   red?: boolean;
   heading?: boolean;
+  user?: boolean;
   link?: boolean;
   code?: boolean;
   codeAccent?: boolean;
@@ -135,6 +140,11 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
     if (depth === "truecolor")
       codes.push(`38;2;${HEADING_RGB[0]};${HEADING_RGB[1]};${HEADING_RGB[2]}`);
     else if (depth === "ansi256") codes.push(`38;5;${HEADING_256}`);
+    else codes.push("96");
+  }
+  if (style.user) {
+    if (depth === "truecolor") codes.push(`38;2;${USER_RGB[0]};${USER_RGB[1]};${USER_RGB[2]}`);
+    else if (depth === "ansi256") codes.push(`38;5;${USER_256}`);
     else codes.push("96");
   }
   if (style.link) {
@@ -210,6 +220,8 @@ export function styleText(text: string, style: Style, depth: ColorDepth): string
 
 export const GLYPHS = {
   userMarker: "▸",
+  // Runs down every row of a user turn in the transcript.
+  userEdge: "▎",
   ok: "✓",
   error: "✗",
   // Not started yet: the hollow twin of the user marker.

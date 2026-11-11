@@ -51,8 +51,19 @@ const visible = (lines: string[]) => lines.map(stripAnsi);
 describe("transcript cells (golden lines)", () => {
   test("user turn", () => {
     expect(visible(userCell("add retry logic to the api client", plain))).toEqual([
-      "  ▸ add retry logic to the api client",
+      "  ▎ add retry logic to the api client",
     ]);
+  });
+
+  test("the user edge runs down wrapped rows and rows after a newline alike", () => {
+    expect(
+      visible(
+        userCell("fix the jitter and add a regression test\ndon't touch the api", {
+          ...plain,
+          width: 30,
+        }),
+      ),
+    ).toEqual(["  ▎ fix the jitter and add a", "  ▎ regression test", "  ▎ don't touch the api"]);
   });
 
   test("agent turn hangs continuation lines under the label", () => {
@@ -661,9 +672,9 @@ describe("components", () => {
     );
   });
 
-  test("a delivered steer keeps the user marker and a dim note", () => {
+  test("a delivered steer keeps the user edge and a dim note", () => {
     expect(visible(userCell("check jitter first", plain, { note: "steered" }))).toEqual([
-      "  ▸ check jitter first · steered",
+      "  ▎ check jitter first · steered",
     ]);
   });
 

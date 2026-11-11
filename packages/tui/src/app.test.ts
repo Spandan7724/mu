@@ -163,7 +163,7 @@ describe("fake-agent session", () => {
     for (const event of script) app.handleEvent(event);
     const visible = app.renderTranscript().map(stripAnsi);
 
-    expect(visible).toContain("  ▸ add retries");
+    expect(visible).toContain("  ▎ add retries");
     expect(visible).toContain("  › read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
@@ -1274,7 +1274,7 @@ describe("input handling", () => {
     const h = harness();
     feed(h.app, "hello\r");
     expect(h.submitted).toEqual(["hello"]);
-    expect(h.app.renderTranscript().map(stripAnsi)).toContain("  ▸ hello");
+    expect(h.app.renderTranscript().map(stripAnsi)).toContain("  ▎ hello");
   });
 
   test("an immediate submitted message is reconciled with the durable user event", () => {
@@ -1284,8 +1284,8 @@ describe("input handling", () => {
       h.app
         .renderTranscript()
         .map(stripAnsi)
-        .filter((line) => line.includes("▸")),
-    ).toEqual(["  ▸ original"]);
+        .filter((line) => line.includes("▎")),
+    ).toEqual(["  ▎ original"]);
 
     h.app.handleEvent({
       type: "message_end",
@@ -1300,8 +1300,8 @@ describe("input handling", () => {
       h.app
         .renderTranscript()
         .map(stripAnsi)
-        .filter((line) => line.includes("▸")),
-    ).toEqual(["  ▸ rewritten by hook"]);
+        .filter((line) => line.includes("▎")),
+    ).toEqual(["  ▎ rewritten by hook"]);
   });
 
   test("a run that ends before accepting its submitted message removes the preview", () => {
@@ -1403,7 +1403,7 @@ describe("input handling", () => {
     pending = h.app.renderBottom().map(stripAnsi).join("\n");
     expect(pending).not.toContain("▹ same · steer");
     expect(pending).toContain("▹ same · follow-up");
-    expect(h.app.renderScreen().map(stripAnsi)).toContain("  ▸ same · steered");
+    expect(h.app.renderScreen().map(stripAnsi)).toContain("  ▎ same · steered");
   });
 
   test("alt+up restores only the newest queued message for editing", () => {
@@ -5707,7 +5707,7 @@ describe("transcript spacing", () => {
     app.appendTranscript(["", "", "  Exported to notes.md", "", ""]);
 
     expect(above(app)).toEqual([
-      "  ▸ fix it",
+      "  ▎ fix it",
       "",
       "  thinking · Reading the code",
       "  › Explored 1 file, 1 search, 1 web search",
@@ -5784,7 +5784,7 @@ describe("transcript spacing", () => {
 
     expect(above(app)).toEqual(live);
     expect(live).toEqual([
-      "  ▸ why",
+      "  ▎ why",
       "",
       "  › read a.ts · 1 line",
       "",
