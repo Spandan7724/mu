@@ -1,4 +1,4 @@
-import { type AnyTool, type SessionStore, SessionTree, type TreeEntry } from "@mu/core";
+import type { AnyTool, SessionStore, SessionTree, TreeEntry } from "@mu/core";
 import { z } from "zod";
 import { tool } from "./tool.ts";
 
@@ -135,7 +135,7 @@ export function recallTools(
   store: SessionStore,
   scope: Record<string, string> = {},
 ): AnyTool[] {
-  const snapshot = SessionTree.fromJsonl(current.toJsonl());
+  const snapshot = current.clone();
   snapshot.fork(current.head);
   const currentId = snapshot.header?.id;
   const fields = Object.entries(scope);

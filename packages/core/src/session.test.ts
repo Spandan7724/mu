@@ -360,6 +360,27 @@ describe("SessionTree", () => {
   });
 });
 
+describe("SessionTree.clone", () => {
+  test("a clone grows and forks without touching its source", () => {
+    const tree = newTree();
+    const first = tree.appendMessage(userMessage("one"));
+    const second = userMessage("two");
+    tree.appendMessage(second);
+
+    const copy = tree.clone();
+    copy.fork(first.id);
+    const added = copy.appendMessage(userMessage("other branch"));
+
+    expect(tree.head).not.toBe(copy.head);
+    expect(tree.has(added.id)).toBe(false);
+    expect(tree.messagesAt().length).toBe(2);
+    expect(copy.messagesAt().length).toBe(2);
+    expect(copy.toJsonl().startsWith(tree.toJsonl())).toBe(true);
+    // Entries are shared, so a message keeps the identity callers map it by.
+    expect(tree.clone().entryIdForMessage(second)).toBe(tree.entryIdForMessage(second));
+  });
+});
+
 describe("jsonl helpers", () => {
   test("serialize/parse round-trip", () => {
     const tree = newTree();

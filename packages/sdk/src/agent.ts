@@ -1269,7 +1269,7 @@ export class Agent {
         );
       }
       const tokensAfterSummary = estimateTokens([...compacted, ...refreshed]);
-      const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
+      const candidateTree = this.tree.clone();
       if (replacements.length > 0) {
         candidateTree.append({ type: "microcompaction", replacements });
       }
@@ -1511,7 +1511,7 @@ export class Agent {
     }
 
     const current = this.tree;
-    const candidate = SessionTree.fromJsonl(current.toJsonl());
+    const candidate = current.clone();
     candidate.fork(step.beforeEntryId);
     const nextDone = state.done.slice(0, -turnCount);
     const newlyUndone = selected
@@ -1613,7 +1613,7 @@ export class Agent {
     }
 
     const current = this.tree;
-    const candidate = SessionTree.fromJsonl(current.toJsonl());
+    const candidate = current.clone();
     candidate.fork(step.id);
     const state = this.checkpoints.state();
     const { redoRef: _redoRef, ...redone } = step;
@@ -2606,7 +2606,7 @@ export class Agent {
                 throw new Error("Compaction observation could not be mapped to the session");
               return { entryId, message };
             });
-            const candidateTree = SessionTree.fromJsonl(this.tree.toJsonl());
+            const candidateTree = this.tree.clone();
             if (replacements.length)
               candidateTree.append({ type: "microcompaction", replacements });
             const summaryMessage = compacted[0];

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, stat } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SESSION_VERSION, SessionTree } from "@mu/core";
+import { SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
 import { FileSessionStore } from "./file-store.ts";
 
 function tree(id: string): SessionTree {
@@ -52,5 +52,134 @@ describe("FileSessionStore", () => {
     expect(await store.delete("remove")).toBe(false);
     expect(await store.load("remove")).toBeUndefined();
     expect(await store.list()).toEqual(["keep"]);
+  });
+
+  const only = async (root: string) => {
+    const [file] = (await readdir(root)).filter((name) => name.endsWith(".jsonl"));
+    return join(root, file as string);
+  };
+
+  test("a grown session is appended to, not rewritten", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-append-"));
+    const store = new FileSessionStore({ root });
+    const session = tree("grow");
+    session.appendMessage(userMessage("one"));
+    await store.save("grow", session);
+    const path = await only(root);
+    const first = await stat(path);
+
+    session.appendMessage(userMessage("two"));
+    session.appendMessage(userMessage("three"));
+    await store.save("grow", session);
+    await store.save("grow", session);
+
+    expect((await stat(path)).ino).toBe(first.ino);
+    expect(await readFile(path, "utf8")).toBe(session.toJsonl());
+    expect((await new FileSessionStore({ root }).load("grow"))?.toJsonl()).toBe(session.toJsonl());
+  });
+
+  test("a reopened session keeps appending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-reopen-"));
+    const session = tree("reopen");
+    session.appendMessage(userMessage("one"));
+    await new FileSessionStore({ root }).save("reopen", session);
+    const path = await only(root);
+    const first = await stat(path);
+
+    const store = new FileSessionStore({ root });
+    const loaded = (await store.load("reopen")) as SessionTree;
+    loaded.appendMessage(userMessage("two"));
+    await store.save("reopen", loaded);
+
+    expect((await stat(path)).ino).toBe(first.ino);
+    expect(await readFile(path, "utf8")).toBe(loaded.toJsonl());
+  });
+
+  test("history that is not a continuation of the file replaces it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-diverge-"));
+    const store = new FileSessionStore({ root });
+    const session = tree("diverge");
+    const base = session.appendMessage(userMessage("one"));
+    session.appendMessage(userMessage("two"));
+    await store.save("diverge", session);
+    const path = await only(root);
+
+    const other = SessionTree.fromJsonl(session.toJsonl().split("\n").slice(0, 2).join("\n"));
+    other.fork(base.id);
+    other.appendMessage(userMessage("another branch"));
+    other.appendMessage(userMessage("and more"));
+    await store.save("diverge", other);
+    expect(await readFile(path, "utf8")).toBe(other.toJsonl());
+
+    other.setTitle("renamed");
+    other.appendMessage(userMessage("after the rename"));
+    await store.save("diverge", other);
+    expect(await readFile(path, "utf8")).toBe(other.toJsonl());
+
+    const shorter = SessionTree.fromJsonl(other.toJsonl().split("\n").slice(0, 2).join("\n"));
+    await store.save("diverge", shorter);
+    expect(await readFile(path, "utf8")).toBe(shorter.toJsonl());
+  });
+
+  test("a file changed by someone else is replaced, never appended to", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-foreign-"));
+    const store = new FileSessionStore({ root });
+    const session = tree("foreign");
+    session.appendMessage(userMessage("one"));
+    await store.save("foreign", session);
+    const path = await only(root);
+
+    await appendFile(
+      path,
+      '{"type":"custom","id":"x","parentId":null,"customType":"t","data":1}\n',
+    );
+    session.appendMessage(userMessage("two"));
+    await store.save("foreign", session);
+    expect(await readFile(path, "utf8")).toBe(session.toJsonl());
+
+    await rm(path);
+    session.appendMessage(userMessage("three"));
+    await store.save("foreign", session);
+    expect(await readFile(path, "utf8")).toBe(session.toJsonl());
+  });
+
+  test("concurrent saves leave the latest session intact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-race-"));
+    const store = new FileSessionStore({ root });
+    const session = tree("race");
+    const saves: Promise<void>[] = [];
+    for (let index = 0; index < 20; index++) {
+      session.appendMessage(userMessage(`message ${index}`));
+      saves.push(store.save("race", session));
+    }
+    await Promise.all(saves);
+    expect(await readFile(await only(root), "utf8")).toBe(session.toJsonl());
+  });
+
+  test("a last line cut short by a crash is dropped on load and healed by the next save", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-torn-"));
+    const session = tree("torn");
+    session.appendMessage(userMessage("one"));
+    await new FileSessionStore({ root }).save("torn", session);
+    const path = await only(root);
+    await appendFile(path, '{"type":"message","id":"e9","parentId":');
+
+    const store = new FileSessionStore({ root });
+    const loaded = (await store.load("torn")) as SessionTree;
+    expect(loaded.toJsonl()).toBe(session.toJsonl());
+    loaded.appendMessage(userMessage("two"));
+    await store.save("torn", loaded);
+    expect(await readFile(path, "utf8")).toBe(loaded.toJsonl());
+  });
+
+  test("listing reads only each header", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-list-"));
+    const store = new FileSessionStore({ root });
+    const session = tree("listed");
+    session.appendMessage(userMessage("x".repeat(200_000)));
+    await store.save("listed", session);
+    await appendFile(await only(root), "not json at all\n");
+
+    expect(await store.list()).toEqual(["listed"]);
   });
 });

@@ -395,6 +395,17 @@ export class SessionTree {
     return tree;
   }
 
+  // An independent tree over the same entries: appends and forks on the copy
+  // leave this one untouched. Entries are never edited once appended, so they
+  // are shared rather than copied.
+  clone(): SessionTree {
+    const copy = new SessionTree();
+    copy.entries = [...this.entries];
+    copy.byId = new Map(this.byId);
+    copy.headId = this.headId;
+    return copy;
+  }
+
   toJsonl(): string {
     return serializeSession(this.entries);
   }
