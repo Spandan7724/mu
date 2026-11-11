@@ -109,7 +109,7 @@ describe("discoverOpenAICodexModels", () => {
       maxOutput: 128_000,
       modalities: ["text", "image"],
       thinking: true,
-      thinkingLevels: ["low", "medium", "xhigh", "ultra"],
+      thinkingLevels: ["low", "medium", "xhigh"],
       defaultThinkingLevel: "low",
     });
     expect(discovered?.[1]).toMatchObject({

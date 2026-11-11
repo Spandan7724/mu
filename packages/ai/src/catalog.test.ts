@@ -107,11 +107,11 @@ describe("catalog", () => {
     const expected = {
       "gpt-5.6-sol": {
         defaultThinkingLevel: "low",
-        thinkingLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       },
       "gpt-5.6-terra": {
         defaultThinkingLevel: "medium",
-        thinkingLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        thinkingLevels: ["low", "medium", "high", "xhigh", "max"],
       },
       "gpt-5.6-luna": {
         defaultThinkingLevel: "medium",

@@ -51,8 +51,10 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+// Codex lists "ultra" as a client-side alias that also enables proactive
+// multi-agent work; the Responses API rejects it, and mu has no such mode.
 function reasoningEffort(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return typeof value === "string" && value.length > 0 && value !== "ultra" ? value : undefined;
 }
 
 function codexModelInfo(
@@ -93,7 +95,7 @@ function codexModelInfo(
         )
         .filter((level): level is string => level !== undefined)
     : [];
-  const fallbackLevels = fallback?.thinkingLevels;
+  const fallbackLevels = fallback?.thinkingLevels?.filter((level) => level !== "ultra");
   const levels = reasoningLevels.length > 0 ? reasoningLevels : fallbackLevels;
   const defaultCandidate =
     reasoningEffort(model.default_reasoning_level) ?? fallback?.defaultThinkingLevel;

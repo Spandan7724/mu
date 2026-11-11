@@ -27,7 +27,7 @@ function model(id: string): ModelInfo {
 
 function cacheBody(models: ModelInfo[]): string {
   return JSON.stringify({
-    version: 6,
+    version: 7,
     updatedAt: "2026-07-27T00:00:00.000Z",
     models,
   });
@@ -58,7 +58,7 @@ describe("model catalog cache", () => {
       version: number;
       models: ModelInfo[];
     };
-    expect(stored.version).toBe(6);
+    expect(stored.version).toBe(7);
     expect(stored.models).toEqual(discovered);
 
     const secondRegistered: ModelInfo[][] = [];

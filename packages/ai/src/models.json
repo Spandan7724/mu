@@ -71,7 +71,7 @@
       "maxOutput": 128000,
       "modalities": ["text", "image"],
       "thinking": true,
-      "thinkingLevels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "thinkingLevels": ["low", "medium", "high", "xhigh", "max"],
       "defaultThinkingLevel": "low",
       "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
     },
@@ -83,7 +83,7 @@
       "maxOutput": 128000,
       "modalities": ["text", "image"],
       "thinking": true,
-      "thinkingLevels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+      "thinkingLevels": ["low", "medium", "high", "xhigh", "max"],
       "defaultThinkingLevel": "medium",
       "pricing": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
     },
