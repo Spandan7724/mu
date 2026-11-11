@@ -176,6 +176,85 @@ describe("fake-agent session", () => {
     expect(footerLine).toContain("$0.14");
   });
 
+  test("parallel calls show each result as it settles and commit in call order", () => {
+    const { app } = harness();
+    const start = (id: string, toolName: string, args: Record<string, unknown>): AgentEvent => ({
+      type: "tool_execution_start",
+      toolCallId: id,
+      toolName,
+      args,
+    });
+    const end = (id: string, toolName: string, details: Record<string, unknown>): AgentEvent => ({
+      type: "tool_execution_end",
+      toolCallId: id,
+      result: {
+        role: "toolResult",
+        toolCallId: id,
+        toolName,
+        content: [{ type: "text", text: `out ${id}` }],
+        details,
+        isError: details.exitCode !== undefined && details.exitCode !== 0,
+        timestamp: 2,
+      },
+    });
+    const named = (lines: string[]) =>
+      lines.map(stripAnsi).filter((line) => /sleep 5|notes\.md|make fail/.test(line));
+    const order = (lines: string[]) =>
+      named(lines).map((line) => line.match(/sleep 5|notes\.md|make fail/)?.[0]);
+
+    app.handleEvent({ type: "agent_start" });
+    app.handleEvent({ type: "turn_start" });
+    app.handleEvent(start("c1", "bash", { command: "sleep 5" }));
+    app.handleEvent(start("c2", "read", { path: "notes.md" }));
+    app.handleEvent(start("c3", "bash", { command: "make fail" }));
+
+    // The fast calls settle first: nothing joins the transcript ahead of c1,
+    // but their rows stop running and show the outcome on one line each.
+    expect(app.handleEvent(end("c3", "bash", { exitCode: 1 }))).toEqual([]);
+    expect(app.handleEvent(end("c2", "read", { lines: 12 }))).toEqual([]);
+    expect(named(app.renderTranscript())).toEqual([]);
+    const live = named(app.renderBottom());
+    expect(order(app.renderBottom())).toEqual(["sleep 5", "notes.md", "make fail"]);
+    expect(live[0]).toContain("running");
+    expect(live[1]).toContain("12 lines");
+    expect(live[2]).toContain("✗ exit 1");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).not.toContain("out c3");
+
+    const committed = app.handleEvent(end("c1", "bash", { exitCode: 0 }));
+    expect(order(committed)).toEqual(["sleep 5", "notes.md", "make fail"]);
+    expect(order(app.renderTranscript())).toEqual(["sleep 5", "notes.md", "make fail"]);
+    expect(named(app.renderBottom())).toEqual([]);
+  });
+
+  test("a result held behind a call that never ends is committed when the turn does", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "agent_start" });
+    for (const id of ["c1", "c2"]) {
+      app.handleEvent({
+        type: "tool_execution_start",
+        toolCallId: id,
+        toolName: "bash",
+        args: { command: `echo ${id}` },
+      });
+    }
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c2",
+      result: {
+        role: "toolResult",
+        toolCallId: "c2",
+        toolName: "bash",
+        content: [{ type: "text", text: "c2" }],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 2,
+      },
+    });
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).not.toContain("echo c2");
+    app.handleEvent({ type: "agent_end", messages: [], reason: "aborted" });
+    expect(app.renderTranscript().map(stripAnsi).join("\n")).toContain("echo c2");
+  });
+
   test("a failing tool renders with the error glyph", () => {
     const { app } = harness();
     app.handleEvent({

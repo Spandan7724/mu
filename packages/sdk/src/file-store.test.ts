@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SESSION_VERSION, SessionTree, userMessage } from "@mu/core";
@@ -170,6 +170,38 @@ describe("FileSessionStore", () => {
     loaded.appendMessage(userMessage("two"));
     await store.save("torn", loaded);
     expect(await readFile(path, "utf8")).toBe(loaded.toJsonl());
+  });
+
+  test("an append interrupted at any byte loads as a clean earlier state", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-file-crash-"));
+    const session = tree("crash");
+    session.appendMessage(userMessage("one"));
+    const before = session.toJsonl();
+    session.appendMessage(userMessage("two — with a multi-byte tail ✓"));
+    session.appendMessage(userMessage("three"));
+    const after = session.toJsonl();
+    const writer = new FileSessionStore({ root });
+    await writer.save("crash", session);
+    const path = await only(root);
+    const full = Buffer.from(after);
+    const start = Buffer.byteLength(before);
+
+    const seen = new Set<number>();
+    for (let cut = start; cut <= full.length; cut++) {
+      await writeFile(path, full.subarray(0, cut));
+      const store = new FileSessionStore({ root });
+      const loaded = (await store.load("crash")) as SessionTree;
+      const text = loaded.toJsonl();
+      expect(after.startsWith(text)).toBe(true);
+      expect(text.startsWith(before)).toBe(true);
+      seen.add(text.length);
+
+      loaded.appendMessage(userMessage("next"));
+      await store.save("crash", loaded);
+      expect(await readFile(path, "utf8")).toBe(loaded.toJsonl());
+    }
+    // Only whole entries ever appear: none, the first, or both.
+    expect(seen.size).toBe(3);
   });
 
   test("listing reads only each header", async () => {

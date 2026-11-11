@@ -9,6 +9,7 @@ import type {
   CompactionProgress,
   PermissionModeTone,
   PermissionRequest,
+  ToolResultMessage,
 } from "@mu/core";
 import {
   agentCell,
@@ -430,6 +431,8 @@ type PendingTool = Omit<ToolRenderInfo, "expanded"> & {
   subagentId?: string;
   // The agent can move this running call to the background.
   backgroundable?: boolean;
+  // The call's result, held while a call before it in the same batch still runs.
+  settled?: ToolResultMessage;
 };
 interface ActivityTool {
   id: string;
@@ -1053,9 +1056,10 @@ export class App {
 
       case "turn_start":
         this.view.modelQuietSince = Date.now();
-        return [];
+        return this.commitSettledTools(true);
 
       case "agent_end": {
+        this.commitSettledTools(true);
         this.view.modelQuietSince = undefined;
         this.clearPendingSubmissions();
         this.running = false;
@@ -1231,19 +1235,16 @@ export class App {
             live.progress = pending.progress as SubagentProgressState;
           return this.completeBackgroundSubagent(delegated.subagentId) ?? [];
         }
-        this.pendingTools.delete(event.toolCallId);
-        const info: ToolRenderInfo = {
-          toolName: pending?.toolName ?? event.result.toolName,
-          args: pending?.args ?? {},
-          result: event.result,
-        };
-        this.view.lastTool = info;
-        const lines = this.registry.render(info, this.ctx);
-        const expanded =
-          pending && this.registry.supportsLiveExpansion(pending.toolName)
-            ? pending.expanded
-            : undefined;
-        this.pushTool(event.toolCallId, info, lines, expanded);
+        // Parallel calls end in the order they settle. One that settles ahead of
+        // an earlier call shows its result in place and joins the transcript after
+        // it, so the transcript reads in call order however the calls raced.
+        if (pending && this.hasRunningCallBefore(event.toolCallId)) {
+          pending.settled = event.result;
+          pending.running = false;
+          return [];
+        }
+        const lines = this.commitTool(event.toolCallId, pending, event.result);
+        lines.push(...this.commitSettledTools());
         return lines;
       }
 
@@ -1826,10 +1827,15 @@ export class App {
           // A backgrounded command keeps its start result while it runs, so
           // the row can name the task it is waiting on.
           ...(pending.taskId !== undefined && pending.result ? { result: pending.result } : {}),
-          ...(pending.progress !== undefined ? { progress: pending.progress } : {}),
+          ...(pending.settled ? { result: pending.settled } : {}),
+          ...(pending.progress !== undefined && !pending.settled
+            ? { progress: pending.progress }
+            : {}),
         },
         this.ctx,
       );
+      // Only the outcome line: the full cell appears when the row is committed.
+      if (pending.settled) return rendered.slice(0, 1);
       if (this.canMoveToBackground(pending) && rendered[0] !== undefined) {
         const hint = styleText(`${GLYPHS.separator} ctrl+z background`, { dim: true }, depth);
         const room = width - stringWidth(stripAnsi(hint)) - 1;
@@ -2153,6 +2159,58 @@ export class App {
       logical.push(...this.disclosureLines(lines, pending.expanded, selectedId === pending.id));
     }
     return this.toTerminalRows(logical);
+  }
+
+  private commitTool(
+    id: string,
+    pending: PendingTool | undefined,
+    result: ToolResultMessage,
+  ): string[] {
+    this.pendingTools.delete(id);
+    const info: ToolRenderInfo = {
+      toolName: pending?.toolName ?? result.toolName,
+      args: pending?.args ?? {},
+      result,
+    };
+    this.view.lastTool = info;
+    const lines = this.registry.render(info, this.ctx);
+    const expanded =
+      pending && this.registry.supportsLiveExpansion(pending.toolName)
+        ? pending.expanded
+        : undefined;
+    this.pushTool(id, info, lines, expanded);
+    return lines;
+  }
+
+  // A started foreground call that has not ended. Rows a background task or
+  // subagent keeps open, and calls that never started, hold nothing back.
+  private isRunningCall(pending: PendingTool): boolean {
+    return (
+      pending.running === true &&
+      pending.startedAt !== undefined &&
+      pending.settled === undefined &&
+      pending.taskId === undefined &&
+      pending.subagentId === undefined
+    );
+  }
+
+  private hasRunningCallBefore(id: string): boolean {
+    for (const pending of this.pendingTools.values()) {
+      if (pending.id === id) return false;
+      if (this.isRunningCall(pending)) return true;
+    }
+    return false;
+  }
+
+  // Commits settled calls from the front, stopping at the first still running;
+  // `all` commits every one (the turn is over and nothing can end before them).
+  private commitSettledTools(all = false): string[] {
+    const lines: string[] = [];
+    for (const pending of [...this.pendingTools.values()]) {
+      if (!all && this.isRunningCall(pending)) break;
+      if (pending.settled) lines.push(...this.commitTool(pending.id, pending, pending.settled));
+    }
+    return lines;
   }
 
   private isPendingActivity(pending: PendingTool): boolean {
