@@ -251,6 +251,35 @@ function renderParagraph(
   return wrapLine(renderInline(lines.join(" ").trim(), depth, style), width);
 }
 
+// A block's rows depend only on its own source, the width and the colour depth.
+// A streaming reply is laid out again on every frame with all but its last block
+// unchanged, so finished blocks are looked up instead of rendered again.
+const BLOCK_MEMO_LIMIT = 2_000;
+const blockMemo = new Map<string, readonly string[]>();
+
+function memoBlock(
+  kind: string,
+  source: string,
+  width: number,
+  depth: ColorDepth,
+  render: () => string[],
+): readonly string[] {
+  const key = `${kind}\u0000${width}\u0000${depth}\u0000${source}`;
+  const cached = blockMemo.get(key);
+  if (cached) return cached;
+  const rows = render();
+  if (blockMemo.size >= BLOCK_MEMO_LIMIT) {
+    // Oldest half out: blocks of the reply in progress were all touched recently.
+    let drop = BLOCK_MEMO_LIMIT / 2;
+    for (const stale of blockMemo.keys()) {
+      if (drop-- <= 0) break;
+      blockMemo.delete(stale);
+    }
+  }
+  blockMemo.set(key, rows);
+  return rows;
+}
+
 export function renderMarkdown(text: string, width: number, depth: ColorDepth): string[] {
   const safe = sanitizeUntrusted(text).replace(/\t/g, "    ");
   const source = safe.split("\n");
@@ -279,10 +308,14 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
         codeLines.push(source[index] ?? "");
         index++;
       }
-      for (const highlighted of highlightCode(codeLines.join("\n"), language, depth)) {
-        const wrapped = wrapLine(highlighted, Math.max(1, width - 2));
-        out.push(...wrapped.map((line) => INDENT + line));
-      }
+      const code = codeLines.join("\n");
+      out.push(
+        ...memoBlock(`code:${language ?? ""}`, code, width, depth, () =>
+          highlightCode(code, language, depth).flatMap((highlighted) =>
+            wrapLine(highlighted, Math.max(1, width - 2)).map((line) => INDENT + line),
+          ),
+        ),
+      );
       if (index < source.length) index++;
       continue;
     }
@@ -359,10 +392,13 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
           ? { green: true }
           : { dim: true }
         : { dim: true };
-      const prefix = `${indent}${styleText(renderedMarker, markerStyle, depth)} `;
-      const continuation = " ".repeat(stringWidth(prefix));
-      const wrapped = wrapLine(prefix + renderInline(content, depth), width, continuation);
-      out.push(...wrapped);
+      out.push(
+        ...memoBlock("list", raw, width, depth, () => {
+          const prefix = `${indent}${styleText(renderedMarker, markerStyle, depth)} `;
+          const continuation = " ".repeat(stringWidth(prefix));
+          return wrapLine(prefix + renderInline(content, depth), width, continuation);
+        }),
+      );
       index++;
       continue;
     }
@@ -387,7 +423,11 @@ export function renderMarkdown(text: string, width: number, depth: ColorDepth): 
       paragraph.push(next);
       index++;
     }
-    out.push(...renderParagraph(paragraph, width, depth));
+    out.push(
+      ...memoBlock("paragraph", paragraph.join("\n"), width, depth, () =>
+        renderParagraph(paragraph, width, depth),
+      ),
+    );
   }
 
   while (out.at(-1) === "") out.pop();

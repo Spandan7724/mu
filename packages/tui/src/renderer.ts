@@ -99,7 +99,18 @@ export class FullScreenRenderer {
     }
 
     let body: string;
-    if (firstChanged === previousCount) {
+    if (previousCount === rowCount) {
+      // Same height: nothing moved, so only the rows that differ are rewritten.
+      body = `\r${CURSOR.up(rowCount - 1 - firstChanged)}`;
+      let at = firstChanged;
+      for (let index = firstChanged; index < rowCount; index++) {
+        const row = frameRow(frame, index);
+        if (index !== firstChanged && row === frameRow(previous, index)) continue;
+        body += `${CURSOR.down(index - at)}\r${CURSOR.clearLine}${row ?? ""}`;
+        at = index;
+      }
+      body += CURSOR.down(rowCount - 1 - at);
+    } else if (firstChanged === previousCount) {
       body = `\r\n${drawFrom(frame, firstChanged)}`;
     } else {
       const moveUp = previousCount - 1 - firstChanged;

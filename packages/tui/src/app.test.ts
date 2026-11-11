@@ -3021,6 +3021,55 @@ describe("transcript review scrolling", () => {
     return app;
   };
 
+  test("review rows from the cache match a fresh layout after every kind of change", () => {
+    const app = longSession(12);
+    const fresh = () => {
+      const view = (app as unknown as { view: Record<string, unknown> }).view;
+      const cached = app.renderFrame().transcript;
+      view.selectableCache = undefined;
+      view.transcriptCache = undefined;
+      expect(app.renderFrame().transcript).toEqual(cached);
+    };
+    const key = (name: string, ctrl = false) =>
+      app.handleInput({ type: "key", key: { name, ctrl, alt: false, shift: false } });
+
+    key("o", true);
+    fresh();
+    for (const name of ["up", "up", "return", "up", "return", "down", "down", "return", "up"]) {
+      key(name);
+      fresh();
+    }
+    // The transcript grows and an earlier row changes while review is open.
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "late",
+      toolName: "bash",
+      args: { command: "echo late" },
+    });
+    app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "late",
+      result: {
+        role: "toolResult",
+        toolCallId: "late",
+        toolName: "bash",
+        content: [{ type: "text", text: "late" }],
+        details: { exitCode: 0 },
+        isError: false,
+        timestamp: 1,
+      },
+    });
+    fresh();
+    app.handleEvent({ type: "message_end", message: assistant("a late answer") });
+    fresh();
+    key("up");
+    fresh();
+    app.setSize(48, 20);
+    fresh();
+    key("down");
+    fresh();
+  });
+
   test("review is one alternate screen that opens at the bottom", () => {
     const app = longSession(12);
     expect(app.renderFrame().alternate).toBeUndefined();
@@ -3813,6 +3862,44 @@ describe("full-screen renderer", () => {
     expect(visible).toEqual(rows.slice(rows.length - visible.length));
     expect(visible.length).toBeGreaterThan(0);
   }
+
+  test("a frame of the same height rewrites only the rows that changed", () => {
+    const { screen, io, renderer, replays } = virtualSetup(8);
+    const history = Array.from({ length: 20 }, (_, index) => `history ${index}`);
+    const managed = ["tool row", "status 0", "╭──────╮", "│ ▸    │", "╰──────╯", "footer"];
+    renderer.renderNow({ transcript: history, managed, dirtyFrom: 0 });
+    let bytes = 0;
+    const write = io.write;
+    io.write = (data) => {
+      bytes += data.length;
+      write(data);
+    };
+
+    const ticked = { transcript: history, managed: managed.with(1, "status 1"), dirtyFrom: 20 };
+    renderer.renderNow(ticked);
+    expectScreenShows(screen, ticked);
+    expect(bytes).toBeLessThan(60);
+
+    // Several separate rows, a row that got shorter, and then growth afterwards.
+    let seed = 7;
+    const random = (limit: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % limit;
+    };
+    let current = ticked.managed;
+    for (let step = 0; step < 200; step++) {
+      const next = current.map((row) => (random(3) === 0 ? "x".repeat(random(12)) + step : row));
+      const frame = { transcript: history, managed: next, dirtyFrom: 20 };
+      renderer.renderNow(frame);
+      const rows = [...history, ...next];
+      expect(screen.lines).toEqual(rows.slice(rows.length - 8));
+      current = next;
+    }
+    const grown = { transcript: history, managed: [...current, "one more"], dirtyFrom: 20 };
+    renderer.renderNow(grown);
+    expectScreenShows(screen, grown);
+    expect(replays()).toBe(1);
+  });
 
   test("a frame shrinking inside the viewport clears its leftover rows in place", () => {
     const { screen, renderer, replays } = virtualSetup(8);

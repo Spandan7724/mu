@@ -67,6 +67,49 @@ function tokenize(line: string): Token[] {
   return tokens;
 }
 
+// The same split as `tokenize`, by run of text under one style instead of by
+// grapheme, with the line's width. Enough to lay out a line that needs no break.
+function scan(line: string): { runs: Token[]; width: number } {
+  const runs: Token[] = [];
+  let width = 0;
+  let active = "";
+  let link = "";
+  let i = 0;
+  const add = (text: string) => {
+    const last = runs[runs.length - 1];
+    if (last && last.ansi === active && last.link === link) last.text += text;
+    else runs.push({ text, ansi: active, link });
+  };
+  while (i < line.length) {
+    if (line[i] === "\u001b" && line[i + 1] === "[") {
+      const end = line.indexOf("m", i);
+      if (end === -1) break;
+      const code = line.slice(i, end + 1);
+      active = code === RESET ? "" : active + code;
+      i = end + 1;
+      continue;
+    }
+    const hyperlink = readLink(line, i);
+    if (hyperlink) {
+      link = hyperlink.open;
+      i = hyperlink.next;
+      continue;
+    }
+    const nextEscape = line.indexOf("\u001b", i);
+    const end = nextEscape === -1 ? line.length : nextEscape;
+    if (end === i) {
+      add(line[i] ?? "");
+      i++;
+      continue;
+    }
+    const text = line.slice(i, end);
+    width += stringWidth(text);
+    add(text);
+    i = end;
+  }
+  return { runs, width };
+}
+
 function renderTokens(tokens: Token[]): string {
   let out = "";
   let current = "";
@@ -95,6 +138,20 @@ export function wrapLine(line: string, width: number, indent = ""): string[] {
   if (width <= 0) return [line];
   const indentWidth = stringWidth(indent);
   const usable = Math.max(1, width - indentWidth);
+
+  // Most lines already fit: they need their styles normalised and the trailing
+  // blanks dropped, not a walk over every grapheme.
+  const scanned = scan(line);
+  if (scanned.width <= usable) {
+    const runs = scanned.runs;
+    for (let last = runs[runs.length - 1]; last && last.ansi === "" && last.link === ""; ) {
+      last.text = last.text.replace(/ +$/, "");
+      if (last.text !== "") break;
+      runs.pop();
+      last = runs[runs.length - 1];
+    }
+    return [renderTokens(runs)];
+  }
 
   const tokens = tokenize(line);
   if (tokens.length === 0) return [""];
@@ -153,7 +210,34 @@ export function wrapText(text: string, width: number, indent = ""): string[] {
   return text.split("\n").flatMap((line) => wrapLine(line, width, indent));
 }
 
+// Frames are laid out again and again from mostly the same lines (every frame
+// of a streaming reply, every rebuild after a disclosure toggles), so the rows
+// of recent lines are remembered for the width in use.
+const ROW_MEMO_LIMIT = 8_192;
+let rowMemoWidth = 0;
+const rowMemo = new Map<string, readonly string[]>();
+
 export function terminalRows(lines: string[], width: number): string[] {
   const safeWidth = Math.max(1, width);
-  return lines.flatMap((line) => wrapText(line, safeWidth));
+  if (safeWidth !== rowMemoWidth) {
+    rowMemo.clear();
+    rowMemoWidth = safeWidth;
+  }
+  const out: string[] = [];
+  for (const line of lines) {
+    let rows = rowMemo.get(line);
+    if (!rows) {
+      rows = wrapText(line, safeWidth);
+      if (rowMemo.size >= ROW_MEMO_LIMIT) {
+        let drop = ROW_MEMO_LIMIT / 2;
+        for (const stale of rowMemo.keys()) {
+          if (drop-- <= 0) break;
+          rowMemo.delete(stale);
+        }
+      }
+      rowMemo.set(line, rows);
+    }
+    for (const row of rows) out.push(row);
+  }
+  return out;
 }

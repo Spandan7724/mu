@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { renderMarkdown } from "./markdown.ts";
 import { detectColorDepth, hyperlink, stripAnsi, styleText } from "./style.ts";
 import { charWidth, graphemes, stringWidth, truncateToWidth } from "./width.ts";
-import { wrapLine, wrapText } from "./wrap.ts";
+import { terminalRows, wrapLine, wrapText } from "./wrap.ts";
 
 describe("width measurement", () => {
   test("ascii is one cell per character", () => {
@@ -196,5 +197,89 @@ describe("colour depth", () => {
   test("the session resume label degrades to dim and then to plain text", () => {
     expect(styleText("resume", { resumeHint: true }, "ansi16")).toContain("[2m");
     expect(styleText("resume", { resumeHint: true }, "none")).toBe("resume");
+  });
+});
+
+describe("layout of lines that need no break", () => {
+  const ESC = "\u001b";
+  test("styles are normalised and trailing blanks dropped exactly as when wrapping", () => {
+    const cases: [string, string][] = [
+      ["plain text   ", "plain text"],
+      [
+        `${ESC}[1mbold${ESC}[22m then plain  `,
+        `${ESC}[1mbold${ESC}[0m${ESC}[1m${ESC}[22m then plain  ${ESC}[0m`,
+      ],
+      [
+        `${ESC}[2m  dim margin${ESC}[0m ${ESC}[1mhead${ESC}[0m   `,
+        `${ESC}[2m  dim margin${ESC}[0m ${ESC}[1mhead${ESC}[0m`,
+      ],
+      [
+        `${ESC}]8;;https://x.y\u0007link${ESC}]8;;\u0007 after `,
+        `${ESC}]8;;https://x.y\u0007link${ESC}]8;;\u0007 after`,
+      ],
+      ["tab\there 中文 🙂 e\u0301", "tab\there 中文 🙂 e\u0301"],
+      [`${ESC}[1m   ${ESC}[0m`, `${ESC}[1m   ${ESC}[0m`],
+      ["   ", ""],
+      [`${ESC}[38;2;1;2;3m`, ""],
+      [`lone ${ESC} escape`, `lone ${ESC} escape`],
+    ];
+    for (const [line, expected] of cases) expect(wrapLine(line, 60)).toEqual([expected]);
+  });
+
+  test("a line one cell too wide still breaks", () => {
+    expect(wrapLine("12345 7890", 10)).toEqual(["12345 7890"]);
+    expect(wrapLine("12345 78901", 10)).toEqual(["12345", "78901"]);
+    expect(wrapLine("中文中文中", 10)).toEqual(["中文中文中"]);
+    expect(wrapLine("中文中文中a", 10)).toEqual(["中文中文中", "a"]);
+  });
+
+  test("ascii shortcuts agree with full measurement", () => {
+    expect(graphemes("a b~")).toEqual(["a", " ", "b", "~"]);
+    expect(graphemes("a\r\nb")).toEqual(["a", "\r\n", "b"]);
+    expect(stringWidth("a\tb")).toBe(6);
+    expect(stringWidth(`${ESC}[1mab${ESC}[0m`)).toBe(2);
+    expect(stringWidth("e\u0301x")).toBe(2);
+  });
+});
+
+describe("remembered layout", () => {
+  test("physical rows are the same whether remembered or not, per width", () => {
+    const lines = ["short", "a much longer line that will not fit in ten cells", "", "中文 text"];
+    const narrow = terminalRows(lines, 10);
+    const wide = terminalRows(lines, 80);
+    expect(wide).toEqual(lines);
+    expect(narrow.length).toBeGreaterThan(lines.length);
+    expect(terminalRows(lines, 10)).toEqual(narrow);
+    expect(terminalRows(lines, 80)).toEqual(wide);
+    narrow.push("caller-owned");
+    expect(terminalRows(lines, 10)).not.toContain("caller-owned");
+  });
+
+  test("lines pushed out of the memory are laid out again correctly", () => {
+    const first = terminalRows(["the first line of many"], 12);
+    for (let batch = 0; batch < 10; batch++) {
+      terminalRows(
+        Array.from({ length: 1_000 }, (_, index) => `filler line ${batch}-${index}`),
+        12,
+      );
+    }
+    expect(terminalRows(["the first line of many"], 12)).toEqual(first);
+  });
+
+  test("markdown blocks are remembered per width and colour depth", () => {
+    const text =
+      "# Title\n\nA paragraph with **bold** text that is long enough to wrap at a narrow width.\n\n- item `one`\n- [x] done\n\n```ts\nconst a = 1;\n```";
+    const narrow = renderMarkdown(text, 30, "truecolor");
+    const wide = renderMarkdown(text, 90, "truecolor");
+    const plain = renderMarkdown(text, 30, "none");
+    expect(narrow.length).toBeGreaterThan(wide.length);
+    expect(plain.join("\n")).not.toContain("\u001b");
+    expect(narrow.join("\n")).toContain("\u001b");
+    expect(plain.map(stripAnsi)).toEqual(narrow.map(stripAnsi));
+    expect(renderMarkdown(text, 30, "truecolor")).toEqual(narrow);
+    expect(renderMarkdown(text, 90, "truecolor")).toEqual(wide);
+    // A reply rendered as it grows ends as the same rows as one rendered whole.
+    for (let end = 1; end < text.length; end += 7) renderMarkdown(text.slice(0, end), 30, "none");
+    expect(renderMarkdown(text, 30, "none")).toEqual(plain);
   });
 });

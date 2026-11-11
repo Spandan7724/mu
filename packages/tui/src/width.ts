@@ -8,6 +8,7 @@ const EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u;
 const WIDE_EMOJI_CLUSTER = /\p{Emoji_Presentation}|\p{Emoji}\ufe0f|\p{Regional_Indicator}|\u20e3/u;
 // No emoji-presentation character sits below this code point (⌚).
 const FIRST_EMOJI_PRESENTATION = 0x231a;
+export const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
 // Terminal cell width. Wide (East-Asian W/F) and emoji-presentation characters
 // occupy two columns; combining marks and zero-width joiners occupy none.
@@ -55,6 +56,10 @@ export function charWidth(codePoint: number): number {
 }
 
 export function graphemeWidth(cluster: string): number {
+  if (cluster.length === 1) {
+    const code = cluster.charCodeAt(0);
+    if (code >= 0x20 && code < 0x7f) return 1;
+  }
   if (WIDE_EMOJI_CLUSTER.test(cluster)) return 2;
   let width = 0;
   for (const char of cluster) width += charWidth(char.codePointAt(0) ?? 0);
@@ -63,14 +68,19 @@ export function graphemeWidth(cluster: string): number {
 
 // Width of a string in terminal cells, ignoring ANSI styling.
 export function stringWidth(text: string): number {
+  const plain = text.includes("\u001b") ? stripAnsi(text) : text;
+  if (PRINTABLE_ASCII.test(plain)) return plain.length;
   let width = 0;
-  for (const cluster of graphemes(stripAnsi(text))) width += graphemeWidth(cluster);
+  for (const cluster of graphemes(plain)) width += graphemeWidth(cluster);
   return width;
 }
 
 // Splits by Unicode extended grapheme cluster so cursor movement and wrapping
 // cannot cut combining text, flags, modifiers, keycaps, or ZWJ emoji sequences.
 export function graphemes(text: string): string[] {
+  // Every printable ASCII character is its own cluster; the segmenter is the
+  // slow part of laying out text that is almost always exactly that.
+  if (PRINTABLE_ASCII.test(text)) return text.split("");
   return Array.from(graphemeSegmenter.segment(text), ({ segment }) => segment);
 }
 

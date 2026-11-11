@@ -592,6 +592,20 @@ interface ConversationView {
   // The first item changed since the cache was built, when every change was
   // local to the end; otherwise the cache is dropped instead.
   transcriptDirtyFrom: number | undefined;
+  // Laid-out rows per item for views that mark a selection or reveal every
+  // disclosure, which the plain cache cannot serve. Moving the selection lays
+  // out only the items that lose or gain it.
+  selectableCache:
+    | {
+        version: number;
+        width: number;
+        revealAll: boolean;
+        selectedId: string | undefined;
+        newest: Map<string, number>;
+        blocks: ({ rows: string[]; spacing: Spacing | undefined; selected: boolean } | undefined)[];
+      }
+    | undefined;
+  selectableDirtyFrom: number | undefined;
   streaming: string | undefined;
   // Thinking of the message still streaming, shown as it will be once committed.
   streamingThinking: string[];
@@ -635,6 +649,8 @@ function conversationView(
     transcriptVersion: 0,
     transcriptCache: undefined,
     transcriptDirtyFrom: undefined,
+    selectableCache: undefined,
+    selectableDirtyFrom: undefined,
     streaming: undefined,
     streamingThinking: [],
     streamingCache: undefined,
@@ -768,6 +784,7 @@ export class App {
   }
   private set transcriptCache(value: ConversationView["transcriptCache"]) {
     this.view.transcriptCache = value;
+    if (value === undefined) this.view.selectableCache = undefined;
   }
   private get activitySelection(): string | undefined {
     return this.view.activitySelection;
@@ -1655,7 +1672,8 @@ export class App {
       }
     });
     const cacheable = !revealAll && selectedId === undefined;
-    const cached = cacheable ? this.transcriptCache : undefined;
+    if (!cacheable) return this.selectableRows(newest, selectedId, revealAll);
+    const cached = this.transcriptCache;
     let from = 0;
     if (cached?.width === this.options.width) {
       if (cached.version === this.transcriptVersion) return cached.rows;
@@ -1682,16 +1700,72 @@ export class App {
       }
       entries.push({ start, tail });
     }
-    if (cacheable) {
-      this.transcriptCache = {
-        version: this.transcriptVersion,
-        width: this.options.width,
-        rows,
-        entries,
-        newest,
+    this.transcriptCache = {
+      version: this.transcriptVersion,
+      width: this.options.width,
+      rows,
+      entries,
+      newest,
+    };
+    this.view.transcriptDirtyFrom = undefined;
+    return rows;
+  }
+
+  private selectableRows(
+    newest: Map<string, number>,
+    selectedId: string | undefined,
+    revealAll: boolean,
+  ): string[] {
+    const width = this.options.width;
+    let cache = this.view.selectableCache;
+    if (!cache || cache.width !== width || cache.revealAll !== revealAll) {
+      cache = {
+        version: -1,
+        width,
+        revealAll,
+        selectedId: undefined,
+        newest: new Map(),
+        blocks: [],
       };
-      this.view.transcriptDirtyFrom = undefined;
     }
+    let from = Number.POSITIVE_INFINITY;
+    if (cache.version !== this.transcriptVersion) {
+      from = Math.min(this.view.selectableDirtyFrom ?? 0, cache.blocks.length);
+      for (const [name, index] of cache.newest) {
+        if (newest.get(name) !== index) from = Math.min(from, index);
+      }
+    }
+    cache.blocks.length = Math.min(cache.blocks.length, this.transcript.length);
+    const rows: string[] = [];
+    let tail: Spacing | undefined;
+    for (let index = 0; index < this.transcript.length; index++) {
+      const item = this.transcript[index] as TranscriptItem;
+      const selected =
+        selectedId !== undefined &&
+        (item.kind === "tool"
+          ? item.id === selectedId
+          : item.kind === "activity" &&
+            (item.id === selectedId || item.tools.some((tool) => tool.id === selectedId)));
+      let block = index < from ? cache.blocks[index] : undefined;
+      if (!block || block.selected !== selected || (selected && cache.selectedId !== selectedId)) {
+        const laid = this.transcriptBlock(item, index, newest, selectedId, revealAll);
+        block = {
+          rows: laid ? this.toTerminalRows(laid.lines) : [],
+          spacing: laid?.spacing,
+          selected,
+        };
+        cache.blocks[index] = block;
+      }
+      if (!block.spacing) continue;
+      if (tail && gapBetween(tail, block.spacing) > 0) rows.push("");
+      for (const row of block.rows) rows.push(row);
+      tail = block.spacing;
+    }
+    cache.version = this.transcriptVersion;
+    cache.selectedId = selectedId;
+    cache.newest = newest;
+    this.view.selectableCache = cache;
+    this.view.selectableDirtyFrom = undefined;
     return rows;
   }
 
@@ -2703,6 +2777,8 @@ export class App {
     this.transcriptVersion++;
     const dirty = this.view.transcriptDirtyFrom;
     this.view.transcriptDirtyFrom = dirty === undefined ? index : Math.min(dirty, index);
+    const selectable = this.view.selectableDirtyFrom;
+    this.view.selectableDirtyFrom = selectable === undefined ? index : Math.min(selectable, index);
   }
 
   private clearPendingSubmissions(): void {
@@ -2823,8 +2899,17 @@ export class App {
     } else if (node.item.kind === "tool") {
       node.item.expanded = expanded ?? !node.item.expanded;
     }
+    // Only this item's rows change, so the review cache keeps every other block.
+    const selectable = this.view.selectableCache;
+    const current =
+      selectable?.version === this.transcriptVersion && this.view.selectableDirtyFrom === undefined;
     this.transcriptVersion++;
     this.transcriptCache = undefined;
+    if (selectable && current) {
+      if (!("pending" in node)) selectable.blocks[this.transcript.indexOf(node.item)] = undefined;
+      selectable.version = this.transcriptVersion;
+      this.view.selectableCache = selectable;
+    }
   }
 
   private openActivity(): void {
