@@ -142,7 +142,8 @@ export interface AgentOptions {
   extensions?: ExtensionHost;
   // Every run sees only these tools, extension tools included.
   toolNames?: string[];
-  // False skips the host's context providers (catalogs for tools this agent lacks).
+  // False skips context extensions add (catalogs, `$skill` bodies); input hooks may
+  // still rewrite or consume the prompt.
   extensionContext?: boolean;
   // Names the /cost context group for a profile's own custom message types.
   contextLabel?: (customType: string) => string | undefined;
@@ -2121,7 +2122,8 @@ export class Agent {
         };
       }
       if (directive?.text !== undefined) effectivePrompt = directive.text;
-      if (directive?.context) promptContext.push(...directive.context);
+      if (directive?.context && this.options.extensionContext !== false)
+        promptContext.push(...directive.context);
     }
 
     const promptMessage: AgentMessage =

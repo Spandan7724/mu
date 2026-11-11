@@ -87,6 +87,10 @@ describe("side conversations", () => {
       name: "catalog",
       activate: (api) => {
         api.registerTool(tool("skill"));
+        api.onInput(() => ({
+          text: "side question, rewritten",
+          context: [customMessage("skill", "attached skill body")],
+        }));
         api.registerContextProvider(() => {
           providerRan = true;
           return [customMessage(SKILLS_CONTEXT_TYPE, "fresh listing")];
@@ -116,6 +120,8 @@ describe("side conversations", () => {
     expect(sent).not.toContain("inherited skill listing");
     expect(sent).not.toContain("inherited mcp listing");
     expect(sent).not.toContain("fresh listing");
+    expect(sent).not.toContain("attached skill body");
+    expect(sent).toContain("side question, rewritten");
     expect(providerRan).toBe(false);
 
     await side.close();
