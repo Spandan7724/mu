@@ -127,4 +127,35 @@ describe("side conversations", () => {
     await side.close();
     await host.shutdown();
   });
+
+  test("a call the side's rules refuse is marked denied without asking", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "write", arguments: {} }] },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    let asked = false;
+    const side = startSideConversation(
+      {
+        provider,
+        model: fakeModel,
+        tools: [tool("write")],
+        onPermission: async () => {
+          asked = true;
+          return "allow";
+        },
+      },
+      {
+        messages: [],
+        tools: ["write"],
+        permissions: [{ permission: "*", pattern: "*", action: "deny" }],
+      },
+    );
+
+    const result = await side.agent.run("write it");
+    const denied = result.messages.find((message) => message.role === "toolResult");
+    expect(asked).toBe(false);
+    expect(denied?.role === "toolResult" && denied.details).toEqual({ blocked: "denied" });
+
+    await side.close();
+  });
 });

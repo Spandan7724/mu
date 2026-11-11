@@ -1321,6 +1321,7 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           taskId?: string;
           durationMs?: number;
           killed?: boolean;
+          blocked?: string;
         }
       | undefined;
     const ok = details?.exitCode === 0;
@@ -1333,7 +1334,7 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     const pendingTask = task !== undefined && details?.exitCode === undefined;
     const outcome = [
       task,
-      details?.killed ? "killed" : `exit ${details?.exitCode ?? "?"}`,
+      details?.blocked ?? (details?.killed ? "killed" : `exit ${details?.exitCode ?? "?"}`),
       duration,
     ]
       .filter(Boolean)

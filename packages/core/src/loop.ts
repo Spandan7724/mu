@@ -65,6 +65,14 @@ export interface ContextPreparation {
   stop?: boolean;
 }
 
+export interface BeforeToolCallDirective {
+  block?: boolean;
+  // The permission engine refused the call, as opposed to a hook blocking it.
+  denied?: boolean;
+  reason?: string;
+  rewrittenArgs?: Record<string, unknown>;
+}
+
 export interface LoopConfig {
   provider: Provider;
   model: ModelInfo;
@@ -85,12 +93,7 @@ export interface LoopConfig {
   beforeToolCall?: (
     info: BeforeToolCallInfo,
     signal: AbortSignal,
-  ) =>
-    | { block?: boolean; reason?: string; rewrittenArgs?: Record<string, unknown> }
-    | undefined
-    | Promise<
-        { block?: boolean; reason?: string; rewrittenArgs?: Record<string, unknown> } | undefined
-      >;
+  ) => BeforeToolCallDirective | undefined | Promise<BeforeToolCallDirective | undefined>;
   afterToolCall?: (
     info: AfterToolCallInfo,
     signal: AbortSignal,
@@ -599,7 +602,10 @@ async function prepareCall(
     if (directive?.block) {
       return {
         kind: "immediate",
-        result: errorResult(directive.reason || "Tool execution was blocked"),
+        result: {
+          ...errorResult(directive.reason || "Tool execution was blocked"),
+          details: { blocked: directive.denied ? "denied" : "blocked" },
+        },
       };
     }
     if (directive?.rewrittenArgs) args = directive.rewrittenArgs;

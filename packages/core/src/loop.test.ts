@@ -394,6 +394,7 @@ describe("control hooks", () => {
       expect(toolResult.content[0]?.type === "text" && toolResult.content[0].text).toBe(
         "not allowed",
       );
+      expect(toolResult.details).toEqual({ blocked: "blocked" });
     }
   });
 

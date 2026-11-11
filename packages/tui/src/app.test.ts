@@ -200,6 +200,32 @@ describe("fake-agent session", () => {
     expect(stripAnsi(lines[0] ?? "")).toContain("exit 1");
   });
 
+  test("a denied command says denied instead of an unknown exit", () => {
+    const { app } = harness();
+    app.handleEvent({
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "touch x" },
+    });
+    const lines = app.handleEvent({
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      result: {
+        role: "toolResult",
+        toolCallId: "c1",
+        toolName: "bash",
+        content: [{ type: "text", text: "Permission denied for bash" }],
+        details: { blocked: "denied" },
+        isError: true,
+        timestamp: 2,
+      },
+    });
+    const row = stripAnsi(lines[0] ?? "");
+    expect(row).toContain("denied");
+    expect(row).not.toContain("exit ?");
+  });
+
   test("native web searches fold into exploration with one blank before streamed text", () => {
     const { app } = harness();
     expect(

@@ -2342,7 +2342,7 @@ export class Agent {
         return rewritten;
       }
       if (action === "deny") {
-        return { block: true, reason: `Permission denied for ${info.toolCall.name}` };
+        return { block: true, denied: true, reason: `Permission denied for ${info.toolCall.name}` };
       }
       const details = await Promise.resolve(selectedTool?.permissionDetails?.(args)).catch(
         () => undefined,
@@ -2384,6 +2384,7 @@ export class Agent {
       }
       return {
         block: true,
+        denied: true,
         reason: decision.message
           ? `Permission denied for ${info.toolCall.name}. The user said: ${decision.message}`
           : `Permission denied for ${info.toolCall.name}`,
