@@ -167,6 +167,7 @@ describe("fake-agent session", () => {
     expect(visible).toContain("  › read src/api/client.ts · 142 lines");
     expect(visible.some((line) => line.startsWith("  mu  Done"))).toBe(true);
 
+    app.setWidth(100);
     const bottom = app.renderBottom().map(stripAnsi);
     expect(bottom.at(-2)).toBe("  ~/code/mu");
     const footerLine = bottom.at(-1) ?? "";
@@ -5061,6 +5062,7 @@ describe("model footer state", () => {
     });
 
     h.app.setModel("openai/gpt-5.1", 1_000_000);
+    h.app.setWidth(100);
     const footerLine = stripAnsi(h.app.renderBottom().at(-1) ?? "");
     expect(footerLine).toContain("openai/gpt-5.1 · 0.0%/1.0m");
     expect(footerLine).toContain("↑1.1k ↓11");
@@ -5173,6 +5175,23 @@ describe("side conversations", () => {
     const main = h.app.renderBottom().map(stripAnsi).join("\n");
     expect(main).toContain("summarize");
     expect(main).toContain("review");
+  });
+
+  test("the side is marked only by its composer title and fits the current width", () => {
+    const { app } = harness();
+    app.setWidth(120);
+    app.openSideConversation("fake/fake-1", 100_000, ["off"]);
+    app.setWidth(40);
+    expect(app.renderTranscript()).toEqual([]);
+    const bottom = app.renderBottom().map(stripAnsi);
+    expect(bottom.some((line) => line.startsWith("  ╭─ side ─"))).toBe(true);
+    for (const line of bottom) expect(line.length).toBeLessThanOrEqual(40);
+    expect(bottom.at(-2)).toBe("  ~/code/mu · ctrl+b main · esc close");
+
+    feed(app, "\u0002");
+    const main = app.renderBottom().map(stripAnsi);
+    expect(main.some((line) => line.includes("─ side"))).toBe(false);
+    expect(main.at(-2)).toBe("  ~/code/mu · ctrl+b side");
   });
 
   test("main and side keep independent composer histories", () => {

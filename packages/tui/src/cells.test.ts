@@ -553,6 +553,36 @@ describe("components", () => {
     expect(lines[1]).toBe("  claude-opus-5 · 0.4%/272k · ↑1.1k ↓11 · $0.14");
   });
 
+  test("a narrow stats row sheds tokens, then cost, then hint segments, keeping the mode", () => {
+    const data = {
+      ...footerData,
+      hint: "ctrl+o · think low",
+      permissionMode: { label: "read-only", tone: "restrictive" as const },
+    };
+    const row = (width: number) => visible(footer(data, width, "none"))[1];
+    expect(row(90)).toBe(
+      "  claude-opus-5 · 0.4%/272k · ↑1.1k ↓11 · $0.14 · ctrl+o · think low · read-only",
+    );
+    expect(row(70)).toBe("  claude-opus-5 · 0.4%/272k · $0.14 · ctrl+o · think low · read-only");
+    expect(row(60)).toBe("  claude-opus-5 · 0.4%/272k · ctrl+o · think low · read-only");
+    expect(row(52)).toBe("  claude-opus-5 · 0.4%/272k · ctrl+o · read-only");
+    expect(row(40)).toBe("  claude-opus-5 · 0.4%/272k · read-only");
+  });
+
+  test("side notes follow the location and drop from the end when narrow", () => {
+    const data = {
+      ...footerData,
+      status: "main",
+      side: ["main running", "ctrl+b main", "esc close"],
+    };
+    expect(visible(footer(data, 80, "none"))[0]).toBe(
+      "  ~/code/mu (main) · main running · ctrl+b main · esc close",
+    );
+    expect(visible(footer(data, 50, "none"))[0]).toBe(
+      "  ~/code/mu (main) · main running · ctrl+b main",
+    );
+  });
+
   test("footer preserves status when the terminal is narrow", () => {
     const line = visible(footer({ ...footerData, status: "main" }, 14, "none"))[0] ?? "";
     expect(line).toEndWith("(main)");

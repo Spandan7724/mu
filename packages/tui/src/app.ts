@@ -32,7 +32,6 @@ import {
   composerBox,
   composerBoxBottom,
   composerContentWidth,
-  composerRule,
   Editor,
   type FooterData,
   footer,
@@ -878,14 +877,7 @@ export class App {
     this.side = conversationView(footerData, thinkingLevels);
     this.activeSource = "side";
     this.syncSideFooter();
-    this.replaceTranscript(
-      [],
-      [
-        composerRule(this.options.width, this.options.depth),
-        `${MARGIN}${styleText("side conversation · inherited context is reference only · esc to close", { dim: true }, this.options.depth)}`,
-        "",
-      ],
-    );
+    this.replaceTranscript([]);
   }
 
   toggleSideConversation(): void {
@@ -904,10 +896,9 @@ export class App {
 
   private syncSideFooter(): void {
     if (!this.side) return;
-    const status = this.mainStatus ? ` · main ${this.mainStatus}` : "";
     this.side.footerData = {
       ...this.side.footerData,
-      side: `from main${status} · ctrl+b switch · esc close`,
+      side: [...(this.mainStatus ? [`main ${this.mainStatus}`] : []), "ctrl+b main", "esc close"],
     };
   }
 
@@ -2039,7 +2030,9 @@ export class App {
         ? styleText("search transcript", { accent: true, bold: true }, depth)
         : this.isShellMode
           ? styleText("shell", { toolExec: true, bold: true }, depth)
-          : undefined;
+          : this.activeSource === "side"
+            ? styleText("side", { accent: true, bold: true }, depth)
+            : undefined;
     lines.push(...composerBox(composerLines, width, depth, composerTitle));
 
     const toolHint = "ctrl+o";
@@ -2088,6 +2081,7 @@ export class App {
       ...footer(
         {
           ...this.footerData,
+          ...(this.side && this.activeSource === "main" ? { side: ["ctrl+b side"] } : {}),
           ...(hint ? { hint } : {}),
           ...(this.mode !== "activity" && this.view.permissionMode
             ? { permissionMode: this.view.permissionMode }

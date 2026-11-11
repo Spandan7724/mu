@@ -480,8 +480,9 @@ export interface FooterData {
   costUsd?: number;
   backgroundTasks?: number;
   status?: string;
-  // Present only while rendering an ephemeral side conversation.
-  side?: string;
+  // Present only while rendering an ephemeral side conversation: its notes and keys,
+  // shown after the location and dropped from the end when the row is too narrow.
+  side?: string[];
   hint?: string;
   permissionMode?: { label: string; tone?: PermissionModeTone | undefined };
 }
@@ -542,43 +543,9 @@ function contextPressure(percent: number): Style {
 }
 
 // A dim cwd and live status row followed by model, context window, cumulative I/O and cost.
+// A stats row too wide for the terminal sheds token counts, then cost, then hint segments
+// from the end, so the model, context and permission mode keep their colours.
 export function footer(data: FooterData, width: number, depth: ColorDepth): string[] {
-  const tokenParts: string[] = [];
-  if ((data.inputTokens ?? 0) > 0) tokenParts.push(`↑${formatTokens(data.inputTokens ?? 0)}`);
-  if ((data.outputTokens ?? 0) > 0) tokenParts.push(`↓${formatTokens(data.outputTokens ?? 0)}`);
-  const percent = Math.max(0, data.contextPercent ?? 0);
-  const hasContext = data.contextPercent !== undefined && data.contextWindow !== undefined;
-  const quiet: Style = { dim: true };
-  const parts: { text: string; style: Style }[] = [
-    ...(data.side
-      ? [
-          { text: "side", style: { accent: true } },
-          { text: data.side, style: quiet },
-        ]
-      : []),
-    { text: data.model, style: quiet },
-    ...(hasContext
-      ? [
-          {
-            text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow ?? 0)}`,
-            style: contextPressure(percent),
-          },
-        ]
-      : []),
-    ...(tokenParts.length > 0 ? [{ text: tokenParts.join(" "), style: quiet }] : []),
-    ...(data.costUsd !== undefined ? [{ text: `$${data.costUsd.toFixed(2)}`, style: quiet }] : []),
-  ];
-  if (data.backgroundTasks && data.backgroundTasks > 0) {
-    parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
-  }
-  if (data.hint) parts.push({ text: data.hint, style: quiet });
-  if (data.permissionMode) {
-    const tone = data.permissionMode.tone;
-    parts.push({
-      text: data.permissionMode.label,
-      style: tone ? PERMISSION_TONE_STYLES[tone] : quiet,
-    });
-  }
   const maxWidth = Math.max(0, width - MARGIN.length);
   const safeCwd = sanitizeUntrusted(data.cwd);
   const safeStatus = sanitizeUntrusted(data.status ?? "");
@@ -588,17 +555,72 @@ export function footer(data: FooterData, width: number, depth: ColorDepth): stri
     safeCwd,
     Math.max(0, maxWidth - statusWidth - (statusWidth > 0 ? 1 : 0)),
   );
-  const location = cwd + (statusWidth > 0 ? `${cwd ? " " : ""}${status}` : "");
-  const plain = parts.map((part) => part.text).join(` ${GLYPHS.separator} `);
+  const separator = ` ${GLYPHS.separator} `;
+  let location = cwd + (statusWidth > 0 ? `${cwd ? " " : ""}${status}` : "");
+  const sideParts = (data.side ?? []).map(sanitizeUntrusted);
+  while (
+    sideParts.length > 0 &&
+    stringWidth(location + separator + sideParts.join(separator)) > maxWidth
+  ) {
+    sideParts.pop();
+  }
+  if (sideParts.length > 0) location += separator + sideParts.join(separator);
+
+  const fits = (parts: { text: string }[]) =>
+    stringWidth(parts.map((part) => part.text).join(separator)) <= maxWidth;
+  let parts = statsParts(data, true, true, data.hint);
+  if (!fits(parts)) parts = statsParts(data, false, true, data.hint);
+  if (!fits(parts)) parts = statsParts(data, false, false, data.hint);
+  const hintParts = data.hint?.split(separator) ?? [];
+  while (!fits(parts) && hintParts.length > 0) {
+    hintParts.pop();
+    parts = statsParts(data, false, false, hintParts.join(separator) || undefined);
+  }
   // Per-part styling cannot survive truncation of the joined string, so a row
-  // too narrow to hold the stats falls back to the uniformly quiet rendering.
-  const stats =
-    stringWidth(plain) <= maxWidth
-      ? parts
-          .map((part) => styleFooterPart(part.text, part.style, depth))
-          .join(dim(` ${GLYPHS.separator} `, depth))
-      : styleFooterText(truncateToWidth(plain, maxWidth), depth);
+  // too narrow to hold even the essentials falls back to the uniformly quiet rendering.
+  const stats = fits(parts)
+    ? parts.map((part) => styleFooterPart(part.text, part.style, depth)).join(dim(separator, depth))
+    : styleFooterText(
+        truncateToWidth(parts.map((part) => part.text).join(separator), maxWidth),
+        depth,
+      );
   return [MARGIN + dim(location, depth), MARGIN + stats];
+}
+
+function statsParts(
+  data: FooterData,
+  tokens: boolean,
+  cost: boolean,
+  hint?: string,
+): { text: string; style: Style }[] {
+  const quiet: Style = { dim: true };
+  const tokenParts: string[] = [];
+  if ((data.inputTokens ?? 0) > 0) tokenParts.push(`↑${formatTokens(data.inputTokens ?? 0)}`);
+  if ((data.outputTokens ?? 0) > 0) tokenParts.push(`↓${formatTokens(data.outputTokens ?? 0)}`);
+  const percent = Math.max(0, data.contextPercent ?? 0);
+  const parts: { text: string; style: Style }[] = [{ text: data.model, style: quiet }];
+  if (data.contextPercent !== undefined && data.contextWindow !== undefined) {
+    parts.push({
+      text: `${(percent * 100).toFixed(1)}%/${formatTokens(data.contextWindow)}`,
+      style: contextPressure(percent),
+    });
+  }
+  if (tokens && tokenParts.length > 0) parts.push({ text: tokenParts.join(" "), style: quiet });
+  if (cost && data.costUsd !== undefined) {
+    parts.push({ text: `$${data.costUsd.toFixed(2)}`, style: quiet });
+  }
+  if (data.backgroundTasks && data.backgroundTasks > 0) {
+    parts.push({ text: `${data.backgroundTasks} bg`, style: quiet });
+  }
+  if (hint) parts.push({ text: hint, style: quiet });
+  if (data.permissionMode) {
+    const tone = data.permissionMode.tone;
+    parts.push({
+      text: data.permissionMode.label,
+      style: tone ? PERMISSION_TONE_STYLES[tone] : quiet,
+    });
+  }
+  return parts;
 }
 
 const composerOuterWidth = (width: number) => Math.max(4, width - MARGIN.length * 2);
