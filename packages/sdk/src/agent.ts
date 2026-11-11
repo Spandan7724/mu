@@ -74,7 +74,7 @@ import {
   type UsageLine,
 } from "./cost-report.ts";
 import { createPermissionGate } from "./permission-gate.ts";
-import { mappedReplacements } from "./session-replacements.ts";
+import { appendCompactionBoundary, mappedReplacements } from "./session-replacements.ts";
 import {
   STRUCTURED_OUTPUT_REMINDERS,
   STRUCTURED_OUTPUT_TOOL,
@@ -1189,35 +1189,7 @@ export class Agent {
       }
 
       emit({ type: "compaction_update", layer: 2, stage: "installing" });
-      for (const replacement of result.replacements ?? []) {
-        const index = working.indexOf(replacement.original);
-        const originalMessage = index < 0 ? replacement.original : original[index];
-        const entryId = originalMessage ? this.tree.entryIdForMessage(originalMessage) : undefined;
-        if (!entryId) throw new Error("Compaction observation could not be mapped to the session");
-        replacements.push({ entryId, message: replacement.message });
-      }
-      const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
-        const index = working.indexOf(message);
-        const entryId = this.tree.entryIdForMessage(
-          index < 0 ? message : (original[index] ?? message),
-        );
-        if (!entryId) throw new Error("Protected context could not be mapped to the session");
-        return entryId;
-      });
       const compacted = applyCompaction(result);
-      const firstKept = result.keptMessages[0];
-      let firstKeptEntryId: string | null = null;
-      if (firstKept) {
-        const source =
-          result.replacements?.find((replacement) => replacement.message === firstKept)?.original ??
-          firstKept;
-        const workingIndex = working.indexOf(source);
-        const originalMessage = workingIndex === -1 ? firstKept : original[workingIndex];
-        const mapped = originalMessage ? this.tree.entryIdForMessage(originalMessage) : undefined;
-        if (!mapped) throw new Error("Compaction tail could not be mapped to the session");
-        firstKeptEntryId = mapped;
-      }
-      const summaryMessage = compacted[0];
       const refreshed =
         (await this.options.refreshContext?.(compacted, {
           sessionId: this._sessionId,
@@ -1231,29 +1203,24 @@ export class Agent {
       }
       const tokensAfterSummary = estimateTokens([...compacted, ...refreshed]);
       const candidateTree = this.tree.clone();
-      if (replacements.length > 0) {
-        candidateTree.append({ type: "microcompaction", replacements });
-      }
-      const windowNumber =
-        candidateTree.activePath().filter((entry) => entry.type === "compaction").length + 1;
-      const boundary = candidateTree.append({
-        type: "compaction",
-        summary: result.summary,
-        ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
-        firstKeptEntryId,
-        preservedEntryIds,
-        ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+      // Cleanup ran on a copy the tree does not hold, so a cleaned message is
+      // found through the original at its position.
+      const installed = appendCompactionBoundary(candidateTree, result, {
+        entryIdOf: (message) => {
+          const index = working.indexOf(message);
+          return this.tree.entryIdForMessage(index < 0 ? message : (original[index] ?? message));
+        },
+        earlier: replacements,
+        recordCleared: true,
+        summaryTimestamp: compacted[0]?.timestamp,
         trigger: "manual",
         contextTokensBefore: tokensBefore,
         contextTokensAfter: tokensAfterSummary,
         model: this.modelRef,
         compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
-        windowNumber,
-        strategy: "summary-tail",
-        keptTokens: estimateTokens(result.keptMessages),
-        toolResultsCleared: replacements.length,
-        usage: result.usage,
       });
+      const boundary = installed.boundary;
+      replacements = installed.replacements;
 
       for (const message of refreshed) candidateTree.appendMessage(message);
       const visible = candidateTree.messagesAt();
@@ -2486,49 +2453,15 @@ export class Agent {
       // Record the boundary only when its exact tail can be anchored to
       // an ancestor entry. Otherwise retain the complete context.
       if (result.summary.length > 0) {
-        const firstKept = result.keptMessages[0];
-        let firstKeptEntryId: string | null = null;
-        if (firstKept) {
-          const source =
-            result.replacements?.find((replacement) => replacement.message === firstKept)
-              ?.original ?? firstKept;
-          const mapped = this.tree.entryIdForMessage(source);
-          if (!mapped) {
-            throw new Error("Compaction tail could not be mapped to the session");
-          }
-          firstKeptEntryId = mapped;
-        }
-        const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
-          const id = this.tree.entryIdForMessage(message);
-          if (!id) throw new Error("Protected context could not be mapped to the session");
-          return id;
-        });
-        const replacements = (result.replacements ?? []).map(({ original, message }) => {
-          const entryId = this.tree.entryIdForMessage(original);
-          if (!entryId)
-            throw new Error("Compaction observation could not be mapped to the session");
-          return { entryId, message };
-        });
         const candidateTree = this.tree.clone();
-        if (replacements.length) candidateTree.append({ type: "microcompaction", replacements });
-        const summaryMessage = compacted[0];
-        const boundary = candidateTree.append({
-          type: "compaction",
-          summary: result.summary,
-          ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
-          firstKeptEntryId,
-          preservedEntryIds,
-          ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+        const { boundary } = appendCompactionBoundary(candidateTree, result, {
+          entryIdOf: (message) => this.tree.entryIdForMessage(message),
+          summaryTimestamp: compacted[0]?.timestamp,
           trigger,
           contextTokensBefore: after.tokens,
           contextTokensAfter: estimateTokens(compacted),
           model: `${run.model.provider}/${run.model.id}`,
           compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
-          windowNumber:
-            this.tree.activePath().filter((entry) => entry.type === "compaction").length + 1,
-          strategy: "summary-tail",
-          keptTokens: estimateTokens(result.keptMessages),
-          usage: result.usage,
         });
         this.tree = candidateTree;
         compacted = candidateTree.messagesAt();
