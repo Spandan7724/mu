@@ -204,6 +204,60 @@ describe("Recall history access", () => {
     expect(first.coverage).toContain("partial");
   });
 
+  test("groups a fork's copied history under the source entries it came from", async () => {
+    const store = new MemorySessionStore();
+    const source = session("source");
+    const decision = source.appendMessage(userMessage("chose the zebra queue"), "checkpoint-1");
+    const fork = new SessionTree({
+      type: "session",
+      version: 1,
+      createdAt: "2026-09-07T00:00:00Z",
+      id: "fork",
+      profile: "coding",
+      environment: { directory: "project-a" },
+      forkedFrom: { sessionId: "source", entryId: decision.id },
+    });
+    const copy = structuredClone(decision);
+    if (copy.type === "message") delete copy.checkpointRef;
+    fork.push(copy);
+    fork.appendMessage(userMessage("fork kept the zebra queue"));
+    source.fork(null);
+    source.appendMessage(userMessage("started over"));
+    await store.save("source", source);
+    await store.save("fork", fork);
+
+    const result = z
+      .object({
+        matches: z.array(
+          z.object({
+            reference: z.string(),
+            branch: z.string(),
+            occurrenceCount: z.number(),
+            duplicateReferences: z.array(z.object({ reference: z.string(), branch: z.string() })),
+          }),
+        ),
+        uniqueMatches: z.number(),
+        duplicateMatches: z.number(),
+      })
+      .parse(
+        JSON.parse(
+          await call(recallTools(fork, store, { directory: "project-a" }), "history_search", {
+            query: "zebra queue",
+          }),
+        ),
+      );
+    expect(result.uniqueMatches).toBe(2);
+    expect(result.duplicateMatches).toBe(1);
+    expect(result.matches).toContainEqual(
+      expect.objectContaining({
+        reference: `session:source#${decision.id}`,
+        branch: "alternate",
+        occurrenceCount: 2,
+        duplicateReferences: [{ reference: `session:fork#${decision.id}`, branch: "active" }],
+      }),
+    );
+  });
+
   test("deduplicates repeated evidence, reports scan coverage, and keeps pagination stable", async () => {
     const store = new MemorySessionStore();
     const current = session("current");

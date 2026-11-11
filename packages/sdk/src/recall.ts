@@ -38,12 +38,21 @@ function evidenceFingerprint(text: string): string {
   };
   delete value.id;
   delete value.parentId;
+  delete (value as { checkpointRef?: unknown }).checkpointRef;
   if (value.message) {
     delete value.message.timestamp;
     delete value.message.toolCallId;
     delete value.message.usage;
   }
   return JSON.stringify(value);
+}
+
+// Entries a fork copied from its source keep their ids; they are the source's
+// evidence, not new evidence.
+function forkCopiedIds(tree: SessionTree): Set<string> {
+  const through = tree.header?.forkedFrom?.entryId;
+  if (typeof through !== "string" || !tree.has(through)) return new Set();
+  return new Set(tree.pathTo(through).map((entry) => entry.id));
 }
 
 const page = {
@@ -101,6 +110,7 @@ interface SearchMatch {
   _sourceRank: number;
   _span: number;
   _fingerprint: string;
+  _forkCopy: boolean;
 }
 
 interface SearchSnapshot {
@@ -276,6 +286,7 @@ export function recallTools(
             if (!tree) continue;
             scannedSessions++;
             const active = new Set(tree.activePath().map((entry) => entry.id));
+            const forkCopies = forkCopiedIds(tree);
             let matchIndex = 0;
             for (const entry of tree.all()) {
               signal.throwIfAborted();
@@ -335,6 +346,7 @@ export function recallTools(
                 _sourceRank: sourceRank,
                 _span: lastIndex - firstIndex,
                 _fingerprint: `${entryBranch}:${evidenceFingerprint(text)}`,
+                _forkCopy: forkCopies.has(entry.id),
               });
             }
           }
@@ -350,25 +362,39 @@ export function recallTools(
             if (aCurrent !== bCurrent) return aCurrent - bCurrent;
             return a._sessionIndex - b._sessionIndex;
           });
-          const unique: SearchMatch[] = [];
-          const byFingerprint = new Map<string, SearchMatch>();
+          const groups: SearchMatch[][] = [];
+          const byFingerprint = new Map<string, SearchMatch[]>();
+          const byEntry = new Map<string, SearchMatch[]>();
           for (const match of matches) {
-            const representative = byFingerprint.get(match._fingerprint);
-            if (!representative) {
-              byFingerprint.set(match._fingerprint, match);
-              unique.push(match);
-              continue;
+            const sameEntry = byEntry.get(match.entryId);
+            let group =
+              (sameEntry && (match._forkCopy || sameEntry.some((member) => member._forkCopy))
+                ? sameEntry
+                : undefined) ?? byFingerprint.get(match._fingerprint);
+            if (!group) {
+              group = [];
+              groups.push(group);
             }
-            representative.occurrenceCount++;
-            if (representative.duplicateReferences.length < 10) {
-              representative.duplicateReferences.push({
-                sessionId: match.sessionId,
-                entryId: match.entryId,
-                branch: match.branch,
-                reference: match.reference,
-              });
-            }
+            group.push(match);
+            if (!byEntry.has(match.entryId)) byEntry.set(match.entryId, group);
+            if (!byFingerprint.has(match._fingerprint))
+              byFingerprint.set(match._fingerprint, group);
           }
+          const unique = groups.map((group) => {
+            const representative =
+              group.find((member) => !member._forkCopy) ?? (group[0] as SearchMatch);
+            representative.occurrenceCount = group.length;
+            representative.duplicateReferences = group
+              .filter((member) => member !== representative)
+              .slice(0, 10)
+              .map(({ sessionId, entryId, branch, reference }) => ({
+                sessionId,
+                entryId,
+                branch,
+                reference,
+              }));
+            return representative;
+          });
           const activeMatches = matches.filter((match) => match.branch === "active").length;
           const searchCursor = `history-search-${nextCursor++}`;
           snapshot = {
@@ -397,6 +423,7 @@ export function recallTools(
             _sourceRank: _c,
             _span: _d,
             _fingerprint: _e,
+            _forkCopy: _f,
             ...visible
           } = match;
           return {
