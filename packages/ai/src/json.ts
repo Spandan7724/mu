@@ -8,6 +8,17 @@ const CONTROL_ESCAPES: Record<string, string> = {
   "\t": "\\t",
 };
 
+const STRING_ESCAPES: Record<string, string> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
+
 // Repairs malformed string literals: escapes raw control characters and
 // doubles backslashes before invalid escape sequences.
 export function repairJson(json: string): string {
@@ -161,44 +172,40 @@ class PartialParser {
     this.pos++; // "
     let out = "";
     while (this.pos < this.text.length) {
-      const ch = this.text[this.pos] as string;
-      if (ch === '"') {
+      // Plain runs are copied whole; only quotes and escapes need a look.
+      let end = this.pos;
+      while (end < this.text.length) {
+        const code = this.text.charCodeAt(end);
+        if (code === 34 || code === 92) break;
+        end++;
+      }
+      if (end > this.pos) {
+        out += this.text.slice(this.pos, end);
+        this.pos = end;
+        continue;
+      }
+      if (this.text.charCodeAt(this.pos) === 34) {
         this.pos++;
         return out;
       }
-      if (ch === "\\") {
-        const next = this.text[this.pos + 1];
-        if (next === undefined) {
-          this.pos++;
-          return out; // dangling escape at truncation point
+      const next = this.text[this.pos + 1];
+      if (next === undefined) {
+        this.pos++;
+        return out; // dangling escape at truncation point
+      }
+      if (next === "u") {
+        const hex = this.text.slice(this.pos + 2, this.pos + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          out += String.fromCharCode(Number.parseInt(hex, 16));
+          this.pos += 6;
+        } else {
+          this.pos = this.text.length; // truncated unicode escape
+          return out;
         }
-        if (next === "u") {
-          const hex = this.text.slice(this.pos + 2, this.pos + 6);
-          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
-            out += String.fromCharCode(Number.parseInt(hex, 16));
-            this.pos += 6;
-          } else {
-            this.pos = this.text.length; // truncated unicode escape
-            return out;
-          }
-          continue;
-        }
-        const map: Record<string, string> = {
-          '"': '"',
-          "\\": "\\",
-          "/": "/",
-          b: "\b",
-          f: "\f",
-          n: "\n",
-          r: "\r",
-          t: "\t",
-        };
-        out += map[next] ?? next;
-        this.pos += 2;
         continue;
       }
-      out += ch;
-      this.pos++;
+      out += STRING_ESCAPES[next] ?? next;
+      this.pos += 2;
     }
     return out; // unterminated
   }
@@ -261,5 +268,46 @@ export function salvageToolArgs(partialJson: string | undefined): Record<string,
       }
     }
     return {};
+  }
+}
+
+const ALWAYS_PARSE_BELOW = 4096;
+const MIN_PARSE_INTERVAL_MS = 50;
+const PARSE_COST_FACTOR = 20;
+
+// Tool-call arguments as they stream. Parsing the whole text on every fragment
+// is quadratic in the argument size, so past a small size the parsed value is
+// refreshed on a clock that keeps parsing near 5% of the time; `finish` is exact.
+export class StreamingToolArgs {
+  private text = "";
+  private value: Record<string, unknown> = {};
+  private parsedAt = Number.NEGATIVE_INFINITY;
+  private costMs = 0;
+
+  constructor(private readonly now: () => number = () => performance.now()) {}
+
+  get json(): string {
+    return this.text;
+  }
+
+  append(fragment: string): Record<string, unknown> {
+    this.text += fragment;
+    const started = this.now();
+    if (
+      this.text.length > ALWAYS_PARSE_BELOW &&
+      started - this.parsedAt < Math.max(MIN_PARSE_INTERVAL_MS, this.costMs * PARSE_COST_FACTOR)
+    ) {
+      return this.value;
+    }
+    this.value = salvageToolArgs(this.text);
+    this.parsedAt = this.now();
+    this.costMs = this.parsedAt - started;
+    return this.value;
+  }
+
+  finish(json: string = this.text): Record<string, unknown> {
+    this.text = json;
+    this.value = salvageToolArgs(json);
+    return this.value;
   }
 }

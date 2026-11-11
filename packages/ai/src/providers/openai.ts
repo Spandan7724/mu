@@ -1,5 +1,5 @@
 import { classifyHttpError, classifyStreamError } from "../errors.ts";
-import { salvageToolArgs } from "../json.ts";
+import { StreamingToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
 import type { AssistantStream } from "../stream.ts";
@@ -426,7 +426,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
 interface ItemState {
   contentIndex: number;
   kind: "text" | "reasoning" | "function_call" | "web_search";
-  partialJson: string;
+  args: StreamingToolArgs;
   markup?: CitationMarkupFilter;
 }
 
@@ -468,13 +468,17 @@ export function streamOpenAI(
           items.set(outputIndex, {
             contentIndex,
             kind: "text",
-            partialJson: "",
+            args: new StreamingToolArgs(),
             markup: new CitationMarkupFilter(),
           });
           output.content.push({ type: "text", text: "" });
           stream.push({ type: "text_start", contentIndex, partial: output });
         } else if (kind === "reasoning") {
-          items.set(outputIndex, { contentIndex, kind: "reasoning", partialJson: "" });
+          items.set(outputIndex, {
+            contentIndex,
+            kind: "reasoning",
+            args: new StreamingToolArgs(),
+          });
           output.content.push({
             type: "thinking",
             thinking: "",
@@ -483,7 +487,11 @@ export function streamOpenAI(
           stream.push({ type: "thinking_start", contentIndex, partial: output });
         } else if (kind === "function_call") {
           sawFunctionCall = true;
-          items.set(outputIndex, { contentIndex, kind: "function_call", partialJson: "" });
+          items.set(outputIndex, {
+            contentIndex,
+            kind: "function_call",
+            args: new StreamingToolArgs(),
+          });
           output.content.push({
             type: "toolCall",
             id: (item.call_id as string) ?? (item.id as string),
@@ -492,7 +500,11 @@ export function streamOpenAI(
           });
           stream.push({ type: "toolcall_start", contentIndex, partial: output });
         } else if (kind === "web_search_call") {
-          items.set(outputIndex, { contentIndex, kind: "web_search", partialJson: "" });
+          items.set(outputIndex, {
+            contentIndex,
+            kind: "web_search",
+            args: new StreamingToolArgs(),
+          });
           const webSearch = webSearchFromWire(item, `web_search_${outputIndex}`);
           output.content.push(webSearch);
           stream.push({
@@ -548,8 +560,7 @@ export function streamOpenAI(
         const state = items.get(event.output_index as number);
         const block = state && output.content[state.contentIndex];
         if (state && block?.type === "toolCall") {
-          state.partialJson += event.delta as string;
-          block.arguments = salvageToolArgs(state.partialJson);
+          block.arguments = state.args.append(event.delta as string);
           stream.push({
             type: "toolcall_delta",
             contentIndex: state.contentIndex,
@@ -598,8 +609,7 @@ export function streamOpenAI(
             partial: output,
           });
         } else if (block?.type === "toolCall") {
-          const args = (item.arguments as string) ?? state.partialJson;
-          block.arguments = salvageToolArgs(args);
+          block.arguments = state.args.finish((item.arguments as string) ?? state.args.json);
           stream.push({
             type: "toolcall_end",
             contentIndex: state.contentIndex,

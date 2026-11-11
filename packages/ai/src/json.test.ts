@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { parseJsonWithRepair, parsePartialJson, repairJson, salvageToolArgs } from "./json.ts";
+import {
+  parseJsonWithRepair,
+  parsePartialJson,
+  repairJson,
+  StreamingToolArgs,
+  salvageToolArgs,
+} from "./json.ts";
 
 describe("repairJson", () => {
   test("escapes raw control characters in strings", () => {
@@ -87,5 +93,39 @@ describe("salvageToolArgs", () => {
 
   test("raw newline in string plus truncation", () => {
     expect(salvageToolArgs('{"text": "line1\nline2')).toEqual({ text: "line1\nline2" });
+  });
+});
+
+describe("StreamingToolArgs", () => {
+  test("small arguments are parsed on every fragment", () => {
+    const args = new StreamingToolArgs(() => 0);
+    expect(args.append('{"path":"a.ts","con')).toEqual({ path: "a.ts" });
+    expect(args.append('tent":"x')).toEqual({ path: "a.ts", content: "x" });
+    expect(args.finish()).toEqual({ path: "a.ts", content: "x" });
+  });
+
+  test("large arguments are parsed on a clock and exactly at the end", () => {
+    let clock = 0;
+    const args = new StreamingToolArgs(() => clock);
+    const full = JSON.stringify({ content: 'line "one"\n'.repeat(4000) });
+    let parses = 0;
+    let last: unknown;
+    for (let i = 0; i < full.length - 2; i += 20) {
+      clock += 1;
+      const value = args.append(full.slice(i, Math.min(i + 20, full.length - 2)));
+      if (value !== last) parses++;
+      last = value;
+    }
+    const fragments = Math.ceil((full.length - 2) / 20);
+    expect(parses).toBeLessThan(fragments / 10);
+    expect(parses).toBeGreaterThan(fragments / 60);
+    expect(args.finish(full)).toEqual(JSON.parse(full));
+    expect(args.json).toBe(full);
+  });
+
+  test("the partial parser keeps escapes inside long strings", () => {
+    const text = 'a\\b "quoted" \u00e9\n'.repeat(500);
+    const json = JSON.stringify({ text });
+    expect(parsePartialJson(json.slice(0, -2))).toEqual({ text });
   });
 });

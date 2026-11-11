@@ -1,4 +1,4 @@
-import { salvageToolArgs } from "../json.ts";
+import { StreamingToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
 import type { AssistantStream } from "../stream.ts";
@@ -170,7 +170,7 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
 
 interface ToolState {
   contentIndex: number;
-  partialJson: string;
+  args: StreamingToolArgs;
 }
 
 function mergeToolName(current: string, incoming: string, knownNames: ReadonlySet<string>): string {
@@ -286,7 +286,7 @@ export function streamOpenAICompletions(
         const fn = (toolDelta.function as Json | undefined) ?? {};
         if (!state) {
           const contentIndex = output.content.length;
-          state = { contentIndex, partialJson: "" };
+          state = { contentIndex, args: new StreamingToolArgs() };
           tools.set(apiIndex, state);
           output.content.push({
             type: "toolCall",
@@ -303,8 +303,7 @@ export function streamOpenAICompletions(
           block.name = mergeToolName(block.name, fn.name, knownToolNames);
         }
         if (typeof fn.arguments === "string") {
-          state.partialJson += fn.arguments;
-          block.arguments = salvageToolArgs(state.partialJson);
+          block.arguments = state.args.append(fn.arguments);
           stream.push({
             type: "toolcall_delta",
             contentIndex: state.contentIndex,
@@ -350,7 +349,7 @@ export function streamOpenAICompletions(
     for (const state of tools.values()) {
       const block = output.content[state.contentIndex];
       if (block?.type !== "toolCall") continue;
-      block.arguments = salvageToolArgs(state.partialJson);
+      block.arguments = state.args.finish();
       stream.push({
         type: "toolcall_end",
         contentIndex: state.contentIndex,

@@ -20,7 +20,13 @@ export {
   isContextTooLongMessage,
   isRetryableErrorKind,
 } from "./errors.ts";
-export { parseJsonWithRepair, parsePartialJson, repairJson, salvageToolArgs } from "./json.ts";
+export {
+  parseJsonWithRepair,
+  parsePartialJson,
+  repairJson,
+  StreamingToolArgs,
+  salvageToolArgs,
+} from "./json.ts";
 export {
   builtinProviderConfigs,
   modelApi,

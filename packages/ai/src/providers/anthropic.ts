@@ -1,5 +1,5 @@
 import { classifyStreamError } from "../errors.ts";
-import { salvageToolArgs } from "../json.ts";
+import { StreamingToolArgs } from "../json.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
 import type { AssistantStream } from "../stream.ts";
@@ -185,7 +185,7 @@ function mapStopReason(reason: string): { stopReason: StopReason; errorMessage?:
 
 interface BlockState {
   contentIndex: number;
-  partialJson: string;
+  args: StreamingToolArgs;
 }
 
 export function streamAnthropic(
@@ -235,7 +235,7 @@ export function streamAnthropic(
         const apiIndex = event.index as number;
         const blockDef = event.content_block as Json;
         const contentIndex = output.content.length;
-        blocks.set(apiIndex, { contentIndex, partialJson: "" });
+        blocks.set(apiIndex, { contentIndex, args: new StreamingToolArgs() });
         const kind = blockDef.type as string;
         if (kind === "text") {
           output.content.push({ type: "text", text: "" });
@@ -285,8 +285,7 @@ export function streamAnthropic(
             partial: output,
           });
         } else if (deltaType === "input_json_delta" && block?.type === "toolCall") {
-          state.partialJson += delta.partial_json as string;
-          block.arguments = salvageToolArgs(state.partialJson);
+          block.arguments = state.args.append(delta.partial_json as string);
           stream.push({
             type: "toolcall_delta",
             contentIndex: state.contentIndex,
@@ -315,7 +314,7 @@ export function streamAnthropic(
             partial: output,
           });
         } else if (block?.type === "toolCall") {
-          block.arguments = salvageToolArgs(state.partialJson);
+          block.arguments = state.args.finish();
           stream.push({
             type: "toolcall_end",
             contentIndex: state.contentIndex,
