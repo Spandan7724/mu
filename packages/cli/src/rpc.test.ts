@@ -7,6 +7,7 @@ import {
   parseMarkdownCommand,
   registryWithCoreCommands,
   toCommand,
+  WireEventDecoder,
 } from "mu";
 import { linesFrom, parseOp, type RpcOut, runRpc } from "./rpc.ts";
 
@@ -102,6 +103,45 @@ describe("runRpc", () => {
     expect(events[0]?.type === "event" && events[0].event.type).toBe("agent_start");
     // Every line is independently parseable — that is the wire contract.
     for (const line of written) expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  test("streamed updates carry the delta alone and rebuild into the final message", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "text", text: "Reading." },
+          { type: "toolCall", id: "c1", name: "missing", arguments: { path: "a.ts" } },
+        ],
+      },
+      { content: [{ type: "text", text: "done" }] },
+    ]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({ type: "input", text: "hi" }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+
+    await runRpc(io, { agent });
+    const decoder = new WireEventDecoder();
+    let lastPartial: unknown;
+    let firstFinal: unknown;
+    let updates = 0;
+    for (const out of parsed(written)) {
+      if (out.type !== "event") continue;
+      if (out.event.type === "message_update") {
+        updates++;
+        expect("message" in out.event).toBe(false);
+      }
+      const event = decoder.decode(out.event);
+      if (event.type === "message_update" && firstFinal === undefined) {
+        lastPartial = event.message.content;
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        firstFinal ??= event.message.content;
+      }
+    }
+    expect(updates).toBeGreaterThan(3);
+    expect(lastPartial).toEqual(firstFinal);
   });
 
   test("a thinking op changes the level and reports the change", async () => {

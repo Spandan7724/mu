@@ -33,6 +33,7 @@ import {
   readAuthFile,
   type SubagentsCommandData,
   type UndoPointsCommandData,
+  WireEventDecoder,
 } from "mu";
 import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
@@ -566,6 +567,7 @@ interface ActiveConversation {
   app: App;
   // The attached worker's mode list and current mode, kept current as it changes.
   snapshot: AgentViewAttachment;
+  decoder: WireEventDecoder;
   disposePresentation?: () => Promise<void>;
 }
 
@@ -772,7 +774,13 @@ export async function runAgentView(
         contextTokens: Math.round(snapshot.contextPercent * snapshot.contextWindow),
         contextPercent: snapshot.contextPercent,
       });
-      active = { sessionId, app: conversation, snapshot, disposePresentation };
+      active = {
+        sessionId,
+        app: conversation,
+        snapshot,
+        decoder: new WireEventDecoder(),
+        disposePresentation,
+      };
       disposePresentation = undefined;
       terminal.setTitle(`mu - ${basename(cwd) || cwd}`);
       renderer.clear();
@@ -820,7 +828,7 @@ export async function runAgentView(
   const unsubscribe = client.subscribe((response: AgentViewResponse) => {
     app.setRecords(client.records);
     if (active && response.type === "event" && response.sessionId === active.sessionId) {
-      active.app.handleEvent(response.event);
+      active.app.handleEvent(active.decoder.decode(response.event));
     } else if (
       active &&
       response.type === "command_result" &&

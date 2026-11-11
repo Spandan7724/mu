@@ -411,6 +411,7 @@ function providerDelta(event: {
   contentIndex?: number;
   delta?: string;
   toolCall?: ToolCallContent;
+  partial?: AssistantMessage;
 }): StreamDelta | undefined {
   const contentIndex = event.contentIndex ?? 0;
   switch (event.type) {
@@ -426,12 +427,25 @@ function providerDelta(event: {
       return { kind: "thinking_delta", contentIndex, text: event.delta ?? "" };
     case "thinking_end":
       return { kind: "thinking_end", contentIndex };
-    case "toolcall_start":
-      return { kind: "toolcall_start", contentIndex };
+    case "toolcall_start": {
+      const block = event.partial?.content[contentIndex];
+      return {
+        kind: "toolcall_start",
+        contentIndex,
+        ...(block?.type === "toolCall" ? { toolCallId: block.id, toolName: block.name } : {}),
+      };
+    }
     case "toolcall_delta":
       return { kind: "toolcall_delta", contentIndex, argsFragment: event.delta ?? "" };
     case "toolcall_end":
-      return { kind: "toolcall_end", contentIndex, toolCallId: event.toolCall?.id ?? "" };
+      return {
+        kind: "toolcall_end",
+        contentIndex,
+        toolCallId: event.toolCall?.id ?? "",
+        ...(event.toolCall
+          ? { toolName: event.toolCall.name, args: event.toolCall.arguments }
+          : {}),
+      };
     default:
       return undefined;
   }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, open, readFile, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { terminateProcessTree } from "@mu/profile-coding";
-import type { AgentEvent, AgentMessage, PermissionRequest, Usage } from "mu";
+import type { AgentMessage, PermissionRequest, Usage, WireAgentEvent } from "mu";
 import { z } from "zod";
 import {
   type AgentViewAttachment,
@@ -903,7 +903,7 @@ export class AgentSupervisor {
         } else if (out.type === "snapshot") {
           runtime.snapshot = out.snapshot as unknown as WorkerSnapshot;
         } else if (out.type === "event") {
-          await this.consumeAgentEvent(sessionId, out.event as AgentEvent, runtime);
+          await this.consumeAgentEvent(sessionId, out.event as WireAgentEvent, runtime);
         } else if (out.type === "command_result") {
           let record = this.records.get(sessionId);
           const mode = permissionModeChange(out.data);
@@ -981,7 +981,7 @@ export class AgentSupervisor {
 
   private async consumeAgentEvent(
     sessionId: string,
-    event: AgentEvent,
+    event: WireAgentEvent,
     runtime: WorkerRuntime,
   ): Promise<void> {
     const record = this.records.get(sessionId);
@@ -994,8 +994,14 @@ export class AgentSupervisor {
     }
     if (event.type === "agent_start") this.cancelIdleEviction(runtime);
     const next = reduceManagedSession(record, { type: "agent_event", event }, this.now());
-    this.records.set(sessionId, next);
-    await this.persistAndBroadcast(next);
+    if (next !== record) {
+      this.records.set(sessionId, next);
+      // A streamed delta only moves the live summary; the roster file waits for
+      // the message's end instead of being rewritten on every token.
+      if (event.type === "message_update")
+        this.broadcast(record.scope, { type: "record", record: next });
+      else await this.persistAndBroadcast(next);
+    }
     this.broadcast(record.scope, { type: "event", sessionId, event });
     if (event.type === "agent_end" && next.state === "completed" && !next.attached) {
       this.scheduleIdleEviction(runtime);

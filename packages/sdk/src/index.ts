@@ -59,6 +59,7 @@ export type {
   Tool,
   ToolRenderer,
   UserContent,
+  WireAgentEvent,
 } from "@mu/core";
 export {
   CommandRegistry,
@@ -68,7 +69,9 @@ export {
   MemorySessionStore,
   SessionTree,
   textResult,
+  toWireEvent,
   userMessage,
+  WireEventDecoder,
 } from "@mu/core";
 export type {
   AgentOptions,

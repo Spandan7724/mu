@@ -9,7 +9,9 @@ import type {
   MarkdownCommandRun,
   PermissionModeTone,
   Usage,
+  WireAgentEvent,
 } from "mu";
+import { toWireEvent } from "mu";
 import { z } from "zod";
 
 export type RpcOp = (
@@ -66,7 +68,7 @@ export interface RpcSnapshot extends RpcRuntimeMetadata {
 }
 
 export type RpcOut =
-  | { type: "event"; event: AgentEvent }
+  | { type: "event"; event: WireAgentEvent }
   | { type: "error"; message: string }
   | ({ type: "ready" } & Partial<RpcRuntimeMetadata>)
   | { type: "snapshot"; snapshot: RpcSnapshot }
@@ -196,7 +198,9 @@ export function parseOp(
 
 export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
   const send = (out: RpcOut) => io.write(`${JSON.stringify(out)}\n`);
-  const unsubscribe = deps.agent.subscribe((event) => send({ type: "event", event }));
+  const unsubscribe = deps.agent.subscribe((event) =>
+    send({ type: "event", event: toWireEvent(event) }),
+  );
   send({ type: "ready", ...(deps.ready ?? {}) });
 
   let active: Promise<void> | undefined;

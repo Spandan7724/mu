@@ -161,9 +161,10 @@ export async function runAgentWorker(
     await runRpc(
       {
         write: (line) => {
-          const value = JSON.parse(line) as Record<string, unknown>;
+          // Every RPC line is one JSON object; the token joins it without a re-parse.
+          const body = line.trimEnd();
           (io.write ?? ((output: string) => process.stdout.write(output)))(
-            `${JSON.stringify({ ...value, ownershipToken })}\n`,
+            `${body.slice(0, -1)},"ownershipToken":${JSON.stringify(ownershipToken)}}\n`,
           );
         },
         lines: fencedWorkerLines(io.lines ?? linesFrom(process.stdin), ownershipToken),

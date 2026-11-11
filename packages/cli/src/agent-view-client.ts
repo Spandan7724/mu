@@ -1,5 +1,5 @@
 import { connect, type Socket } from "node:net";
-import type { AgentEvent } from "mu";
+import type { WireAgentEvent } from "mu";
 import { currentExecutableCommand } from "./agent-supervisor.ts";
 import {
   type AgentViewAttachment,
@@ -320,4 +320,4 @@ export class AgentViewClient {
   }
 }
 
-export type ManagedAgentEvent = { sessionId: string; event: AgentEvent };
+export type ManagedAgentEvent = { sessionId: string; event: WireAgentEvent };

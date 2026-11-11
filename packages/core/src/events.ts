@@ -17,9 +17,15 @@ export type StreamDelta =
   | { kind: "thinking_start"; contentIndex: number }
   | { kind: "thinking_delta"; contentIndex: number; text: string }
   | { kind: "thinking_end"; contentIndex: number }
-  | { kind: "toolcall_start"; contentIndex: number }
+  | { kind: "toolcall_start"; contentIndex: number; toolCallId?: string; toolName?: string }
   | { kind: "toolcall_delta"; contentIndex: number; argsFragment: string }
-  | { kind: "toolcall_end"; contentIndex: number; toolCallId: string };
+  | {
+      kind: "toolcall_end";
+      contentIndex: number;
+      toolCallId: string;
+      toolName?: string;
+      args?: Record<string, unknown>;
+    };
 
 export type AgentEndReason = "done" | "aborted" | "budget" | "maxTurns" | "error";
 export type CompactionTrigger = "manual" | "threshold" | "overflow" | "model-change";

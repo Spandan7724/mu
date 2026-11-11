@@ -8,6 +8,7 @@ import {
   type MarkdownCommandRun,
   supportedThinkingLevels,
   type ThinkingLevel,
+  toWireEvent,
   type UndoPointsCommandData,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
@@ -110,7 +111,7 @@ export async function runHeadless(
       );
     }
     if (args.json) {
-      io.stdout(`${JSON.stringify(event)}\n`);
+      io.stdout(`${JSON.stringify(toWireEvent(event))}\n`);
     } else if (event.type === "message_update" && event.delta.kind === "text_delta") {
       replyText += event.delta.text;
     } else if (event.type === "message_end" && event.message.role === "assistant") {

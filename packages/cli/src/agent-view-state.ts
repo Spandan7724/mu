@@ -1,4 +1,4 @@
-import type { AgentEvent, PermissionRequest } from "mu";
+import type { AgentEvent, PermissionRequest, WireAgentEvent } from "mu";
 import { z } from "zod";
 
 export const AGENT_VIEW_PROTOCOL_VERSION = 1;
@@ -73,7 +73,7 @@ export const rosterSchema = z
 
 export type ManagedSessionTransition =
   | { type: "runtime_ready"; pid: number; model?: string }
-  | { type: "agent_event"; event: AgentEvent }
+  | { type: "agent_event"; event: WireAgentEvent }
   | { type: "worker_failed"; message: string }
   | { type: "stopped" }
   | { type: "attached"; attached: boolean };

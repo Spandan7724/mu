@@ -1,4 +1,11 @@
-import type { AgentEvent, AgentMessage, PermissionModeTone, PermissionRequest, Usage } from "mu";
+import type {
+  AgentEvent,
+  AgentMessage,
+  PermissionModeTone,
+  PermissionRequest,
+  Usage,
+  WireAgentEvent,
+} from "mu";
 import { builtinProviderConfigs } from "mu";
 import { z } from "zod";
 import {
@@ -201,7 +208,12 @@ const streamDeltaSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("thinking_end"), contentIndex: z.number().int().nonnegative() })
     .strict(),
   z
-    .object({ kind: z.literal("toolcall_start"), contentIndex: z.number().int().nonnegative() })
+    .object({
+      kind: z.literal("toolcall_start"),
+      contentIndex: z.number().int().nonnegative(),
+      toolCallId: eventId.optional(),
+      toolName: z.string().max(256).optional(),
+    })
     .strict(),
   z
     .object({
@@ -215,6 +227,8 @@ const streamDeltaSchema = z.discriminatedUnion("kind", [
       kind: z.literal("toolcall_end"),
       contentIndex: z.number().int().nonnegative(),
       toolCallId: eventId,
+      toolName: z.string().max(256).optional(),
+      args: z.record(z.string(), z.unknown()).optional(),
     })
     .strict(),
 ]);
@@ -238,7 +252,11 @@ export const agentEventSchema = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("message_start"), message: messageSchema }).strict(),
   z
-    .object({ type: z.literal("message_update"), message: messageSchema, delta: streamDeltaSchema })
+    .object({
+      type: z.literal("message_update"),
+      message: messageSchema.optional(),
+      delta: streamDeltaSchema,
+    })
     .strict(),
   z.object({ type: z.literal("message_end"), message: messageSchema }).strict(),
   z.object({ type: z.literal("web_search_start"), search: webSearchContentSchema }).strict(),
@@ -502,7 +520,7 @@ export type AgentViewResponse =
   | { type: "snapshot"; records: ManagedSessionRecord[] }
   | { type: "record"; record: ManagedSessionRecord }
   | { type: "removed"; sessionId: string }
-  | { type: "event"; sessionId: string; event: AgentEvent }
+  | { type: "event"; sessionId: string; event: WireAgentEvent }
   | {
       type: "command_result";
       sessionId: string;
