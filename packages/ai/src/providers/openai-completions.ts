@@ -1,4 +1,5 @@
 import { StreamingToolArgs } from "../json.ts";
+import { usesCacheBreakpoints } from "../provider-config.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
 import type { AssistantStream } from "../stream.ts";
@@ -164,6 +165,9 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
       body.prompt_cache_key = opts.sessionId;
     }
   }
+  // One request-level marker: the router places the breakpoint on the last
+  // cacheable block and moves it forward as the conversation grows.
+  if (usesCacheBreakpoints(model)) body.cache_control = { type: "ephemeral" };
   addThinking(body, model, opts?.thinkingLevel);
   return body;
 }

@@ -38,7 +38,7 @@ const ZERO_PRICING = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 type Json = Record<string, unknown>;
 
-function codexSessionId(value: string | undefined): string | undefined {
+function cacheKey(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized.slice(0, MAX_OPENAI_CACHE_KEY_LENGTH) : undefined;
 }
@@ -204,7 +204,7 @@ function resolveAuthMode(
       throw new Error("OpenAI Codex requires a ChatGPT account credential");
     }
     const base = (opts?.baseUrl ?? CODEX_BASE_URL).replace(/\/+$/, "");
-    const sessionId = codexSessionId(opts?.sessionId);
+    const sessionId = cacheKey(opts?.sessionId);
     return {
       url: `${base}/responses`,
       headers: {
@@ -412,7 +412,11 @@ function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
     body.include = ["reasoning.encrypted_content"];
     body.tool_choice = "auto";
     body.parallel_tool_calls = true;
-    const sessionId = codexSessionId(opts?.sessionId);
+  }
+  // Requests sharing a key are routed to the same cache, so a session's turns
+  // keep finding the prefix its earlier turns wrote.
+  if (isCodex || model.provider === "openai") {
+    const sessionId = cacheKey(opts?.sessionId);
     if (sessionId) body.prompt_cache_key = sessionId;
   }
   if (opts?.temperature !== undefined) body.temperature = opts.temperature;

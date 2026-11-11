@@ -8,6 +8,10 @@ export interface BuiltinProviderConfig {
   env: string[];
   auth?: "bearer" | "anthropic" | "google" | "azure" | "cloudflare" | "none";
   headers?: Record<string, string>;
+  // The provider caches a prompt prefix only where a request marks it. `true`
+  // covers every model; a string covers model ids with that prefix. Providers
+  // without it cache implicitly or not at all.
+  cacheBreakpoints?: true | string;
 }
 
 const configs: BuiltinProviderConfig[] = [
@@ -24,6 +28,7 @@ const configs: BuiltinProviderConfig[] = [
     baseUrl: "https://api.anthropic.com",
     env: ["ANTHROPIC_API_KEY"],
     auth: "anthropic",
+    cacheBreakpoints: true,
   },
   {
     id: "azure-openai-responses",
@@ -140,6 +145,7 @@ const configs: BuiltinProviderConfig[] = [
     baseUrl: "https://api.minimax.io/anthropic",
     env: ["MINIMAX_API_KEY"],
     auth: "anthropic",
+    cacheBreakpoints: true,
   },
   {
     id: "mistral",
@@ -197,6 +203,7 @@ const configs: BuiltinProviderConfig[] = [
     api: "openai-completions",
     baseUrl: "https://openrouter.ai/api/v1",
     env: ["OPENROUTER_API_KEY"],
+    cacheBreakpoints: "anthropic/",
   },
   {
     id: "qwen-token-plan",
@@ -212,6 +219,7 @@ const configs: BuiltinProviderConfig[] = [
     baseUrl: "https://ai-gateway.vercel.sh",
     env: ["AI_GATEWAY_API_KEY"],
     auth: "anthropic",
+    cacheBreakpoints: "anthropic/",
   },
   {
     id: "xai",
@@ -233,6 +241,11 @@ export const builtinProviderConfigs = new Map(configs.map((config) => [config.id
 
 export function providerConfig(id: string): BuiltinProviderConfig | undefined {
   return builtinProviderConfigs.get(id);
+}
+
+export function usesCacheBreakpoints(model: ModelInfo): boolean {
+  const declared = builtinProviderConfigs.get(model.provider)?.cacheBreakpoints;
+  return declared === true || (typeof declared === "string" && model.id.startsWith(declared));
 }
 
 export function modelApi(model: ModelInfo): LlmApi {

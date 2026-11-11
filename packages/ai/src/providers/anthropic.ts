@@ -1,5 +1,6 @@
 import { classifyStreamError } from "../errors.ts";
 import { StreamingToolArgs } from "../json.ts";
+import { usesCacheBreakpoints } from "../provider-config.ts";
 import { withRetries } from "../retry.ts";
 import { iterateSse } from "../sse.ts";
 import type { AssistantStream } from "../stream.ts";
@@ -97,12 +98,20 @@ function convertMessages(messages: AiMessage[], cacheControl: boolean): Json[] {
       out.push({ role: "user", content: results });
     }
   }
-  // Recent-message cache breakpoint.
-  const last = out[out.length - 1];
-  if (cacheControl && last && last.role === "user") {
-    const content = last.content as Json[];
-    const lastBlock = content[content.length - 1];
-    if (lastBlock) lastBlock.cache_control = CACHE_CONTROL;
+  // Breakpoints on the last two user turns: the newest writes this request's
+  // prefix, the one before it is where the previous request wrote. Reading it
+  // back does not then depend on how many blocks the turn between them added.
+  if (cacheControl && out[out.length - 1]?.role === "user") {
+    let marked = 0;
+    for (let i = out.length - 1; i >= 0 && marked < 2; i--) {
+      const message = out[i] as Json;
+      if (message.role !== "user") continue;
+      const content = message.content as Json[];
+      const lastBlock = content[content.length - 1];
+      if (!lastBlock) continue;
+      lastBlock.cache_control = CACHE_CONTROL;
+      marked++;
+    }
   }
   return out;
 }
@@ -127,7 +136,7 @@ function buildThinking(model: ModelInfo, level: ThinkingLevel | undefined, body:
 }
 
 function buildBody(model: ModelInfo, ctx: LlmContext, opts?: StreamOpts): Json {
-  const cacheControl = model.provider === "anthropic";
+  const cacheControl = usesCacheBreakpoints(model);
   const body: Json = {
     model: model.id,
     max_tokens: opts?.maxTokens ?? model.maxOutput,
