@@ -26,6 +26,7 @@ const PARALLEL_LIMIT = 10;
 const DOOM_LOOP_THRESHOLD = 3;
 const CYCLE_REPEATS = 3;
 const MAX_CYCLE_LENGTH = 3;
+const INTERRUPTED = "the run was interrupted first.";
 
 export interface AgentContext {
   systemPrompt?: LlmContext["systemPrompt"];
@@ -547,8 +548,9 @@ async function failTruncatedCalls(calls: ToolCallContent[], emit: EventSink): Pr
   return { results, terminate: false, steering: [] };
 }
 
-async function skipCallsForSteering(
+async function skipCalls(
   calls: ToolCallContent[],
+  why: string,
   emit: EventSink,
 ): Promise<ToolResultMessage[]> {
   const results: ToolResultMessage[] = [];
@@ -561,9 +563,7 @@ async function skipCallsForSteering(
     });
     const message = resultMessage(
       call,
-      errorResult(
-        `Tool call "${call.name}" was not executed because a steering message interrupted the remaining tool calls. Re-evaluate the plan before re-issuing it.`,
-      ),
+      errorResult(`Tool call "${call.name}" was not executed because ${why}`),
       true,
     );
     await emitResult(message, emit);
@@ -707,7 +707,9 @@ async function executeCalls(
     } else await emitResult(message, emit);
   };
 
-  const runOne = async (call: ToolCallContent): Promise<ToolResultMessage> => {
+  // `endNow` reports the call's end as soon as it settles; its message still
+  // joins the transcript in call order.
+  const runOne = async (call: ToolCallContent, endNow = false): Promise<ToolResultMessage> => {
     const tool = context.tools?.find((t) => t.name === call.name);
     await emit({
       type: "tool_execution_start",
@@ -718,7 +720,13 @@ async function executeCalls(
         ? { backgroundable: true as const }
         : {}),
     });
-    const preparation = await prepareCall(call, assistantMessage, context, config, signal);
+    const preparation: Preparation =
+      endNow && signal.aborted
+        ? {
+            kind: "immediate",
+            result: errorResult(`Tool call "${call.name}" was not executed because ${INTERRUPTED}`),
+          }
+        : await prepareCall(call, assistantMessage, context, config, signal);
     const outcome =
       preparation.kind === "immediate"
         ? { result: preparation.result, isError: true, backgrounded: false }
@@ -727,7 +735,7 @@ async function executeCalls(
     directResponse ??= outcome.result.directResponse;
     const message = resultMessage(call, outcome.result, outcome.isError);
     // A call moved to the background reports its end now, not when its batch does.
-    if (outcome.backgrounded) {
+    if (outcome.backgrounded || endNow) {
       await emit({ type: "tool_execution_end", toolCallId: call.id, result: message });
       endedEarly.add(call.id);
     }
@@ -751,16 +759,29 @@ async function executeCalls(
       continue;
     }
 
-    // Gather the run of consecutive safe calls.
+    // The run of consecutive safe calls shares a pool: a slot frees as soon as
+    // its call settles, rather than when a fixed window of calls does.
     const batch: ToolCallContent[] = [];
-    while (i < calls.length && batch.length < PARALLEL_LIMIT) {
+    while (i < calls.length) {
       const next = calls[i] as ToolCallContent;
       const nextTool = context.tools?.find((t) => t.name === next.name);
       if (!nextTool || !concurrencySafe(nextTool, next.arguments)) break;
       batch.push(next);
       i++;
     }
-    const settled = await Promise.all(batch.map(runOne));
+    const settled: ToolResultMessage[] = [];
+    let cursor = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = cursor++;
+        const next = batch[index];
+        if (!next) return;
+        settled[index] = await runOne(next, true);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(PARALLEL_LIMIT, batch.length) }, () => worker()),
+    );
     for (const message of settled) {
       await emitEnded(message);
       results.push(message);
@@ -770,8 +791,18 @@ async function executeCalls(
     if (steering.length > 0) break;
   }
 
-  if (steering.length > 0 && i < calls.length) {
-    results.push(...(await skipCallsForSteering(calls.slice(i), emit)));
+  // Every call gets a result, run or not: providers reject a transcript that
+  // holds a tool call without one.
+  if (i < calls.length) {
+    results.push(
+      ...(await skipCalls(
+        calls.slice(i),
+        signal.aborted
+          ? INTERRUPTED
+          : "a steering message interrupted the remaining tool calls. Re-evaluate the plan before re-issuing it.",
+        emit,
+      )),
+    );
   }
 
   return {

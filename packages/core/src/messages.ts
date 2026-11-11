@@ -65,11 +65,62 @@ export function renderCustomMessage(message: CustomMessage): UserMessage {
 // the provider layer accepts.
 // A failed assistant attempt is kept in the transcript but never sent back: its
 // content is incomplete and may hold tool calls that were never run.
+// Providers reject a tool call that has no result, so every call sent is paired:
+// an interrupted stream's unanswered calls are dropped (their arguments may be
+// partial), and any other unanswered call gets a result saying it never ran.
 export function toAiMessages(messages: AgentMessage[]): AiMessage[] {
   const out: AiMessage[] = [];
-  for (const message of messages) {
-    if (message.role === "assistant" && message.stopReason === "error") continue;
-    out.push(message.role === "custom" ? renderCustomMessage(message) : message);
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i] as AgentMessage;
+    if (message.role === "custom") {
+      out.push(renderCustomMessage(message));
+      continue;
+    }
+    if (message.role !== "assistant") {
+      out.push(message);
+      continue;
+    }
+    if (message.stopReason === "error") continue;
+    const calls = message.content.filter((block) => block.type === "toolCall");
+    if (calls.length === 0) {
+      out.push(message);
+      continue;
+    }
+    const answered = new Set<string>();
+    let next = i + 1;
+    for (; next < messages.length; next++) {
+      const result = messages[next];
+      if (result?.role !== "toolResult") break;
+      answered.add(result.toolCallId);
+    }
+    const unanswered = calls.filter((call) => !answered.has(call.id));
+    if (unanswered.length === 0) {
+      out.push(message);
+      continue;
+    }
+    if (message.stopReason === "aborted") {
+      const content = message.content.filter(
+        (block) => block.type !== "toolCall" || answered.has(block.id),
+      );
+      if (content.length > 0) out.push({ ...message, content });
+    } else out.push(message);
+    for (; i + 1 < next; i++) out.push(messages[i + 1] as ToolResultMessage);
+    if (message.stopReason === "aborted") continue;
+    for (const call of unanswered) {
+      out.push({
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: call.name,
+        content: [
+          {
+            type: "text",
+            text: `Tool call "${call.name}" was interrupted before it returned a result.`,
+          },
+        ],
+        isError: true,
+        timestamp: message.timestamp,
+      });
+    }
   }
   return out;
 }

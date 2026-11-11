@@ -26,6 +26,57 @@ describe("messages", () => {
     expect(converted.every((m) => m.role !== ("custom" as never))).toBe(true);
   });
 
+  test("every tool call sent to a provider has a result", () => {
+    const assistant = (stopReason: "toolUse" | "aborted", ids: string[]) => ({
+      role: "assistant" as const,
+      content: [
+        { type: "text" as const, text: "working" },
+        ...ids.map((id) => ({ type: "toolCall" as const, id, name: "read", arguments: {} })),
+      ],
+      model: "fake/fake-1",
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason,
+      timestamp: 2,
+    });
+    const result = (toolCallId: string) => ({
+      role: "toolResult" as const,
+      toolCallId,
+      toolName: "read",
+      content: [{ type: "text" as const, text: "ok" }],
+      isError: false,
+      timestamp: 3,
+    });
+    const shape = (messages: Parameters<typeof toAiMessages>[0]) =>
+      toAiMessages(messages).map((m) =>
+        m.role === "assistant"
+          ? `assistant:${m.content.flatMap((b) => (b.type === "toolCall" ? [b.id] : [])).join(",")}`
+          : m.role === "toolResult"
+            ? `result:${m.toolCallId}:${m.isError}`
+            : m.role,
+      );
+    const user = userMessage("next");
+
+    expect(shape([assistant("toolUse", ["c1", "c2"]), result("c1"), user])).toEqual([
+      "assistant:c1,c2",
+      "result:c1:false",
+      "result:c2:true",
+      "user",
+    ]);
+    expect(shape([assistant("aborted", ["c1", "c2"]), result("c1"), user])).toEqual([
+      "assistant:c1",
+      "result:c1:false",
+      "user",
+    ]);
+    const complete = [assistant("toolUse", ["c1"]), result("c1"), user];
+    expect(toAiMessages(complete)).toEqual(complete);
+    expect(
+      shape([
+        { ...assistant("aborted", ["c1"]), content: assistant("aborted", ["c1"]).content.slice(1) },
+        user,
+      ]),
+    ).toEqual(["user"]);
+  });
+
   test("failed assistant attempts stay out of the request", () => {
     const user = userMessage("hello");
     const failed = {

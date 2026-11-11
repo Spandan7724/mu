@@ -562,6 +562,48 @@ describe("tool batching", () => {
     expect(texts).toEqual(["a", "b"]);
   });
 
+  test("a parallel call reports its end when it settles and frees its slot", async () => {
+    const calls = Array.from({ length: 12 }, (_, index) => ({
+      type: "toolCall" as const,
+      id: `c${index}`,
+      name: "safe",
+      arguments: { ms: index === 0 ? 60 : 5 },
+    }));
+    const provider = new FakeProvider([
+      { content: calls },
+      { content: [{ type: "text", text: "ok" }] },
+    ]);
+    let concurrent = 0;
+    let peak = 0;
+    const started: number[] = [];
+    const safe: AnyTool = {
+      name: "safe",
+      description: "safe",
+      inputSchema: { type: "object" },
+      isConcurrencySafe: () => true,
+      execute: async (_id, args) => {
+        concurrent++;
+        peak = Math.max(peak, concurrent);
+        started.push(Date.now());
+        await Bun.sleep((args as { ms: number }).ms);
+        concurrent--;
+        return textResult("ok");
+      },
+    };
+    const { events, emit } = collector();
+    const result = await runLoop([userMessage("go")], ctx([safe]), baseConfig(provider), emit);
+
+    expect(peak).toBe(10);
+    // The eleventh call starts when a fast call ends, not when the slow one does.
+    expect((started[10] ?? 0) - (started[0] ?? 0)).toBeLessThan(40);
+    const ends = events.flatMap((e) => (e.type === "tool_execution_end" ? [e.toolCallId] : []));
+    expect(ends.length).toBe(12);
+    expect(ends[ends.length - 1]).toBe("c0");
+    expect(result.messages.flatMap((m) => (m.role === "toolResult" ? [m.toolCallId] : []))).toEqual(
+      calls.map((call) => call.id),
+    );
+  });
+
   test("steering waits for an active parallel batch and skips later calls", async () => {
     const provider = new FakeProvider([
       {
@@ -771,5 +813,82 @@ describe("abort", () => {
     const { emit } = collector();
     await runLoop([userMessage("go")], ctx([slow]), baseConfig(provider), emit, controller.signal);
     expect(sawAbort).toBe(true);
+  });
+
+  test("calls an abort left unstarted still get a result", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "c1", name: "slow", arguments: {} },
+          { type: "toolCall", id: "c2", name: "slow", arguments: {} },
+          { type: "toolCall", id: "c3", name: "slow", arguments: {} },
+        ],
+      },
+    ]);
+    const controller = new AbortController();
+    let executed = 0;
+    const slow: AnyTool = {
+      name: "slow",
+      description: "slow",
+      inputSchema: { type: "object" },
+      execute: async () => {
+        executed++;
+        controller.abort();
+        return textResult("stopped");
+      },
+    };
+    const { events, emit } = collector();
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx([slow]),
+      baseConfig(provider),
+      emit,
+      controller.signal,
+    );
+
+    expect(result.reason).toBe("aborted");
+    expect(executed).toBe(1);
+    const results = result.messages.filter((m) => m.role === "toolResult");
+    expect(results.map((m) => m.role === "toolResult" && m.toolCallId)).toEqual(["c1", "c2", "c3"]);
+    expect(results.slice(1).every((m) => m.role === "toolResult" && m.isError)).toBe(true);
+    expect(events.filter((e) => e.type === "tool_execution_end").length).toBe(3);
+  });
+
+  test("an abort stops a parallel run from starting its queued calls", async () => {
+    const calls = Array.from({ length: 14 }, (_, index) => ({
+      type: "toolCall" as const,
+      id: `c${index}`,
+      name: "safe",
+      arguments: {},
+    }));
+    const provider = new FakeProvider([{ content: calls }]);
+    const controller = new AbortController();
+    let executed = 0;
+    const safe: AnyTool = {
+      name: "safe",
+      description: "safe",
+      inputSchema: { type: "object" },
+      isConcurrencySafe: () => true,
+      execute: async () => {
+        executed++;
+        await Bun.sleep(5);
+        controller.abort();
+        return textResult("ok");
+      },
+    };
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx([safe]),
+      baseConfig(provider),
+      collector().emit,
+      controller.signal,
+    );
+
+    expect(executed).toBe(10);
+    expect(
+      result.messages
+        .filter((m) => m.role === "toolResult")
+        .map((m) => m.role === "toolResult" && m.toolCallId),
+    ).toEqual(calls.map((call) => call.id));
   });
 });
