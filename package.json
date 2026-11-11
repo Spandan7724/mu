@@ -11,6 +11,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "bun test",
+    "test:fast": "bun test --path-ignore-patterns='mu_eval/**' --path-ignore-patterns='packages/profiles/browser/**' --path-ignore-patterns='**/browser-*.test.ts'",
     "purity": "bun scripts/kernel-purity.ts",
     "ci": "bun run typecheck && bun run lint && bun test && bun run purity",
     "build": "bun build packages/cli/src/main.ts --compile --minify --outfile dist/mu",
