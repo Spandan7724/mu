@@ -34,7 +34,7 @@ jobs:
             package: package:linux
             artifact: mu-linux-x64
             archive: mu-linux-x64.tar.gz
-          - runner: macos-14
+          - runner: macos-15
             build: build:macos
             package: package:macos
             artifact: mu-darwin-arm64
