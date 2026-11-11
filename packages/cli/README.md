@@ -87,9 +87,10 @@ user's repository.
 | `/undo`, `/redo`, `/fork`, `/diff` | Navigate the session and workspace history |
 | `/export [path.md]` | Export the complete active branch |
 | `/btw [question]` | Open an ephemeral read-only side conversation |
+| `/skills` | List skills and set each on, manual or off |
 | `/instructions [reload]`, `/reload` | Inspect or reload repository instructions |
 | `/subagents` | List subagents, the model and reasoning level each runs on, and how to invoke them; choose a different model or level for any of them (coding profile) |
-| `/cost` | Show session token and cost totals |
+| `/cost` | Show spend by source and model, and what fills the context |
 | `/keybindings` | Show Mu-specific keyboard controls |
 
 During a run, Enter steers the current turn and Tab queues a follow-up. `Ctrl+O` opens

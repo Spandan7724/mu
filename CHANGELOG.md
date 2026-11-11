@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.3.1 — 2026-11-12
+
+### Highlights
+
+- **`/fork` picks where to branch.** Start a new session from before any earlier prompt, or
+  copy the whole conversation with "here". The original session is left untouched.
+- **`/skills` turns each skill on, manual or off.** Manual skills run only when you invoke
+  them with `/name` or `$name`; off skills are ignored. Choices are saved by skill name in
+  `~/.mu/config.json`.
+- **`/cost` breaks down spend** by source (main turns, subagents, tools, compaction,
+  `/btw`) and by model, and shows what fills the context window.
+
+### Changes
+
+- **`/btw` is a fixed read-only side conversation.** It can read files, list folders, run
+  inspection commands and check background tasks. Everything else is denied rather than
+  asked, configured denies still hold, and skills, MCP and subagents stay out of it. Its
+  spend counts toward the session.
+- `$name` attaches the named skill's instructions as hidden context, the same as `/name`.
+- Codex models no longer offer the `ultra` alias; a saved `ultra` setting falls back to
+  `max` instead of being rejected.
+- Recall groups a fork's copied history under the entries it was copied from.
+
+### Providers and cost
+
+- Better prompt caching: Anthropic requests mark the last two user turns as cache
+  breakpoints, and direct OpenAI requests send a cache key.
+- The SSE parser treats a CRLF split across two chunks as one line ending.
+
+### Reliability
+
+- Every tool call gets a result after an interrupt, so an aborted turn never leaves a call
+  unanswered. Parallel tool calls share one pool and report as each one settles.
+- A refused `bash` call reads as denied or blocked instead of `exit ?`.
+- The agent view shortens long command descriptions, so attaching no longer kills the
+  worker.
+- Session files grow by appending instead of being rewritten; listing sessions reads only
+  their headers.
+
+### Performance
+
+- Streamed updates cross RPC, `mu -p --json` and the agent view as deltas instead of the
+  whole partial message per token, and the agent roster is no longer rewritten per token.
+- Streaming tool arguments are parsed on a timer instead of on every fragment.
+- Faster TUI layout: a no-wrap fast path, remembered rows and markdown blocks, a cached
+  review screen and row-level repaint.
+
+### Terminal UI
+
+- Parallel tool rows appear in call order and show each result as it settles.
+- User turns carry a seafoam edge on every row with text.
+- The running spinner is a one-cell braille eater whose tail grows every half lap.
+- The `/btw` window titles its composer "side", drops the header row and shows its keys on
+  the location row. The footer drops parts instead of truncating when space runs out.
+
+### SDK and RPC
+
+- **Wire format:** `message_update` events over RPC and `mu -p --json` carry only the
+  `delta`, not the accumulated `message`. Rebuild the partial message with
+  `WireEventDecoder`, or `toWireEvent` to produce the same format. `toolcall_start` and
+  `toolcall_end` deltas now carry the tool name, and `toolcall_end` carries the parsed
+  arguments.
+
+**Full commit list:** https://github.com/Spandan7724/mu/compare/v0.3.0...v0.3.1
+
 ## 0.3.0 — 2026-11-03
 
 ### Breaking changes

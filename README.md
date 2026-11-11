@@ -200,8 +200,11 @@ trees, so forks, undo, and compaction add entries rather than rewriting history.
   compaction boundary.
 - `/compact [focus]` compacts immediately. Mu also compacts automatically before the active
   model's context fills, reserving response space, and retries once after a context-overflow error.
+- `/fork` starts a new session from before an earlier prompt, or from here; the original
+  is untouched.
 - `/btw [question]` opens an ephemeral read-only side conversation using the current
-  context as reference. It is not saved or merged back into the main session.
+  context as reference. It can read and inspect but never asks for more, and has no skills,
+  MCP or subagents. It is not saved or merged back into the main session.
 
 Compaction builds a bounded, incremental handoff from retiring conversation text, guided by
 recent work. It preserves active constraints, decisions, outcomes and decisive evidence. The
@@ -292,7 +295,8 @@ The model sees each skill's name and description and loads the full instructions
 task matches. Run a skill yourself with `/<skill-name> [request]`, or mention it as
 `$skill-name` in a message (`mu -p "/skill-name …"` works too). Only what you typed shows
 in the conversation; the skill's instructions go to the model alongside it. `/skills` lists
-what was found and where. `allowed-tools` in
+what was found and where, and sets each skill on, manual (only when you invoke it) or off;
+choices are saved by name in `~/.mu/config.json`. `allowed-tools` in
 frontmatter is shown but never pre-approves anything.
 
 ### MCP
