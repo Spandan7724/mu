@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type AssistantMessage,
   addUsage,
   type Credential,
   defaultModelRef,
@@ -9,6 +10,7 @@ import {
   type ModelInfo,
   type PromptSection,
   type Provider,
+  type StreamOpts,
   sleep,
   supportedThinkingLevels,
   type ThinkingLevel,
@@ -72,6 +74,7 @@ import {
   type UsageLine,
 } from "./cost-report.ts";
 import { createPermissionGate } from "./permission-gate.ts";
+import { mappedReplacements } from "./session-replacements.ts";
 import {
   STRUCTURED_OUTPUT_REMINDERS,
   STRUCTURED_OUTPUT_TOOL,
@@ -278,6 +281,21 @@ function promptText(message: AgentMessage): string {
 
 function createSessionId(): string {
   return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
+// What one run's hooks share: the request it sends and what it has learned so far.
+interface RunState {
+  model: ModelInfo;
+  provider: Provider;
+  tools: AnyTool[];
+  // Estimated tokens of the system prompt and tool definitions.
+  requestOverhead: number;
+  streamOpts: StreamOpts;
+  emit: (event: AgentEvent) => void;
+  // A model chosen for this run alone: its usage says nothing about later runs.
+  ownModel: boolean;
+  contextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
+  budgetHalt: HaltReason | undefined;
 }
 
 export class Agent {
@@ -1123,17 +1141,11 @@ export class Agent {
         stage: "clearing-tool-output",
         toolResultsCleared: micro.evicted,
       });
-      replacements = micro.messages.flatMap((message, index) => {
-        const prior = original[index];
-        if (!prior || message === prior) return [];
-        const entryId = this.tree.entryIdForMessage(prior);
-        return entryId ? [{ entryId, message }] : [];
-      });
-      const changedCount = micro.messages.filter(
-        (message, index) => message !== original[index],
-      ).length;
-      if (replacements.length === changedCount) working = micro.messages;
-      else replacements = [];
+      const mapped = mappedReplacements(this.tree, original, micro.messages);
+      if (mapped) {
+        replacements = mapped;
+        working = micro.messages;
+      }
     }
 
     const compactor = this.compactorOverride ?? { model: this.model, provider: this.provider };
@@ -1142,30 +1154,17 @@ export class Agent {
     let compactionUsage: Usage | undefined;
     let usageRecorded = false;
     try {
-      const credentialResolver = this.options.getCredentials;
-      const result = await compactContext(working, {
-        provider: compactor.provider,
-        model: compactor.model,
+      const result = await this.summarize(working, {
+        compactor,
+        model: this.model,
         contextTokens: this.compactionContextTokens(this.model),
-        canContinue: (usage) => !this.budgetBreach(addUsage(this.totals, usage)),
-        keepRecentTokens: Math.min(
-          DEFAULT_KEEP_RECENT_TOKENS,
-          Math.max(2, Math.floor(this.model.contextWindow * 0.2)),
-        ),
-        ...(focus ? { customInstructions: focus } : {}),
-        ...(this.options.carryoverExtractor
-          ? { carryoverExtractor: this.options.carryoverExtractor }
-          : {}),
-        signal: this.controller.signal,
-        onProgress: (progress) =>
-          emit({ type: "compaction_update", layer: 2, stage: "summarizing", progress }),
         streamOpts: {
           sessionId: this._sessionId,
           ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
-          ...(credentialResolver
-            ? { getCredentials: () => credentialResolver(compactor.model.provider) }
-            : {}),
         },
+        focus,
+        layer: 2,
+        emit,
       });
       compactionUsage = result.usage;
       if (result.summary.length === 0) {
@@ -1306,15 +1305,7 @@ export class Agent {
       const failedUsage =
         compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
       if (failedUsage && !usageRecorded) {
-        this.tree.append({
-          type: "compaction-attempt",
-          status: this.controller.signal.aborted ? "cancelled" : "failed",
-          trigger: "manual",
-          model: this.modelRef,
-          compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
-          timestamp: Date.now(),
-          usage: failedUsage,
-        });
+        this.appendCompactionAttempt("manual", this.model, compactor.model, failedUsage);
         await this.store.save(this._sessionId, this.tree).catch(() => {});
         this.totals = addUsage(this.totals, failedUsage);
         this.ledger.add({
@@ -2130,7 +2121,6 @@ export class Agent {
           }
         : undefined;
     if (thinkingNotice) this.thinkingNotices.add(noticeKey);
-    let runContextUsage = opts?.model ? undefined : this.lastContextUsage;
     if (opts?.model) this.lastContextUsage = undefined;
     const systemPrompt = resolveSystemPrompt(this.options.systemPrompt);
 
@@ -2174,53 +2164,29 @@ export class Agent {
     // provider request and only tool calls wait for it.
     const checkpointReady = this.beginCheckpoint(this.tree.head, this.controller.signal);
 
-    let budgetHalt: HaltReason | undefined;
-
-    const requestOverhead =
-      estimateTextTokens(JSON.stringify(systemPrompt)) +
-      estimateTextTokens(
-        JSON.stringify(
-          tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    const credentialResolver = this.options.getCredentials;
+    const run: RunState = {
+      model: runModel,
+      provider: runProvider,
+      tools,
+      requestOverhead:
+        estimateTextTokens(JSON.stringify(systemPrompt)) +
+        estimateTextTokens(
+          JSON.stringify(
+            tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+          ),
         ),
-      );
-    const currentContextState = (messages: AgentMessage[]) => {
-      const state = contextState(
-        runModel,
-        messages,
-        runContextUsage?.usage,
-        runContextUsage?.estimatedTokensAtUsage,
-      );
-      const tokens = Math.max(state.tokens, estimateTokens(messages) + requestOverhead);
-      return { ...state, tokens, percent: state.limit > 0 ? tokens / state.limit : 0 };
-    };
-
-    const recordUsage = (
-      usage: Usage,
-      line: Omit<UsageLine, "usage">,
-      messages: AgentMessage[],
-      requestMessages?: AgentMessage[],
-    ): HaltReason | undefined => {
-      this.totals = addUsage(this.totals, usage);
-      this.ledger.add({ ...line, usage });
-      if (requestMessages) {
-        runContextUsage = {
-          usage,
-          estimatedTokensAtUsage: estimateTokens(requestMessages),
-        };
-        if (!opts?.model) this.lastContextUsage = runContextUsage;
-      }
-      const state = currentContextState(messages);
-      this.lastContextPercent = state.percent;
-      this.lastContextTokens = state.tokens;
-      emit({
-        type: "usage_updated",
-        sessionTotals: this.totals,
-        contextTokens: state.tokens,
-        contextPercent: state.percent,
-      });
-      const breach = this.budgetBreach();
-      if (breach) budgetHalt = breach;
-      return breach;
+      streamOpts: {
+        sessionId: this._sessionId,
+        ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
+        ...(credentialResolver
+          ? { getCredentials: () => credentialResolver(runModel.provider) }
+          : {}),
+      },
+      emit,
+      ownModel: opts?.model !== undefined,
+      contextUsage: opts?.model ? undefined : this.lastContextUsage,
+      budgetHalt: undefined,
     };
 
     const turnChanges = new TurnChanges(
@@ -2239,17 +2205,10 @@ export class Agent {
       ready: checkpointReady,
     });
 
-    const credentialResolver = this.options.getCredentials;
     const config: LoopConfig = {
       provider: runProvider,
       model: runModel,
-      streamOpts: {
-        sessionId: this._sessionId,
-        ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
-        ...(credentialResolver
-          ? { getCredentials: () => credentialResolver(runModel.provider) }
-          : {}),
-      },
+      streamOpts: run.streamOpts,
       thinkingLevel: runThinking,
       ...(this.options.budget?.maxTurns !== undefined
         ? { maxTurns: this.options.budget.maxTurns }
@@ -2287,259 +2246,7 @@ export class Agent {
         }
         return directive;
       },
-      prepareContext: async (messages) => {
-        const prepared = (next: AgentMessage[], stop = false) => {
-          if (config.streamOpts) {
-            config.streamOpts.maxTokens = Math.max(
-              1,
-              Math.min(
-                runModel.maxOutput,
-                Math.floor(runModel.contextWindow * 0.95 - currentContextState(next).tokens),
-              ),
-            );
-          }
-          return { messages: next, stop };
-        };
-        const state = currentContextState(messages);
-        this.lastContextPercent = state.percent;
-        this.lastContextTokens = state.tokens;
-
-        const auto = this.options.autoCompact !== false;
-
-        // Cheap cleanup preserves unique evidence for the handoff. Image expiry
-        // runs even below the text-pressure threshold.
-        let working = messages;
-        if (auto && !this.compactRequested) {
-          const micro = microcompact(working, {
-            imagesOnly: state.percent < MICROCOMPACT_THRESHOLD,
-            ...(state.percent < MICROCOMPACT_THRESHOLD
-              ? { supersedeWithinTurns: SUPERSEDE_WITHIN_TURNS }
-              : {}),
-            imageRetentionTurns: this.options.imageRetentionTurns ?? 3,
-            imageBudgetTokens:
-              this.options.imageBudgetTokens ?? Math.floor(runModel.contextWindow * 0.1),
-            targetTokens: Math.floor(
-              runModel.contextWindow *
-                (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) *
-                0.8,
-            ),
-          });
-          if (micro.evicted > 0) {
-            const changed = micro.messages.flatMap((message, index) => {
-              const prior = working[index];
-              if (!prior || message === prior) return [];
-              const entryId = this.tree.entryIdForMessage(prior);
-              return entryId ? [{ entryId, message }] : [];
-            });
-            const changedCount = micro.messages.filter(
-              (message, index) => message !== working[index],
-            ).length;
-            // Apply only a transition we can replay exactly after resume.
-            if (changed.length === changedCount) {
-              emit({ type: "compaction_start", layer: 1 });
-              this.tree.append({
-                type: "microcompaction",
-                replacements: changed,
-              });
-              working = micro.messages;
-              runContextUsage = undefined;
-              this.lastContextUsage = undefined;
-              const microState = currentContextState(working);
-              this.lastContextPercent = microState.percent;
-              this.lastContextTokens = microState.tokens;
-              emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
-            }
-          }
-        }
-
-        const after = currentContextState(working);
-        const due =
-          this.compactRequested ||
-          (auto &&
-            shouldCompact(
-              after,
-              Math.min(
-                this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD,
-                1 -
-                  Math.min(runModel.maxOutput, runModel.contextWindow * 0.2) /
-                    runModel.contextWindow,
-              ),
-            ));
-        if (!due) return prepared(working);
-
-        const trigger: CompactionTrigger = this.reactiveRecoveryPending
-          ? "overflow"
-          : this.compactorOverride
-            ? "model-change"
-            : this.compactRequested
-              ? "manual"
-              : "threshold";
-        const focus = this.compactRequestedFocus;
-        const compactor = this.compactorOverride ?? { model: runModel, provider: runProvider };
-        this.compactRequested = false;
-        this.compactRequestedFocus = undefined;
-        this.compactorOverride = undefined;
-        const layer = this.reactiveRecoveryPending ? 3 : 2;
-        if (layer === 2)
-          emit({
-            type: "compaction_start",
-            layer,
-            trigger,
-            contextTokensBefore: after.tokens,
-          });
-        let compactionUsage: Usage | undefined;
-        let usageRecorded = false;
-        try {
-          emit({ type: "compaction_update", layer, stage: "summarizing" });
-          const result = await compactContext(working, {
-            provider: compactor.provider,
-            model: compactor.model,
-            contextTokens: this.compactionContextTokens(runModel, tools, requestOverhead),
-            canContinue: (usage) => !this.budgetBreach(addUsage(this.totals, usage)),
-            keepRecentTokens: Math.min(
-              DEFAULT_KEEP_RECENT_TOKENS,
-              Math.max(2, Math.floor(runModel.contextWindow * 0.2)),
-            ),
-            ...(config.streamOpts
-              ? {
-                  streamOpts: {
-                    ...config.streamOpts,
-                    ...(credentialResolver
-                      ? { getCredentials: () => credentialResolver(compactor.model.provider) }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...(this.options.carryoverExtractor
-              ? { carryoverExtractor: this.options.carryoverExtractor }
-              : {}),
-            ...(focus ? { customInstructions: focus } : {}),
-            signal: this.controller.signal,
-            onProgress: (progress) =>
-              emit({ type: "compaction_update", layer, stage: "summarizing", progress }),
-          });
-          compactionUsage = result.usage;
-          let compacted = applyCompaction(result);
-          let summaryEntryId: string | undefined;
-
-          // Record the boundary only when its exact tail can be anchored to
-          // an ancestor entry. Otherwise retain the complete context.
-          if (result.summary.length > 0) {
-            const firstKept = result.keptMessages[0];
-            let firstKeptEntryId: string | null = null;
-            if (firstKept) {
-              const source =
-                result.replacements?.find((replacement) => replacement.message === firstKept)
-                  ?.original ?? firstKept;
-              const mapped = this.tree.entryIdForMessage(source);
-              if (!mapped) {
-                throw new Error("Compaction tail could not be mapped to the session");
-              }
-              firstKeptEntryId = mapped;
-            }
-            const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
-              const id = this.tree.entryIdForMessage(message);
-              if (!id) throw new Error("Protected context could not be mapped to the session");
-              return id;
-            });
-            const replacements = (result.replacements ?? []).map(({ original, message }) => {
-              const entryId = this.tree.entryIdForMessage(original);
-              if (!entryId)
-                throw new Error("Compaction observation could not be mapped to the session");
-              return { entryId, message };
-            });
-            const candidateTree = this.tree.clone();
-            if (replacements.length)
-              candidateTree.append({ type: "microcompaction", replacements });
-            const summaryMessage = compacted[0];
-            const boundary = candidateTree.append({
-              type: "compaction",
-              summary: result.summary,
-              ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
-              firstKeptEntryId,
-              preservedEntryIds,
-              ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
-              trigger,
-              contextTokensBefore: after.tokens,
-              contextTokensAfter: estimateTokens(compacted),
-              model: `${runModel.provider}/${runModel.id}`,
-              compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
-              windowNumber:
-                this.tree.activePath().filter((entry) => entry.type === "compaction").length + 1,
-              strategy: "summary-tail",
-              keptTokens: estimateTokens(result.keptMessages),
-              usage: result.usage,
-            });
-            this.tree = candidateTree;
-            compacted = candidateTree.messagesAt();
-            summaryEntryId = boundary.id;
-          }
-
-          runContextUsage = undefined;
-          this.lastContextUsage = undefined;
-          recordUsage(
-            result.usage,
-            {
-              source: "compaction",
-              model: `${compactor.model.provider}/${compactor.model.id}`,
-              turns: 0,
-            },
-            compacted,
-          );
-          usageRecorded = true;
-          emit({
-            type: "compaction_end",
-            layer,
-            tokensFreed: result.tokensFreed,
-            trigger,
-            status: result.summary.length > 0 ? "completed" : "noop",
-            contextTokensBefore: after.tokens,
-            contextTokensAfter: currentContextState(compacted).tokens,
-            keptTokens: estimateTokens(result.keptMessages),
-            ...(summaryEntryId ? { summaryEntryId } : {}),
-          });
-          this.reactiveRecoveryPending = false;
-          return prepared(compacted, budgetHalt !== undefined);
-        } catch (error) {
-          const failedUsage =
-            compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
-          if (failedUsage && !usageRecorded) {
-            this.tree.append({
-              type: "compaction-attempt",
-              status: this.controller.signal.aborted ? "cancelled" : "failed",
-              trigger,
-              model: `${runModel.provider}/${runModel.id}`,
-              compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
-              timestamp: Date.now(),
-              usage: failedUsage,
-            });
-            recordUsage(
-              failedUsage,
-              {
-                source: "compaction",
-                model: `${compactor.model.provider}/${compactor.model.id}`,
-                turns: 0,
-              },
-              working,
-            );
-          }
-          // A failed summarization must not take the run down: carry on
-          // uncompacted and let the provider surface any context error.
-          emit({
-            type: "compaction_end",
-            layer,
-            tokensFreed: 0,
-            trigger,
-            status: this.controller.signal.aborted ? "cancelled" : "failed",
-            contextTokensBefore: after.tokens,
-            contextTokensAfter: after.tokens,
-            errorMessage:
-              error instanceof Error ? error.message : "Compaction failed for an unknown reason",
-          });
-          this.reactiveRecoveryPending = false;
-          return prepared(working, budgetHalt !== undefined);
-        }
-      },
+      prepareContext: (messages) => this.prepareRunContext(run, messages),
       ...(host
         ? {
             transformContext: (messages: AgentMessage[]) => host.runContextHooks(messages),
@@ -2563,60 +2270,8 @@ export class Agent {
             },
           }
         : {}),
-      // Layer 3 — reactive recovery. The provider rejected the request for
-      // being too long: compact, then let the loop try once more rather than
-      // ending the run. Exactly one attempt, so a real failure still surfaces.
-      recoverFromError: async (message) => {
-        if (isContextTooLongResult(message)) {
-          if (this.recoveryAttempted) return false;
-          this.recoveryAttempted = true;
-          this.compactRequested = true;
-          this.reactiveRecoveryPending = true;
-          emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
-          return true;
-        }
-        // Transient failures (overload, rate limit, dropped or stalled stream)
-        // re-run the turn from the last committed state after the server's wait.
-        const delayMs = turnRetryDelayMs(message, this.turnRetries);
-        if (delayMs === undefined) return false;
-        this.turnRetries++;
-        emit({
-          type: "provider_retry",
-          attempt: this.turnRetries,
-          maxAttempts: MAX_TURN_RETRIES,
-          delayMs,
-          errorMessage: message.errorMessage ?? "the provider returned an error",
-        });
-        await sleep(delayMs, this.controller.signal).catch(() => {});
-        return true;
-      },
-      shouldStopAfterTurn: async (turn: TurnInfo) => {
-        this.recoveryAttempted = false;
-        this.turnRetries = 0;
-        for (const result of turn.toolResults) {
-          if (!result.usage) continue;
-          this.totals = addUsage(this.totals, result.usage);
-          for (const line of attachedUsageLines(result.usage, result.details, turn.message.model))
-            this.ledger.add(line);
-          this.claimChildUsage(result.usage);
-        }
-        // A finished child whose usage no result carried has nothing left to count.
-        for (const child of this.children) if (!child.running) this.children.delete(child);
-        const breach = recordUsage(
-          turn.message.usage,
-          {
-            source: "main",
-            model: turn.message.model,
-            turns: turn.message.stopReason === "error" ? 0 : 1,
-          },
-          turn.context.messages,
-          turn.requestMessages,
-        );
-        if (breach) {
-          return true;
-        }
-        return false;
-      },
+      recoverFromError: (message) => this.recoverRunError(run, message),
+      shouldStopAfterTurn: (turn) => this.finishRunTurn(run, turn),
     };
 
     const result = await (async () => {
@@ -2651,7 +2306,7 @@ export class Agent {
     await this.store.save(this._sessionId, this.tree);
 
     const reason: HaltReason =
-      budgetHalt ?? (result.reason === "budget" ? "maxCostUsd" : (result.reason as HaltReason));
+      run.budgetHalt ?? (result.reason === "budget" ? "maxCostUsd" : (result.reason as HaltReason));
 
     const runResult: RunResult = {
       text: lastText(result.messages),
@@ -2676,6 +2331,381 @@ export class Agent {
       );
     }
     return { ...runResult, output: captured };
+  }
+
+  private runContextState(run: RunState, messages: AgentMessage[]) {
+    const state = contextState(
+      run.model,
+      messages,
+      run.contextUsage?.usage,
+      run.contextUsage?.estimatedTokensAtUsage,
+    );
+    const tokens = Math.max(state.tokens, estimateTokens(messages) + run.requestOverhead);
+    return { ...state, tokens, percent: state.limit > 0 ? tokens / state.limit : 0 };
+  }
+
+  private recordRunUsage(
+    run: RunState,
+    usage: Usage,
+    line: Omit<UsageLine, "usage">,
+    messages: AgentMessage[],
+    requestMessages?: AgentMessage[],
+  ): HaltReason | undefined {
+    this.totals = addUsage(this.totals, usage);
+    this.ledger.add({ ...line, usage });
+    if (requestMessages) {
+      run.contextUsage = {
+        usage,
+        estimatedTokensAtUsage: estimateTokens(requestMessages),
+      };
+      if (!run.ownModel) this.lastContextUsage = run.contextUsage;
+    }
+    const state = this.runContextState(run, messages);
+    this.lastContextPercent = state.percent;
+    this.lastContextTokens = state.tokens;
+    run.emit({
+      type: "usage_updated",
+      sessionTotals: this.totals,
+      contextTokens: state.tokens,
+      contextPercent: state.percent,
+    });
+    const breach = this.budgetBreach();
+    if (breach) run.budgetHalt = breach;
+    return breach;
+  }
+
+  // Runs before every model request: cheap cleanup, then full compaction when
+  // it is due, then the output allowance the remaining window leaves.
+  private async prepareRunContext(
+    run: RunState,
+    messages: AgentMessage[],
+  ): Promise<{ messages: AgentMessage[]; stop: boolean }> {
+    const prepared = (next: AgentMessage[], stop = false) => {
+      run.streamOpts.maxTokens = Math.max(
+        1,
+        Math.min(
+          run.model.maxOutput,
+          Math.floor(run.model.contextWindow * 0.95 - this.runContextState(run, next).tokens),
+        ),
+      );
+      return { messages: next, stop };
+    };
+    const state = this.runContextState(run, messages);
+    this.lastContextPercent = state.percent;
+    this.lastContextTokens = state.tokens;
+
+    const auto = this.options.autoCompact !== false;
+
+    // Cheap cleanup preserves unique evidence for the handoff. Image expiry
+    // runs even below the text-pressure threshold.
+    let working = messages;
+    if (auto && !this.compactRequested) {
+      const micro = microcompact(working, {
+        imagesOnly: state.percent < MICROCOMPACT_THRESHOLD,
+        ...(state.percent < MICROCOMPACT_THRESHOLD
+          ? { supersedeWithinTurns: SUPERSEDE_WITHIN_TURNS }
+          : {}),
+        imageRetentionTurns: this.options.imageRetentionTurns ?? 3,
+        imageBudgetTokens:
+          this.options.imageBudgetTokens ?? Math.floor(run.model.contextWindow * 0.1),
+        targetTokens: Math.floor(
+          run.model.contextWindow * (this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD) * 0.8,
+        ),
+      });
+      if (micro.evicted > 0) {
+        const changed = mappedReplacements(this.tree, working, micro.messages);
+        if (changed) {
+          run.emit({ type: "compaction_start", layer: 1 });
+          this.tree.append({
+            type: "microcompaction",
+            replacements: changed,
+          });
+          working = micro.messages;
+          run.contextUsage = undefined;
+          this.lastContextUsage = undefined;
+          const microState = this.runContextState(run, working);
+          this.lastContextPercent = microState.percent;
+          this.lastContextTokens = microState.tokens;
+          run.emit({ type: "compaction_end", layer: 1, tokensFreed: micro.tokensFreed });
+        }
+      }
+    }
+
+    const after = this.runContextState(run, working);
+    const due =
+      this.compactRequested ||
+      (auto &&
+        shouldCompact(
+          after,
+          Math.min(
+            this.options.compactThreshold ?? AUTO_COMPACT_THRESHOLD,
+            1 -
+              Math.min(run.model.maxOutput, run.model.contextWindow * 0.2) /
+                run.model.contextWindow,
+          ),
+        ));
+    if (!due) return prepared(working);
+
+    const trigger: CompactionTrigger = this.reactiveRecoveryPending
+      ? "overflow"
+      : this.compactorOverride
+        ? "model-change"
+        : this.compactRequested
+          ? "manual"
+          : "threshold";
+    const focus = this.compactRequestedFocus;
+    const compactor = this.compactorOverride ?? { model: run.model, provider: run.provider };
+    this.compactRequested = false;
+    this.compactRequestedFocus = undefined;
+    this.compactorOverride = undefined;
+    const layer = this.reactiveRecoveryPending ? 3 : 2;
+    if (layer === 2)
+      run.emit({
+        type: "compaction_start",
+        layer,
+        trigger,
+        contextTokensBefore: after.tokens,
+      });
+    let compactionUsage: Usage | undefined;
+    let usageRecorded = false;
+    try {
+      run.emit({ type: "compaction_update", layer, stage: "summarizing" });
+      const result = await this.summarize(working, {
+        compactor,
+        model: run.model,
+        contextTokens: this.compactionContextTokens(run.model, run.tools, run.requestOverhead),
+        streamOpts: run.streamOpts,
+        focus,
+        layer,
+        emit: run.emit,
+      });
+      compactionUsage = result.usage;
+      let compacted = applyCompaction(result);
+      let summaryEntryId: string | undefined;
+
+      // Record the boundary only when its exact tail can be anchored to
+      // an ancestor entry. Otherwise retain the complete context.
+      if (result.summary.length > 0) {
+        const firstKept = result.keptMessages[0];
+        let firstKeptEntryId: string | null = null;
+        if (firstKept) {
+          const source =
+            result.replacements?.find((replacement) => replacement.message === firstKept)
+              ?.original ?? firstKept;
+          const mapped = this.tree.entryIdForMessage(source);
+          if (!mapped) {
+            throw new Error("Compaction tail could not be mapped to the session");
+          }
+          firstKeptEntryId = mapped;
+        }
+        const preservedEntryIds = (result.preservedMessages ?? []).map((message) => {
+          const id = this.tree.entryIdForMessage(message);
+          if (!id) throw new Error("Protected context could not be mapped to the session");
+          return id;
+        });
+        const replacements = (result.replacements ?? []).map(({ original, message }) => {
+          const entryId = this.tree.entryIdForMessage(original);
+          if (!entryId)
+            throw new Error("Compaction observation could not be mapped to the session");
+          return { entryId, message };
+        });
+        const candidateTree = this.tree.clone();
+        if (replacements.length) candidateTree.append({ type: "microcompaction", replacements });
+        const summaryMessage = compacted[0];
+        const boundary = candidateTree.append({
+          type: "compaction",
+          summary: result.summary,
+          ...(result.carryover !== undefined ? { carryover: result.carryover } : {}),
+          firstKeptEntryId,
+          preservedEntryIds,
+          ...(summaryMessage ? { timestamp: summaryMessage.timestamp } : {}),
+          trigger,
+          contextTokensBefore: after.tokens,
+          contextTokensAfter: estimateTokens(compacted),
+          model: `${run.model.provider}/${run.model.id}`,
+          compactorModel: `${compactor.model.provider}/${compactor.model.id}`,
+          windowNumber:
+            this.tree.activePath().filter((entry) => entry.type === "compaction").length + 1,
+          strategy: "summary-tail",
+          keptTokens: estimateTokens(result.keptMessages),
+          usage: result.usage,
+        });
+        this.tree = candidateTree;
+        compacted = candidateTree.messagesAt();
+        summaryEntryId = boundary.id;
+      }
+
+      run.contextUsage = undefined;
+      this.lastContextUsage = undefined;
+      this.recordRunUsage(
+        run,
+        result.usage,
+        {
+          source: "compaction",
+          model: `${compactor.model.provider}/${compactor.model.id}`,
+          turns: 0,
+        },
+        compacted,
+      );
+      usageRecorded = true;
+      run.emit({
+        type: "compaction_end",
+        layer,
+        tokensFreed: result.tokensFreed,
+        trigger,
+        status: result.summary.length > 0 ? "completed" : "noop",
+        contextTokensBefore: after.tokens,
+        contextTokensAfter: this.runContextState(run, compacted).tokens,
+        keptTokens: estimateTokens(result.keptMessages),
+        ...(summaryEntryId ? { summaryEntryId } : {}),
+      });
+      this.reactiveRecoveryPending = false;
+      return prepared(compacted, run.budgetHalt !== undefined);
+    } catch (error) {
+      const failedUsage =
+        compactionUsage ?? (error instanceof CompactionError ? error.usage : undefined);
+      if (failedUsage && !usageRecorded) {
+        this.appendCompactionAttempt(trigger, run.model, compactor.model, failedUsage);
+        this.recordRunUsage(
+          run,
+          failedUsage,
+          {
+            source: "compaction",
+            model: `${compactor.model.provider}/${compactor.model.id}`,
+            turns: 0,
+          },
+          working,
+        );
+      }
+      // A failed summarization must not take the run down: carry on
+      // uncompacted and let the provider surface any context error.
+      run.emit({
+        type: "compaction_end",
+        layer,
+        tokensFreed: 0,
+        trigger,
+        status: this.controller.signal.aborted ? "cancelled" : "failed",
+        contextTokensBefore: after.tokens,
+        contextTokensAfter: after.tokens,
+        errorMessage:
+          error instanceof Error ? error.message : "Compaction failed for an unknown reason",
+      });
+      this.reactiveRecoveryPending = false;
+      return prepared(working, run.budgetHalt !== undefined);
+    }
+  }
+
+  // Layer 3 — reactive recovery. The provider rejected the request for
+  // being too long: compact, then let the loop try once more rather than
+  // ending the run. Exactly one attempt, so a real failure still surfaces.
+  private async recoverRunError(run: RunState, message: AssistantMessage): Promise<boolean> {
+    if (isContextTooLongResult(message)) {
+      if (this.recoveryAttempted) return false;
+      this.recoveryAttempted = true;
+      this.compactRequested = true;
+      this.reactiveRecoveryPending = true;
+      run.emit({ type: "compaction_start", layer: 3, trigger: "overflow" });
+      return true;
+    }
+    // Transient failures (overload, rate limit, dropped or stalled stream)
+    // re-run the turn from the last committed state after the server's wait.
+    const delayMs = turnRetryDelayMs(message, this.turnRetries);
+    if (delayMs === undefined) return false;
+    this.turnRetries++;
+    run.emit({
+      type: "provider_retry",
+      attempt: this.turnRetries,
+      maxAttempts: MAX_TURN_RETRIES,
+      delayMs,
+      errorMessage: message.errorMessage ?? "the provider returned an error",
+    });
+    await sleep(delayMs, this.controller.signal).catch(() => {});
+    return true;
+  }
+
+  private finishRunTurn(run: RunState, turn: TurnInfo): boolean {
+    this.recoveryAttempted = false;
+    this.turnRetries = 0;
+    for (const result of turn.toolResults) {
+      if (!result.usage) continue;
+      this.totals = addUsage(this.totals, result.usage);
+      for (const line of attachedUsageLines(result.usage, result.details, turn.message.model))
+        this.ledger.add(line);
+      this.claimChildUsage(result.usage);
+    }
+    // A finished child whose usage no result carried has nothing left to count.
+    for (const child of this.children) if (!child.running) this.children.delete(child);
+    const breach = this.recordRunUsage(
+      run,
+      turn.message.usage,
+      {
+        source: "main",
+        model: turn.message.model,
+        turns: turn.message.stopReason === "error" ? 0 : 1,
+      },
+      turn.context.messages,
+      turn.requestMessages,
+    );
+    return breach !== undefined;
+  }
+
+  // One summarizer call, shared by /compact and the automatic layers.
+  private summarize(
+    working: AgentMessage[],
+    request: {
+      compactor: { model: ModelInfo; provider: Provider };
+      // The model whose window the result must fit.
+      model: ModelInfo;
+      contextTokens: number;
+      streamOpts: StreamOpts;
+      focus: string | undefined;
+      layer: 2 | 3;
+      emit: (event: AgentEvent) => void;
+    },
+  ) {
+    const { compactor, layer, emit } = request;
+    const credentialResolver = this.options.getCredentials;
+    return compactContext(working, {
+      provider: compactor.provider,
+      model: compactor.model,
+      contextTokens: request.contextTokens,
+      canContinue: (usage) => !this.budgetBreach(addUsage(this.totals, usage)),
+      keepRecentTokens: Math.min(
+        DEFAULT_KEEP_RECENT_TOKENS,
+        Math.max(2, Math.floor(request.model.contextWindow * 0.2)),
+      ),
+      streamOpts: {
+        ...request.streamOpts,
+        ...(credentialResolver
+          ? { getCredentials: () => credentialResolver(compactor.model.provider) }
+          : {}),
+      },
+      ...(this.options.carryoverExtractor
+        ? { carryoverExtractor: this.options.carryoverExtractor }
+        : {}),
+      ...(request.focus ? { customInstructions: request.focus } : {}),
+      signal: this.controller.signal,
+      onProgress: (progress) =>
+        emit({ type: "compaction_update", layer, stage: "summarizing", progress }),
+    });
+  }
+
+  // A paid summarizer call that installed nothing still belongs to the session's spend.
+  private appendCompactionAttempt(
+    trigger: CompactionTrigger,
+    model: ModelInfo,
+    compactor: ModelInfo,
+    usage: Usage,
+  ): void {
+    this.tree.append({
+      type: "compaction-attempt",
+      status: this.controller.signal.aborted ? "cancelled" : "failed",
+      trigger,
+      model: `${model.provider}/${model.id}`,
+      compactorModel: `${compactor.provider}/${compactor.id}`,
+      timestamp: Date.now(),
+      usage,
+    });
   }
 
   private compactionContextTokens(
