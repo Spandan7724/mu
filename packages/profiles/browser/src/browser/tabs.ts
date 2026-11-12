@@ -4,6 +4,9 @@ import { NetworkTracker } from "../page/network.ts";
 import { RefTable } from "../page/refs.ts";
 import { FrameRegistry } from "./frames.ts";
 
+// How long a drawn page may take to deliver an animation frame (6 fps is still drawn).
+const FRAME_WAIT_MS = 150;
+
 export interface TabInfo {
   tabId: string;
   url: string;
@@ -181,6 +184,46 @@ export class Tab {
     const count = (this.repeats.counts.get(key) ?? 0) + 1;
     this.repeats.counts.set(key, count);
     return count;
+  }
+
+  // A window the compositor is not drawing (on Wayland, one on a hidden workspace) gets no
+  // animation frames while visibilityState stays "visible", so pages that render on a frame
+  // (Gmail's message rows, lazy lists) never fill in. A screenshot rendered without the
+  // compositor starts frames again (~130 ms); they keep running while the page asks for
+  // them. Measured on Hyprland 0.57 / Chrome 154: no frames for 8 s+ without it, 60 fps after.
+  // Returns whether frames had stopped (and were restarted).
+  async ensureRendering(signal?: AbortSignal): Promise<boolean> {
+    if (this.dialog) return false;
+    const contextId = await this.frames
+      .isolatedWorld(this.frames.mainFrameId ?? "", signal)
+      .catch(() => undefined);
+    if (contextId === undefined) return false;
+    const framed = await this.session
+      .send(
+        "Runtime.evaluate",
+        {
+          expression: `new Promise(function (resolve) { requestAnimationFrame(function () { resolve(true); }); setTimeout(function () { resolve(false); }, ${FRAME_WAIT_MS}); })`,
+          contextId,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+        { signal, timeoutMs: 2_000 },
+      )
+      .catch(() => undefined);
+    if (framed === undefined || framed.result.value === true) return false;
+    await this.session
+      .send(
+        "Page.captureScreenshot",
+        {
+          format: "jpeg",
+          quality: 1,
+          clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
+          fromSurface: false,
+        },
+        { signal, timeoutMs: 3_000 },
+      )
+      .catch(() => {});
+    return true;
   }
 
   get detached(): boolean {

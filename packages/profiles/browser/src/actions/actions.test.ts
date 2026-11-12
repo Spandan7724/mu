@@ -107,6 +107,13 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(report.text).not.toContain("Loading");
   });
 
+  test("a frame of the page's own site that loads slowly is waited for, not taken for a long-poll", async () => {
+    await open("form-basic");
+    const account = await open("slow-frame");
+    expect(account.outcome.details.timings.settleMs).toBeGreaterThanOrEqual(2_000);
+    expect(account.text).toContain("ok");
+  });
+
   test("a progress bar with a value is a meter, not a loading indicator", async () => {
     const steps = await open("progress-steps");
     expect(steps.outcome.details.settle).toStartWith("page loaded and quiet");

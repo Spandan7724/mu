@@ -136,7 +136,7 @@ export const SIGNED_IN_SCENARIOS: Scenario[] = [
   real("gmail search", go("https://mail.google.com/mail/u/0/#search/from%3Agoogle")),
   real("gmail search box", go("https://mail.google.com/mail/u/0/#inbox"), {
     tool: "type",
-    find: /textbox "Search mail" \[ref=(e\d+)\]/,
+    find: /(?:textbox|combobox) "Search mail" \[ref=(e\d+)\]/,
     args: { text: "invoice", submit: true },
   }),
   real("gmail open email", go("https://mail.google.com/mail/u/0/#inbox"), {

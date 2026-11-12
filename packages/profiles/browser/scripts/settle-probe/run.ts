@@ -1,7 +1,9 @@
 // Records what happens around every browser action, for replaying settle rules offline:
 //   bun packages/profiles/browser/scripts/settle-probe/run.ts --out /tmp/probe
 //     [--only <regex>] [--synthetic | --real | --signed-in] [--runs cold,warm,plain]
-//     [--browser-profile <name>]
+//     [--browser-profile <name>] [--window-class <class>]
+// --window-class sets Chrome's window class, so a compositor rule can place the window
+// (for example on a hidden workspace, to check rendering there).
 // Runs: cold = first visit with snapshot sampling; warm = repeat visit with sampling;
 // plain = repeat visit without sampling (shows how much sampling itself costs).
 // Uses a temporary signed-out profile unless --browser-profile names a managed one
@@ -81,6 +83,7 @@ const outDir = flag("--out") ?? "/tmp/settle-probe";
 const only = flag("--only") ? new RegExp(flag("--only") as string, "i") : undefined;
 const runs = (flag("--runs") ?? "cold,warm,plain").split(",");
 const managed = flag("--browser-profile");
+const windowClass = flag("--window-class");
 
 const site = startProbeSite();
 const scenarios = (
@@ -110,6 +113,7 @@ const manager = new BrowserManager({
   headless: !managed,
   viewport: config.viewport,
   keepOpen: Boolean(managed),
+  ...(windowClass ? { args: [`--class=${windowClass}`] } : {}),
 });
 const deps = { browser: manager, config, vision: () => false };
 const interaction = interactionTools(deps);

@@ -124,6 +124,25 @@ export const RULES: Rule[] = [
     },
   ]),
   {
+    name: "A+O3000+F",
+    description: "A+O3000, and a frame document still loading is never a long-poll",
+    counts: tracked,
+    isActionWrite: actionWrites(1_000),
+    busyGuard: true,
+    stableMs: 3_000,
+    noLongPoll: (request) => request.type === "Document",
+  },
+  {
+    name: "A+O3000+Fs",
+    description: "A+O3000, and a frame document from the page's own site is never a long-poll",
+    counts: tracked,
+    isActionWrite: actionWrites(1_000),
+    busyGuard: true,
+    stableMs: 3_000,
+    noLongPoll: (request, ctx) =>
+      request.type === "Document" && siteOf(request.url.split("/")[0] ?? "") === ctx.site,
+  },
+  {
     name: "A+T",
     description: "A, and only document/script/stylesheet/XHR/fetch requests hold network quiet",
     counts: content,

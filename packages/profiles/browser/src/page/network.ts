@@ -13,11 +13,33 @@ const IGNORED_TYPES = new Set([
 interface Inflight {
   started: number;
   url: string;
+  type: string;
   session: string;
   write: boolean;
 }
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// The registrable domain, approximately (no public suffix list): the last two labels,
+// three under a two-letter country code with a generic second level (example.co.uk).
+// A miss only decides whether a frame document counts as a long-poll.
+export function siteOf(url: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  if (!host || /^[\d.]+$|:/.test(host)) return host || undefined;
+  const labels = host.split(".");
+  const generic = /^(co|com|org|net|gov|ac|edu|ne|or|go)$/.test(labels.at(-2) ?? "");
+  const keep = generic && (labels.at(-1)?.length ?? 0) === 2 ? 3 : 2;
+  return labels.slice(-keep).join(".");
+}
+
+function ownFrame(request: Inflight, site: string | undefined): boolean {
+  return site !== undefined && request.type === "Document" && siteOf(request.url) === site;
+}
 
 // In-flight requests of one tab across its own and its OOPIF sessions.
 export class NetworkTracker {
@@ -37,6 +59,7 @@ export class NetworkTracker {
         this.inflight.set(event.requestId, {
           started: performance.now(),
           url: event.request.url,
+          type: event.type ?? "Other",
           session: session.sessionId,
           write: !READ_METHODS.has(event.request.method),
         });
@@ -64,11 +87,17 @@ export class NetworkTracker {
     return () => this.listeners.delete(listener);
   }
 
-  // Requests older than `longPollMs` are treated as long-polls, not page work.
-  pending(longPollMs: number): number {
+  // Requests older than `longPollMs` are treated as long-polls, not page work, except a
+  // frame of the page's own site still loading its document: that is the page loading
+  // (Gmail's data frame took 2 s on a cold start). Third-party frames are left out because
+  // ad slots hang for many seconds.
+  pending(longPollMs: number, pageUrl?: string): number {
     const now = performance.now();
+    const site = pageUrl ? siteOf(pageUrl) : undefined;
     let count = 0;
-    for (const request of this.inflight.values()) if (now - request.started < longPollMs) count++;
+    for (const request of this.inflight.values()) {
+      if (now - request.started < longPollMs || ownFrame(request, site)) count++;
+    }
     return count;
   }
 
@@ -82,9 +111,11 @@ export class NetworkTracker {
   }
 
   // When the oldest counted request stops counting, if any.
-  nextExpiry(longPollMs: number): number | undefined {
+  nextExpiry(longPollMs: number, pageUrl?: string): number | undefined {
+    const site = pageUrl ? siteOf(pageUrl) : undefined;
     let earliest: number | undefined;
     for (const request of this.inflight.values()) {
+      if (ownFrame(request, site)) continue;
       const expiry = request.started + longPollMs;
       if (expiry > performance.now() && (earliest === undefined || expiry < earliest))
         earliest = expiry;

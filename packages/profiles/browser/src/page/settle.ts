@@ -245,6 +245,8 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
             while (generation === probeGeneration) {
               await new Promise((done) => setTimeout(done, PROBE_MS));
               if (generation !== probeGeneration) return;
+              await ensureRendering();
+              if (generation !== probeGeneration) return;
               const started = performance.now();
               const read = await Promise.all([
                 viewportKey(tab, probeSignal),
@@ -267,16 +269,23 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
           probeGeneration++;
           probes.abort();
         };
+        // A page that could not render looks quiet and steady only because it is stalled,
+        // so once frames are restarted both have to be seen again.
+        const ensureRendering = async () => {
+          if (!(await tab.ensureRendering(probeSignal).catch(() => false))) return;
+          steady = undefined;
+          runDomQuiet(profile.domQuietMs, profile.capMs);
+        };
         const refreshBusy = () => {
           if (busyChecking) return;
           busyChecking = true;
-          void pageBusy(tab, probeSignal)
-            .catch(() => false)
-            .then((value) => {
-              busy = { at: performance.now(), value };
-              busyChecking = false;
-              notify();
-            });
+          void (async () => {
+            await ensureRendering();
+            const value = await pageBusy(tab, probeSignal).catch(() => false);
+            busy = { at: performance.now(), value };
+            busyChecking = false;
+            notify();
+          })();
         };
         const finish = (reason: string) => {
           if (timer) clearTimeout(timer);
@@ -360,6 +369,7 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
               navigationDomStarted = true;
               runDomQuiet(profile.domQuietMs, profile.capMs);
               startProbes();
+              void ensureRendering();
             }
           }
           if (
@@ -373,7 +383,8 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
               `page content unchanged for ${STABLE_MS / 1_000} s while the network stayed busy`,
             );
           }
-          const pending = tab.network.pending(LONG_POLL_MS);
+          const pageUrl = tab.frames.get(tab.frames.mainFrameId ?? "")?.url;
+          const pending = tab.network.pending(LONG_POLL_MS, pageUrl);
           const networkIdleAt =
             Math.max(tab.network.lastActivity, phaseStart) + profile.networkQuietMs;
           const graceAt = actionEnd + profile.graceMs;
@@ -394,7 +405,7 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
             // A loading indicator is showing; the probes report when it goes.
           }
           if (pending === 0 && writes === 0) deadlines.push(networkIdleAt);
-          const expiry = tab.network.nextExpiry(LONG_POLL_MS);
+          const expiry = tab.network.nextExpiry(LONG_POLL_MS, pageUrl);
           if (expiry !== undefined) deadlines.push(expiry);
           deadlines.push(graceAt);
           const next = Math.min(...deadlines.filter((deadline) => deadline > now));

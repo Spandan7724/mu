@@ -561,10 +561,12 @@ export class BrowserManager {
         { signal, timeoutMs: 3_000 },
       )
       .catch(() => undefined);
-    if (state?.result.value !== "hidden") return;
-    await tab.session
-      .send("Page.bringToFront", undefined, { signal, timeoutMs: 3_000 })
-      .catch(() => {});
+    if (state?.result.value === "hidden") {
+      await tab.session
+        .send("Page.bringToFront", undefined, { signal, timeoutMs: 3_000 })
+        .catch(() => {});
+    }
+    await tab.ensureRendering(signal);
   }
 
   private async recoverCrashed(tab: Tab, signal?: AbortSignal): Promise<void> {
