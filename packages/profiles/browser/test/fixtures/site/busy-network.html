@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Busy network</title></head>
+<body>
+<main>
+  <h1>Live dashboard</h1>
+  <p>Orders today: <span id="n">0</span></p>
+  <a href="/form-basic">Contact</a>
+</main>
+<script>
+  // Telemetry and polling that never stop, like an analytics- and ad-heavy page.
+  var n = 0;
+  // Requests overlap, so one is always in flight and recent.
+  function beat() {
+    fetch("/api/slow?ms=20", { method: "POST", body: "beat" });
+    fetch("/api/slow?ms=400");
+    document.getElementById("n").textContent = String(++n);
+  }
+  beat();
+  setInterval(beat, 150);
+</script>
+</body>
+</html>

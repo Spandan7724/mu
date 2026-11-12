@@ -24,6 +24,7 @@ const STALE_NODE = [
   /node with given id does not belong to the document/i,
   /node is detached from document/i,
   /cannot find object with id/i,
+  /could not find object with given id/i,
 ];
 const CONTEXT_GONE = [
   /cannot find context with specified id/i,

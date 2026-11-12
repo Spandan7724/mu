@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Report</title></head>
+<body>
+<main>
+  <h1>Report</h1>
+  <div id="spinner" role="progressbar" aria-busy="true">Loading…</div>
+</main>
+<script>
+  // Content arrives without any network activity to wait on.
+  setTimeout(function () {
+    document.getElementById("spinner").remove();
+    var p = document.createElement("p");
+    p.textContent = "Report ready: 42 rows";
+    document.querySelector("main").appendChild(p);
+  }, 1200);
+</script>
+</body>
+</html>

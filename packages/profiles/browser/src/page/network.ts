@@ -72,12 +72,12 @@ export class NetworkTracker {
     return count;
   }
 
-  // Writes (form saves, submissions) started at or after `since`: finite work
+  // Writes (form saves, submissions) started between `since` and `until`: finite work
   // however slow, never a long-poll.
-  pendingWrites(since: number): number {
+  pendingWrites(since: number, until = Number.POSITIVE_INFINITY): number {
     let count = 0;
     for (const request of this.inflight.values())
-      if (request.write && request.started >= since) count++;
+      if (request.write && request.started >= since && request.started <= until) count++;
     return count;
   }
 

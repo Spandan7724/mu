@@ -87,6 +87,7 @@ describe("CdpConnection", () => {
     expect(error).toMatchObject({ kind: "stale-node", method: "DOM.describeNode", code: -32000 });
     expect(classifyProtocolError("Cannot find context with specified id")).toBe("context-gone");
     expect(classifyProtocolError("Session with given id not found.")).toBe("target-closed");
+    expect(classifyProtocolError("Could not find object with given id")).toBe("stale-node");
     expect(classifyProtocolError("Invalid parameters")).toBe("protocol");
   });
 

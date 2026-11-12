@@ -90,6 +90,29 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(filled.text).not.toContain("columnheader: newsletter");
   });
 
+  test("a page whose network never goes quiet settles once its content stops changing", async () => {
+    await open("form-basic");
+    const busy = await open("busy-network");
+    expect(busy.outcome.details.settle).toStartWith("page content unchanged for 3 s");
+    expect(busy.outcome.details.timings.settleMs).toBeLessThan(6_000);
+    expect(busy.text).toContain("(new page: refs from earlier observations no longer apply)");
+    expect(busy.text).toContain('heading "Live dashboard"');
+  });
+
+  test("a visible loading indicator is waited out even with no network activity", async () => {
+    // A warm browser, so the first load's own slowness cannot cover for the spinner.
+    await open("form-basic");
+    const report = await open("spinner-load");
+    expect(report.text).toContain("Report ready: 42 rows");
+    expect(report.text).not.toContain("Loading");
+  });
+
+  test("a progress bar with a value is a meter, not a loading indicator", async () => {
+    const steps = await open("progress-steps");
+    expect(steps.outcome.details.settle).toStartWith("page loaded and quiet");
+    expect(steps.outcome.details.timings.settleMs).toBeLessThan(1_500);
+  });
+
   test("a click that saves the form waits for the save and the next step, not a fixed cap", async () => {
     await open("wizard-save");
     const next = await run("click", { ref: refIn(page, "button", "Next") });

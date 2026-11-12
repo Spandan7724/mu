@@ -67,9 +67,14 @@ export interface CaptureOptions {
   // Extra CSS px above and below the viewport that still count as visible.
   margin?: number;
   maxText?: number;
+  // Read the page without assigning refs, so the next observation still sees a new
+  // document as new.
+  peek?: boolean;
 }
 
-const OBJECT_GROUP = "mu-capture";
+// Each capture releases only its own objects, so overlapping captures cannot free each
+// other's handles mid-read.
+let captureCount = 0;
 // Set by the capture script where an interactive child sits inside a text block.
 const INLINE_MARK = String.fromCharCode(1);
 const MASK = "••••";
@@ -107,12 +112,13 @@ async function runCapture(
   worlds: (frameId: string) => Promise<number>,
   script: string,
   signal: AbortSignal | undefined,
+  objectGroup: string,
 ): Promise<FrameCapture> {
   const options = { signal, timeoutMs: 5_000 };
   const contextId = await worlds(frame.frameId);
   const evaluated = await frame.session.send(
     "Runtime.evaluate",
-    { expression: script, contextId, objectGroup: OBJECT_GROUP, returnByValue: false },
+    { expression: script, contextId, objectGroup, returnByValue: false },
     options,
   );
   if (evaluated.exceptionDetails || !evaluated.result.objectId) {
@@ -282,6 +288,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
   })})`;
   const frames = tab.frames.list().filter((frame) => !frame.session.detached);
   const mainFrameId = tab.frames.mainFrameId;
+  const objectGroup = `mu-capture-${++captureCount}`;
   if (!mainFrameId) throw new Error("page has no main frame yet");
   const worlds = (frameId: string) => tab.frames.isolatedWorld(frameId, signal);
   const frameErrors: string[] = [];
@@ -289,13 +296,17 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
   await Promise.all(
     frames.map(async (frame) => {
       try {
-        captures.set(frame.frameId, await runCapture(frame, worlds, script, signal));
+        captures.set(frame.frameId, await runCapture(frame, worlds, script, signal, objectGroup));
       } catch (error) {
         if (signal?.aborted) throw error;
-        if (isCdpError(error, "context-gone")) {
+        // A handle that vanished mid-read went with its document: capture it again.
+        if (isCdpError(error, "context-gone", "stale-node")) {
           tab.frames.forgetWorlds(frame.frameId);
           try {
-            captures.set(frame.frameId, await runCapture(frame, worlds, script, signal));
+            captures.set(
+              frame.frameId,
+              await runCapture(frame, worlds, script, signal, objectGroup),
+            );
             return;
           } catch {}
         }
@@ -414,7 +425,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
         }),
       );
       void frame.session
-        .send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP }, { timeoutMs: 2_000 })
+        .send("Runtime.releaseObjectGroup", { objectGroup }, { timeoutMs: 2_000 })
         .catch(() => {});
     }),
   );
@@ -488,7 +499,7 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
   }
   const mainFrame = tab.frames.get(mainFrameId);
   const documentId = `${mainFrameId}:${mainFrame?.loaderId ?? ""}`;
-  const newDocument = tab.refs.beginDocument(documentId, mainFrameId);
+  const newDocument = options.peek ? false : tab.refs.beginDocument(documentId, mainFrameId);
   const assign = (node: PageNode) => {
     if (
       node.backendNodeId !== undefined &&
@@ -510,8 +521,8 @@ export async function capturePage(tab: Tab, options: CaptureOptions = {}): Promi
     }
     for (const child of node.children) assign(child);
   };
-  assign(root);
-  if (modal && !modal.ref && modal.backendNodeId !== undefined) {
+  if (!options.peek) assign(root);
+  if (!options.peek && modal && !modal.ref && modal.backendNodeId !== undefined) {
     modal.ref = tab.refs.refFor(modal.frameId, modal.backendNodeId);
   }
   return {
