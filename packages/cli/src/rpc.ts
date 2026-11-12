@@ -36,7 +36,7 @@ export type RpcOp = (
   | { type: "snapshot" }
   | { type: "resize"; cols: number; rows: number }
   | { type: "thinking"; level: string }
-  | { type: "abort" }
+  | { type: "abort"; by?: "user" | "host" | undefined; via?: string | undefined }
   | { type: "stop_subagent"; subagentId: string }
   | { type: "background_tools"; toolCallIds?: string[] | undefined }
   | { type: "shutdown" }
@@ -143,7 +143,13 @@ const rpcOpSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("thinking"), level: z.string().min(1).max(128) }).strict(),
-  z.object({ type: z.literal("abort") }).strict(),
+  z
+    .object({
+      type: z.literal("abort"),
+      by: z.enum(["user", "host"]).optional(),
+      via: z.string().max(64).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) }).strict(),
   z
     .object({
@@ -431,7 +437,8 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
         case "abort":
           deps.cancelPermissions?.();
           deps.abortAuxiliary?.();
-          deps.agent.abort();
+          // An RPC client aborts on its user's behalf unless it says otherwise.
+          deps.agent.abort({ by: op.by ?? "user", ...(op.via ? { via: op.via } : {}) });
           accept(op);
           break;
 

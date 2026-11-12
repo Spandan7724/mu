@@ -48,6 +48,52 @@ export function isCustomMessage(message: AgentMessage): message is CustomMessage
   return message.role === "custom";
 }
 
+// Who ended a run before it finished: a person (`user`) or the program driving
+// the agent (`host`). `via` names how, such as the key pressed.
+export interface Interruption {
+  by: "user" | "host";
+  via?: string;
+}
+
+export const INTERRUPTED_TYPE = "interrupted";
+
+export function isInterruption(value: unknown): value is Interruption {
+  if (typeof value !== "object" || value === null) return false;
+  const { by, via } = value as Record<string, unknown>;
+  return (by === "user" || by === "host") && (via === undefined || typeof via === "string");
+}
+
+// Recorded where a run stopped early, so the model knows its work there was cut
+// off rather than finished. Without it, a model asked "what happened" invents a reason.
+export function interruptionMessage(
+  interruption: Interruption | undefined,
+  timestamp = Date.now(),
+): CustomMessage {
+  const who =
+    interruption?.by === "user"
+      ? "The user interrupted this run here, before it finished."
+      : interruption?.by === "host"
+        ? "The program running this agent stopped this run here, before it finished."
+        : "This run was interrupted here, before it finished.";
+  return {
+    role: "custom",
+    customType: INTERRUPTED_TYPE,
+    content: [
+      {
+        type: "text",
+        text: `${who} A reply or tool call cut off by it did not complete, and a cut-off tool call may have partly run.`,
+      },
+    ],
+    display: true,
+    ...(interruption ? { details: interruption } : {}),
+    timestamp,
+  };
+}
+
+export function isInterruptionMessage(message: AgentMessage | undefined): boolean {
+  return message?.role === "custom" && message.customType === INTERRUPTED_TYPE;
+}
+
 // Custom messages are rendered to the model as tagged user-role content so the
 // model can tell injected context from what the user typed.
 export function renderCustomMessage(message: CustomMessage): UserMessage {
@@ -68,6 +114,7 @@ export function renderCustomMessage(message: CustomMessage): UserMessage {
 // Providers reject a tool call that has no result, so every call sent is paired:
 // an interrupted stream's unanswered calls are dropped (their arguments may be
 // partial), and any other unanswered call gets a result saying it never ran.
+// An interrupted stream with nothing streamed yet is dropped, not sent empty.
 export function toAiMessages(
   messages: AgentMessage[],
   options: { images?: boolean } = {},
@@ -85,7 +132,7 @@ export function toAiMessages(
     }
     if (message.stopReason === "error") continue;
     const calls = message.content.filter((block) => block.type === "toolCall");
-    if (calls.length === 0) {
+    if (calls.length === 0 && message.stopReason !== "aborted") {
       out.push(message);
       continue;
     }
@@ -96,19 +143,25 @@ export function toAiMessages(
       if (result?.role !== "toolResult") break;
       answered.add(result.toolCallId);
     }
-    const unanswered = calls.filter((call) => !answered.has(call.id));
-    if (unanswered.length === 0) {
-      out.push(message);
-      continue;
-    }
     if (message.stopReason === "aborted") {
       const content = message.content.filter(
         (block) => block.type !== "toolCall" || answered.has(block.id),
       );
       if (content.length > 0) out.push({ ...message, content });
-    } else out.push(message);
+      for (; i + 1 < next; i++) out.push(messages[i + 1] as ToolResultMessage);
+      // Sessions saved before interruptions were recorded get the marker here.
+      if (!isInterruptionMessage(messages[next])) {
+        out.push(renderCustomMessage(interruptionMessage(undefined, message.timestamp)));
+      }
+      continue;
+    }
+    const unanswered = calls.filter((call) => !answered.has(call.id));
+    if (unanswered.length === 0) {
+      out.push(message);
+      continue;
+    }
+    out.push(message);
     for (; i + 1 < next; i++) out.push(messages[i + 1] as ToolResultMessage);
-    if (message.stopReason === "aborted") continue;
     for (const call of unanswered) {
       out.push({
         role: "toolResult",

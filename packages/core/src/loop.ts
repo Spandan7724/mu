@@ -13,7 +13,7 @@ import {
 } from "@mu/ai";
 import type { AgentEndReason, AgentEvent, EventSink, StreamDelta } from "./events.ts";
 import type { AgentMessage } from "./messages.ts";
-import { toAiMessages } from "./messages.ts";
+import { interruptionMessage, isInterruption, toAiMessages } from "./messages.ts";
 import {
   type AnyTool,
   canBackground,
@@ -182,7 +182,21 @@ export async function runLoop(
   const recentSteps: CycleStep[] = [];
 
   const finish = async (reason: AgentEndReason): Promise<AgentRunResult> => {
-    await emit({ type: "agent_end", messages: newMessages, reason });
+    if (reason !== "aborted") {
+      await emit({ type: "agent_end", messages: newMessages, reason });
+      return { messages: newMessages, reason };
+    }
+    const interruption = isInterruption(abort.reason) ? abort.reason : undefined;
+    const marker = interruptionMessage(interruption);
+    await emit({ type: "message_start", message: marker });
+    await emit({ type: "message_end", message: marker });
+    newMessages.push(marker);
+    await emit({
+      type: "agent_end",
+      messages: newMessages,
+      reason,
+      ...(interruption ? { interruption } : {}),
+    });
     return { messages: newMessages, reason };
   };
 

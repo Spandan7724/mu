@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "./events.ts";
 import { type AgentContext, type LoopConfig, runLoop } from "./loop.ts";
-import { type AgentMessage, userMessage } from "./messages.ts";
+import { type AgentMessage, INTERRUPTED_TYPE, userMessage } from "./messages.ts";
 import { FakeProvider, fakeModel } from "./testing/fake-provider.ts";
 import { type AnyTool, type ToolResult, textResult } from "./tools.ts";
 
@@ -791,6 +791,69 @@ describe("abort", () => {
       controller.signal,
     );
     expect(result.reason).toBe("aborted");
+  });
+
+  test("an abort records who interrupted the run, in the transcript and on agent_end", async () => {
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "slow" }], delayMs: 50 }]);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort({ by: "user", via: "esc" }), 10);
+    const { events, emit } = collector();
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx(),
+      baseConfig(provider),
+      emit,
+      controller.signal,
+    );
+
+    const last = result.messages.at(-1);
+    expect(last).toMatchObject({
+      role: "custom",
+      customType: INTERRUPTED_TYPE,
+      details: { by: "user", via: "esc" },
+    });
+    expect(events.some((e) => e.type === "message_end" && e.message === last)).toBe(true);
+    expect(events.at(-1)).toMatchObject({
+      type: "agent_end",
+      reason: "aborted",
+      interruption: { by: "user", via: "esc" },
+    });
+  });
+
+  test("an abort between turns is recorded too, and an unexplained one says so", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "toolCall", id: "c1", name: "stop", arguments: {} }] },
+      { content: [{ type: "text", text: "never" }] },
+    ]);
+    const controller = new AbortController();
+    const stop: AnyTool = {
+      name: "stop",
+      description: "stop",
+      inputSchema: { type: "object" },
+      execute: async () => {
+        controller.abort();
+        return textResult("finished");
+      },
+    };
+    const { events, emit } = collector();
+    const result = await runLoop(
+      [userMessage("go")],
+      ctx([stop]),
+      baseConfig(provider),
+      emit,
+      controller.signal,
+    );
+
+    expect(result.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "toolResult",
+      "custom",
+    ]);
+    const marker = result.messages.at(-1);
+    expect(marker?.role === "custom" && marker.details).toBeUndefined();
+    const end = events.at(-1);
+    expect(end?.type === "agent_end" && "interruption" in end).toBe(false);
   });
 
   test("the abort signal reaches tool execute", async () => {

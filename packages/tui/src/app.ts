@@ -11,6 +11,7 @@ import type {
   PermissionRequest,
   ToolResultMessage,
 } from "@mu/core";
+import { INTERRUPTED_TYPE, isInterruption } from "@mu/core";
 import {
   agentCell,
   type CompactionProgressState,
@@ -22,6 +23,7 @@ import {
   fixedTailCell,
   formatDuration,
   type RenderContext,
+  runEndRow,
   thinkingCell,
   toolOutputCell,
   userCell,
@@ -112,7 +114,8 @@ export interface AppCallbacks {
   onShell?: (command: string) => void;
   // Supplies file paths for the `@` mention popup.
   onMentionQuery?: (query: string) => { label: string; description?: string }[];
-  onAbort: () => void;
+  // `via` names the key that interrupted the run.
+  onAbort: (via: "esc" | "ctrl+c") => void;
   // Stops one background subagent selected in transcript review.
   // Stops a background subagent or task by its id (x twice in review).
   onStopBackground?: (id: string) => void;
@@ -1094,13 +1097,16 @@ export class App {
                 : "finished";
           this.syncSideFooter();
         }
-        const duration = styleText(
-          `worked for ${formatDuration(Date.now() - this.runStartedAt)}`,
-          { dim: true },
-          this.ctx.depth,
+        const duration = runEndRow(
+          {
+            durationMs: Date.now() - this.runStartedAt,
+            interrupted: event.reason === "aborted",
+            ...(event.interruption ? { interruption: event.interruption } : {}),
+          },
+          this.ctx,
         );
         if (event.reason !== "error") {
-          const lines = [MARGIN + duration, ""];
+          const lines = [duration, ""];
           this.appendTranscript(lines);
           return lines;
         }
@@ -1108,7 +1114,7 @@ export class App {
         // nothing and hides actionable messages like a missing API key.
         const detail = this.lastError ?? "the provider returned an error";
         this.lastError = undefined;
-        const lines = [...errorCell(detail, this.ctx), MARGIN + duration, ""];
+        const lines = [...errorCell(detail, this.ctx), duration, ""];
         this.appendTranscript(lines);
         return lines;
       }
@@ -1595,6 +1601,15 @@ export class App {
         continue;
       }
       if (message.customType === "background_subagent") this.restoreSubagentResult(message.details);
+      if (message.customType === INTERRUPTED_TYPE) {
+        const interruption = isInterruption(message.details) ? message.details : undefined;
+        this.pushTranscript({
+          kind: "lines",
+          lines: [
+            runEndRow({ interrupted: true, ...(interruption ? { interruption } : {}) }, this.ctx),
+          ],
+        });
+      }
     }
     this.editor.replaceHistory(history);
   }
@@ -3128,7 +3143,7 @@ export class App {
   // exiting immediately, so a single stray keystroke can't drop in-flight work.
   private handleCtrlC(): void {
     if (this.running) {
-      this.options.callbacks.onAbort();
+      this.options.callbacks.onAbort("ctrl+c");
       this.ctrlCArmedAt = 0;
       return;
     }
@@ -3271,7 +3286,7 @@ export class App {
 
     switch (key.name) {
       case "escape":
-        if (this.running) this.options.callbacks.onAbort();
+        if (this.running) this.options.callbacks.onAbort("esc");
         else if (this.isShellMode) this.editor.setText("");
         else if (
           this.activeSource === "side" &&

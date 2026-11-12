@@ -413,9 +413,9 @@ class SubagentManager {
     if (typeof choice === "string") return errorResult(choice);
     const job = this.newJob(kind, description, ctx.toolCallId);
     job.choice = choice;
-    const relay = () => job.controller.abort();
+    const relay = () => job.controller.abort(ctx.signal.reason);
     ctx.signal.addEventListener("abort", relay, { once: true });
-    if (ctx.signal.aborted) job.controller.abort();
+    if (ctx.signal.aborted) relay();
     let forward = (update: SubagentProgressUpdate) => ctx.update("", update);
     let backgrounded = false;
     const done = this.launch(

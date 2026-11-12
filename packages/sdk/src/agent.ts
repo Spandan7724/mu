@@ -40,6 +40,7 @@ import {
   type ExtensionHost,
   estimateTextTokens,
   estimateTokens,
+  type Interruption,
   isContextTooLongResult,
   type LoopConfig,
   MemorySessionStore,
@@ -1005,7 +1006,7 @@ export class Agent {
     } catch {
       // Still abort the active model request even if resource signaling fails.
     }
-    this.controller.abort();
+    this.controller.abort({ by: "host", via: "stop" } satisfies Interruption);
     this.resolveIdleIfDone();
   }
 
@@ -1028,9 +1029,10 @@ export class Agent {
     return this.shutdownPromise;
   }
 
-  abort(): void {
+  // The interruption travels as the signal's reason, so the run records who stopped it.
+  abort(interruption: Interruption = { by: "host" }): void {
     if (this.running) this.noticesHeld = true;
-    this.controller.abort();
+    this.controller.abort(interruption);
   }
 
   // Running calls that can move to the background, by tool-call id.

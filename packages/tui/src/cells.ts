@@ -1,4 +1,9 @@
-import type { CheckpointDiffFile, CompactionProgress, CompactionStage } from "@mu/core";
+import type {
+  CheckpointDiffFile,
+  CompactionProgress,
+  CompactionStage,
+  Interruption,
+} from "@mu/core";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeUntrusted } from "./sanitize.ts";
 import {
@@ -349,6 +354,31 @@ export function formatDuration(durationMs: number): string {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return seconds % 60 === 0 ? `${minutes}m` : `${minutes}m ${seconds % 60}s`;
+}
+
+// Closes a run: how long it worked, or that it was cut off and by what, so an
+// interrupted run never reads as finished. A resumed session has no duration.
+export function runEndRow(
+  options: { durationMs?: number; interrupted?: boolean; interruption?: Interruption },
+  ctx: RenderContext,
+): string {
+  const duration =
+    options.durationMs === undefined ? undefined : formatDuration(options.durationMs);
+  if (!options.interrupted) return MARGIN + dim(`worked for ${duration ?? ""}`.trim(), ctx.depth);
+  const by = options.interruption?.by;
+  const via =
+    by === "user" && options.interruption?.via
+      ? sanitizeUntrusted(options.interruption.via)
+      : undefined;
+  const detail = [via, duration]
+    .filter(Boolean)
+    .map((part) => ` · ${part}`)
+    .join("");
+  return (
+    MARGIN +
+    styleText(by === "host" ? "stopped" : "interrupted", { toolMutate: true }, ctx.depth) +
+    dim(detail, ctx.depth)
+  );
 }
 
 // Background process cells live in the managed region while running and are

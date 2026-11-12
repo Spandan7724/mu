@@ -19,6 +19,7 @@ import {
 import {
   createManagedSessionRecord,
   displaySummary,
+  isRunEnded,
   MAX_AGENT_VIEW_ERROR_CHARS,
   type ManagedSessionRecord,
   reduceManagedSession,
@@ -640,7 +641,9 @@ export class AgentSupervisor {
           const wasEvicting = runtime.lifecycle === "evicting";
           runtime.lifecycle = "stopping";
           if (!wasEvicting) {
-            await this.workerOperation(runtime, { type: "abort" }).catch(() => {});
+            await this.workerOperation(runtime, { type: "abort", by: "host", via: "stop" }).catch(
+              () => {},
+            );
             requestWorkerShutdown(runtime);
           }
           this.scheduleForceStop(runtime);
@@ -660,7 +663,7 @@ export class AgentSupervisor {
         const record = this.requireRecord(request.sessionId, client.scope as string);
         if (this.runtimes.has(request.sessionId))
           throw new Error("stop the runtime before removing its row");
-        if (!["stopped", "completed", "failed"].includes(record.state))
+        if (!["stopped", "completed", "interrupted", "failed"].includes(record.state))
           throw new Error("only inactive rows can be removed");
         this.records.delete(request.sessionId);
         await this.persist();
@@ -768,7 +771,7 @@ export class AgentSupervisor {
     this.records.set(sessionId, next);
     await this.persistAndBroadcast(next);
     const runtime = this.runtimes.get(sessionId);
-    if (runtime && !attached && next.state === "completed") this.scheduleIdleEviction(runtime);
+    if (runtime && !attached && isRunEnded(next.state)) this.scheduleIdleEviction(runtime);
   }
 
   private async spawnWorker(
@@ -1003,7 +1006,7 @@ export class AgentSupervisor {
       else await this.persistAndBroadcast(next);
     }
     this.broadcast(record.scope, { type: "event", sessionId, event });
-    if (event.type === "agent_end" && next.state === "completed" && !next.attached) {
+    if (event.type === "agent_end" && isRunEnded(next.state) && !next.attached) {
       this.scheduleIdleEviction(runtime);
     }
   }
@@ -1170,7 +1173,7 @@ export class AgentSupervisor {
   private evictWhenIdle(sessionId: string, runtime: WorkerRuntime): void {
     const record = this.records.get(sessionId);
     if (this.runtimes.get(sessionId) !== runtime) return;
-    if (record?.state === "completed" && !record.attached) this.scheduleIdleEviction(runtime);
+    if (record && isRunEnded(record.state) && !record.attached) this.scheduleIdleEviction(runtime);
   }
 
   private scheduleIdleEviction(runtime: WorkerRuntime): void {

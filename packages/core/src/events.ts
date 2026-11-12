@@ -5,7 +5,7 @@ import type {
   Usage,
   WebSearchContent,
 } from "@mu/ai";
-import type { AgentMessage } from "./messages.ts";
+import type { AgentMessage, Interruption } from "./messages.ts";
 import type { PermissionRequest } from "./permission.ts";
 
 // Fine-grained deltas for renderers that stream. Carried alongside the
@@ -49,7 +49,13 @@ export interface CompactionProgress {
 // outside it. Every member must be JSON-serializable.
 export type AgentEvent =
   | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentMessage[]; reason: AgentEndReason }
+  | {
+      type: "agent_end";
+      messages: AgentMessage[];
+      reason: AgentEndReason;
+      // With reason "aborted", who stopped the run when the aborter said so.
+      interruption?: Interruption;
+    }
   | { type: "turn_start" }
   | { type: "turn_end"; message: AssistantMessage; toolResults: ToolResultMessage[] }
   | { type: "message_start"; message: AgentMessage }

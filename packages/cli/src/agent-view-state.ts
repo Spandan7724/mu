@@ -12,10 +12,16 @@ export const managedSessionStateSchema = z.enum([
   "working",
   "needs_input",
   "completed",
+  "interrupted",
   "failed",
   "stopped",
 ]);
 export type ManagedSessionState = z.infer<typeof managedSessionStateSchema>;
+
+// A run that ended, cleanly or cut off, leaves an idle runtime that can be evicted.
+export function isRunEnded(state: ManagedSessionState): boolean {
+  return state === "completed" || state === "interrupted";
+}
 
 export const permissionRequestSchema = z.object({
   id: z.string().min(1).max(256),
@@ -231,7 +237,7 @@ export function reduceManagedSession(
           const failed = event.reason === "error";
           return {
             ...previous,
-            state: failed ? "failed" : "completed",
+            state: failed ? "failed" : event.reason === "aborted" ? "interrupted" : "completed",
             pendingRequest: undefined,
             updatedAt: now,
             completedAt: now,

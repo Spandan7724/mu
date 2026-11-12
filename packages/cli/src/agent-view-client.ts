@@ -174,7 +174,7 @@ export class AgentViewClient {
           remember?: boolean | "session" | undefined;
           message?: string | undefined;
         }
-      | { type: "abort" }
+      | { type: "abort"; by?: "user" | "host"; via?: string }
       | { type: "stop_subagent"; subagentId: string }
       | { type: "background_tools"; toolCallIds?: string[] | undefined }
       | { type: "thinking"; level: string },

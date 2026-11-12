@@ -51,6 +51,8 @@ describe("parseOp", () => {
       "parse_error",
     );
     expect(parseOp('{"type":"abort","extra":true}').type).toBe("parse_error");
+    expect(parseOp('{"type":"abort","by":"robot"}').type).toBe("parse_error");
+    expect(parseOp('{"type":"abort","by":"user","via":"esc"}').type).toBe("abort");
     expect(parseOp("x".repeat(2_000_001)).type).toBe("parse_error");
   });
 });
@@ -543,7 +545,7 @@ describe("runRpc", () => {
     const { io, written } = harness(
       [
         JSON.stringify({ type: "input", text: "go" }),
-        JSON.stringify({ type: "abort" }),
+        JSON.stringify({ type: "abort", via: "esc" }),
         JSON.stringify({ type: "shutdown" }),
       ],
       20,
@@ -551,9 +553,10 @@ describe("runRpc", () => {
     await runRpc(io, { agent });
 
     const end = parsed(written).find((o) => o.type === "event" && o.event.type === "agent_end");
-    expect(end?.type === "event" && end.event.type === "agent_end" && end.event.reason).toBe(
-      "aborted",
-    );
+    expect(end?.type === "event" && end.event).toMatchObject({
+      reason: "aborted",
+      interruption: { by: "user", via: "esc" },
+    });
   });
 });
 

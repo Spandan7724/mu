@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { AssistantMessage } from "@mu/ai";
 import {
   customMessage,
+  interruptionMessage,
   isCustomMessage,
+  isInterruption,
   renderCustomMessage,
   toAiMessages,
   userMessage,
@@ -52,7 +55,9 @@ describe("messages", () => {
           ? `assistant:${m.content.flatMap((b) => (b.type === "toolCall" ? [b.id] : [])).join(",")}`
           : m.role === "toolResult"
             ? `result:${m.toolCallId}:${m.isError}`
-            : m.role,
+            : m.content.some((b) => b.type === "text" && b.text.startsWith("<interrupted>"))
+              ? "interrupted"
+              : m.role,
       );
     const user = userMessage("next");
 
@@ -65,6 +70,7 @@ describe("messages", () => {
     expect(shape([assistant("aborted", ["c1", "c2"]), result("c1"), user])).toEqual([
       "assistant:c1",
       "result:c1:false",
+      "interrupted",
       "user",
     ]);
     const complete = [assistant("toolUse", ["c1"]), result("c1"), user];
@@ -74,7 +80,43 @@ describe("messages", () => {
         { ...assistant("aborted", ["c1"]), content: assistant("aborted", ["c1"]).content.slice(1) },
         user,
       ]),
-    ).toEqual(["user"]);
+    ).toEqual(["interrupted", "user"]);
+  });
+
+  test("an interrupted run tells the model it was cut off, once", () => {
+    const aborted = (content: AssistantMessage["content"]): AssistantMessage => ({
+      role: "assistant",
+      content,
+      model: "fake/fake-1",
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      stopReason: "aborted",
+      errorMessage: "Request aborted",
+      timestamp: 2,
+    });
+    const user = userMessage("what happened");
+    const marker = interruptionMessage({ by: "user", via: "esc" }, 3);
+    const texts = (messages: Parameters<typeof toAiMessages>[0]) =>
+      toAiMessages(messages).map((m) =>
+        m.content.map((b) => (b.type === "text" ? b.text : b.type)).join("|"),
+      );
+
+    const recorded = texts([aborted([]), marker, user]);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0]).toStartWith("<interrupted>\nThe user interrupted this run");
+    expect(recorded[1]).toBe("what happened");
+
+    const legacy = texts([aborted([{ type: "text", text: "Here is" }]), user]);
+    expect(legacy).toHaveLength(3);
+    expect(legacy[0]).toBe("Here is");
+    expect(legacy[1]).toStartWith("<interrupted>\nThis run was interrupted here");
+
+    expect(texts([interruptionMessage({ by: "host" })])[0]).toStartWith(
+      "<interrupted>\nThe program running this agent stopped",
+    );
+    expect(interruptionMessage(undefined).details).toBeUndefined();
+    expect(isInterruption({ by: "user", via: "esc" })).toBe(true);
+    expect(isInterruption({ by: "user", via: 1 })).toBe(false);
+    expect(isInterruption(new DOMException("aborted", "AbortError"))).toBe(false);
   });
 
   test("failed assistant attempts stay out of the request", () => {

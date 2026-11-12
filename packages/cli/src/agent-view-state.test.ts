@@ -54,6 +54,21 @@ describe("agent-view state reducer", () => {
       50,
     );
     expect(completed).toMatchObject({ state: "completed", completedAt: 50 });
+
+    const interrupted = reduceManagedSession(
+      resumed,
+      {
+        type: "agent_event",
+        event: {
+          type: "agent_end",
+          messages: [],
+          reason: "aborted",
+          interruption: { by: "user", via: "esc" },
+        },
+      },
+      60,
+    );
+    expect(interrupted).toMatchObject({ state: "interrupted", completedAt: 60 });
   });
 
   test("stop and worker failure remain distinct", () => {

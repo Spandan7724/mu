@@ -404,9 +404,9 @@ export async function runInteractive(
       },
       onEditQueued: (kind, text) => activeAgent().removeQueuedMessage(kind, text),
       onShell: (command) => beginUserShell(command),
-      onAbort: () => {
+      onAbort: (via) => {
         if (shellController) shellController.abort();
-        else activeAgent().abort();
+        else activeAgent().abort({ by: "user", via });
       },
       onStopBackground: (id) => {
         agent.stopBackgroundWork(id);

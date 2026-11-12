@@ -865,6 +865,33 @@ describe("steering, follow-ups and abort", () => {
     expect(result.reason).toBe("aborted");
   });
 
+  test("the next run is told the user interrupted the last one", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "slow" }], delayMs: 60 },
+      { content: [{ type: "text", text: "you stopped me" }] },
+    ]);
+    const agent = agentWith(provider);
+    const running = agent.run("go");
+    setTimeout(() => agent.abort({ by: "user", via: "esc" }), 10);
+    await running;
+
+    const recorded = agent.session
+      .activePath()
+      .flatMap((entry) => (entry.type === "message" ? [entry.message] : []))
+      .at(-1);
+    expect(recorded).toMatchObject({
+      customType: "interrupted",
+      details: { by: "user", via: "esc" },
+    });
+
+    await agent.run("what happened");
+    const sent = provider.requests[1]?.messages.flatMap((message) =>
+      message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])),
+    );
+    expect(sent?.at(-2)).toStartWith("<interrupted>\nThe user interrupted this run");
+    expect(sent?.at(-1)).toBe("what happened");
+  });
+
   test("a profile follow-up starts a new run while the agent is idle", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "waiting" }] },

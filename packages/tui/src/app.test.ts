@@ -2,6 +2,7 @@
 // zero network, exactly as the milestone requires.
 import { describe, expect, spyOn, test } from "bun:test";
 import type { AgentEvent, AgentMessage, ToolResultMessage } from "@mu/core";
+import { interruptionMessage, userMessage } from "@mu/core";
 import { App, type AppCallbacks, type AppOptions, CTRL_C_EXIT_WINDOW_MS } from "./app.ts";
 import { diffCell, diffLinesFromHunks } from "./cells.ts";
 import { InputDecoder } from "./input.ts";
@@ -38,7 +39,7 @@ function harness(
     remember: boolean | "session";
     message?: string;
   }[] = [];
-  let aborted = false;
+  let aborted: "esc" | "ctrl+c" | false = false;
   let exited = false;
 
   const registry = new RendererRegistry();
@@ -63,8 +64,8 @@ function harness(
         followUps.push(text);
         return true;
       },
-      onAbort: () => {
-        aborted = true;
+      onAbort: (via) => {
+        aborted = via;
       },
       onExit: () => {
         exited = true;
@@ -542,6 +543,48 @@ describe("fake-agent session", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  test("an interrupted run never reads as finished, live or resumed", () => {
+    const { app } = harness();
+    const now = Date.now();
+    const spy = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      app.handleEvent({ type: "agent_start" });
+      spy.mockReturnValue(now + 219_000);
+      const live = app.handleEvent({
+        type: "agent_end",
+        messages: [],
+        reason: "aborted",
+        interruption: { by: "user", via: "esc" },
+      });
+      expect(stripAnsi(live[0] ?? "")).toBe("  interrupted · esc · 3m 39s");
+
+      app.handleEvent({ type: "agent_start" });
+      const stopped = app.handleEvent({
+        type: "agent_end",
+        messages: [],
+        reason: "aborted",
+        interruption: { by: "host", via: "stop" },
+      });
+      expect(stripAnsi(stopped[0] ?? "")).toBe("  stopped · 0ms");
+
+      app.handleEvent({ type: "agent_start" });
+      const unexplained = app.handleEvent({ type: "agent_end", messages: [], reason: "aborted" });
+      expect(stripAnsi(unexplained[0] ?? "")).toBe("  interrupted · 0ms");
+    } finally {
+      spy.mockRestore();
+    }
+
+    app.replaceTranscript([
+      userMessage("explain the repo"),
+      interruptionMessage({ by: "user", via: "ctrl+c" }),
+      interruptionMessage(undefined),
+    ]);
+    const resumed = app.renderScreen().map(stripAnsi);
+    expect(resumed).toContain("  interrupted · ctrl+c");
+    expect(resumed).toContain("  interrupted");
+    expect(resumed.join("\n")).not.toContain("worked for");
   });
 
   test("an error still reports elapsed time, after the error detail", () => {
@@ -1599,14 +1642,14 @@ describe("input handling", () => {
       type: "key",
       key: { name: "escape", ctrl: false, alt: false, shift: false },
     });
-    expect(h.aborted).toBe(true);
+    expect(h.aborted).toBe("esc");
   });
 
   test("ctrl+c aborts a running agent instead of exiting", () => {
     const h = harness();
     h.app.handleEvent({ type: "agent_start" });
     feed(h.app, "\u0003");
-    expect(h.aborted).toBe(true);
+    expect(h.aborted).toBe("ctrl+c");
     expect(h.exited).toBe(false);
   });
 

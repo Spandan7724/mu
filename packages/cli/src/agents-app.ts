@@ -39,7 +39,11 @@ import cliPackage from "../package.json";
 import { dispatchEnvironment, scopeForCurrentProject } from "./agent-supervisor.ts";
 import { AgentViewClient } from "./agent-view-client.ts";
 import type { AgentViewAttachment, AgentViewResponse } from "./agent-view-protocol.ts";
-import type { ManagedSessionRecord, ManagedSessionState } from "./agent-view-state.ts";
+import {
+  isRunEnded,
+  type ManagedSessionRecord,
+  type ManagedSessionState,
+} from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
 import { resolveCliModel } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
@@ -67,12 +71,13 @@ const STATE_ORDER: Record<ManagedSessionState, number> = {
   working: 1,
   starting: 2,
   failed: 3,
-  completed: 4,
-  stopped: 5,
+  interrupted: 4,
+  completed: 5,
+  stopped: 6,
 };
 
 function stableOrderTime(record: ManagedSessionRecord): number {
-  if (record.state === "completed" || record.state === "failed") {
+  if (isRunEnded(record.state) || record.state === "failed") {
     return record.completedAt ?? record.createdAt;
   }
   if (record.state === "stopped") return record.updatedAt;
@@ -136,9 +141,11 @@ function stateLabel(state: ManagedSessionState, depth: ColorDepth): string {
         ? { toolMutate: true, bold: true }
         : state === "completed"
           ? { permissive: true }
-          : state === "stopped"
-            ? { dim: true }
-            : { accent: true };
+          : state === "interrupted"
+            ? { toolMutate: true }
+            : state === "stopped"
+              ? { dim: true }
+              : { accent: true };
   return styleText(state.replace("_", " "), style, depth);
 }
 
@@ -513,7 +520,7 @@ export class AgentsApp {
 
   private renderRow(record: ManagedSessionRecord, selected: boolean): string[] {
     const marker = selected ? styleText("›", { accent: true, bold: true }, this.depth) : " ";
-    const finished = record.state === "completed" || record.state === "failed";
+    const finished = isRunEnded(record.state) || record.state === "failed";
     // Attaching, detaching, and restarting a worker are record updates, but they
     // must not make an already-finished run appear newly completed.
     const timestamp = finished ? (record.completedAt ?? record.updatedAt) : record.updatedAt;
@@ -693,7 +700,8 @@ export async function runAgentView(
           onShell: (command) =>
             void client.sessionOp(sessionId, { type: "shell", command }).catch(showError),
           onMentionQuery: (query) => mentionCandidates(cwd, query),
-          onAbort: () => void client.sessionOp(sessionId, { type: "abort" }).catch(showError),
+          onAbort: (via) =>
+            void client.sessionOp(sessionId, { type: "abort", by: "user", via }).catch(showError),
           onStopBackground: (subagentId) =>
             void client
               .sessionOp(sessionId, { type: "stop_subagent", subagentId })

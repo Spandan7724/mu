@@ -110,7 +110,13 @@ export const agentViewRequestSchema = z.discriminatedUnion("type", [
             message: z.string().max(10_000).optional(),
           })
           .strict(),
-        z.object({ type: z.literal("abort") }).strict(),
+        z
+          .object({
+            type: z.literal("abort"),
+            by: z.enum(["user", "host"]).optional(),
+            via: z.string().max(64).optional(),
+          })
+          .strict(),
         z
           .object({ type: z.literal("stop_subagent"), subagentId: z.string().min(1).max(512) })
           .strict(),
@@ -233,6 +239,10 @@ const streamDeltaSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const interruptionSchema = z
+  .object({ by: z.enum(["user", "host"]), via: z.string().max(64).optional() })
+  .strict();
+
 export const agentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent_start") }).strict(),
   z
@@ -240,6 +250,7 @@ export const agentEventSchema = z.discriminatedUnion("type", [
       type: z.literal("agent_end"),
       messages: z.array(messageSchema).max(100_000),
       reason: z.enum(["done", "aborted", "budget", "maxTurns", "error"]),
+      interruption: interruptionSchema.optional(),
     })
     .strict(),
   z.object({ type: z.literal("turn_start") }).strict(),
