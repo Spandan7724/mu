@@ -370,15 +370,8 @@ export function runEndRow(
     by === "user" && options.interruption?.via
       ? sanitizeUntrusted(options.interruption.via)
       : undefined;
-  const detail = [via, duration]
-    .filter(Boolean)
-    .map((part) => ` · ${part}`)
-    .join("");
-  return (
-    MARGIN +
-    styleText(by === "host" ? "stopped" : "interrupted", { toolMutate: true }, ctx.depth) +
-    dim(detail, ctx.depth)
-  );
+  const label = by === "host" ? "stopped" : "interrupted";
+  return MARGIN + dim([label, via, duration].filter(Boolean).join(" · "), ctx.depth);
 }
 
 // Background process cells live in the managed region while running and are
