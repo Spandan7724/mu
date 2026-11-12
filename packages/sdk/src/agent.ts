@@ -279,6 +279,14 @@ function promptText(message: AgentMessage): string {
   return message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
+function hasImage(message: AgentMessage): boolean {
+  return (
+    message.role !== "assistant" &&
+    typeof message.content !== "string" &&
+    message.content.some((block) => block.type === "image")
+  );
+}
+
 function createSessionId(): string {
   return `s${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
@@ -327,6 +335,10 @@ export class Agent {
   private lastContextUsage: { usage: Usage; estimatedTokensAtUsage: number } | undefined;
   private readonly checkpoints = new CheckpointHistory();
   private recoveryAttempted = false;
+  // Models whose provider rejected a request with images although the catalog
+  // says they read them. A refusal counts once a retry without images succeeds.
+  private readonly imageRefusals = new Set<string>();
+  private imageProbe: string | undefined;
   // Transient-error retries of the current turn; reset once a turn completes.
   private turnRetries = 0;
   private reactiveRecoveryPending = false;
@@ -2015,6 +2027,7 @@ export class Agent {
     this.recoveryAttempted = false;
     this.turnRetries = 0;
     this.reactiveRecoveryPending = false;
+    this.settleImageProbe(false);
 
     const host = this.options.extensions;
     let effectivePrompt = prompt;
@@ -2056,7 +2069,9 @@ export class Agent {
     let captured: T | undefined;
     let reminders = 0;
     let tools: AnyTool[] = this.tools;
-    const runModel = opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model;
+    const runModel = this.withoutRefusedImages(
+      opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model,
+    );
     const runProvider = opts?.model ? this.providerFor(runModel) : this.provider;
     const webSearch = resolveWebSearchBackend(runProvider);
     if (opts?.allowedTools) {
@@ -2237,7 +2252,7 @@ export class Agent {
             },
           }
         : {}),
-      recoverFromError: (message) => this.recoverRunError(run, message),
+      recoverFromError: (message, request) => this.recoverRunError(run, message, request),
       shouldStopAfterTurn: (turn) => this.finishRunTurn(run, turn),
     };
 
@@ -2531,7 +2546,31 @@ export class Agent {
   // Layer 3 — reactive recovery. The provider rejected the request for
   // being too long: compact, then let the loop try once more rather than
   // ending the run. Exactly one attempt, so a real failure still surfaces.
-  private async recoverRunError(run: RunState, message: AssistantMessage): Promise<boolean> {
+  private async recoverRunError(
+    run: RunState,
+    message: AssistantMessage,
+    request: { model: ModelInfo; messages: AgentMessage[] },
+  ): Promise<boolean | { model: ModelInfo }> {
+    if (message.errorKind === "bad_request") {
+      // The retry without images failed too, so images were not the cause.
+      if (this.imageProbe) {
+        this.settleImageProbe(false);
+        return false;
+      }
+      if (request.model.modalities.includes("image") && request.messages.some(hasImage)) {
+        const ref = `${request.model.provider}/${request.model.id}`;
+        this.imageRefusals.add(ref);
+        this.imageProbe = ref;
+        run.emit({
+          type: "provider_retry",
+          attempt: 1,
+          maxAttempts: 1,
+          delayMs: 0,
+          errorMessage: `${ref} rejected a request with an image; trying again without images`,
+        });
+        return { model: this.withoutRefusedImages(request.model) };
+      }
+    }
     if (isContextTooLongResult(message)) {
       if (this.recoveryAttempted) return false;
       this.recoveryAttempted = true;
@@ -2556,7 +2595,18 @@ export class Agent {
     return true;
   }
 
+  private withoutRefusedImages(model: ModelInfo): ModelInfo {
+    if (!this.imageRefusals.has(`${model.provider}/${model.id}`)) return model;
+    return { ...model, modalities: model.modalities.filter((modality) => modality !== "image") };
+  }
+
+  private settleImageProbe(confirmed: boolean): void {
+    if (this.imageProbe && !confirmed) this.imageRefusals.delete(this.imageProbe);
+    this.imageProbe = undefined;
+  }
+
   private finishRunTurn(run: RunState, turn: TurnInfo): boolean {
+    this.settleImageProbe(true);
     this.recoveryAttempted = false;
     this.turnRetries = 0;
     for (const result of turn.toolResults) {

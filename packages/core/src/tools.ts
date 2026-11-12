@@ -16,6 +16,13 @@ export interface ToolResult {
   retention?: { key: string; summary: string };
 }
 
+// The model that will read this call's result, as the loop runs it now.
+export interface ToolCallContext {
+  model: string;
+  // Tools skip producing images when false; the request drops any that remain.
+  acceptsImages: boolean;
+}
+
 export interface Tool<Args = Record<string, unknown>> {
   name: string;
   description: string; // model-facing
@@ -49,6 +56,8 @@ export interface Tool<Args = Record<string, unknown>> {
     signal: AbortSignal,
     onUpdate?: (partial: ToolResultContent[], details?: unknown) => void,
     background?: AbortSignal,
+    // Absent when a caller outside the loop runs the tool.
+    context?: ToolCallContext,
   ) => Promise<ToolResult>;
 }
 

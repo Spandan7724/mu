@@ -1,4 +1,3 @@
-import { findModel } from "mu";
 import type { Tab } from "../browser/tabs.ts";
 
 export const MAX_SCREENSHOT_WIDTH = 1280;
@@ -18,10 +17,10 @@ export interface Screenshot {
 
 export type VisionMode = "auto" | "on" | "off";
 
-export function visionEnabled(mode: VisionMode, modelRef: string | undefined): boolean {
-  if (mode !== "auto") return mode === "on";
-  if (!modelRef) return false;
-  return findModel(modelRef)?.modalities.includes("image") ?? false;
+// Screenshots go only to a model that reads images; "on" cannot force them on
+// one that does not, since the request would drop them.
+export function visionEnabled(mode: VisionMode, acceptsImages: boolean): boolean {
+  return mode !== "off" && acceptsImages;
 }
 
 export function screenshotHeader(shot: Screenshot): string {

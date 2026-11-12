@@ -37,10 +37,10 @@ export function snapshotTool(deps: BrowserToolDeps) {
     changesState: false,
     permissionScope: observeScope,
     permissionPattern: () => activeHost(deps),
-    execute: ({ scope, ref }, { signal }) =>
+    execute: ({ scope, ref }, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         async () => ({ summary: ref ? `snapshot of ${ref}` : `snapshot (${scope ?? "viewport"})` }),
         {
           blockedByDialog: false,
@@ -66,8 +66,8 @@ export function screenshotTool(deps: BrowserToolDeps) {
     changesState: false,
     permissionScope: observeScope,
     permissionPattern: () => activeHost(deps),
-    execute: async ({ ref, fullPage }, { signal }): Promise<ToolResult> => {
-      if (!deps.vision()) {
+    execute: async ({ ref, fullPage }, { signal, acceptsImages }): Promise<ToolResult> => {
+      if (!deps.vision(acceptsImages)) {
         return {
           content: [
             {

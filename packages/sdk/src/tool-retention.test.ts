@@ -3,6 +3,8 @@ import { type AgentMessage, SessionTree } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import { Agent } from "./agent.ts";
 
+const visionModel = { ...fakeModel, modalities: ["text" as const, "image" as const] };
+
 const observe = (id: string) => ({
   content: [{ type: "toolCall" as const, id, name: "observe", arguments: { id } }],
 });
@@ -35,7 +37,7 @@ test("only the newest retained tool result reaches the model, and resume replays
     observe("c"),
     { content: [{ type: "text", text: "done" }] },
   ]);
-  const agent = new Agent({ provider, model: fakeModel, tools: [observeTool()] });
+  const agent = new Agent({ provider, model: visionModel, tools: [observeTool()] });
   await agent.run("look three times");
 
   const last = provider.requests.at(-1);
@@ -54,7 +56,7 @@ test("only the newest retained tool result reaches the model, and resume replays
 
   const resumed = new Agent({
     provider: new FakeProvider([observe("d"), { content: [{ type: "text", text: "ok" }] }]),
-    model: fakeModel,
+    model: visionModel,
     tools: [observeTool()],
   });
   resumed.resume(restored);

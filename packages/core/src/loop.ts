@@ -28,6 +28,10 @@ const CYCLE_REPEATS = 3;
 const MAX_CYCLE_LENGTH = 3;
 const INTERRUPTED = "the run was interrupted first.";
 
+function acceptsImages(model: ModelInfo): boolean {
+  return model.modalities.includes("image");
+}
+
 export interface AgentContext {
   systemPrompt?: LlmContext["systemPrompt"];
   messages: AgentMessage[];
@@ -102,8 +106,12 @@ export interface LoopConfig {
   shouldStopAfterTurn?: (turn: TurnInfo) => boolean | Promise<boolean>;
   // Called when a turn ends in a provider error. Returning true continues the
   // loop instead of ending the run — this is where reactive context recovery
-  // hooks on. It runs before the loop would otherwise give up.
-  recoverFromError?: (message: AssistantMessage) => boolean | Promise<boolean>;
+  // hooks on. It runs before the loop would otherwise give up. A returned model
+  // replaces the run's model for the retry and every turn after it.
+  recoverFromError?: (
+    message: AssistantMessage,
+    request: { model: ModelInfo; messages: AgentMessage[] },
+  ) => boolean | { model: ModelInfo } | Promise<boolean | { model: ModelInfo }>;
   prepareNextTurn?: (
     turn: TurnInfo,
   ) => NextTurnDirective | undefined | Promise<NextTurnDirective | undefined>;
@@ -223,11 +231,16 @@ export async function runLoop(
 
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         await emit({ type: "turn_end", message, toolResults: [] });
-        if (
-          message.stopReason === "error" &&
-          (await currentConfig.recoverFromError?.(message)) === true
-        ) {
+        const recovery =
+          message.stopReason === "error"
+            ? await currentConfig.recoverFromError?.(message, {
+                model: currentConfig.model,
+                messages: request.messages,
+              })
+            : undefined;
+        if (recovery) {
           // The hook took responsibility for making the next attempt viable.
+          if (recovery !== true) currentConfig = { ...currentConfig, model: recovery.model };
           hasMoreToolCalls = true;
           continue;
         }
@@ -463,7 +476,7 @@ async function streamAssistant(
 
   const llmContext: LlmContext = {
     ...(context.systemPrompt ? { systemPrompt: context.systemPrompt } : {}),
-    messages: toAiMessages(messages),
+    messages: toAiMessages(messages, { images: acceptsImages(config.model) }),
     ...(context.tools
       ? {
           tools: context.tools.map((tool) => ({
@@ -664,6 +677,10 @@ async function runPrepared(
         );
       },
       background?.signal,
+      {
+        model: `${config.model.provider}/${config.model.id}`,
+        acceptsImages: acceptsImages(config.model),
+      },
     );
     await updateChain;
     isError = result.isError === true;

@@ -16,8 +16,8 @@ import { StaleRefError } from "../page/resolve.ts";
 export interface BrowserToolDeps {
   browser: BrowserManager;
   config: ResolvedBrowserOptions;
-  // Whether observations carry a screenshot for the active model.
-  vision: () => boolean;
+  // Whether observations carry a screenshot, given whether the model reads images.
+  vision: (acceptsImages: boolean) => boolean;
   // The agent's notes, shown when it loops between tabs.
   notes?: () => string;
 }
@@ -160,13 +160,18 @@ export interface PageActionOptions {
 
 // Every browser tool runs through here: resolve the active tab, act, observe,
 // and return one outcome line plus the observation, with timings and retention.
+export interface BrowserCall {
+  signal: AbortSignal;
+  acceptsImages: boolean;
+}
+
 export async function pageAction(
   deps: BrowserToolDeps,
-  toolSignal: AbortSignal,
+  call: BrowserCall,
   act: (tab: Tab, stopwatch: Stopwatch, signal: AbortSignal) => Promise<ActResult>,
   options: PageActionOptions = {},
 ): Promise<ToolResult> {
-  const signal = deps.browser.actionSignal(toolSignal);
+  const signal = deps.browser.actionSignal(call.signal);
   const switching = options.tabSwitch === true;
   if (!switching) deps.browser.switchStreak = 0;
   const stopwatch = new Stopwatch();
@@ -219,7 +224,7 @@ export async function pageAction(
   const notices = deps.browser.drainNotices();
   const observeOptions = {
     screenshot:
-      options.screenshot === false || !deps.vision()
+      options.screenshot === false || !deps.vision(call.acceptsImages)
         ? false
         : (model: PageModel, rendered: string, fingerprint: string) =>
             screenshotWorthIt(

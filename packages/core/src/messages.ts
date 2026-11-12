@@ -68,7 +68,10 @@ export function renderCustomMessage(message: CustomMessage): UserMessage {
 // Providers reject a tool call that has no result, so every call sent is paired:
 // an interrupted stream's unanswered calls are dropped (their arguments may be
 // partial), and any other unanswered call gets a result saying it never ran.
-export function toAiMessages(messages: AgentMessage[]): AiMessage[] {
+export function toAiMessages(
+  messages: AgentMessage[],
+  options: { images?: boolean } = {},
+): AiMessage[] {
   const out: AiMessage[] = [];
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i] as AgentMessage;
@@ -122,7 +125,21 @@ export function toAiMessages(messages: AgentMessage[]): AiMessage[] {
       });
     }
   }
-  return out;
+  return options.images === false ? out.map(withoutImages) : out;
+}
+
+const IMAGE_OMITTED = "(image omitted: this model cannot read images)";
+
+// A model that cannot read images rejects the whole request over one, so each
+// message keeps its text and says where an image was.
+function withoutImages(message: AiMessage): AiMessage {
+  if (message.role === "assistant") return message;
+  if (!message.content.some((block) => block.type === "image")) return message;
+  const kept = message.content.filter((block) => block.type !== "image");
+  const note: TextContent = { type: "text", text: IMAGE_OMITTED };
+  return message.role === "user"
+    ? { ...message, content: [...(kept as UserMessage["content"]), note] }
+    : { ...message, content: [...(kept as ToolResultMessage["content"]), note] };
 }
 
 export function userMessage(text: string): UserMessage {

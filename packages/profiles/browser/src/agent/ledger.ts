@@ -80,7 +80,8 @@ export function recordingCommits(
   if (!COMMIT_TOOLS.has(tool.name)) return tool;
   return {
     ...tool,
-    execute: async (toolCallId, args, signal, onUpdate) => {
+    execute: async (...call) => {
+      const args = call[1];
       const tab = browser.currentTab();
       const input = (args ?? {}) as Record<string, unknown>;
       const { scope } = classify({
@@ -125,7 +126,7 @@ export function recordingCommits(
       const retry = browser.approvedRetry;
       browser.approvedRetry =
         retry && retry.remaining > 1 ? { ...retry, remaining: retry.remaining - 1 } : undefined;
-      const result: ToolResult = await tool.execute(toolCallId, args, signal, onUpdate);
+      const result: ToolResult = await tool.execute(...call);
       if (scope !== "browser:commit") return result;
       if (result.isError) {
         const kind = (result.details as { kind?: OutcomeKind } | undefined)?.kind;
@@ -146,7 +147,7 @@ export function recordingCommits(
         (tool.name === "click_xy" ? `(${input.x}, ${input.y})` : "");
       const valuesDigest = digest(input);
       const record: CommitRecord = {
-        id: toolCallId,
+        id: call[0],
         at: Date.now(),
         host: hostOf(before.url),
         url: before.url,

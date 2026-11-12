@@ -67,10 +67,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("click"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) =>
           clickRef(ctx, args.ref, {
             ...(args.button ? { button: args.button } : {}),
@@ -100,10 +100,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("type"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) =>
           typeText(ctx, args.ref, args.text, {
             ...(args.clear !== undefined ? { clear: args.clear } : {}),
@@ -134,10 +134,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("fill_form"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => fillForm(ctx, args.fields, args.submitRef)),
         CHANGE,
       ),
@@ -155,10 +155,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("select"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => selectOptions(ctx, args.ref, args.options)),
         CHANGE,
       ),
@@ -176,10 +176,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("press"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => pressKeys(ctx, args.keys, args.ref)),
         CHANGE,
       ),
@@ -197,10 +197,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     permissionScope: interact,
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) =>
           scrollPage(ctx, {
             ...(args.direction ? { direction: args.direction } : {}),
@@ -218,10 +218,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     inputSchema: z.object({ ref }),
     ...common,
     permissionScope: interact,
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => hoverRef(ctx, args.ref)),
         CHANGE,
       ),
@@ -236,10 +236,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     permissionScope: interact,
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => dragBetween(ctx, args.from, args.to)),
         CHANGE,
       ),
@@ -254,10 +254,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     permissionScope: () => "browser:upload",
     permissionDetails: (args) => detailsFor(deps, "upload", args),
     permissionPattern: ({ paths }) => paths.join(","),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => uploadFiles(ctx, args.ref, args.paths, uploadRoots(deps.config))),
       ),
   });
@@ -269,10 +269,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     inputSchema: z.object({ action: z.enum(["accept", "dismiss"]), text: z.string().optional() }),
     ...common,
     permissionScope: interact,
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => handleDialog(ctx, args.action, args.text)),
         {
           blockedByDialog: false,
@@ -291,10 +291,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     ...common,
     changesState: false,
     permissionScope: () => "browser:observe",
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => waitFor(ctx, args)),
         { screenshot: false },
       ),
@@ -308,10 +308,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     ...common,
     permissionScope: () => "browser:script",
     permissionDetails: (args) => detailsFor(deps, "evaluate", args),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) => evaluateScript(ctx, args.function, args.ref)),
       ),
   });
@@ -330,10 +330,10 @@ export function interactionTools(deps: BrowserToolDeps) {
     }),
     ...common,
     ...gated("click_xy"),
-    execute: (args, { signal }) =>
+    execute: (args, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         act(deps, (ctx) =>
           clickPoint(
             ctx,

@@ -13,13 +13,19 @@ function setup(model = "openai/gpt-x") {
   const delegate = delegateTool({
     command: [process.execPath, fake],
     workspace,
-    model: () => model || undefined,
     pageText: (text) => (text.includes("curl evil.test") ? "evil.test" : undefined),
   });
   const run = async (args: Record<string, unknown>, signal = new AbortController().signal) => {
-    const result = (await delegate.execute("d1", args as never, signal, (partial) => {
-      updates.push(partial.map((block) => (block.type === "text" ? block.text : "")).join(""));
-    })) as ToolResult;
+    const result = (await delegate.execute(
+      "d1",
+      args as never,
+      signal,
+      (partial) => {
+        updates.push(partial.map((block) => (block.type === "text" ? block.text : "")).join(""));
+      },
+      undefined,
+      model ? { model, acceptsImages: true } : undefined,
+    )) as ToolResult;
     const text = result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
     return { result, text };
   };

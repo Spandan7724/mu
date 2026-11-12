@@ -30,10 +30,10 @@ export function navigateTool(deps: BrowserToolDeps) {
       (HISTORY as readonly string[]).includes(url)
         ? (deps.browser.tabPattern() ?? "")
         : hostOf(safeNormalize(url)),
-    execute: ({ url, newTab }, { signal }) =>
+    execute: ({ url, newTab }, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         async (tab, stopwatch, actionSignal) => {
           if (url === "back" || url === "forward") {
             const result = await stopwatch.time("settleMs", () =>

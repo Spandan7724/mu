@@ -54,10 +54,10 @@ export function tabsTool(deps: BrowserToolDeps) {
       // Switching to or closing a tab is judged by the host it is on, so host lists apply.
       return (tabId && deps.browser.tabPattern(tabId)) || (tabId ?? "*");
     },
-    execute: ({ action, url, tabId }, { signal }) =>
+    execute: ({ action, url, tabId }, call) =>
       pageAction(
         deps,
-        signal,
+        call,
         async (tab, stopwatch, actionSignal) => {
           if (action === "list") {
             return { summary: "listed tabs", extra: fencedTabs(deps.browser.tabs()) };

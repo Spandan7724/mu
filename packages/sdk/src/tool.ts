@@ -31,6 +31,9 @@ export interface ToolDefinition<Schema extends z.ZodType> {
       update: (text: string, details?: unknown) => void;
       // Fires when the user moves the running call to the background (canBackground).
       background: AbortSignal;
+      // The model reading the result; undefined when run outside an agent loop.
+      model: string | undefined;
+      acceptsImages: boolean;
     },
   ) => Promise<ToolResult | string> | ToolResult | string;
 }
@@ -155,7 +158,7 @@ export function tool<Schema extends z.ZodType>(
           },
         }
       : {}),
-    execute: async (toolCallId, rawArgs, signal, onUpdate, background) => {
+    execute: async (toolCallId, rawArgs, signal, onUpdate, background, context) => {
       const parsed = parseArgs(rawArgs);
       if (!parsed.success) {
         const issues = parsed.error.issues
@@ -171,6 +174,8 @@ export function tool<Schema extends z.ZodType>(
           signal,
           update,
           background: background ?? NEVER,
+          model: context?.model,
+          acceptsImages: context?.acceptsImages ?? true,
         }),
       );
     },

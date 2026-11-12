@@ -20,11 +20,12 @@ function jpegSize(base64: string): { width: number; height: number } {
 }
 
 describe("vision mode", () => {
-  test("auto follows the model catalog; on/off override", () => {
-    expect(visionEnabled("on", undefined)).toBe(true);
-    expect(visionEnabled("off", "openai-codex/gpt-5.6-luna")).toBe(false);
-    expect(visionEnabled("auto", undefined)).toBe(false);
-    expect(visionEnabled("auto", "no-such/model")).toBe(false);
+  test("screenshots follow what the model reads; off turns them off", () => {
+    expect(visionEnabled("auto", true)).toBe(true);
+    expect(visionEnabled("on", true)).toBe(true);
+    expect(visionEnabled("auto", false)).toBe(false);
+    expect(visionEnabled("on", false)).toBe(false);
+    expect(visionEnabled("off", true)).toBe(false);
   });
 
   test("header states the CSS coordinate space and any scaling", () => {

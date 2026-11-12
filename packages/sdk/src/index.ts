@@ -57,6 +57,7 @@ export type {
   SessionStore,
   StreamDelta,
   Tool,
+  ToolCallContext,
   ToolRenderer,
   UserContent,
   WireAgentEvent,

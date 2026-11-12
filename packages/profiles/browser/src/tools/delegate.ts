@@ -73,7 +73,6 @@ export interface DelegateDeps {
   // argv prefix that runs mu itself.
   command: string[];
   workspace: string;
-  model: () => string | undefined;
   // Which site's page text the brief repeats, if any.
   pageText?: (text: string) => string | undefined;
   run?: CodingRunner;
@@ -162,7 +161,7 @@ export function delegateTool(deps: DelegateDeps) {
         },
       };
     },
-    execute: async (args, { signal, update }): Promise<ToolResult> => {
+    execute: async (args, { signal, update, model }): Promise<ToolResult> => {
       const access: Access = args.access ?? "read";
       let cwd: string;
       try {
@@ -178,7 +177,6 @@ export function delegateTool(deps: DelegateDeps) {
           isError: true,
         };
       }
-      const model = deps.model();
       const argv = [
         ...deps.command,
         "-p",

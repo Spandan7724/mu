@@ -116,9 +116,9 @@ function observingDataFlow(tool: AnyTool, browser: BrowserManager): AnyTool {
 function resumingHandoff(tool: AnyTool, handoffs: Handoffs): AnyTool {
   return {
     ...tool,
-    execute: (toolCallId, args, signal, onUpdate) => {
+    execute: (...args) => {
       handoffs.cancel();
-      return tool.execute(toolCallId, args, signal, onUpdate);
+      return tool.execute(...args);
     },
   };
 }
@@ -170,7 +170,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     downloadsDir: config.downloadsDir,
     ...(restrictsHosts(config) ? { hostAllowed: (url: string) => hostAllowed(url, config) } : {}),
   });
-  let activeModel: string | undefined;
   const state = new BrowserState();
   const hosts = hostRules(config.allowedHosts, config.blockedHosts);
   // One agent's tools over one lane of the browser: the main agent's, or a sub-task's.
@@ -179,7 +178,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     const deps = {
       browser: lane,
       config,
-      vision: () => visionEnabled(config.vision, activeModel),
+      vision: (acceptsImages: boolean) => visionEnabled(config.vision, acceptsImages),
       notes: () => formatNotes(laneState.notes.entries()),
     };
     const interaction = interactionTools(deps);
@@ -209,7 +208,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       delegateTool({
         command: config.codingCommand,
         workspace: config.workspace,
-        model: () => activeModel,
         pageText: (text) => lane.dataflow.leak(text, "")?.from,
       }),
     ] as AnyTool[];
@@ -251,10 +249,7 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     name: "browser",
     toolset,
     contextLabel: (customType) => (customType === STATE_TYPE ? "page state" : undefined),
-    promptFor: (modelRef) => {
-      activeModel = modelRef;
-      return browserPrompt(modelRef);
-    },
+    promptFor: browserPrompt,
     refreshContext: (messages, context) => {
       // A new run means the user replied or the hand-off already woke the agent.
       handoffs.cancel();
@@ -268,9 +263,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
           )
           .join("\n"),
       );
-      // The model can change mid-session; the latest assistant turn names it.
-      const last = messages.findLast((message) => message.role === "assistant");
-      if (last?.role === "assistant" && last.model) activeModel = last.model;
       // In-process state is authoritative; the transcript is read back only when a
       // different session (a resume) starts using this profile.
       if (state.sessionId !== context.sessionId) {

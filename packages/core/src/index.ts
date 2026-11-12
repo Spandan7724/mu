@@ -140,6 +140,6 @@ export {
   serializeEntry,
   serializeSession,
 } from "./session.ts";
-export type { AnyTool, Tool, ToolResult } from "./tools.ts";
+export type { AnyTool, Tool, ToolCallContext, ToolResult } from "./tools.ts";
 export { canBackground, concurrencySafe, errorResult, textResult } from "./tools.ts";
 export { toWireEvent, type WireAgentEvent, WireEventDecoder } from "./wire.ts";
