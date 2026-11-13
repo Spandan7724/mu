@@ -5752,16 +5752,16 @@ describe("transcript spacing", () => {
     expect(above(app)).toEqual([
       "  ▎ fix it",
       "",
-      "  thinking · Reading the code",
+      "    thinking · Reading the code",
       "  › Explored 1 file, 1 search, 1 web search",
       "",
-      "  thinking · Planning",
+      "    thinking · Planning",
       "  mu  I'll run the tests.",
       "",
       "  › Ran 2 commands",
       "  › created b.ts +1 −0",
       "",
-      "  thinking · Done",
+      "    thinking · Done",
       "  mu  All set.",
       "",
       "  Exported to notes.md",
@@ -5795,6 +5795,72 @@ describe("transcript spacing", () => {
       },
     });
     expect(above(app)).toEqual(["  mu  Checking.", "", "  › read a.ts · 1 line", ""]);
+  });
+
+  const hit = (app: App, name: string, ctrl = false) =>
+    app.handleInput({ type: "key", key: { name, ctrl, alt: false, shift: false } });
+
+  test("review opens a thinking block to its whole text and closes it again", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: user("why") });
+    app.handleEvent({
+      type: "message_end",
+      message: thinking("**Weighing it**\n\nThe cache is warm.", "Because it is cached."),
+    });
+    app.handleEvent({ type: "message_end", message: thinking("Done") });
+    run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
+    hit(app, "o", true);
+    hit(app, "up");
+    hit(app, "return");
+    hit(app, "escape");
+    expect(above(app)).toEqual([
+      "  ▎ why",
+      "",
+      "  ⌄ thinking",
+      "    Weighing it",
+      "",
+      "    The cache is warm.",
+      "",
+      "  mu  Because it is cached.",
+      "",
+      "    thinking · Done",
+      "  › read a.ts · 1 line",
+      "",
+    ]);
+    feed(app, "/collapse\r");
+    expect(above(app).slice(2, 4)).toEqual([
+      "  › thinking · Weighing it",
+      "  mu  Because it is cached.",
+    ]);
+  });
+
+  test("hidden thinking leaves the rows around it as if it were never there", () => {
+    const { app } = harness();
+    app.handleEvent({ type: "message_end", message: user("fix it") });
+    app.handleEvent({ type: "message_end", message: thinking("Reading the code\nand the tests") });
+    run(app, "r1", "read", { path: "a.ts" }, "a", { lines: 1 });
+    app.handleEvent({ type: "message_end", message: thinking("Planning", "I'll run the tests.") });
+    app.setShowThinking(false);
+    app.handleEvent({
+      type: "message_update",
+      message: thinking("Weighing"),
+      delta: { kind: "thinking_delta", contentIndex: 0, text: "Weighing" },
+    } as never);
+    expect(above(app)).toEqual([
+      "  ▎ fix it",
+      "",
+      "  › read a.ts · 1 line",
+      "",
+      "  mu  I'll run the tests.",
+      "",
+    ]);
+    hit(app, "o", true);
+    hit(app, "up");
+    hit(app, "return");
+    hit(app, "escape");
+    expect(above(app).join("\n")).not.toContain("thinking");
+    app.setShowThinking(true);
+    expect(above(app)).toContain("  › thinking · Reading the code");
   });
 
   test("committing streamed thinking and text moves rows from live to history without a repaint", () => {
@@ -5831,7 +5897,7 @@ describe("transcript spacing", () => {
       "",
       "  › read a.ts · 1 line",
       "",
-      "  thinking · Weighing it",
+      "    thinking · Weighing it",
       "  mu  Because it is cached.",
       "",
     ]);

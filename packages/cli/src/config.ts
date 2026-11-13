@@ -26,6 +26,8 @@ export interface UserConfig {
   subagents?: Record<string, SubagentPins>;
   // On/manual/off chosen in /skills, by skill name; absent means the skill's own default.
   skills?: SkillStates;
+  // False hides thinking blocks in the TUI; what the model is sent is unchanged.
+  showThinking?: boolean | undefined;
   [key: string]: unknown;
 }
 
@@ -65,6 +67,7 @@ const userConfigSchema = z
       )
       .optional(),
     skills: z.record(z.string().min(1), z.enum(["on", "manual", "off"])).optional(),
+    showThinking: z.boolean().optional(),
   })
   .loose();
 
@@ -180,6 +183,20 @@ export async function saveThinkingLevel(
   });
 }
 
+export async function saveShowThinking(show: boolean, file = userConfigPath()): Promise<void> {
+  const config = await readUserConfig(file);
+  await mkdir(dirname(file), { recursive: true });
+  const { showThinking: _, ...rest } = config;
+  await writeFile(
+    file,
+    `${JSON.stringify(show ? rest : { ...rest, showThinking: false }, null, 2)}\n`,
+    {
+      encoding: "utf8",
+      mode: 0o600,
+    },
+  );
+}
+
 export async function savePermissionMode(
   profile: string,
   mode: string,
@@ -291,4 +308,16 @@ export function thinkingCommandChoice(
   return level
     ? { level }
     : { message: `${modelId} has no "${wanted}" level. Choose one of: ${levels.join(", ")}.` };
+}
+
+// `/show-thinking` alone flips the setting; `on`/`off` set it.
+export function showThinkingChoice(
+  current: boolean,
+  args: string,
+): { show: boolean } | { message: string } {
+  const wanted = args.trim().toLowerCase();
+  if (!wanted) return { show: !current };
+  if (wanted === "on") return { show: true };
+  if (wanted === "off") return { show: false };
+  return { message: `Use /show-thinking on or /show-thinking off.` };
 }

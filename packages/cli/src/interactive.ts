@@ -64,14 +64,17 @@ import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-vi
 import type { ParsedArgs } from "./args.ts";
 import {
   applySavedThinking,
+  loadUserConfig,
   type PinnableSubagent,
   readSubagentPins,
   type SubagentPin,
   saveDefaultModel,
   savePermissionMode,
+  saveShowThinking,
   saveSkillState,
   saveSubagentPin,
   saveThinkingLevel,
+  showThinkingChoice,
   thinkingCommandChoice,
   userConfigPath,
 } from "./config.ts";
@@ -369,6 +372,7 @@ export async function runInteractive(
     cwd: formatCwdForFooter(process.cwd(), process.env.HOME ?? process.env.USERPROFILE),
     contextWindow: agent.contextWindow,
     thinkingLevels: agent.thinkingLevels,
+    showThinking: (await loadUserConfig(undefined, () => {})).showThinking !== false,
     registry,
     callbacks: {
       onSubmit: (text) => {
@@ -498,6 +502,26 @@ export async function runInteractive(
         onBack: () => app.openCommandMenu(),
       });
       return { handled: true };
+    },
+  });
+  commands.register({
+    name: "show-thinking",
+    description: "Show or hide thinking blocks (display only)",
+    side: true,
+    run: async (ctx) => {
+      const choice = showThinkingChoice(app.showThinking, ctx.args);
+      if ("message" in choice) return { handled: true, message: choice.message };
+      app.setShowThinking(choice.show);
+      const state = choice.show ? "shown" : "hidden";
+      try {
+        await saveShowThinking(choice.show);
+        return { handled: true, message: `thinking blocks ${state} · saved` };
+      } catch (error) {
+        return {
+          handled: true,
+          message: `thinking blocks ${state} · could not save: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
     },
   });
   // /model and /resume open selection lists rather than needing exact typing.

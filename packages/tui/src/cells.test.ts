@@ -209,23 +209,66 @@ describe("transcript cells (golden lines)", () => {
 
   test("thinking collapses to one dim line by default", () => {
     const lines = visible(thinkingCell("First I should check the client.\nThen the tests.", plain));
-    expect(lines.length).toBe(1);
-    expect(lines[0]).toContain("thinking · First I should check the client.");
+    expect(lines).toEqual(["  › thinking · First I should check the client."]);
+  });
+
+  test("thinking that fits its row has no marker and does not open", () => {
+    expect(visible(thinkingCell("Running the tests", plain))).toEqual([
+      "    thinking · Running the tests",
+    ]);
+    expect(visible(thinkingCell("Running the tests", plain, { expanded: true }))).toEqual([
+      "    thinking · Running the tests",
+    ]);
   });
 
   test("thinking summary drops markdown markers from the heading", () => {
     const lines = visible(thinkingCell("**Checking `arithmetic`**\n\nThe user asked…", plain));
-    expect(lines).toEqual(["  thinking · Checking arithmetic"]);
+    expect(lines).toEqual(["  › thinking · Checking arithmetic"]);
     expect(visible(thinkingCell("## Planning reply", plain))[0]).toBe(
-      "  thinking · Planning reply",
+      "    thinking · Planning reply",
     );
   });
 
-  test("thinking sits in the marker column, dim and italic", () => {
-    const lines = visible(thinkingCell("one\ntwo", plain, true));
-    expect(lines).toEqual(["  one", "  two"]);
+  test("a first line cut to the width is expandable", () => {
+    const narrow = { width: 40, depth: "none" as const };
+    const lines = visible(
+      thinkingCell("a long first line that cannot fit in forty columns", narrow),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.startsWith("  › thinking · a long")).toBe(true);
+    expect(lines[0]?.endsWith("…")).toBe(true);
+  });
+
+  test("open thinking shows the whole text stepped in under its header", () => {
+    const text = "**Reading the code**\n\nFirst the client.\nThen the tests.\n\n\n**Planning**";
+    expect(visible(thinkingCell(text, plain, { expanded: true }))).toEqual([
+      "  ⌄ thinking",
+      "    Reading the code",
+      "",
+      "    First the client.",
+      "    Then the tests.",
+      "",
+      "    Planning",
+    ]);
+  });
+
+  test("selected thinking takes the review marker; inert thinking takes none", () => {
+    expect(visible(thinkingCell("one\ntwo", plain, { selected: true }))[0]).toBe(
+      "  ❯ thinking · one",
+    );
+    expect(visible(thinkingCell("one\ntwo", plain, { inert: true }))[0]).toBe("    thinking · one");
+  });
+
+  test("thinking is dim and italic, its titles dim and bold", () => {
     const [summary] = thinkingCell("one", { width: 40, depth: "ansi256" });
     expect(summary).toContain("\u001b[2;3m");
+    const open = thinkingCell(
+      "**Title**\nbody",
+      { width: 40, depth: "ansi256" },
+      { expanded: true },
+    );
+    expect(open[1]).toContain("\u001b[1;2m");
+    expect(open[2]).toContain("\u001b[2;3m");
   });
 
   test("error cell", () => {

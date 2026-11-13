@@ -25,6 +25,7 @@ import {
   type RenderContext,
   runEndRow,
   thinkingCell,
+  thinkingExpandable,
   toolOutputCell,
   userCell,
 } from "./cells.ts";
@@ -70,7 +71,7 @@ import { terminalRows, wrapText } from "./wrap.ts";
 
 const COLLAPSE_COMMAND = {
   label: "collapse",
-  description: "Collapse all expanded tool activity",
+  description: "Collapse all expanded tool activity and thinking",
   side: true,
 };
 
@@ -152,6 +153,8 @@ export interface AppOptions {
   cwd?: string;
   contextWindow?: number;
   thinkingLevels?: readonly string[];
+  // Thinking blocks are shown unless this is false; it changes display only.
+  showThinking?: boolean;
   callbacks: AppCallbacks;
   registry?: RendererRegistry;
 }
@@ -448,7 +451,7 @@ interface ActivityTool {
 }
 
 type ActivityNode =
-  | { id: string; item: TranscriptItem; tool?: ActivityTool }
+  | { id: string; item: TranscriptItem; tool?: ActivityTool; thinking?: number }
   | { id: string; pending: PendingTool };
 
 interface ActivitySearchMatch {
@@ -475,7 +478,11 @@ type TranscriptItem =
   | {
       kind: "assistant";
       message: AssistantMessage;
-      rendered?: { width: number; lines: string[] };
+      // Content indexes of the thinking blocks opened in review.
+      openThinking?: Set<number> | undefined;
+      // Thinking blocks with more to show than their row, at this width.
+      expandable?: { width: number; indexes: Set<number> } | undefined;
+      rendered?: { width: number; lines: string[] } | undefined;
     }
   | {
       kind: "tool";
@@ -523,15 +530,24 @@ function gapBetween(previous: Spacing, next: Spacing): number {
   return 1;
 }
 
-function assistantSpacing(message: AssistantMessage, rows: number): Spacing {
-  const kinds = message.content.flatMap((block): SpacingKind[] =>
+// An open thinking block ends like a multi-row tool block: one blank after it.
+function assistantSpacing(
+  message: AssistantMessage,
+  rows: number,
+  showThinking = true,
+  open?: ReadonlySet<number>,
+): Spacing {
+  const kinds = message.content.flatMap((block, index): SpacingKind[] =>
     block.type === "thinking" && block.thinking.trim()
-      ? ["thinking"]
+      ? showThinking
+        ? [open?.has(index) ? "status" : "thinking"]
+        : []
       : block.type === "text" && block.text.trim()
         ? ["speech"]
         : [],
   );
-  return { first: kinds[0] ?? "speech", last: kinds.at(-1) ?? "speech", rows };
+  const first = kinds[0] === "status" ? "thinking" : (kinds[0] ?? "speech");
+  return { first, last: kinds.at(-1) ?? "speech", rows };
 }
 
 function hasAssistantText(message: AssistantMessage): boolean {
@@ -703,6 +719,9 @@ export class App {
   private stopArmedFor: string | undefined;
   private ctrlCArmedAt = 0;
   private commands: { label: string; description?: string; side?: boolean }[] = [COLLAPSE_COMMAND];
+  private showThinkingBlocks: boolean;
+  private assistantIds = new WeakMap<TranscriptItem, string>();
+  private nextAssistantId = 0;
   private picker: PickerRequest | undefined;
   private pickerQuery = "";
   private pickerDeleteValue: string | undefined;
@@ -712,6 +731,7 @@ export class App {
 
   constructor(private options: AppOptions) {
     this.registry = options.registry ?? new RendererRegistry();
+    this.showThinkingBlocks = options.showThinking ?? true;
     const thinkingLevels = [
       ...new Set(options.thinkingLevels ?? ["off", "low", "medium", "high"]),
     ] as string[];
@@ -1759,8 +1779,10 @@ export class App {
         selectedId !== undefined &&
         (item.kind === "tool"
           ? item.id === selectedId
-          : item.kind === "activity" &&
-            (item.id === selectedId || item.tools.some((tool) => tool.id === selectedId)));
+          : item.kind === "assistant"
+            ? this.selectedThinking(item, selectedId) !== undefined
+            : item.kind === "activity" &&
+              (item.id === selectedId || item.tools.some((tool) => tool.id === selectedId)));
       let block = index < from ? cache.blocks[index] : undefined;
       if (!block || block.selected !== selected || (selected && cache.selectedId !== selectedId)) {
         const laid = this.transcriptBlock(item, index, newest, selectedId, revealAll);
@@ -1807,18 +1829,27 @@ export class App {
     }
     if (item.kind === "assistant") {
       let lines: string[];
-      if (revealAll) {
-        lines = this.assistantRows(item.message, true);
+      const selected = this.selectedThinking(item, selectedId);
+      if (revealAll || selected !== undefined) {
+        lines = this.assistantRows(item.message, { revealAll, item, selected });
       } else {
         if (item.rendered?.width !== this.options.width) {
           item.rendered = {
             width: this.options.width,
-            lines: this.assistantRows(item.message),
+            lines: this.assistantRows(item.message, { item }),
           };
         }
         lines = item.rendered.lines;
       }
-      return { lines, spacing: assistantSpacing(item.message, lines.length) };
+      if (lines.length === 0) return undefined;
+      const expandable = this.expandableThinking(item);
+      const open = revealAll
+        ? expandable
+        : new Set([...(item.openThinking ?? [])].filter((index) => expandable.has(index)));
+      return {
+        lines,
+        spacing: assistantSpacing(item.message, lines.length, this.showThinkingBlocks, open),
+      };
     }
     if (item.kind === "activity") {
       const lines = this.renderActivity(item, selectedId, revealAll);
@@ -1889,9 +1920,9 @@ export class App {
     // turn is never a frozen screen with only a spinner. Each block is spaced
     // from the committed history above exactly as it will be once committed.
     const live: { lines: string[]; spacing: Spacing }[] = [];
-    const liveThinking = this.view.streamingThinking.flatMap((text) =>
-      thinkingCell(text, this.ctx),
-    );
+    const liveThinking = this.showThinkingBlocks
+      ? this.view.streamingThinking.flatMap((text) => thinkingCell(text, this.ctx))
+      : [];
     if (liveThinking.length > 0) {
       live.push({
         lines: liveThinking,
@@ -2732,7 +2763,9 @@ export class App {
     return [
       summary,
       ...item.tools.flatMap((tool) => [
-        ...(tool.thinking ? this.underGroup(this.assistantRows(tool.thinking, revealAll)) : []),
+        ...(tool.thinking
+          ? this.underGroup(this.assistantRows(tool.thinking, { revealAll, inert: true }))
+          : []),
         ...this.underGroup(
           this.renderActivityTool(
             tool,
@@ -2766,6 +2799,11 @@ export class App {
     const nodes: ActivityNode[] = [];
     for (const item of this.transcript) {
       if (item.kind === "tool") nodes.push({ id: item.id, item });
+      if (item.kind === "assistant" && this.showThinkingBlocks) {
+        for (const index of this.expandableThinking(item)) {
+          nodes.push({ id: `${this.assistantId(item)}:${index}`, item, thinking: index });
+        }
+      }
       if (item.kind !== "activity") continue;
       if (item.tools.length === 1) {
         const tool = item.tools[0] as ActivityTool;
@@ -2827,16 +2865,89 @@ export class App {
     this.transcriptCache = undefined;
   }
 
-  private assistantRows(message: AssistantMessage, revealThinking = false): string[] {
+  private assistantRows(
+    message: AssistantMessage,
+    options: {
+      revealAll?: boolean;
+      item?: Extract<TranscriptItem, { kind: "assistant" }>;
+      selected?: number | undefined;
+      inert?: boolean;
+    } = {},
+  ): string[] {
     const lines: string[] = [];
-    for (const block of message.content) {
+    let openBefore = false;
+    for (const [index, block] of message.content.entries()) {
       if (block.type === "thinking" && block.thinking.trim()) {
-        lines.push(...thinkingCell(block.thinking, this.ctx, revealThinking));
+        if (!this.showThinkingBlocks) continue;
+        if (openBefore) lines.push("");
+        const expanded =
+          (options.revealAll === true || options.item?.openThinking?.has(index) === true) &&
+          thinkingExpandable(block.thinking, this.ctx);
+        lines.push(
+          ...thinkingCell(block.thinking, this.ctx, {
+            expanded,
+            selected: options.selected === index,
+            ...(options.inert ? { inert: true } : {}),
+          }),
+        );
+        openBefore = expanded;
       } else if (block.type === "text" && block.text.trim()) {
+        if (openBefore) lines.push("");
         lines.push(...this.toTerminalRows(agentCell(stripCitationMarkup(block.text), this.ctx)));
+        openBefore = false;
       }
     }
     return lines;
+  }
+
+  private assistantId(item: TranscriptItem): string {
+    let id = this.assistantIds.get(item);
+    if (id === undefined) {
+      id = `thinking-${++this.nextAssistantId}`;
+      this.assistantIds.set(item, id);
+    }
+    return id;
+  }
+
+  private selectedThinking(
+    item: TranscriptItem,
+    selectedId: string | undefined,
+  ): number | undefined {
+    if (selectedId === undefined || !this.showThinkingBlocks) return undefined;
+    const prefix = `${this.assistantId(item)}:`;
+    return selectedId.startsWith(prefix) ? Number(selectedId.slice(prefix.length)) : undefined;
+  }
+
+  private expandableThinking(item: Extract<TranscriptItem, { kind: "assistant" }>): Set<number> {
+    if (item.expandable?.width === this.options.width) return item.expandable.indexes;
+    const indexes = new Set<number>();
+    for (const [index, block] of item.message.content.entries()) {
+      if (block.type === "thinking" && thinkingExpandable(block.thinking, this.ctx)) {
+        indexes.add(index);
+      }
+    }
+    item.expandable = { width: this.options.width, indexes };
+    return indexes;
+  }
+
+  get showThinking(): boolean {
+    return this.showThinkingBlocks;
+  }
+
+  // Display only: the blocks stay in the transcript and in what the model is sent.
+  setShowThinking(show: boolean): void {
+    if (show === this.showThinkingBlocks) return;
+    this.showThinkingBlocks = show;
+    for (const view of [this.main, this.side]) {
+      if (!view) continue;
+      for (const item of view.transcript) if (item.kind === "assistant") item.rendered = undefined;
+      view.transcriptVersion++;
+      view.transcriptCache = undefined;
+      view.selectableCache = undefined;
+    }
+    if (!show && this.activitySelection?.startsWith("thinking-")) {
+      this.activitySelection = this.activityNodes().at(-1)?.id;
+    }
   }
 
   private toTerminalRows(lines: string[]): string[] {
@@ -2908,7 +3019,13 @@ export class App {
     const node = this.activityNodes().find((candidate) => candidate.id === this.activitySelection);
     if (!node) return;
     if ("pending" in node) node.pending.expanded = expanded ?? !node.pending.expanded;
-    else if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
+    else if (node.thinking !== undefined && node.item.kind === "assistant") {
+      const open = node.item.openThinking ?? new Set<number>();
+      node.item.openThinking = open;
+      if (expanded ?? !open.has(node.thinking)) open.add(node.thinking);
+      else open.delete(node.thinking);
+      node.item.rendered = undefined;
+    } else if (node.tool) node.tool.expanded = expanded ?? !node.tool.expanded;
     else if (node.item.kind === "activity") {
       node.item.expanded = expanded ?? !node.item.expanded;
     } else if (node.item.kind === "tool") {
@@ -3118,11 +3235,13 @@ export class App {
     const isExpanded =
       "pending" in node
         ? node.pending.expanded
-        : node.tool
-          ? node.tool.expanded
-          : node.item.kind === "activity" || node.item.kind === "tool"
-            ? node.item.expanded
-            : false;
+        : node.thinking !== undefined && node.item.kind === "assistant"
+          ? node.item.openThinking?.has(node.thinking) === true
+          : node.tool
+            ? node.tool.expanded
+            : node.item.kind === "activity" || node.item.kind === "tool"
+              ? node.item.expanded
+              : false;
     if (isExpanded) {
       this.toggleActivityNode(false);
       return;
@@ -3655,6 +3774,12 @@ export class App {
       if (item.kind === "tool") {
         changed ||= item.expanded;
         item.expanded = false;
+        continue;
+      }
+      if (item.kind === "assistant" && item.openThinking?.size) {
+        changed = true;
+        item.openThinking = undefined;
+        item.rendered = undefined;
         continue;
       }
       if (item.kind !== "activity") continue;

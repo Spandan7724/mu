@@ -18,6 +18,7 @@ export type {
   PrimaryRole,
   RenderContext,
   TaskCellOptions,
+  ThinkingDisplay,
   ToolCellOptions,
   ToolTone,
 } from "./cells.ts";
@@ -31,6 +32,7 @@ export {
   planCell,
   taskCell,
   thinkingCell,
+  thinkingExpandable,
   toolCell,
   toolOutputCell,
   userCell,

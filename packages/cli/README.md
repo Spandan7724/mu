@@ -81,6 +81,7 @@ user's repository.
 | `/login`, `/logout` | Add or remove credentials stored by Mu |
 | `/model` | Select the active model |
 | `/thinking [level]` | Set the active model's reasoning level (same as ctrl+t); bare, it lists the levels |
+| `/show-thinking [on\|off]` | Show or hide thinking blocks; display only, what the model is sent is unchanged |
 | `/permissions` | Change the current permission mode |
 | `/resume`, `/new`, `/rename` | Open, create, or name conversations |
 | `/compact [focus]` | Compact the active model context |
@@ -94,9 +95,10 @@ user's repository.
 | `/keybindings` | Show Mu-specific keyboard controls |
 
 During a run, Enter steers the current turn and Tab queues a follow-up. `Ctrl+O` opens
-transcript review, `Alt+T` collapses expanded tool activity, `Shift+Tab` cycles permission
-modes, and a leading `!` runs a command directly without a model call. Direct shell commands
-are still recorded as session context.
+transcript review, where Enter opens a tool row or a `›` thinking row to its full text;
+`Alt+T` collapses everything opened, `Shift+Tab` cycles permission modes, and a leading `!`
+runs a command directly without a model call. Direct shell commands are still recorded as
+session context.
 
 ## Providers
 

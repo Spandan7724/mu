@@ -45,7 +45,7 @@ import {
   type ManagedSessionState,
 } from "./agent-view-state.ts";
 import type { ParsedArgs } from "./args.ts";
-import { resolveCliModel } from "./config.ts";
+import { loadUserConfig, resolveCliModel, saveShowThinking, showThinkingChoice } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import {
   formatSubagentsOutput,
@@ -676,6 +676,7 @@ export async function runAgentView(
         cwd: formatCwdForFooter(cwd, process.env.HOME ?? process.env.USERPROFILE),
         contextWindow: snapshot.contextWindow,
         thinkingLevels: snapshot.thinkingLevels,
+        showThinking: (await loadUserConfig(undefined, () => {})).showThinking !== false,
         registry,
         callbacks: {
           onSubmit: (text) =>
@@ -713,6 +714,21 @@ export async function runAgentView(
           onExit: () => void detach(),
           onDetach: () => void detach(),
           onCommand: (text) => {
+            const [name = "", ...rest] = text.trim().split(/\s+/);
+            if (name === "/show-thinking") {
+              const choice = showThinkingChoice(conversation.showThinking, rest.join(" "));
+              if ("message" in choice) {
+                conversation.appendTranscript([`  ${choice.message}`]);
+                return;
+              }
+              conversation.setShowThinking(choice.show);
+              const state = choice.show ? "shown" : "hidden";
+              void saveShowThinking(choice.show).then(
+                () => conversation.appendTranscript([`  thinking blocks ${state} · saved`]),
+                showError,
+              );
+              return;
+            }
             if (text.trim() === "/model" && snapshot.models?.length) {
               conversation.openPicker({
                 title: `select a model · ${snapshot.models.length} available`,

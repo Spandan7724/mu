@@ -103,17 +103,74 @@ function plainSummary(line: string): string {
     .replace(/`([^`]+)`/g, "$1");
 }
 
-// Thinking sits in the marker column, dim and italic so it never reads as a
-// header; collapsed to one line unless expanded.
-export function thinkingCell(text: string, ctx: RenderContext, expanded = false): string[] {
-  const paint = (line: string) => styleText(line, { dim: true, italic: true }, ctx.depth);
+const THINKING_LABEL = `thinking ${GLYPHS.separator} `;
+const THINKING_TITLE = /^(?:\*\*(.+?)\*\*|__(.+?)__|#{1,6}\s+(.+?))\s*$/;
+
+function thinkingRoom(ctx: RenderContext): number {
+  return body(ctx) - 2 - THINKING_LABEL.length;
+}
+
+// Whether opening the block would show more than its collapsed row does.
+export function thinkingExpandable(text: string, ctx: RenderContext): boolean {
+  const lines = sanitizeUntrusted(text)
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  return lines.length > 1 || stringWidth(plainSummary(lines[0] ?? "")) > thinkingRoom(ctx);
+}
+
+export interface ThinkingDisplay {
+  expanded?: boolean;
+  selected?: boolean;
+  // Rows that cannot be opened (thinking inside a group) carry no marker.
+  inert?: boolean;
+}
+
+// Thinking is dim italic, one row by default. A block with more to show takes the
+// disclosure marker tool rows use and opens to its complete text, stepped in under
+// the header the way tool output is.
+export function thinkingCell(
+  text: string,
+  ctx: RenderContext,
+  display: ThinkingDisplay = {},
+): string[] {
+  const paint = (line: string, style: Style = {}) =>
+    styleText(line, { dim: true, italic: true, ...style }, ctx.depth);
   const safe = sanitizeUntrusted(text);
-  if (!expanded) {
+  const expandable = thinkingExpandable(text, ctx);
+  const open = expandable && display.expanded === true;
+  const marker = display.selected
+    ? styleText("❯", { accent: true, bold: true }, ctx.depth)
+    : expandable && !display.inert
+      ? styleText(open ? "⌄" : "›", { dim: true }, ctx.depth)
+      : " ";
+  if (!open) {
     const first = safe.trim().split("\n")[0] ?? "";
-    const summary = truncateToWidth(plainSummary(first), body(ctx) - 11);
-    return [MARGIN + paint(`thinking ${GLYPHS.separator} ${summary}`)];
+    const summary = truncateToWidth(plainSummary(first), thinkingRoom(ctx));
+    return [`${MARGIN}${marker} ${paint(`${THINKING_LABEL}${summary}`)}`];
   }
-  return wrapText(safe, body(ctx)).map((line) => MARGIN + paint(line));
+  const rows: string[] = [`${MARGIN}${marker} ${paint("thinking")}`];
+  const width = body(ctx) - INDENT.length;
+  for (const [index, paragraph] of safe
+    .trim()
+    .split(/\n\s*\n/)
+    .entries()) {
+    if (index > 0) rows.push("");
+    for (const line of paragraph.split("\n")) {
+      const title = THINKING_TITLE.exec(line.trim());
+      if (title) {
+        const heading = plainSummary(title[1] ?? title[2] ?? title[3] ?? "");
+        for (const row of wrapText(heading, width)) {
+          rows.push(MARGIN + INDENT + paint(row, { italic: false, bold: true }));
+        }
+        continue;
+      }
+      for (const row of wrapText(line.replace(/\t/g, "    "), width)) {
+        rows.push(row ? MARGIN + INDENT + paint(row) : "");
+      }
+    }
+  }
+  return rows;
 }
 
 export interface ToolCellOptions {

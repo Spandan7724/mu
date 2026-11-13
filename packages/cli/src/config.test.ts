@@ -10,8 +10,10 @@ import {
   resolveCliModel,
   saveDefaultModel,
   savePermissionMode,
+  saveShowThinking,
   saveSkillState,
   saveThinkingLevel,
+  showThinkingChoice,
   userConfigPath,
 } from "./config.ts";
 
@@ -231,6 +233,29 @@ describe("saved thinking levels", () => {
     expect(await loadUserConfig(file)).toEqual({
       model: "openai-codex/gpt-6-luna",
       thinking: { "openai-codex/gpt-6-luna": "max", "openai-codex/gpt-6.1-sol": "low" },
+    });
+  });
+
+  test("hidden thinking is saved, and showing it again removes the key", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mu-show-thinking-"));
+    const file = join(root, "config.json");
+    await saveDefaultModel("openai-codex/gpt-6-luna", file);
+    await saveShowThinking(false, file);
+    expect(await loadUserConfig(file)).toEqual({
+      model: "openai-codex/gpt-6-luna",
+      showThinking: false,
+    });
+    await saveShowThinking(true, file);
+    expect(await loadUserConfig(file)).toEqual({ model: "openai-codex/gpt-6-luna" });
+  });
+
+  test("/show-thinking toggles alone and takes on or off", () => {
+    expect(showThinkingChoice(true, "")).toEqual({ show: false });
+    expect(showThinkingChoice(false, " ")).toEqual({ show: true });
+    expect(showThinkingChoice(false, "OFF")).toEqual({ show: false });
+    expect(showThinkingChoice(false, "on")).toEqual({ show: true });
+    expect(showThinkingChoice(true, "maybe")).toEqual({
+      message: "Use /show-thinking on or /show-thinking off.",
     });
   });
 
