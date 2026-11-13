@@ -91,6 +91,7 @@ class SharedBrowser {
   closingIntentionally = false;
   lease: ProfileLease | undefined;
   product: { product: string; version: string; executable?: string } | undefined;
+  headedBrowser = false;
   abort = new AbortController();
   readonly lanes = new Set<BrowserManager>();
   readonly waiting = new Set<() => void>();
@@ -239,6 +240,7 @@ export class BrowserManager {
       for (const info of targetInfos) this.trackTarget(info);
       if (this.options.hostAllowed)
         await this.guardNewPages(connection, this.options.hostAllowed, signal);
+      shared.headedBrowser = !version.userAgent.includes("Headless");
       const [product, number] = version.product.split("/");
       shared.product = {
         product: connected.browser?.product ?? product ?? version.product,
@@ -758,7 +760,9 @@ export class BrowserManager {
       shared.lease?.release();
       return;
     }
-    const close = options.close ?? !this.options.keepOpen;
+    // A headless run re-attached to a window an earlier session left open leaves it open.
+    const close =
+      options.close ?? (!this.options.keepOpen && !(this.options.headless && shared.headedBrowser));
     shared.closingIntentionally = true;
     const { connection } = connected;
     const timeouts = { timeoutMs: 2_000 };

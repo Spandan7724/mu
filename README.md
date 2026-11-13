@@ -259,7 +259,8 @@ mu browser close          # close the managed browser left open by earlier runs
 
 The browser runs on mu's persistent profile under `~/.mu/browser/profiles/<name>`
 (`--browser-profile <name>`), or on any existing browser through `--cdp <url>`;
-`--headless` hides the window. Page content is treated as untrusted data. Permission modes
+`--headless` hides the window. A visible window stays open after mu exits so the next run
+can pick it up; a headless browser closes with mu. Page content is treated as untrusted data. Permission modes
 are `default` (asks before sending, buying, deleting, publishing, or changing account
 settings), `supervised`, `read-only`, and `autonomous`. When a site needs you, for
 example to sign in or solve a check, the agent hands the window to you and continues once

@@ -60,6 +60,14 @@ describe("browser profile options", () => {
     expect(resolveBrowserOptions({ home, cdpUrl: "http://127.0.0.1:9222" }).connect).toBe("cdp");
   });
 
+  test("a headless browser closes when mu exits unless keepOpen says otherwise", () => {
+    expect(resolveBrowserOptions({ home: tempHome() }).keepOpen).toBe(true);
+    expect(resolveBrowserOptions({ home: tempHome(), headless: true }).keepOpen).toBe(false);
+    const configured = tempHome({ browser: { headless: true } });
+    expect(resolveBrowserOptions({ home: configured }).keepOpen).toBe(false);
+    expect(resolveBrowserOptions({ home: configured, keepOpen: true }).keepOpen).toBe(true);
+  });
+
   test("invalid config is reported and ignored; invalid names and cdp without url throw", () => {
     const home = tempHome({ browser: { headless: "yes" } });
     const warnings: string[] = [];

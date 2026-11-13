@@ -127,6 +127,7 @@ describeWithBrowser("mu browser status and close", () => {
     const profile = await browserProfile({
       home,
       headless: true,
+      keepOpen: true,
       ...(testBrowserPath ? { executable: testBrowserPath } : {}),
     });
     await profile.browser.activeTab();

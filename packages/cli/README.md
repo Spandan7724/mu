@@ -237,7 +237,8 @@ await agent.shutdown(); // the browser window stays open unless keepOpen: false
 Options: `browserProfile`, `connect` (`managed` | `cdp`), `cdpUrl`, `executable`,
 `channel`, `headless`, `vision` (`auto` | `on` | `off`), `viewport`, `keepOpen`,
 `downloadsDir`, `allowedHosts`, `blockedHosts`. The same keys are read from the `browser`
-section of `~/.mu/config.json`; explicit options win.
+section of `~/.mu/config.json`; explicit options win. `keepOpen` defaults to `true` for a
+visible window and `false` for a headless browser.
 
 ### Custom tools
 

@@ -120,6 +120,7 @@ export function resolveBrowserOptions(
     );
   }
   const connect = merged.connect ?? (merged.cdpUrl ? "cdp" : "managed");
+  const headless = merged.headless ?? false;
   if (connect === "cdp" && !merged.cdpUrl) {
     throw new Error('Browser connect mode "cdp" needs a cdpUrl (--cdp <url>).');
   }
@@ -129,10 +130,11 @@ export function resolveBrowserOptions(
     ...(merged.cdpUrl ? { cdpUrl: merged.cdpUrl } : {}),
     ...(merged.executable ? { executable: merged.executable } : {}),
     ...(merged.channel ? { channel: merged.channel } : {}),
-    headless: merged.headless ?? false,
+    headless,
     vision: merged.vision ?? "auto",
     viewport: merged.viewport ?? { width: 1280, height: 800 },
-    keepOpen: merged.keepOpen ?? true,
+    // A headless browser is invisible, so leaving it running after mu exits only leaks it.
+    keepOpen: merged.keepOpen ?? !headless,
     downloadsDir: resolve(merged.downloadsDir ?? join(home, ".mu", "browser", "downloads")),
     allowedHosts: merged.allowedHosts ?? [],
     blockedHosts: merged.blockedHosts ?? [],

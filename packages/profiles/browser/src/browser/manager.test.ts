@@ -179,6 +179,29 @@ describeWithBrowser("BrowserManager in real headless Chrome", () => {
     await until(async () => !(await endpointAlive(wsUrl)));
   });
 
+  test("a headless session leaves open a visible window it re-attached to", async () => {
+    const headedDir = tempUserDataDir();
+    const options = { ...manager.options, userDataDir: headedDir, profileName: "headed" };
+    // A user agent without "Headless" is how a visible window identifies itself.
+    const visible = new BrowserManager({
+      ...options,
+      keepOpen: true,
+      args: ["--user-agent=Mozilla/5.0 (X11; Linux x86_64) Chrome/154.0.0.0 Safari/537.36"],
+    });
+    await visible.activeTab();
+    const wsUrl = readDevToolsActivePort(headedDir) as string;
+    await visible.shutdown();
+    const headless = new BrowserManager({ ...options, keepOpen: false });
+    await headless.activeTab();
+    expect(headless.status().launched).toBe(false);
+    await headless.shutdown();
+    expect(await endpointAlive(wsUrl)).toBe(true);
+    await visible.activeTab();
+    await visible.shutdown({ close: true });
+    await until(async () => !(await endpointAlive(wsUrl)));
+    rmSync(headedDir, { recursive: true, force: true });
+  });
+
   test("a session held by another process is refused until that process dies", async () => {
     const holder = Bun.spawn(
       [
