@@ -265,6 +265,18 @@ settings), `supervised`, `read-only`, and `autonomous`. When a site needs you, f
 example to sign in or solve a check, the agent hands the window to you and continues once
 the page moves on or you reply.
 
+On Hyprland, a window on a hidden workspace stops drawing, and pages that render on an
+animation frame (Gmail's message list, for example) stall. mu restarts drawing before it
+reads the page, which adds about 0.1–0.5 s each time. To keep the window drawing instead,
+add a `render_unfocused` rule for the browser's window class (`google-chrome` for Chrome;
+`hyprctl clients` shows the class of other browsers):
+
+```lua
+hl.window_rule({ name = "mu-browser", match = { class = "^google-chrome$" }, render_unfocused = true })
+```
+
+Other platforms need no setup.
+
 ## Instructions, extensions, skills, and MCP
 
 The coding profile reads project instructions from `AGENTS.md` and compatible fallback
