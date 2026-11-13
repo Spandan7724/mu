@@ -6,6 +6,10 @@ import { FrameRegistry } from "./frames.ts";
 
 // How long a drawn page may take to deliver an animation frame (6 fps is still drawn).
 const FRAME_WAIT_MS = 150;
+// Editors save once typing pauses (debounced autosave); leaving the page sooner loses the
+// edit. Before mu leaves a page it typed into, it allows this long for a save to start.
+const SAVE_DELAY_MS = 2_000;
+const SAVE_CAP_MS = 15_000;
 
 export interface TabInfo {
   tabId: string;
@@ -73,6 +77,12 @@ export class Tab {
   lastFingerprint: string | undefined;
   // Consecutive interactions that left the page exactly as it was.
   unchangedStreak = 0;
+  // When mu last typed or pressed keys, and in which document; cleared once awaited.
+  private lastInput: { at: number; loaderId: string | undefined } | undefined;
+  // mu asked the page to close; a beforeunload dialog then answers whether it may.
+  closing = false;
+  // What the last settle saw still unfinished; shown to the model once.
+  unfinished: string[] = [];
   // A main-frame navigation the host lists stopped before it left the browser.
   blockedNavigation: string | undefined;
   // The main frame shows Chrome's error page; tab.url (from target info) then names the
@@ -224,6 +234,46 @@ export class Tab {
       )
       .catch(() => {});
     return true;
+  }
+
+  noteInput(): void {
+    this.lastInput = { at: performance.now(), loaderId: this.documentLoader() };
+  }
+
+  private documentLoader(): string | undefined {
+    return this.frames.get(this.frames.mainFrameId ?? "")?.loaderId;
+  }
+
+  // Before mu leaves a page it typed into: waits until a save has started (or
+  // SAVE_DELAY_MS passed without one) and no write is in flight. Returns the ms waited.
+  async awaitSaves(signal?: AbortSignal): Promise<number> {
+    const input = this.lastInput;
+    this.lastInput = undefined;
+    // Typing that submitted the page left that document already.
+    if (!input || input.loaderId !== this.documentLoader()) return 0;
+    const since = input.at;
+    const started = performance.now();
+    const settled = () => {
+      const now = performance.now();
+      if (now - started >= SAVE_CAP_MS) return true;
+      if (this.network.pendingWrites(since) > 0) return false;
+      return this.network.lastWriteAt >= since || now >= since + SAVE_DELAY_MS;
+    };
+    while (!settled() && !this.detached) {
+      if (signal?.aborted) break;
+      await new Promise<void>((resolve) => {
+        const wake = () => {
+          off();
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", wake);
+          resolve();
+        };
+        const off = this.network.onChange(wake);
+        const timer = setTimeout(wake, Math.max(10, since + SAVE_DELAY_MS - performance.now()));
+        signal?.addEventListener("abort", wake, { once: true });
+      });
+    }
+    return Math.round(performance.now() - started);
   }
 
   get detached(): boolean {

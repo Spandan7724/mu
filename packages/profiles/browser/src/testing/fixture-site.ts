@@ -12,6 +12,8 @@ export interface FixtureSite {
   requests: string[];
   // What the wizard fixture's final submit sent, oldest first.
   submissions: Record<string, unknown>[];
+  // Bodies the late-work fixture's autosave posted, oldest first.
+  autosaves: string[];
   // Sign-ups on the signup fixture: the code it "emailed" and whether it was entered.
   signups: { email: string; code: string; verified: boolean }[];
   stop: () => void;
@@ -25,6 +27,7 @@ export function startFixtureSite(): FixtureSite {
   let origin = "";
   let crossOrigin = "";
   const submissions: Record<string, unknown>[] = [];
+  const autosaves: string[] = [];
   const signups: FixtureSite["signups"] = [];
   const requests: string[] = [];
   const handler = async (request: Request): Promise<Response> => {
@@ -86,6 +89,12 @@ export function startFixtureSite(): FixtureSite {
     if (path === "/redirect") {
       return Response.redirect(url.searchParams.get("to") ?? "/", 302);
     }
+    if (path === "/api/autosave" && request.method === "POST") {
+      const body = await request.text();
+      await Bun.sleep(300);
+      autosaves.push(body);
+      return Response.json({ saved: true });
+    }
     if (path === "/api/slow") {
       await Bun.sleep(Number(url.searchParams.get("ms") ?? 500));
       return Response.json({ ok: true });
@@ -126,6 +135,7 @@ export function startFixtureSite(): FixtureSite {
     url: (page) => `${origin}/${page}`,
     requests,
     submissions,
+    autosaves,
     signups,
     stop: () => {
       main.stop(true);

@@ -114,6 +114,50 @@ describeWithBrowser("browser actions on the fixture site (real headless Chrome)"
     expect(account.text).toContain("ok");
   });
 
+  test("a response that is drawn after it arrives is read once drawing stops", async () => {
+    await open("late-work");
+    const loaded = await run("click", { ref: refIn(page, "button", "Load rows") });
+    expect(loaded.text).toContain("Row 5");
+  });
+
+  test("a request the action started that is still loading is reported, not waited for", async () => {
+    await open("late-work");
+    const loaded = await run("click", { ref: refIn(page, "button", "Load archive") });
+    expect(loaded.outcome.details.timings.settleMs).toBeLessThan(2_500);
+    expect(loaded.text).toContain(
+      "note: the page may not be finished (a request the action started is still loading)",
+    );
+    const again = await run("wait", { text: "Archive loaded" });
+    expect(again.text).not.toContain("may not be finished");
+  });
+
+  test("a new page that draws nothing yet is reported as such", async () => {
+    const app = await open("late-app");
+    expect(app.text).toContain("the page shows nothing yet");
+  });
+
+  test("leaving a page right after typing lets its autosave go out first", async () => {
+    await open("late-work");
+    await run("type", { ref: refIn(page, "textbox", "Draft"), text: "keep this" });
+    await open("form-basic");
+    expect(site.autosaves).toContain("keep this");
+  });
+
+  test("closing a tab with unsaved changes shows its leave dialog instead of discarding them", async () => {
+    const opened = await run("tabs", { action: "open", url: site.url("unsaved") });
+    await run("type", { ref: refIn(page, "textbox", "Note"), text: "draft" });
+    const asked = await run("tabs", { action: "close", tabId: opened.outcome.details.tabId });
+    expect(asked.outcome.ok).toBe(false);
+    expect(asked.text).toContain("asked before closing");
+    expect(profile.browser.tabs().some((tab) => tab.tabId === opened.outcome.details.tabId)).toBe(
+      true,
+    );
+    await run("dialog", { action: "accept" });
+    expect(profile.browser.tabs().some((tab) => tab.tabId === opened.outcome.details.tabId)).toBe(
+      false,
+    );
+  });
+
   test("a progress bar with a value is a meter, not a loading indicator", async () => {
     const steps = await open("progress-steps");
     expect(steps.outcome.details.settle).toStartWith("page loaded and quiet");

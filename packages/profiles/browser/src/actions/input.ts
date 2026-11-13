@@ -198,6 +198,7 @@ export async function typeText(
     options.keystrokes ?? (info.combobox && info.editable === "value" && typed.length <= 200);
   const watcher =
     options.settle === false ? undefined : watchSettle(tab, info.combobox ? "typing" : "in-page");
+  tab.noteInput();
   let actual: string;
   try {
     await ctx.stopwatch.time("cdpMs", async () => {
@@ -360,6 +361,7 @@ export async function pressKeys(
     where = ` in ${tab.refs.label(ref)}`;
   }
   const watcher = watchSettle(tab, "in-page");
+  tab.noteInput();
   try {
     await ctx.stopwatch.time("cdpMs", () =>
       raceDialog(tab, pressCombo(tab.session, combo, signal)),

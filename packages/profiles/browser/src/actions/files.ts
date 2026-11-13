@@ -219,6 +219,17 @@ export async function handleDialog(
     throw error;
   }
   tab.dialog = undefined;
+  const closing = tab.closing && dialog.type === "beforeunload";
+  tab.closing = false;
+  if (closing && action === "accept") {
+    watcher.dispose();
+    const deadline = performance.now() + 3_000;
+    while (!tab.detached && performance.now() < deadline) await Bun.sleep(25);
+    return {
+      summary: "accepted the beforeunload dialog → the tab closed",
+      tab: await ctx.browser.activeTab(signal),
+    };
+  }
   const settle = await ctx.stopwatch.time("settleMs", () => watcher.settle(signal));
   const answered =
     dialog.type === "prompt" && action === "accept" && text !== undefined

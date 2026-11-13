@@ -58,6 +58,7 @@ async function settleAfter(
   trigger: (watcher: SettleWatcher) => Promise<"same-document" | undefined>,
   signal?: AbortSignal,
 ): Promise<NavigationResult> {
+  await tab.awaitSaves(signal);
   const watcher = watchSettle(tab, "navigation");
   try {
     if ((await trigger(watcher)) === "same-document") {

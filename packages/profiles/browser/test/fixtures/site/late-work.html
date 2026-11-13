@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Late work</title></head>
+<body>
+<main>
+  <h1>Workspace</h1>
+  <!-- The response arrives after 1.4 s; its rows are drawn over the next 600 ms. -->
+  <button id="rows">Load rows</button>
+  <ul id="row-list"></ul>
+  <!-- The page's own data request outlasts the in-page time limit. -->
+  <button id="archive">Load archive</button>
+  <p id="archive-state"></p>
+  <!-- Saves 1.5 s after typing stops, as editors do. -->
+  <textarea aria-label="Draft"></textarea>
+  <p id="saved">Saved</p>
+</main>
+<script>
+  document.getElementById("rows").onclick = function () {
+    fetch("/api/slow?ms=1400").then(function () {
+      var i = 0;
+      var timer = setInterval(function () {
+        var li = document.createElement("li");
+        li.textContent = "Row " + i;
+        document.getElementById("row-list").appendChild(li);
+        if (++i >= 6) clearInterval(timer);
+      }, 100);
+    });
+  };
+  document.getElementById("archive").onclick = function () {
+    fetch("/api/slow?ms=3200").then(function () {
+      document.getElementById("archive-state").textContent = "Archive loaded";
+    });
+  };
+  var save;
+  document.querySelector("textarea").oninput = function (event) {
+    document.getElementById("saved").textContent = "Edited";
+    clearTimeout(save);
+    save = setTimeout(function () {
+      fetch("/api/autosave", { method: "POST", body: event.target.value }).then(function () {
+        document.getElementById("saved").textContent = "Saved";
+      });
+    }, 1500);
+  };
+</script>
+</body>
+</html>

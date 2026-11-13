@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Unsaved</title></head>
+<body>
+<main>
+  <h1>Notes</h1>
+  <!-- Never saves; asks before the page is left while it holds an edit. -->
+  <textarea aria-label="Note"></textarea>
+</main>
+<script>
+  var dirty = false;
+  document.querySelector("textarea").oninput = function () { dirty = true; };
+  addEventListener("beforeunload", function (event) {
+    if (dirty) { event.preventDefault(); event.returnValue = ""; }
+  });
+</script>
+</body>
+</html>

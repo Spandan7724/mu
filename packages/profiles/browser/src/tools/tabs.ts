@@ -103,7 +103,17 @@ export function tabsTool(deps: BrowserToolDeps) {
                 : {}),
             };
           }
-          await stopwatch.time("cdpMs", () => deps.browser.closeTab(tabId, actionSignal));
+          const asked = await stopwatch.time("cdpMs", () =>
+            deps.browser.closeTab(tabId, actionSignal),
+          );
+          if (asked) {
+            return {
+              ok: false,
+              kind: "dialog",
+              summary: `tab ${tabId} asked before closing (its dialog is shown in the page header; usually unsaved changes): accept it with the dialog tool to close anyway, or dismiss it to keep the tab`,
+              tab: asked,
+            };
+          }
           const next = await stopwatch.time("cdpMs", () => deps.browser.activeTab(actionSignal));
           return {
             summary: `closed tab ${tabId}${tabId === tab.tabId ? `; now on ${next.tabId}` : ""}`,

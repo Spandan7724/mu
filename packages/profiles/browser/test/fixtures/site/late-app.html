@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Late app</title></head>
+<body>
+<!-- Draws nothing until the app boots 3 s after load, with no network meanwhile. -->
+<div id="root"></div>
+<script>
+  setTimeout(function () {
+    document.getElementById("root").innerHTML = "<h1>App</h1><p>Dashboard</p>";
+  }, 3000);
+</script>
+</body>
+</html>

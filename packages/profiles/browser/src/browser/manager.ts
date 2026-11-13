@@ -660,11 +660,28 @@ export class BrowserManager {
     return this.attach(page.targetId, signal);
   }
 
-  async closeTab(tabId: string, signal?: AbortSignal): Promise<void> {
+  // Returns the tab when the page asked before closing (a "leave site?" dialog for unsaved
+  // changes); it stays open and becomes active so the dialog can be answered.
+  async closeTab(tabId: string, signal?: AbortSignal): Promise<Tab | undefined> {
     const connection = await this.ensureConnected(signal);
     const page = this.targetFor(tabId);
-    await connection.send("Target.closeTarget", { targetId: page.targetId }, { signal });
     const wasActive = this.activeTargetId === page.targetId;
+    const tab = this.attached.get(page.targetId);
+    if (tab && !tab.detached) {
+      await tab.awaitSaves(signal);
+      // Page.close runs the page's beforeunload handlers; Target.closeTarget skips them.
+      tab.closing = true;
+      await tab.session.send("Page.close", undefined, { signal, timeoutMs: 3_000 }).catch(() => {});
+      const deadline = performance.now() + 3_000;
+      while (this.pages.has(page.targetId) && !tab.dialog && performance.now() < deadline)
+        await Bun.sleep(25);
+      if (tab.dialog) {
+        this.activeTargetId = page.targetId;
+        return tab;
+      }
+    }
+    if (this.pages.has(page.targetId))
+      await connection.send("Target.closeTarget", { targetId: page.targetId }, { signal });
     if (wasActive) this.activeTargetId = undefined;
     this.forgetTarget(page.targetId);
     if (wasActive) {
@@ -676,6 +693,7 @@ export class BrowserManager {
       this.activeTargetId = remaining[0]?.targetId;
     }
     this.notices = this.notices.filter((notice) => notice !== "The active tab was closed.");
+    return undefined;
   }
 
   // A lane for one parallel sub-task, once fewer than MAX_LANES are running.
@@ -766,6 +784,8 @@ export class BrowserManager {
     shared.closingIntentionally = true;
     const { connection } = connected;
     const timeouts = { timeoutMs: 2_000 };
+    // An edit typed just before the run ended is still saving.
+    if (close) await Promise.all([...this.attached.values()].map((tab) => tab.awaitSaves()));
     if (close && this.options.connect === "managed") {
       await connection.send("Browser.close", undefined, timeouts).catch(() => {});
     } else if (close) {

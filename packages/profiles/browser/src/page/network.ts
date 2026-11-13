@@ -41,11 +41,28 @@ function ownFrame(request: Inflight, site: string | undefined): boolean {
   return site !== undefined && request.type === "Document" && siteOf(request.url) === site;
 }
 
+export interface ActionWindow {
+  since: number;
+  until: number;
+}
+
+// A data read an action started within its window, from any host (a page's data often
+// comes from another domain).
+function actionRead(request: Inflight, window: ActionWindow): boolean {
+  return (
+    !request.write &&
+    (request.type === "XHR" || request.type === "Fetch") &&
+    request.started >= window.since &&
+    request.started <= window.until
+  );
+}
+
 // In-flight requests of one tab across its own and its OOPIF sessions.
 export class NetworkTracker {
   private readonly inflight = new Map<string, Inflight>();
   private readonly listeners = new Set<() => void>();
   lastActivity = 0;
+  lastWriteAt = Number.NEGATIVE_INFINITY;
 
   attach(session: CdpSession): () => void {
     // Request ids are browser-wide: a frame's document request can start in the
@@ -63,6 +80,7 @@ export class NetworkTracker {
           session: session.sessionId,
           write: !READ_METHODS.has(event.request.method),
         });
+        if (!READ_METHODS.has(event.request.method)) this.lastWriteAt = performance.now();
         this.touch();
       }),
       session.on("Network.loadingFinished", (event) => finish(event.requestId)),
@@ -98,6 +116,12 @@ export class NetworkTracker {
     for (const request of this.inflight.values()) {
       if (now - request.started < longPollMs || ownFrame(request, site)) count++;
     }
+    return count;
+  }
+
+  pendingReads(actions: ActionWindow): number {
+    let count = 0;
+    for (const request of this.inflight.values()) if (actionRead(request, actions)) count++;
     return count;
   }
 

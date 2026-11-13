@@ -222,6 +222,8 @@ export async function pageAction(
   if (block) result = block.result;
   const before = tab.lastFingerprint;
   const notices = deps.browser.drainNotices();
+  const unfinished = tab.unfinished;
+  tab.unfinished = [];
   const observeOptions = {
     screenshot:
       options.screenshot === false || !deps.vision(call.acceptsImages)
@@ -303,6 +305,11 @@ export async function pageAction(
     ...(nudge ? [nudge] : []),
     ...(looksLikeInjection(content) ? [INJECTION_NOTE] : []),
     ...notices.map((notice) => `note: ${notice}`),
+    ...(unfinished.length
+      ? [
+          `note: the page may not be finished (${unfinished.join("; ")}); if what you need is missing, wait or look again`,
+        ]
+      : []),
     ...(result.extra ? [result.extra] : []),
     "",
     observation.text,

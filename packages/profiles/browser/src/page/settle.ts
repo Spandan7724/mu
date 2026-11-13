@@ -27,6 +27,9 @@ const WRITE_CAP_MS = 15_000;
 // nothing navigated, within this long of the action. Later writes are the page's own
 // traffic (analytics, sync) and never mean the action is still being carried out.
 const ACTION_WRITE_WINDOW_MS = 1_000;
+// A data request an in-page action starts within this long of it is the action's work; one
+// still loading when settle ends is reported, not waited for.
+const ACTION_READ_WINDOW_MS = 1_000;
 // Pages whose network never goes quiet (ads, trackers, sync) count as ready once what the
 // viewport shows has not changed for this long. Measured with scripts/settle-probe: pages
 // mid-render held still for up to 2 s (Google Maps before its controls), so 3 s.
@@ -35,8 +38,8 @@ const PROBE_MS = 250;
 // The steady exit is taken only on a reading this recent, never on one that predates
 // whatever woke the check.
 const PROBE_FRESH_MS = 50;
-// A busy reading older than this is checked again before settling.
-const BUSY_FRESH_MS = 300;
+// While a loading indicator shows, or a page still shows nothing, read it again this often.
+const RECHECK_MS = 250;
 
 // A visible loading indicator: aria-busy, or a progress bar with no value. A progress bar
 // with a value is a meter (wizard steps, playback) and says nothing about loading.
@@ -48,6 +51,68 @@ const PAGE_BUSY = `(function () {
   }
   return false;
 })()`;
+
+// Last structural change, kept for the whole settle so the final reading sees changes that
+// came after DOM quiet first held (a response drawn once it arrives).
+const CHANGE_KEY = 'Symbol.for("mu.settle.lastChange")';
+const TRACK_CHANGES = `(function () {
+  if (window[${CHANGE_KEY}]) return;
+  var state = { at: performance.now() };
+  state.observer = new MutationObserver(function (records) {
+    for (var i = 0; i < records.length; i++) {
+      if (records[i].type !== "attributes" || records[i].attributeName !== "style") {
+        state.at = performance.now();
+        return;
+      }
+    }
+  });
+  state.observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+  window[${CHANGE_KEY}] = state;
+})()`;
+const STOP_TRACKING = `(function () {
+  var state = window[${CHANGE_KEY}];
+  if (state) { state.observer.disconnect(); delete window[${CHANGE_KEY}]; }
+})()`;
+
+// What settle finishes on: a loading indicator, ms since the last structural change (null
+// when untracked), and whether the page shows anything at all (visible text or a sizable
+// image, canvas, frame or control).
+const PAGE_STATE = `(function () {
+  var busy = ${PAGE_BUSY};
+  var state = window[${CHANGE_KEY}];
+  var content = false, body = document.body;
+  if (body) {
+    var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) { return /\\S/.test(node.data) ? 1 : 3; }
+    });
+    for (var node, n = 0; !content && (node = walker.nextNode()) && n < 5000; n++) {
+      var parent = node.parentElement;
+      if (parent && parent.checkVisibility({ opacityProperty: true, visibilityProperty: true })) content = true;
+    }
+    var media = content ? [] : body.querySelectorAll("img,svg,canvas,video,iframe,embed,object,input,button,select,textarea");
+    for (var i = 0; !content && i < media.length; i++) {
+      var r = media[i].getBoundingClientRect();
+      if (r.width >= 16 && r.height >= 16 && media[i].checkVisibility({ opacityProperty: true, visibilityProperty: true })) content = true;
+    }
+  }
+  return { busy: busy, quietMs: state ? performance.now() - state.at : null, content: content };
+})()`;
+
+interface PageState {
+  busy: boolean;
+  quietMs: number | null;
+  content: boolean;
+}
+
+async function pageState(tab: Tab, signal: AbortSignal): Promise<PageState> {
+  const contextId = await tab.frames.isolatedWorld(tab.frames.mainFrameId ?? "", signal);
+  const result = await tab.session.send(
+    "Runtime.evaluate",
+    { expression: PAGE_STATE, contextId, returnByValue: true },
+    { signal, timeoutMs: 2_000 },
+  );
+  return result.result.value as PageState;
+}
 
 async function pageBusy(tab: Tab, signal: AbortSignal): Promise<boolean> {
   const contextId = await tab.frames.isolatedWorld(tab.frames.mainFrameId ?? "", signal);
@@ -119,6 +184,7 @@ export interface SettleWatcher {
 // Start before the action so navigations and requests it triggers are seen.
 export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatcher {
   const watchedFrom = performance.now();
+  tab.unfinished = [];
   let profile = PROFILES[mode];
   let navigationStarted = mode === "navigation";
   let navigatedLoader: string | undefined;
@@ -198,7 +264,7 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
           const result = await tab.session.send(
             "Runtime.evaluate",
             {
-              expression: `${DOM_QUIET}(${quiet}, ${cap})`,
+              expression: `${TRACK_CHANGES};${DOM_QUIET}(${quiet}, ${cap})`,
               contextId,
               awaitPromise: true,
               returnByValue: true,
@@ -230,7 +296,10 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
         let probeGeneration = 0;
         let steady: { key: string; since: number; seenAt: number } | undefined;
         let busy: { at: number; value: boolean } | undefined;
-        let busyChecking = false;
+        // The reading settle finishes on, taken once quiet holds; `at` is when it was asked.
+        let reading: { at: number; state: PageState } | undefined;
+        let readingPending = false;
+        let readySince: number | undefined;
         const track = (key: string | undefined, started: number, at: number) => {
           if (key === undefined) steady = undefined;
           else if (steady?.key === key) steady.seenAt = at;
@@ -276,20 +345,58 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
           steady = undefined;
           runDomQuiet(profile.domQuietMs, profile.capMs);
         };
-        const refreshBusy = () => {
-          if (busyChecking) return;
-          busyChecking = true;
+        const refreshReading = () => {
+          if (readingPending) return;
+          readingPending = true;
+          const at = performance.now();
           void (async () => {
             await ensureRendering();
-            const value = await pageBusy(tab, probeSignal).catch(() => false);
-            busy = { at: performance.now(), value };
-            busyChecking = false;
+            const state = await pageState(tab, probeSignal).catch(() => undefined);
+            reading = { at, state: state ?? { busy: false, quietMs: null, content: true } };
+            readingPending = false;
             notify();
           })();
         };
+        const stopTracking = () => {
+          void tab.frames
+            .isolatedWorld(tab.frames.mainFrameId ?? "")
+            .then((contextId) =>
+              tab.session.send("Runtime.evaluate", { expression: STOP_TRACKING, contextId }),
+            )
+            .catch(() => {});
+        };
+        // What visibly had not finished when settle ended, for the model to judge: settle
+        // returns on its best guess and does not wait for these.
+        const unfinished = (): string[] => {
+          const notes: string[] = [];
+          const now = performance.now();
+          const state = reading && now - reading.at <= RECHECK_MS ? reading.state : undefined;
+          if (
+            phase === "in-page" &&
+            !navigationStarted &&
+            tab.network.pendingReads({
+              since: watchedFrom,
+              until: actionEnd + ACTION_READ_WINDOW_MS,
+            }) > 0
+          )
+            notes.push("a request the action started is still loading");
+          if (
+            tab.network.pendingWrites(
+              watchedFrom,
+              committedAt ?? actionEnd + ACTION_WRITE_WINDOW_MS,
+            ) > 0
+          )
+            notes.push("a save or submission the action started is still in progress");
+          if (state ? state.busy : busy?.value) notes.push("a loading indicator is showing");
+          if (state && phase === "navigation" && !state.content)
+            notes.push("the page shows nothing yet");
+          return notes;
+        };
         const finish = (reason: string) => {
           if (timer) clearTimeout(timer);
+          tab.unfinished = dialog ? [] : unfinished();
           stopProbes();
+          stopTracking();
           wake = undefined;
           signal?.removeEventListener("abort", onAbort);
           domGeneration++;
@@ -310,6 +417,7 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
         const onAbort = () => {
           if (timer) clearTimeout(timer);
           stopProbes();
+          stopTracking();
           wake = undefined;
           domGeneration++;
           reject(new CdpError("aborted", "settle", "aborted"));
@@ -389,20 +497,29 @@ export function watchSettle(tab: Tab, mode: SettleMode = "in-page"): SettleWatch
             Math.max(tab.network.lastActivity, phaseStart) + profile.networkQuietMs;
           const graceAt = actionEnd + profile.graceMs;
           const networkQuiet = pending === 0 && writes === 0 && now >= networkIdleAt;
-          if (domQuiet && networkQuiet && now >= graceAt) {
-            if (!busy || now - busy.at > BUSY_FRESH_MS) {
-              refreshBusy();
+          if (!(domQuiet && networkQuiet && now >= graceAt)) readySince = undefined;
+          else {
+            readySince ??= now;
+            if (!reading || reading.at < readySince || now - reading.at > RECHECK_MS) {
+              refreshReading();
               wake = check;
               timer = setTimeout(check, Math.max(1, actionEnd + capMs - now));
               return;
             }
-            if (!busy.value) {
+            const { busy: loading, quietMs } = reading.state;
+            if (quietMs !== null && quietMs < profile.domQuietMs) {
+              // Changed after quiet first held (a response being drawn): wait for it again.
+              readySince = undefined;
+              runDomQuiet(profile.domQuietMs, Math.max(1, actionEnd + capMs - now));
+            } else if (!loading) {
               if (phase === "navigation") return finish("page loaded and quiet after navigation");
               return finish(
                 domChanged || networkChanged ? "page changed, then settled" : "no change",
               );
+            } else {
+              // A loading indicator is showing; read it again shortly.
+              deadlines.push(reading.at + RECHECK_MS);
             }
-            // A loading indicator is showing; the probes report when it goes.
           }
           if (pending === 0 && writes === 0) deadlines.push(networkIdleAt);
           const expiry = tab.network.nextExpiry(LONG_POLL_MS, pageUrl);
