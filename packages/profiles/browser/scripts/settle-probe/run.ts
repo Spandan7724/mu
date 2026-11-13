@@ -1,6 +1,7 @@
 // Records what happens around every browser action, for replaying settle rules offline:
 //   bun packages/profiles/browser/scripts/settle-probe/run.ts --out /tmp/probe
-//     [--only <regex>] [--synthetic | --real | --signed-in] [--runs cold,warm,plain]
+//     [--only <regex>] [--synthetic | --real | --interactions | --signed-in]
+//     [--runs cold,warm,plain]
 //     [--browser-profile <name>] [--window-class <class>]
 // --window-class sets Chrome's window class, so a compositor rule can place the window
 // (for example on a hidden workspace, to check rendering there).
@@ -22,6 +23,7 @@ import { interactionTools } from "../../src/tools/interact.ts";
 import { navigateTool } from "../../src/tools/navigate.ts";
 import { startProbeSite } from "./pages.ts";
 import {
+  INTERACTION_SCENARIOS,
   REAL_SCENARIOS,
   type Scenario,
   SIGNED_IN_SCENARIOS,
@@ -72,7 +74,8 @@ const SAMPLE_MS = 250;
 const TAIL_MS = 4_000;
 const PROBE = 'Symbol.for("mu.settle-probe")';
 const MUTATION_SCRIPT = `(function(){var k=${PROBE};if(window[k])return;var log=[];Object.defineProperty(window,k,{value:log});new MutationObserver(function(rs){for(var i=0;i<rs.length;i++){if(rs[i].type!=="attributes"||rs[i].attributeName!=="style"){log.push(Date.now());return}}}).observe(document,{subtree:true,childList:true,characterData:true,attributes:true});})()`;
-const BUSY_SCRIPT = `(function(){var els=document.querySelectorAll('[aria-busy="true"],[role="progressbar"],progress');for(var i=0;i<els.length;i++){var r=els[i].getBoundingClientRect();if(r.width>0&&r.height>0)return true}return false})()`;
+// Mirrors PAGE_BUSY in src/page/settle.ts.
+const BUSY_SCRIPT = `(function(){var els=document.querySelectorAll('[aria-busy="true"],[role="progressbar"]:not([aria-valuenow]),progress:not([value])');for(var i=0;i<els.length;i++){var r=els[i].getBoundingClientRect();if(r.width>0&&r.height>0)return true}return false})()`;
 
 const argv = process.argv.slice(2);
 const flag = (name: string) => {
@@ -89,10 +92,12 @@ const site = startProbeSite();
 const scenarios = (
   argv.includes("--signed-in")
     ? SIGNED_IN_SCENARIOS
-    : [
-        ...(argv.includes("--real") ? [] : syntheticScenarios(site.url)),
-        ...(argv.includes("--synthetic") ? [] : REAL_SCENARIOS),
-      ]
+    : argv.includes("--interactions")
+      ? INTERACTION_SCENARIOS
+      : [
+          ...(argv.includes("--real") ? [] : syntheticScenarios(site.url)),
+          ...(argv.includes("--synthetic") ? [] : REAL_SCENARIOS),
+        ]
 ).filter((scenario) => !only || only.test(scenario.name));
 
 const home = tempUserDataDir();

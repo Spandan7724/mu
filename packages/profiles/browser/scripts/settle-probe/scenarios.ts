@@ -36,6 +36,15 @@ export function syntheticScenarios(url: (name: string) => string): Scenario[] {
       { tool: "click", find: button(label), args: {} },
     ],
   });
+  const type = (name: string, find: RegExp): Scenario => ({
+    name: `type ${name}`,
+    kind: "synthetic",
+    marker: MARKER,
+    steps: [
+      { tool: "navigate", url: url(name) },
+      { tool: "type", find, args: { text: "abc" } },
+    ],
+  });
   return [
     nav("static"),
     nav("beacon-noise"),
@@ -52,6 +61,11 @@ export function syntheticScenarios(url: (name: string) => string): Scenario[] {
     click("autosave", "Save"),
     click("click-post-slow", "Submit"),
     click("click-noop", "Nothing", undefined),
+    click("click-fetch-render", "Load"),
+    click("click-fetch-own-slow", "Load"),
+    nav("empty-then-render"),
+    type("search-debounced", /textbox "Search" \[ref=(e\d+)\]/),
+    type("filter-debounced", /searchbox "Filter by name" \[ref=(e\d+)\]/),
     click("submit-nav", "Send"),
     {
       name: "click spa-route",
@@ -124,6 +138,98 @@ export const REAL_SCENARIOS: Scenario[] = [
   real("google maps", go("https://www.google.com/maps/place/Eiffel+Tower")),
   real("vercel", go("https://vercel.com")),
   real("nytimes", go("https://www.nytimes.com")),
+];
+
+const typeIn = (find: RegExp, text: string): Step => ({ tool: "type", find, args: { text } });
+const tap = (find: RegExp): Step => ({ tool: "click", find, args: {} });
+const field = (name: string) =>
+  new RegExp(`(?:searchbox|combobox|textbox) "${name}" \\[ref=(e\\d+)\\]`);
+
+// In-page interactions on public pages (nothing is submitted) and pages that draw late.
+export const INTERACTION_SCENARIOS: Scenario[] = [
+  real(
+    "wikipedia typeahead",
+    go("https://en.wikipedia.org/wiki/Main_Page"),
+    typeIn(field("Search Wikipedia"), "Rust prog"),
+  ),
+  real("youtube typeahead", go("https://www.youtube.com"), typeIn(field("Search"), "lofi")),
+  real(
+    "amazon typeahead",
+    go("https://www.amazon.in"),
+    typeIn(field("Search Amazon\\.in"), "usb c"),
+  ),
+  real(
+    "mdn search",
+    go("https://developer.mozilla.org/en-US/"),
+    tap(/button "Search[^"]*" \[ref=(e\d+)\]/),
+    typeIn(field('[^"]*'), "flexbox"),
+  ),
+  real(
+    "react.dev search",
+    go("https://react.dev"),
+    tap(/button "Search[^"]*" \[ref=(e\d+)\]/),
+    typeIn(field('[^"]*'), "useEffect"),
+  ),
+  real("caniuse search", go("https://caniuse.com"), typeIn(field('[^"]*'), "flexbox")),
+  real(
+    "huggingface filter",
+    go("https://huggingface.co/models"),
+    typeIn(field('[^"]*(?:[Ff]ilter|[Ss]earch)[^"]*'), "llama"),
+  ),
+  real("crates.io search", go("https://crates.io"), {
+    tool: "type",
+    find: field('[^"]*'),
+    args: { text: "serde", submit: true },
+  }),
+  real(
+    "github branch picker",
+    go("https://github.com/oven-sh/bun"),
+    tap(/button "[^"]*(?:branch|main)[^"]*" \[ref=(e\d+)\]/i),
+  ),
+  real(
+    "github issues closed",
+    go("https://github.com/oven-sh/bun/issues"),
+    tap(/link "Closed[^"]*" \[ref=(e\d+)\]/),
+  ),
+  real(
+    "github repo tab",
+    go("https://github.com/oven-sh/bun"),
+    tap(/link "Pull requests[^"]*" \[ref=(e\d+)\]/),
+  ),
+  real(
+    "github file tree",
+    go("https://github.com/oven-sh/bun"),
+    tap(/link "docs(?:, \(Directory\))?" \[ref=(e\d+)\]/),
+  ),
+  real(
+    "wikipedia tools menu",
+    go("https://en.wikipedia.org/wiki/Web_browser"),
+    tap(/(?:button|checkbox) "Tools" \[ref=(e\d+)\]/),
+  ),
+  real(
+    "duckduckgo images",
+    go("https://duckduckgo.com/?q=bun+runtime"),
+    tap(/link "Images" \[ref=(e\d+)\]/),
+  ),
+  real(
+    "herokuapp dynamic controls",
+    go("https://the-internet.herokuapp.com/dynamic_controls"),
+    tap(button("Remove")),
+  ),
+  real(
+    "herokuapp dynamic loading 1",
+    go("https://the-internet.herokuapp.com/dynamic_loading/1"),
+    tap(button("Start")),
+  ),
+  real("spotify", go("https://open.spotify.com/")),
+  real("twitch", go("https://www.twitch.tv/directory")),
+  real("airbnb", go("https://www.airbnb.com")),
+  real("linkedin jobs", go("https://www.linkedin.com/jobs/search?keywords=engineer")),
+  real("medium", go("https://medium.com/tag/programming")),
+  real("producthunt", go("https://www.producthunt.com")),
+  real("pinterest ideas", go("https://www.pinterest.com/ideas/")),
+  real("coursera", go("https://www.coursera.org/search?query=python")),
+  real("dev.to", go("https://dev.to")),
 ];
 
 // Signed-in apps: pages are opened and read, one email is opened; nothing is sent or moved.

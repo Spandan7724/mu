@@ -88,6 +88,34 @@ const PAGES: Record<string, string> = {
     `${ready}document.getElementById('b').onclick=function(){fetch('/api/save?ms=2000',{method:'POST',body:'d'}).then(function(){ready('sent')})};`,
   ),
   "click-noop": page("No-op", "<button id=b>Nothing</button>", ""),
+  // A plain text field that searches once typing pauses for 500 ms.
+  "search-debounced": page(
+    "Search",
+    `<input aria-label="Search" placeholder="Search"><ul id=r></ul>`,
+    `${ready}var t;document.querySelector('input').oninput=function(){clearTimeout(t);t=setTimeout(function(){fetch('/api/slow?ms=300').then(function(){document.getElementById('r').innerHTML='<li>Result one</li><li>Result two</li>';ready('results')})},500)};`,
+  ),
+  // A search box (input type=search) that filters after a 350 ms pause.
+  "filter-debounced": page(
+    "Filter",
+    `<input type=search aria-label="Filter by name"><ul id=r></ul>`,
+    `${ready}var t;document.querySelector('input').oninput=function(){clearTimeout(t);t=setTimeout(function(){fetch('/api/slow?ms=300').then(function(){document.getElementById('r').innerHTML='<li>Model one</li>';ready('filtered')})},350)};`,
+  ),
+  // The response arrives after 1.4 s and its rows are drawn over the next 600 ms.
+  "click-fetch-render": page(
+    "Rows",
+    "<button id=b>Load</button><ul id=r></ul>",
+    `${ready}document.getElementById('b').onclick=function(){fetch('/api/slow?ms=1400').then(function(){var i=0;var t=setInterval(function(){var li=document.createElement('li');li.textContent='Row '+i;document.getElementById('r').appendChild(li);if(++i>=6){clearInterval(t);ready('rows')}},100)})};`,
+  ),
+  // The page's own data request takes longer than the in-page time limit.
+  "click-fetch-own-slow": page(
+    "Slow data",
+    "<button id=b>Load</button>",
+    `${ready}document.getElementById('b').onclick=function(){fetch('/api/slow?ms=3500').then(function(){ready('loaded')})};`,
+  ),
+  // Nothing is drawn until the app boots 3 s after load, with no network meanwhile.
+  "empty-then-render":
+    "<!doctype html><html><head><meta charset=utf-8><title>App</title></head><body><main></main>" +
+    `<script>${ready}setTimeout(function(){var m=document.querySelector('main');m.innerHTML='<h1>App</h1><p>Dashboard</p><a href=/static>Link</a>';ready('app')},3000);</script></body></html>`,
   // A form posts and the server answers slowly with a new page.
   "submit-nav": page(
     "Form",
