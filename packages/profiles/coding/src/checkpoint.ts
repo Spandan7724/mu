@@ -893,6 +893,14 @@ export class ShadowCheckpointProvider implements CheckpointProvider {
     });
   }
 
+  // A file's recorded text at a checkpoint; undefined when it was not recorded.
+  async fileAt(ref: string, path: string): Promise<string | undefined> {
+    return this.locked(async () => {
+      const shown = await this.git("cat-file", "blob", `${ref}:${path}`);
+      return shown.exitCode === 0 ? shown.stdout : undefined;
+    });
+  }
+
   async diff(fromRef: string, toRef?: string): Promise<CheckpointDiffFile[]> {
     return this.locked(async () => {
       await this.ensure();

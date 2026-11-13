@@ -11,6 +11,7 @@ import {
   type ProfileRuntime,
 } from "@mu/core";
 import { partialCheckpointNotice, ShadowCheckpointProvider } from "./checkpoint.ts";
+import { commandChanges } from "./command-changes.ts";
 import {
   codingEnvironment,
   environmentMessage,
@@ -228,7 +229,14 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     writeTool(deps),
     editTool(deps),
     lsTool(deps),
-    bashTool({ root, processes, ...(options.spawn ? { spawn: options.spawn } : {}) }),
+    bashTool({
+      root,
+      processes,
+      ...(options.spawn ? { spawn: options.spawn } : {}),
+      ...(checkpoints && !checkpointNotice
+        ? { changes: commandChanges(root, checkpoints, fileState) }
+        : {}),
+    }),
     ...taskTools(processes, waitingOn),
   ] as AnyTool[];
 

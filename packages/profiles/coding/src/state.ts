@@ -50,6 +50,19 @@ export class FileState {
     this.markRead(absolute);
   }
 
+  // The agent changed the file without its file tools (a shell command). It
+  // stays read only if the agent had seen exactly the content the change began
+  // from; otherwise a write or edit must read it again.
+  markChanged(path: string, previous: string | undefined): void {
+    const absolute = resolve(path);
+    this.modified.add(absolute);
+    const seen = this.reads.get(absolute);
+    if (!seen) return;
+    const unchangedSinceRead =
+      previous === undefined ? !seen.exists : seen.exists && seen.digest === digest(previous);
+    if (unchangedSinceRead) this.markRead(absolute);
+  }
+
   hasRead(path: string): boolean {
     return this.reads.has(resolve(path));
   }

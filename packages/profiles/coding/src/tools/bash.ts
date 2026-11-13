@@ -7,6 +7,7 @@ import {
 } from "@mu/core";
 import { tool } from "mu";
 import { z } from "zod";
+import { type ChangedFile, type CommandChanges, changedFilesNote } from "../command-changes.ts";
 import { shellCommand, shellEnv, terminateProcessTree } from "../shell.ts";
 import { isInspectionShellCommand, isSingleRipgrepCommand } from "../shell-inspection.ts";
 import { shellPermissionTargets } from "../shell-permissions.ts";
@@ -42,6 +43,8 @@ export interface BashDeps {
   root: string;
   // When present, `run_in_background: true` hands the command to it.
   processes?: ProcessManager;
+  // When present, foreground commands that may change state report the files they changed.
+  changes?: CommandChanges;
   // Injectable so tests never spawn real processes.
   spawn?: (
     command: string,
@@ -198,7 +201,7 @@ export function bashTool(deps: BashDeps) {
     canBackground: ({ run_in_background }) =>
       run_in_background !== true && deps.processes !== undefined,
     description:
-      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use write/edit tools for file changes.",
+      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use edit/write for individual file changes; a script run here is fine for batched or mechanical changes across files, and the result lists the files a command changed.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
       description: z
@@ -215,7 +218,7 @@ export function bashTool(deps: BashDeps) {
     }),
     execute: async (
       { command, timeoutMs, run_in_background },
-      { signal, update, background },
+      { signal, update, background, model },
     ): Promise<ToolResult | string> => {
       if (signal.aborted) return errorResult("Aborted before the command started.");
 
@@ -234,6 +237,10 @@ export function bashTool(deps: BashDeps) {
           details: { taskId: task.id, command, background: true },
         };
       }
+
+      const changes = isInspectionShellCommand(command) ? undefined : deps.changes;
+      const before = changes ? await changes.before(signal).catch(() => undefined) : undefined;
+      if (signal.aborted) return errorResult("Aborted before the command started.");
 
       const startedAt = Date.now();
       const live = streamingUpdates(update);
@@ -286,6 +293,11 @@ export function bashTool(deps: BashDeps) {
         };
       }
 
+      const changed: ChangedFile[] =
+        changes && before ? await changes.after(before, model !== undefined).catch(() => []) : [];
+      const changedDetails = changed.length > 0 ? { changedFiles: changed } : {};
+      const note = changed.length > 0 ? `\n\n${changedFilesNote(changed)}` : "";
+
       const parts: string[] = [];
       const stdout = plainTerminalText(result.stdout);
       const stderr = plainTerminalText(result.stderr);
@@ -298,8 +310,14 @@ export function bashTool(deps: BashDeps) {
 
       if (result.timedOut) {
         return {
-          content: [{ type: "text", text: `${body}\n\n[command timed out and was killed]` }],
-          details: { command, exitCode: result.exitCode, timedOut: true, durationMs },
+          content: [{ type: "text", text: `${body}\n\n[command timed out and was killed]${note}` }],
+          details: {
+            command,
+            exitCode: result.exitCode,
+            timedOut: true,
+            durationMs,
+            ...changedDetails,
+          },
           isError: true,
         };
       }
@@ -322,10 +340,10 @@ export function bashTool(deps: BashDeps) {
         content: [
           {
             type: "text",
-            text: failed ? `${body}\n\n[exit code ${result.exitCode}]` : body,
+            text: `${failed ? `${body}\n\n[exit code ${result.exitCode}]` : body}${note}`,
           },
         ],
-        details: { command, exitCode: result.exitCode, durationMs },
+        details: { command, exitCode: result.exitCode, durationMs, ...changedDetails },
         isError: failed,
       };
     },
