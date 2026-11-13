@@ -94,7 +94,7 @@ export const TASKS: EvalTask[] = [
     name: "search + extract (Wikipedia)",
     modes: ["default"],
     prompt: () =>
-      "What's the current population of Iceland according to English Wikipedia? Give the number and the year it refers to.",
+      "Open English Wikipedia in the browser and find Iceland's current population there. Give the number and the year it refers to.",
     check: async ({ text, messages }) => {
       if (!toolCalls(messages).some((call) => call.name === "navigate")) {
         return { pass: false, note: "answered without opening Wikipedia (ungrounded)" };
@@ -510,9 +510,17 @@ function callLog(messages: AgentMessage[], prefix = ""): string[] {
             | { type?: string; description?: string; messages?: AgentMessage[] }
             | undefined)
         : undefined;
-    return details?.type === "subagent"
-      ? callLog(details.messages ?? [], `${prefix}[${details.description}] `)
-      : [];
+    if (details?.type === "subagent")
+      return callLog(details.messages ?? [], `${prefix}[${details.description}] `);
+    // Settle's "may not be finished" note, so the next call shows what the model made of it.
+    const note =
+      message.role === "toolResult"
+        ? message.content
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("\n")
+            .match(/note: the page may not be finished \(([^)]*)\)/)?.[1]
+        : undefined;
+    return note ? [`${prefix}  ↳ not finished: ${note}`] : [];
   });
 }
 
