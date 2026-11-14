@@ -201,7 +201,7 @@ export function bashTool(deps: BashDeps) {
     canBackground: ({ run_in_background }) =>
       run_in_background !== true && deps.processes !== undefined,
     description:
-      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use edit/write for individual file changes; a script run here is fine for batched or mechanical changes across files, and the result lists the files a command changed.",
+      "Run a command with the platform-native shell in the session root. For repository exploration, batch read-only inspection and narrow before reading. Keep searches inspection-safe: do not add printf/echo headings, pipe to sort, or redirect stderr; use rg --sort path, --no-messages, and repeated -e arguments. Keep each pattern simply quoted and never splice quote characters inside a shell regex. Read only relevant line ranges unless full context is needed. Use write/edit tools for file changes.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
       description: z

@@ -476,6 +476,60 @@ export function diffLineCounts(
   return `${diff.approximate ? styleText("≈ ", { dim: true }, depth) : ""}${added} ${removed}`;
 }
 
+interface CommandChange extends CheckpointDiffFile {
+  hunksOmitted?: boolean;
+}
+
+// Files a shell command changed, as the coding profile measured them.
+function commandChanges(info: ToolRenderInfo): CommandChange[] {
+  if (!info.result) return [];
+  const files = (info.result.details as { changedFiles?: unknown } | undefined)?.changedFiles;
+  return Array.isArray(files) ? (files as CommandChange[]) : [];
+}
+
+function changeTotals(files: readonly CommandChange[]): { added: number; removed: number } {
+  return {
+    added: files.reduce((sum, file) => sum + file.added, 0),
+    removed: files.reduce((sum, file) => sum + file.removed, 0),
+  };
+}
+
+function fileCount(count: number): string {
+  return `${count} file${count === 1 ? "" : "s"}`;
+}
+
+// The result ends with a line naming the changed files for the model; the row
+// already shows them, so the user's view of the output leaves it out.
+function withoutChangeNote(info: ToolRenderInfo): ToolRenderInfo {
+  if (!info.result || commandChanges(info).length === 0) return info;
+  const content = info.result.content.map((block, index, blocks) =>
+    block.type === "text" && index === blocks.length - 1
+      ? { ...block, text: block.text.replace(/\n*\[changed \d+ files?: [^\n]*\]$/, "") }
+      : block,
+  );
+  return { ...info, result: { ...info.result, content } };
+}
+
+function commandDiffs(info: ToolRenderInfo, ctx: RenderContext): string[] {
+  return commandChanges(info).flatMap((file) => {
+    const [header = "", ...lines] = diffCell(
+      {
+        path: file.path,
+        added: file.added,
+        removed: file.removed,
+        lines: displayedDiffLines(diffLinesFromHunks(file.hunks), info, ctx),
+      },
+      ctx,
+    );
+    const omitted = file.hunksOmitted
+      ? [
+          `${MARGIN}${INDENT}${styleText("diff too large to keep in the session", { dim: true }, ctx.depth)}`,
+        ]
+      : [];
+    return [header, ...omitted, ...lines];
+  });
+}
+
 // A diff is only meaningful whole: a completed call shows the tool's authoritative
 // before/after file diff, and a failed one what it proposed, unnumbered.
 function fileDiff(info: ToolRenderInfo, ctx: RenderContext): string[] {
@@ -1138,7 +1192,14 @@ export class RendererRegistry {
     if (activityKind === "command") {
       const failed = infos.filter((info) => info.result?.isError).length;
       const failure = failed > 0 ? `, ${styleText(`${failed} failed`, { red: true }, depth)}` : "";
-      return `Ran ${infos.length} command${infos.length === 1 ? "" : "s"}${failure}`;
+      // A failed command's changes happened too, so they count.
+      const changes = infos.flatMap(commandChanges);
+      const files = new Set(changes.map((file) => file.path)).size;
+      const changed =
+        files > 0
+          ? `, changed ${fileCount(files)} ${diffLineCounts(changeTotals(changes), depth)}`
+          : "";
+      return `Ran ${infos.length} command${infos.length === 1 ? "" : "s"}${failure}${changed}`;
     }
     // A file edited by several calls is one file, and a failed call changed nothing.
     const done = infos.filter((info) => info.result && !info.result.isError);
@@ -1345,24 +1406,35 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
     const command = firstString(info.args, ["command"])?.trimEnd();
     const [firstLine = "", ...moreLines] = command?.split("\n") ?? [];
     const shownCommand = info.expanded || moreLines.length === 0 ? command : `${firstLine} …`;
+    const changes = commandChanges(info);
+    // The counts are reserved before the command is fitted, so they never wrap.
+    const changed =
+      changes.length > 0
+        ? `${styleText(` ${GLYPHS.separator} `, { dim: true }, ctx.depth)}${fileCount(changes.length)} ${diffLineCounts(changeTotals(changes), ctx.depth)}`
+        : "";
+    const shown = withoutChangeNote(info);
+    const [header = "", ...cell] = toolCell(
+      {
+        name: userShell ? "$" : info.running ? "running" : info.result ? "ran" : "bash",
+        tone: "exec",
+        ...(shownCommand ? { primaryArg: shownCommand, primaryRole: "code" } : {}),
+        ...(info.result?.isError ? { isError: true } : {}),
+        ...(info.result
+          ? pendingTask
+            ? { summary: task as string }
+            : ok
+              ? { isSuccess: true, ...(succeeded ? { summary: succeeded } : {}) }
+              : { summary: outcome, summaryError: true }
+          : {}),
+      },
+      changed ? { ...ctx, width: ctx.width - stringWidth(stripAnsi(changed)) } : ctx,
+    );
     return [
-      ...toolCell(
-        {
-          name: userShell ? "$" : info.running ? "running" : info.result ? "ran" : "bash",
-          tone: "exec",
-          ...(shownCommand ? { primaryArg: shownCommand, primaryRole: "code" } : {}),
-          ...(info.result?.isError ? { isError: true } : {}),
-          ...(info.result
-            ? pendingTask
-              ? { summary: task as string }
-              : ok
-                ? { isSuccess: true, ...(succeeded ? { summary: succeeded } : {}) }
-                : { summary: outcome, summaryError: true }
-            : {}),
-        },
-        ctx,
-      ),
-      ...resultPreview(info, ctx),
+      header + changed,
+      ...cell,
+      ...(info.expanded && info.result
+        ? [...expandedResult(shown, ctx), ...commandDiffs(info, ctx)]
+        : resultPreview(shown, ctx)),
     ];
   },
   ls: (info, ctx) => [
@@ -1397,6 +1469,7 @@ for (const name of ["write", "edit"]) {
 }
 const bashRenderer = codingRenderers.bash;
 if (bashRenderer) {
+  bashRenderer.ownsExpansion = true;
   bashRenderer.activityKind = (info) => {
     if (booleanArg(info.args, "userShell")) return undefined;
     const command = firstString(info.args, ["command"])?.trim() ?? "";
