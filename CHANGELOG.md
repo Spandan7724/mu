@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.3.2 — 2026-11-14
+
+### Highlights
+
+- **Bash shows the files a command changed.** In a git repository, each command that may
+  write is checkpointed; its row ends `· N files +A −R` and expands to the output followed
+  by the diffs. Changed files carry over through compaction.
+- **Interrupted runs say so.** A stopped run ends `interrupted · esc · 3m 39s` (also after
+  resume) instead of `worked for`, and the model is told it was interrupted and by whom, so
+  it no longer invents a reason. `mu agents` lists such runs as `interrupted`.
+- **Thinking opens and hides.** A thinking block longer than its row takes the `›` marker
+  and opens to its full text in review. `/show-thinking [on|off]` hides thinking in the TUI
+  and `mu agents`; it only changes the display and is saved as `showThinking`.
+
+### Changes
+
+- Images never reach a model that cannot read them. Tools learn whether the current model
+  accepts images, leftover images are replaced with a note, and a provider that refuses
+  images is retried once without them and then remembered. After `/model`, the browser
+  uses the new model instead of a stale one.
+
+### Browser
+
+- **Faster, more complete settle.** Page-initiated writes and endless background traffic
+  no longer hold an action; a visible loading indicator does. Pages whose network never
+  goes quiet return once the viewport has been unchanged for 3 s. On public sites settle
+  time fell by about a quarter to a third (p90 10–12 s → 5–7 s).
+- Settle checks the DOM is still quiet when it finishes, so half-drawn responses are not
+  read, and reports unfinished work to the model instead of waiting it out.
+- mu waits for an edit to save before leaving a page it typed into, and closes tabs
+  through the page so "leave site?" dialogs reach the model.
+- Pages keep rendering in a window on a hidden workspace: mu restarts stalled animation
+  frames before reading the page. The README describes a Hyprland `render_unfocused` rule
+  that avoids the restart.
+- A headless browser closes when mu exits. A visible window stays open for the next run,
+  including one a headless run re-attached to.
+- Page capture retries when a node handle disappears mid-capture.
+
+### Terminal UI
+
+- The interrupted-run row is dim like the other status rows.
+- Review: Enter opens a tool row or a `›` thinking row; `Alt+T` collapses everything
+  opened.
+
+### SDK and RPC
+
+- Tools receive a `ToolCallContext` (`model`, `acceptsImages`) as a new optional last
+  argument to `execute`; `tool()` handlers get `model` and `acceptsImages`.
+- `Agent.abort({ by, via })` records who stopped a run; an aborted run ends with an
+  `interrupted` message (`INTERRUPTED_TYPE`, `Interruption`). The RPC `abort` op takes
+  optional `by` (`user` | `host`, default `user`) and `via`.
+- Browser `keepOpen` defaults to `true` for a visible window and `false` when headless.
+
+**Full commit list:** https://github.com/Spandan7724/mu/compare/v0.3.1...v0.3.2
+
 ## 0.3.1 — 2026-11-12
 
 ### Highlights

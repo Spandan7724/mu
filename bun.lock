@@ -16,7 +16,7 @@
     },
     "packages/cli": {
       "name": "@mu-agent/mu",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "bin": {
         "mu": "./dist/mu.js",
       },
