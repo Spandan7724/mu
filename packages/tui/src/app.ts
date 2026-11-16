@@ -3728,7 +3728,13 @@ export class App {
     }
     if (key.name === "return" || key.name === "tab") {
       const selected = this.commandList.selected;
-      if (selected && this.mentionStart >= 0 && selected.label.endsWith("/")) {
+      // Tab opens a folder; Enter mentions it.
+      if (
+        key.name === "tab" &&
+        selected &&
+        this.mentionStart >= 0 &&
+        selected.label.endsWith("/")
+      ) {
         this.editor.spliceBeforeCursor(this.mentionStart, `@${selected.label}`);
         this.refreshMentions();
         return;

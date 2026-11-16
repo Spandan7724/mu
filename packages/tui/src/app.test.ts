@@ -4377,7 +4377,7 @@ describe("@-file mention popup", () => {
     expect(app.editor.text).toBe("@ser");
   });
 
-  test("picking a folder opens it instead of completing", () => {
+  test("tab opens a folder and enter mentions one", () => {
     const queries: string[] = [];
     const app = new App({
       width: 60,
@@ -4405,6 +4405,14 @@ describe("@-file mention popup", () => {
       key: { name: "return", ctrl: false, alt: false, shift: false },
     });
     expect(app.editor.text).toBe("see config/.env ");
+    expect(app.currentMode).toBe("composing");
+
+    feed(app, "and @con");
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.editor.text).toBe("see config/.env and config/ ");
     expect(app.currentMode).toBe("composing");
   });
 

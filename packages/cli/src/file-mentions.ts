@@ -41,16 +41,31 @@ interface IndexedPath {
   base: number;
 }
 
-function indexPaths(paths: string[]): IndexedPath[] {
+// Folders come from the file paths (labelled with a trailing `/`), so only
+// folders holding a file the ignore rules allow are listed. A folder sorts with
+// the files beside it.
+function indexPaths(files: string[]): IndexedPath[] {
+  const folders = new Set<string>();
+  for (const file of files) {
+    for (let slash = file.lastIndexOf("/"); slash > 0; slash = file.lastIndexOf("/", slash - 1)) {
+      const folder = file.slice(0, slash + 1);
+      if (folders.has(folder)) break;
+      folders.add(folder);
+    }
+  }
   const depth = (path: string) => {
     let count = 0;
-    for (let i = 0; i < path.length; i++) if (path.charCodeAt(i) === 47) count++;
+    for (let i = 0; i < path.length - 1; i++) if (path.charCodeAt(i) === 47) count++;
     return count;
   };
-  return paths
+  return [...folders, ...files]
     .map((path) => ({ path, depth: depth(path) }))
     .sort((a, b) => a.depth - b.depth || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-    .map(({ path }) => ({ path, lower: path.toLowerCase(), base: path.lastIndexOf("/") + 1 }));
+    .map(({ path }) => ({
+      path,
+      lower: path.toLowerCase(),
+      base: path.lastIndexOf("/", path.length - 2) + 1,
+    }));
 }
 
 export function ripgrepFileArgs(): string[] {
@@ -213,6 +228,7 @@ export class FileMentions {
     const contains: MentionItem[] = [];
     for (const entry of entries) {
       const directory = entry.isDirectory();
+      if (directory && entry.name === ".git") continue;
       if (filtered) {
         if (entry.name.startsWith(".")) continue;
         if (directory ? JUNK_DIR_SET.has(entry.name) : isJunkFile(entry.name)) continue;

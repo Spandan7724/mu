@@ -49,18 +49,32 @@ describe.each([
   test("leaves out junk and dotfiles even without ignore files", async () => {
     await files({ ...junk, ".env": "" });
     const mentions = await built({ ripgrep: executable });
-    expect(labels(mentions.query("")).sort()).toEqual(["app.py", "src/main.py"]);
+    expect(labels(mentions.query("")).sort()).toEqual(["app.py", "src/", "src/main.py"]);
   });
 
   test("ranks file-name prefix matches over deeper path matches", async () => {
     await files({ "lib/app/index.ts": "", "src/apple.ts": "", "my-app.ts": "", "z/app.ts": "" });
     const mentions = await built({ ripgrep: executable });
     expect(labels(mentions.query("app"))).toEqual([
+      "lib/app/",
       "src/apple.ts",
       "z/app.ts",
       "my-app.ts",
       "lib/app/index.ts",
     ]);
+  });
+
+  test("folders are searchable and sort with the files beside them", async () => {
+    await files({ "src/api/client.ts": "", "README.md": "", "zed.ts": "" });
+    const mentions = await built({ ripgrep: executable });
+    expect(labels(mentions.query(""))).toEqual([
+      "README.md",
+      "src/",
+      "zed.ts",
+      "src/api/",
+      "src/api/client.ts",
+    ]);
+    expect(labels(mentions.query("ap"))).toEqual(["src/api/", "src/api/client.ts"]);
   });
 
   test("matches case-insensitively and caps results", async () => {
@@ -87,19 +101,26 @@ describe.if(ripgrep !== undefined)("ignore rules", () => {
     await files({ ".gitignore": "out/\n", "out/a.js": "", "keep.ts": "" });
     const mentions = await built({ ripgrep });
     expect(labels(mentions.query(""))).toEqual(["keep.ts"]);
+    expect(labels(mentions.query("out"))).toEqual([]);
   });
 
   test("build and dist are listed unless ignored", async () => {
     await files({ "build/gen.ts": "", "dist/x.js": "" });
     const mentions = await built({ ripgrep });
-    expect(labels(mentions.query("")).sort()).toEqual(["build/gen.ts", "dist/x.js"]);
+    expect(labels(mentions.query("")).sort()).toEqual([
+      "build/",
+      "build/gen.ts",
+      "dist/",
+      "dist/x.js",
+    ]);
   });
 });
 
 describe("folder listing", () => {
-  test("a slash lists the folder on disk, ignored files and dotfiles included", async () => {
+  test("a slash lists the folder on disk, ignored files and dotfiles included, .git not", async () => {
     await files({ ".gitignore": "local.json\n", "config/local.json": "", "config/.env": "" });
     await mkdir(join(root, "config/nested"));
+    await mkdir(join(root, ".git"));
     const mentions = await built({ ripgrep });
     expect(labels(mentions.query("config/"))).toEqual([
       "config/.env",
