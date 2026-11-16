@@ -26,6 +26,7 @@ export interface ParsedArgs {
   allowAll: boolean;
   noInstructions: boolean;
   noCheckpoints: boolean;
+  addDirs: string[];
   purgeData: boolean;
   browserProfile?: string | undefined;
   cdpUrl?: string | undefined;
@@ -64,6 +65,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     allowAll: false,
     noInstructions: false,
     noCheckpoints: false,
+    addDirs: [],
     purgeData: false,
     errors: [],
   };
@@ -183,6 +185,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--no-checkpoints":
         parsed.noCheckpoints = true;
         break;
+      case "--add-dir": {
+        const dir = argv[++i];
+        if (dir) parsed.addDirs.push(dir);
+        else parsed.errors.push("--add-dir requires a folder");
+        break;
+      }
       case "--permission-mode":
         parsed.permissionMode = argv[++i];
         if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
@@ -305,6 +313,7 @@ Options for both agents:
       --permission-mode <mode>
                              start in this mode (see each agent above)
       --allow-all            start in the profile's unrestricted mode (yolo / autonomous)
+      --add-dir <folder>     let the file tools reach this folder too (repeatable)
       --max-turns <n>        stop after n model turns (-p and --rpc)
       --max-cost <usd>       stop once the run has cost this much (-p and --rpc)
   -h, --help                 show this help
@@ -322,6 +331,7 @@ Slash commands in every session:
   /rename          name the current conversation
   /new             clear the screen and start a new chat
   /btw             open an ephemeral side conversation
+  /add-dir [path]  let the file tools reach another folder this session, or list them
   /export [path]   save the transcript as Markdown
   /cost            spend by source and model, and what fills the context
   /keybindings     list every key binding

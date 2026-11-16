@@ -10,6 +10,7 @@ import {
   loadMcpConfig,
   mcpExtension,
   projectDirectories,
+  type SkillCatalog,
   skillRoots,
   skillsExtension,
 } from "mu";
@@ -18,6 +19,8 @@ import { readSkillStates } from "./config.ts";
 export interface BuiltInExtensions {
   host: ExtensionHost;
   warnings: string[];
+  // Skill roots and every discovered skill's directory, current as of the last scan.
+  skillFolders: () => string[];
 }
 
 export interface BuiltInOptions {
@@ -49,7 +52,17 @@ export async function loadBuiltInExtensions(
   const roots = skillRoots({ home, projectDirs });
   const catalog = await discoverSkills(roots);
   warnings.push(...catalog.warnings.map((warning) => `skill ${warning}`));
-  await host.register(skillsExtension({ roots, catalog, states: () => readSkillStates(userFile) }));
+  let skillDirectories: string[] = [];
+  const onCatalog = (scanned: SkillCatalog) => {
+    skillDirectories = [...scanned.skills, ...scanned.shadowed].map((skill) => skill.directory);
+  };
+  onCatalog(catalog);
+  await host.register(
+    skillsExtension({ roots, catalog, states: () => readSkillStates(userFile), onCatalog }),
+  );
+  const skillFolders = () => [
+    ...new Set([...roots.map((root) => root.directory), ...skillDirectories]),
+  ];
 
   const config = await loadMcpConfig({
     ...configOptions,
@@ -85,5 +98,5 @@ export async function loadBuiltInExtensions(
   const user = await loadExtensions(host, { ...extensionOptions, projectDir: cwd });
   warnings.push(...user.failed.map(({ file, error }) => `extension ${file}: ${error}`));
 
-  return { host, warnings };
+  return { host, warnings, skillFolders };
 }

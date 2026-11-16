@@ -204,10 +204,11 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
       interaction.clickXy,
       interaction.downloads,
       notesTool(laneState),
-      ...fileTools(config.workspace),
+      ...fileTools({ root: config.workspace, folders: config.folders }),
       delegateTool({
         command: config.codingCommand,
         workspace: config.workspace,
+        folders: config.folders,
         pageText: (text) => lane.dataflow.leak(text, "")?.from,
       }),
     ] as AnyTool[];

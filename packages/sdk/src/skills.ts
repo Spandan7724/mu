@@ -356,6 +356,8 @@ export interface SkillsExtensionOptions {
   // The user's on/manual/off choices by skill name, read on every lookup so a change
   // applies from the next message.
   states?: () => SkillStates;
+  // Called with every scan's catalog.
+  onCatalog?: (catalog: SkillCatalog) => void;
 }
 
 // Re-read so an edited skill takes effect without restarting the session.
@@ -375,6 +377,7 @@ export function skillsExtension(options: SkillsExtensionOptions): Extension {
   let catalog: SkillCatalog = options.catalog ?? { skills: [], shadowed: [], warnings: [] };
   const rescan = async () => {
     catalog = await discoverSkills(options.roots);
+    options.onCatalog?.(catalog);
     return catalog;
   };
   const states = options.states ?? ((): SkillStates => ({}));

@@ -569,6 +569,7 @@ describe("runHeadless", () => {
         allowAll: false,
         noInstructions: false,
         noCheckpoints: false,
+        addDirs: [],
         purgeData: false,
         errors: [],
       },

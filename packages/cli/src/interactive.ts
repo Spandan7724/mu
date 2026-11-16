@@ -1,7 +1,6 @@
-import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative } from "node:path";
-import { bashTool } from "@mu/profile-coding";
+import { bashTool, resolveRipgrepExecutable } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
@@ -62,6 +61,7 @@ import {
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
+import { FileMentions } from "./file-mentions.ts";
 import {
   applySavedThinking,
   loadUserConfig,
@@ -308,6 +308,7 @@ export async function runInteractive(
       savedPermissionMode: true,
       noInstructions: args.noInstructions,
       noCheckpoints: args.noCheckpoints,
+      addDirs: args.addDirs,
       browser: browserFlags(args),
       resumeSessionId: args.resumeSessionId,
       agentOptions: options,
@@ -430,7 +431,7 @@ export async function runInteractive(
         }
         void runCommand(text);
       },
-      onMentionQuery: (query) => mentionCandidates(query),
+      onMentionQuery: (query) => fileMentions.query(query),
       onThinkingChange: (level) => {
         const target = activeAgent();
         target.setThinking(level as ThinkingLevel);
@@ -1010,38 +1011,14 @@ export async function runInteractive(
     paint();
   });
 
-  // Shallow file listing for the `@` popup — bounded so a huge tree cannot
-  // stall a keystroke.
-  const SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
-  function mentionCandidates(query: string): { label: string }[] {
-    const root = process.cwd();
-    const out: { label: string }[] = [];
-    const walk = (dir: string, depth: number) => {
-      if (depth > 3 || out.length >= 50) return;
-      let names: string[];
-      try {
-        names = readdirSync(dir);
-      } catch {
-        return;
-      }
-      for (const name of names.sort()) {
-        if (name.startsWith(".") || SKIP.has(name)) continue;
-        const full = join(dir, name);
-        try {
-          if (statSync(full).isDirectory()) walk(full, depth + 1);
-          else {
-            const rel = relative(root, full);
-            if (query.length === 0 || rel.includes(query)) out.push({ label: rel });
-          }
-        } catch {
-          // unreadable entry — skip
-        }
-        if (out.length >= 50) return;
-      }
-    };
-    walk(root, 0);
-    return out;
-  }
+  const fileMentions = new FileMentions({
+    root: process.cwd(),
+    ripgrep: resolveRipgrepExecutable(),
+    onReady: () => {
+      app.refreshMentionList();
+      paint();
+    },
+  });
 
   function applyPermissionMode(mode: PermissionMode): void {
     runtime.setPermissionMode(mode.id);

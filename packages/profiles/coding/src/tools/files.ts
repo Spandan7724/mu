@@ -12,77 +12,51 @@ const MAX_READ_SOURCE_BYTES = 16 * 1024 * 1024;
 
 export interface ToolDeps {
   root: string;
+  // Folders besides the root that the tools may reach (user-added, skill folders).
+  folders?: () => readonly string[];
   state: FileState;
   instructions?: {
     instructionsForPath: (path: string) => Promise<{ text: string; sources: string[] }>;
   };
 }
 
+export type FileReach = Pick<ToolDeps, "root" | "folders">;
+
+function inside(folder: string, path: string): boolean {
+  const rel = relative(folder, path);
+  return !(rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel));
+}
+
 // Every path is resolved against the session root and must stay inside it.
 export function resolveInRoot(root: string, path: string): string {
   const absolute = isAbsolute(path) ? resolve(path) : resolve(root, path);
-  const rel = relative(resolve(root), absolute);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (!inside(resolve(root), absolute)) {
     throw new Error(`Path escapes the session root: ${path}`);
   }
   return absolute;
 }
 
-function assertCanonicalInRoot(root: string, target: string, original: string): void {
-  const rel = relative(root, target);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`Path escapes the session root through a symbolic link: ${original}`);
-  }
+export function reachableFolders(reach: FileReach): string[] {
+  return [reach.root, ...(reach.folders?.() ?? [])].map((folder) => resolve(folder));
 }
 
-export async function resolveExistingInRoot(root: string, path: string): Promise<string> {
-  const lexical = resolveInRoot(root, path);
-  const canonicalRoot = await realpath(root);
-  const canonicalTarget = await realpath(lexical);
-  assertCanonicalInRoot(canonicalRoot, canonicalTarget, path);
-  return canonicalTarget;
+// Relative paths resolve against the root; the result must lie in one of the folders.
+export function resolveReachable(reach: FileReach, path: string): string {
+  const absolute = isAbsolute(path) ? resolve(path) : resolve(reach.root, path);
+  if (!reachableFolders(reach).some((folder) => inside(folder, absolute))) {
+    throw new Error(`Path is outside the folders this session can reach: ${path}`);
+  }
+  return absolute;
 }
 
-export async function resolveForWriteInRoot(root: string, path: string): Promise<string> {
-  const lexical = resolveInRoot(root, path);
-  const canonicalRoot = await realpath(root);
-  try {
-    const canonicalTarget = await realpath(lexical);
-    assertCanonicalInRoot(canonicalRoot, canonicalTarget, path);
-    return canonicalTarget;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-
+// The real location of `path`: links followed as far as the path exists, the
+// missing rest appended.
+function canonical(path: string): string {
   const missing: string[] = [];
-  let cursor = lexical;
+  let cursor = path;
   for (;;) {
     try {
-      const canonicalParent = await realpath(cursor);
-      assertCanonicalInRoot(canonicalRoot, canonicalParent, path);
-      return resolve(canonicalParent, ...missing.reverse());
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const parent = dirname(cursor);
-      if (parent === cursor) throw error;
-      missing.push(relative(parent, cursor));
-      cursor = parent;
-    }
-  }
-}
-
-// The file a write to `path` lands in, relative to the canonical root with
-// forward slashes, which is how checkpoints name it. Symbolic links are
-// followed, so the named resource is the file that actually changes.
-export function checkpointResource(root: string, path: string): string {
-  const canonicalRoot = realpathSync.native(resolve(root));
-  const missing: string[] = [];
-  let cursor = resolveInRoot(root, path);
-  let target: string;
-  for (;;) {
-    try {
-      target = resolve(realpathSync.native(cursor), ...missing.toReversed());
-      break;
+      return resolve(realpathSync.native(cursor), ...missing.toReversed());
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const parent = dirname(cursor);
@@ -91,23 +65,52 @@ export function checkpointResource(root: string, path: string): string {
       cursor = parent;
     }
   }
-  assertCanonicalInRoot(canonicalRoot, target, path);
-  return relative(canonicalRoot, target).split(sep).join("/");
+}
+
+function assertCanonicalReachable(reach: FileReach, target: string, original: string): void {
+  if (!reachableFolders(reach).some((folder) => inside(canonical(folder), target))) {
+    throw new Error(
+      `Path leaves the folders this session can reach through a symbolic link: ${original}`,
+    );
+  }
+}
+
+export async function resolveExisting(reach: FileReach, path: string): Promise<string> {
+  const canonicalTarget = await realpath(resolveReachable(reach, path));
+  assertCanonicalReachable(reach, canonicalTarget, path);
+  return canonicalTarget;
+}
+
+export function resolveForWrite(reach: FileReach, path: string): string {
+  const canonicalTarget = canonical(resolveReachable(reach, path));
+  assertCanonicalReachable(reach, canonicalTarget, path);
+  return canonicalTarget;
+}
+
+// The file a write to `path` lands in, relative to the canonical root with
+// forward slashes, which is how checkpoints name it. Symbolic links are
+// followed, so the named resource is the file that actually changes. A file in
+// another folder is no checkpoint resource.
+export function checkpointResources(reach: FileReach, path: string): string[] {
+  const target = resolveForWrite(reach, path);
+  const canonicalRoot = canonical(resolve(reach.root));
+  if (!inside(canonicalRoot, target)) return [];
+  return [relative(canonicalRoot, target).split(sep).join("/")];
 }
 
 function display(root: string, path: string): string {
-  const rel = relative(resolve(root), path);
+  const resolvedRoot = resolve(root);
+  if (!inside(resolvedRoot, path)) return path;
+  const rel = relative(resolvedRoot, path);
   return rel === "" ? "." : rel;
 }
 
 // Root-relative with forward slashes, so a rule like `src/*` reads the same on
-// every platform. Execution still enforces the root.
+// every platform; a path in another folder stays absolute. Execution still
+// enforces the folders.
 function permissionPath(root: string, path: string): string {
-  try {
-    return display(root, resolveInRoot(root, path)).split(sep).join("/");
-  } catch {
-    return resolve(root, path);
-  }
+  const absolute = isAbsolute(path) ? resolve(path) : resolve(root, path);
+  return display(root, absolute).split(sep).join("/");
 }
 
 // A trailing newline ends the last line rather than starting another.
@@ -138,10 +141,10 @@ export function readTool(deps: ToolDeps) {
     }),
     isConcurrencySafe: () => true,
     execute: async ({ path, offset, limit }): Promise<ToolResult | string> => {
-      let absolute = resolveInRoot(deps.root, path);
+      let absolute = resolveReachable(deps, path);
       let content: string;
       try {
-        absolute = await resolveExistingInRoot(deps.root, path);
+        absolute = await resolveExisting(deps, path);
         const info = await stat(absolute);
         if (info.size > MAX_READ_SOURCE_BYTES) {
           return errorResult(
@@ -197,7 +200,7 @@ export function writeTool(deps: ToolDeps) {
   return tool({
     name: "write",
     changesState: true,
-    changedResources: ({ path }) => [checkpointResource(deps.root, path)],
+    changedResources: ({ path }) => checkpointResources(deps, path),
     permissionPattern: ({ path }) => permissionPath(deps.root, path),
     description:
       "Write a complete file, creating it or replacing its contents. To change part of an existing file, prefer edit.",
@@ -206,7 +209,7 @@ export function writeTool(deps: ToolDeps) {
       content: z.string().describe("The complete file contents"),
     }),
     permissionDetails: async ({ path, content }) => {
-      const absolute = await resolveForWriteInRoot(deps.root, path);
+      const absolute = resolveForWrite(deps, path);
       let before: string | undefined;
       try {
         before = await readFile(absolute, "utf8");
@@ -223,7 +226,7 @@ export function writeTool(deps: ToolDeps) {
       };
     },
     execute: async ({ path, content }): Promise<ToolResult | string> => {
-      const absolute = await resolveForWriteInRoot(deps.root, path);
+      const absolute = resolveForWrite(deps, path);
       let exists = true;
       let currentContent: string | undefined;
       try {
@@ -585,7 +588,7 @@ export function editTool(deps: ToolDeps) {
   return tool({
     name: "edit",
     changesState: true,
-    changedResources: ({ path }) => [checkpointResource(deps.root, path)],
+    changedResources: ({ path }) => checkpointResources(deps, path),
     permissionPattern: ({ path }) => permissionPath(deps.root, path),
     description:
       "Replace exact strings in a file. Each oldString must appear exactly once unless that edit sets replaceAll. Pass several edits to change one file in a single call. Read the file first.",
@@ -600,7 +603,7 @@ export function editTool(deps: ToolDeps) {
     }),
     coerceInput: coerceEditInput,
     permissionDetails: async ({ path, edits }) => {
-      const absolute = await resolveExistingInRoot(deps.root, path);
+      const absolute = await resolveExisting(deps, path);
       const relativePath = display(deps.root, absolute);
       let content: string;
       try {
@@ -620,9 +623,9 @@ export function editTool(deps: ToolDeps) {
       };
     },
     execute: async ({ path, edits }): Promise<ToolResult | string> => {
-      let absolute = resolveInRoot(deps.root, path);
+      let absolute = resolveReachable(deps, path);
       try {
-        absolute = await resolveExistingInRoot(deps.root, path);
+        absolute = await resolveExisting(deps, path);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           return errorResult(`File not found: ${display(deps.root, absolute)}`);
@@ -690,10 +693,10 @@ export function lsTool(deps: ToolDeps) {
     isConcurrencySafe: () => true,
     execute: async ({ path }): Promise<ToolResult | string> => {
       const requested = path ?? ".";
-      let absolute = resolveInRoot(deps.root, requested);
+      let absolute = resolveReachable(deps, requested);
       let entries: string[];
       try {
-        absolute = await resolveExistingInRoot(deps.root, requested);
+        absolute = await resolveExisting(deps, requested);
         entries = await readdir(absolute);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

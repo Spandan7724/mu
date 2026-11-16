@@ -53,6 +53,8 @@ export interface CodingProfileOptions {
   managedInstructionPaths?: string[];
   // Overrides checkpoints.enabled from project and user config.
   checkpoints?: boolean;
+  // Folders besides the root that the file tools reach, read on every call (D92).
+  folders?: () => readonly string[];
 }
 
 export interface CodingProfile extends Profile {
@@ -216,7 +218,12 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     }
     checkpoints.setIncludedPaths(included);
   }
-  const deps = { root, state: fileState, instructions: instructionLoader };
+  const deps = {
+    root,
+    state: fileState,
+    instructions: instructionLoader,
+    ...(options.folders ? { folders: options.folders } : {}),
+  };
   // Tasks a task_output call is waiting on; that call reports the exit itself.
   const waitingOn = new Map<string, number>();
   const processes = new ProcessManager(
@@ -418,15 +425,20 @@ export {
   parseInspectionCommands,
   type ShellCommandClassification,
 } from "./shell-inspection.ts";
+export { resolveRipgrepExecutable } from "./ripgrep.ts";
 export { shellPermissionTargets } from "./shell-permissions.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
 export {
   editPreviewProbe,
   editTool,
+  type FileReach,
   lsTool,
+  reachableFolders,
   readTool,
+  resolveExisting,
   resolveInRoot,
+  resolveReachable,
   writeTool,
 } from "./tools/files.ts";
 export { shellSpawner, taskTools } from "./tools/tasks.ts";

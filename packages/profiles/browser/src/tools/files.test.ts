@@ -16,7 +16,7 @@ test("file tools work inside the agent's folder only, read PDFs, and fence what 
   writeFileSync(join(root, "resume.pdf"), minimalPdf(["Ada Lovelace, Analyst"]));
   writeFileSync(join(base, "outside.md"), "private\n");
   symlinkSync(join(base, "outside.md"), join(root, "link.md"));
-  const tools = Object.fromEntries(fileTools(root).map((tool) => [tool.name, tool])) as Record<
+  const tools = Object.fromEntries(fileTools({ root }).map((tool) => [tool.name, tool])) as Record<
     string,
     AnyTool
   >;
@@ -60,14 +60,52 @@ test("progress/ is writable without asking; nothing else is, however the path is
   writeFileSync(join(root, "about-me.md"), "Name: Ada\n");
   symlinkSync(join(root, "about-me.md"), join(root, "progress", "link.md"));
   const rules = BROWSER_PERMISSION_DEFAULTS;
-  const write = (path: string) => evaluate(rules, "write", pathPattern(root, path));
-  expect(pathPattern(root, "progress/jobs.md")).toBe("progress/jobs.md");
+  const write = (path: string) => evaluate(rules, "write", pathPattern({ root }, path));
+  expect(pathPattern({ root }, "progress/jobs.md")).toBe("progress/jobs.md");
   expect(write("progress/jobs.md")).toBe("allow");
   expect(write(join(root, "progress", "new", "list.md"))).toBe("allow");
   expect(write("about-me.md")).toBe("ask");
   expect(write("progress/../about-me.md")).toBe("ask");
   expect(write("progress/link.md")).toBe("ask");
   expect(write("../elsewhere/progress/x.md")).toBe("ask");
-  expect(evaluate(rules, "edit", pathPattern(root, "progress/jobs.md"))).toBe("allow");
+  expect(evaluate(rules, "edit", pathPattern({ root }, "progress/jobs.md"))).toBe("allow");
   rmSync(root, { recursive: true, force: true });
+});
+
+test("a skill's files and added folders are reachable; writes there still ask", async () => {
+  const base = mkdtempSync(join(tmpdir(), "mu-reach-"));
+  const root = join(base, "work");
+  const skill = join(base, "skills", "jobs");
+  const added = join(base, "added");
+  mkdirSync(root, { recursive: true });
+  mkdirSync(join(skill, "references"), { recursive: true });
+  mkdirSync(join(added, "progress"), { recursive: true });
+  writeFileSync(join(skill, "references", "workflow.md"), "step one\n");
+  writeFileSync(join(added, ".env"), "TOKEN=secret\n");
+  writeFileSync(join(base, "elsewhere.md"), "private\n");
+  const reach = { root, folders: () => [join(base, "skills"), added] };
+  const tools = Object.fromEntries(fileTools(reach).map((tool) => [tool.name, tool])) as Record<
+    string,
+    AnyTool
+  >;
+  const run = async (name: string, args: Record<string, unknown>) =>
+    (await tools[name]?.execute("f", args, new AbortController().signal)) as ToolResult;
+  const text = (result: ToolResult) =>
+    result.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+
+  expect(text(await run("read", { path: join(skill, "references", "workflow.md") }))).toContain(
+    "step one",
+  );
+  expect(text(await run("read", { path: join(added, ".env") }))).toContain("Refusing to access");
+  const outside = await run("read", { path: join(base, "elsewhere.md") });
+  expect(outside.isError).toBe(true);
+  expect(text(outside)).toContain(join(base, "skills"));
+
+  const rules = BROWSER_PERMISSION_DEFAULTS;
+  const pattern = pathPattern(reach, join(added, "progress", "x.md"));
+  expect(pattern).not.toStartWith("progress/");
+  expect(pattern).toEndWith("/added/progress/x.md");
+  expect(evaluate(rules, "write", pattern)).toBe("ask");
+  expect(evaluate(rules, "read", pathPattern(reach, join(skill, "SKILL.md")))).toBe("allow");
+  rmSync(base, { recursive: true, force: true });
 });

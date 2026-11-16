@@ -6,6 +6,7 @@ import type { AnyTool } from "@mu/core";
 import { FileState } from "./state.ts";
 import { bashTool } from "./tools/bash.ts";
 import {
+  checkpointResources,
   editPreviewProbe,
   editTool,
   lsTool,
@@ -110,7 +111,7 @@ describe("read", () => {
     const root = await scratch();
     await expect(
       run(readTool({ root, state: new FileState() }), { path: "../../../etc/passwd" }),
-    ).rejects.toThrow("escapes the session root");
+    ).rejects.toThrow("outside the folders this session can reach");
   });
 
   test("canonical paths cannot escape through a symlink", async () => {
@@ -129,6 +130,73 @@ describe("read", () => {
     await writeFile(join(root, "..notes"), "valid");
     const result = await run(readTool({ root, state: new FileState() }), { path: "..notes" });
     expect(textOf(result)).toContain("valid");
+  });
+});
+
+describe("folders besides the root", () => {
+  test("read, ls, write and edit reach an added folder; anything else stays refused", async () => {
+    const root = await scratch();
+    const added = await scratch();
+    const elsewhere = await scratch();
+    await writeFile(join(added, "notes.md"), "one\n");
+    await writeFile(join(elsewhere, "private.md"), "no");
+    const deps = { root, folders: () => [added], state: new FileState() };
+
+    expect(textOf(await run(readTool(deps), { path: join(added, "notes.md") }))).toContain("one");
+    expect(textOf(await run(lsTool(deps), { path: added }))).toContain("notes.md");
+    await run(editTool(deps), {
+      path: join(added, "notes.md"),
+      edits: [{ oldString: "one", newString: "two" }],
+    });
+    await run(writeTool(deps), { path: join(added, "new", "file.md"), content: "made" });
+    expect(await readFile(join(added, "notes.md"), "utf8")).toBe("two\n");
+    expect(await readFile(join(added, "new", "file.md"), "utf8")).toBe("made");
+
+    await expect(run(readTool(deps), { path: join(elsewhere, "private.md") })).rejects.toThrow(
+      "outside the folders",
+    );
+    await expect(
+      run(writeTool(deps), { path: join(elsewhere, "x.md"), content: "x" }),
+    ).rejects.toThrow("outside the folders");
+  });
+
+  test("a folder that does not exist yet can be written into", async () => {
+    const root = await scratch();
+    const parent = await scratch();
+    const skills = join(parent, "skills");
+    const deps = { root, folders: () => [skills], state: new FileState() };
+    await run(writeTool(deps), { path: join(skills, "new-skill", "SKILL.md"), content: "x" });
+    expect(await readFile(join(skills, "new-skill", "SKILL.md"), "utf8")).toBe("x");
+    await expect(
+      run(writeTool(deps), { path: join(parent, "beside.md"), content: "x" }),
+    ).rejects.toThrow("outside the folders");
+  });
+
+  test("a symlinked folder is followed; a link out of an added folder is not", async () => {
+    const root = await scratch();
+    const skills = await scratch();
+    const real = await scratch();
+    const elsewhere = await scratch();
+    await writeFile(join(real, "SKILL.md"), "skill body");
+    await writeFile(join(elsewhere, "secret.txt"), "secret");
+    await symlink(real, join(skills, "linked"));
+    await symlink(join(elsewhere, "secret.txt"), join(skills, "secret.txt"));
+    const deps = { root, folders: () => [skills, join(skills, "linked")], state: new FileState() };
+
+    expect(
+      textOf(await run(readTool(deps), { path: join(skills, "linked", "SKILL.md") })),
+    ).toContain("skill body");
+    await expect(run(readTool(deps), { path: join(skills, "secret.txt") })).rejects.toThrow(
+      "symbolic link",
+    );
+  });
+
+  test("files in another folder are no checkpoint resource; root files are", async () => {
+    const root = await scratch();
+    const added = await scratch();
+    const reach = { root, folders: () => [added] };
+    expect(checkpointResources(reach, "src/a.ts")).toEqual(["src/a.ts"]);
+    expect(checkpointResources(reach, join(added, "a.md"))).toEqual([]);
   });
 });
 

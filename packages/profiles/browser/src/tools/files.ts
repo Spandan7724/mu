@@ -1,12 +1,15 @@
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { AnyTool, ToolResult } from "@mu/core";
 import {
   editTool,
+  type FileReach,
   FileState,
   lsTool,
+  reachableFolders,
   readTool,
-  resolveInRoot,
+  resolveExisting,
+  resolveReachable,
   truncateOutput,
   withNotice,
   writeTool,
@@ -18,12 +21,13 @@ const PDF_TIMEOUT_MS = 30_000;
 
 const refuse = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 
-// The file's real location relative to the folder, so a rule like "progress/*" can
-// not be reached through "progress/../other.md" or a link out of progress/.
-export function pathPattern(root: string, path: unknown): string {
+// The file's real location relative to the workspace, so a rule like "progress/*" can
+// not be reached through "progress/../other.md" or a link out of progress/. A file in
+// another folder is named by its absolute path.
+export function pathPattern(reach: FileReach, path: unknown): string {
   if (typeof path !== "string") return ".";
   try {
-    const absolute = resolveInRoot(root, path);
+    const absolute = resolveReachable(reach, path);
     let existing = absolute;
     const rest: string[] = [];
     while (!existsSync(existing)) {
@@ -31,19 +35,22 @@ export function pathPattern(root: string, path: unknown): string {
       existing = dirname(existing);
     }
     const real = join(realpathSync(existing), ...rest);
-    return relative(realpathSync(root), real).split(sep).join("/") || ".";
+    const rel = relative(realpathSync(reach.root), real);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+      return real.split(sep).join("/");
+    return rel.split(sep).join("/") || ".";
   } catch {
     return `outside:${path}`;
   }
 }
 
-function blocked(root: string, path: unknown): string | undefined {
+function blocked(reach: FileReach, path: unknown): string | undefined {
   if (typeof path !== "string") return undefined;
   let absolute: string;
   try {
-    absolute = resolveInRoot(root, path);
+    absolute = resolveReachable(reach, path);
   } catch {
-    // Outside the folder: the coding tool reports that itself.
+    // Outside the folders: the coding tool reports that itself.
     return undefined;
   }
   const real = existsSync(absolute) ? realpathSync(absolute) : absolute;
@@ -68,14 +75,11 @@ function fenced(result: ToolResult, path: unknown): ToolResult {
   };
 }
 
-// A PDF inside the folder (after resolving links), or undefined.
-function pdfPath(root: string, path: unknown): string | undefined {
+// A PDF inside the folders (after resolving links), or undefined.
+async function pdfPath(reach: FileReach, path: unknown): Promise<string | undefined> {
   if (typeof path !== "string") return undefined;
   try {
-    const absolute = resolveInRoot(root, path);
-    if (!existsSync(absolute)) return undefined;
-    const real = realpathSync(absolute);
-    resolveInRoot(realpathSync(root), real);
+    const real = await resolveExisting(reach, path);
     return detectType(real).mime === "application/pdf" ? real : undefined;
   } catch {
     return undefined;
@@ -113,24 +117,25 @@ async function pdfText(path: string, signal: AbortSignal): Promise<ToolResult> {
 }
 
 // The coding agent's file tools, rooted at the folder mu was started in: the
-// browser agent lists, reads, writes and edits files there and nowhere else.
-export function fileTools(root: string): AnyTool[] {
-  const deps = { root, state: new FileState() };
+// browser agent lists, reads, writes and edits files in the session's folders (D92)
+// and nowhere else.
+export function fileTools(reach: FileReach): AnyTool[] {
+  const deps = { ...reach, state: new FileState() };
   const guarded = (tool: AnyTool, fence: boolean): AnyTool => ({
     ...tool,
-    permissionPattern: (args) => pathPattern(root, (args as { path?: unknown } | undefined)?.path),
+    permissionPattern: (args) => pathPattern(reach, (args as { path?: unknown } | undefined)?.path),
     execute: async (...call) => {
       const path = (call[1] as { path?: unknown } | undefined)?.path;
-      const refusal = blocked(root, path);
+      const refusal = blocked(reach, path);
       if (refusal) return refuse(refusal);
-      const pdf = tool.name === "read" ? pdfPath(root, path) : undefined;
+      const pdf = tool.name === "read" ? await pdfPath(reach, path) : undefined;
       let result: ToolResult;
       try {
         result = pdf ? await pdfText(pdf, call[2]) : await tool.execute(...call);
       } catch (error) {
         if (call[2].aborted) throw error;
         return refuse(
-          `${error instanceof Error ? error.message : String(error)}. Only files in ${root} are available.`,
+          `${error instanceof Error ? error.message : String(error)}. Only files in ${reachableFolders(reach).join(", ")} are available.`,
         );
       }
       return fence ? fenced(result, path) : result;

@@ -172,6 +172,7 @@ async function main(): Promise<number> {
           allowAll: args.allowAll,
           noInstructions: args.noInstructions,
           noCheckpoints: args.noCheckpoints,
+          addDirs: args.addDirs,
           browser: browserFlags(args),
           resumeSessionId: args.resumeSessionId,
           maxTurns: args.maxTurns,

@@ -1,5 +1,5 @@
 import type { ToolPermissionDetails, ToolResult } from "@mu/core";
-import { resolveInRoot } from "@mu/profile-coding";
+import { reachableFolders, resolveReachable } from "@mu/profile-coding";
 import { tool } from "mu";
 import { z } from "zod";
 
@@ -73,6 +73,8 @@ export interface DelegateDeps {
   // argv prefix that runs mu itself.
   command: string[];
   workspace: string;
+  // Folders besides the workspace the session reaches (D92).
+  folders?: () => readonly string[];
   // Which site's page text the brief repeats, if any.
   pageText?: (text: string) => string | undefined;
   run?: CodingRunner;
@@ -113,9 +115,14 @@ function parseEvents(stdout: string): ParsedRun {
   return { answer, denied };
 }
 
-// The coding agent works in the browser agent's folder or below it, never elsewhere.
+// The coding agent works in one of the session's folders or below it, never elsewhere.
 function directoryFor(deps: DelegateDeps, directory: string | undefined): string {
-  return directory ? resolveInRoot(deps.workspace, directory) : deps.workspace;
+  return directory
+    ? resolveReachable(
+        { root: deps.workspace, ...(deps.folders ? { folders: deps.folders } : {}) },
+        directory,
+      )
+    : deps.workspace;
 }
 
 export function delegateTool(deps: DelegateDeps) {
@@ -171,7 +178,7 @@ export function delegateTool(deps: DelegateDeps) {
           content: [
             {
               type: "text",
-              text: `The coding agent can only work in ${deps.workspace} or a folder inside it.`,
+              text: `The coding agent can only work in ${reachableFolders({ root: deps.workspace, ...(deps.folders ? { folders: deps.folders } : {}) }).join(", ")} or a folder inside one.`,
             },
           ],
           isError: true,

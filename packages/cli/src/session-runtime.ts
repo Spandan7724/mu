@@ -24,6 +24,7 @@ import {
   thinkingCommandChoice,
 } from "./config.ts";
 import { loadBuiltInExtensions } from "./extensions.ts";
+import { resolveFolder, type SessionFolders, sessionFolders } from "./folders.ts";
 import {
   nextPermissionMode,
   permissionModeFor,
@@ -54,6 +55,8 @@ export interface SessionRuntimeOptions {
   // Leaves out /fork where the surface cannot open the new session.
   noFork?: boolean | undefined;
   browser?: BrowserFlags | undefined;
+  // --add-dir folders, as typed; the file tools reach them for this process (D92).
+  addDirs?: string[] | undefined;
   // Merged over the options derived from flags (tests and embedders).
   profileOptions?: Record<string, unknown> | undefined;
   resumeSessionId?: string | undefined;
@@ -105,6 +108,14 @@ export async function createCliSessionRuntime(
     useBuiltIns || options.model ? await resolveCliModel(options.model) : overrides.model;
   let profile: Profile | undefined;
   let resolved = overrides;
+  const flaggedFolders = (options.addDirs ?? []).map((dir) => {
+    try {
+      return resolveFolder(dir, options.cwd);
+    } catch (error) {
+      throw new Error(`--add-dir: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  let folders: SessionFolders | undefined;
   if (useBuiltIns) {
     const profileName = options.profile ?? DEFAULT_PROFILE;
     profile = await resolveProfile(profileName, {
@@ -116,6 +127,7 @@ export async function createCliSessionRuntime(
         },
         profileName,
       ),
+      folders: () => folders?.reach() ?? flaggedFolders,
       ...(options.profileOptions ?? {}),
     });
     for (const diagnostic of profile.diagnostics ?? [])
@@ -196,6 +208,18 @@ export async function createCliSessionRuntime(
         }
       : {}),
   });
+  if (useBuiltIns) {
+    const workspace = (profile as { config?: { workspace?: unknown } } | undefined)?.config
+      ?.workspace;
+    folders = sessionFolders({
+      cwd: options.cwd,
+      ...(typeof workspace === "string" ? { startFolder: workspace } : {}),
+      flagged: flaggedFolders,
+      ...("skillFolders" in loaded ? { skillFolders: loaded.skillFolders } : {}),
+      session: () => ({ id: agent.sessionId, messages: () => agent.session.messagesAt() }),
+    });
+    await loaded.host.register(folders.extension);
+  }
   const restrictiveMode = profile?.permissionModes?.find((mode) => mode.tone === "restrictive");
   const existingTools = [
     ...(resolved.tools?.map((candidate) => candidate.name) ?? []),

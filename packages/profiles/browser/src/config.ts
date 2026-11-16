@@ -24,6 +24,8 @@ export interface BrowserProfileOptions {
   workspace?: string | undefined;
   // argv prefix that runs mu itself, for delegating to the coding agent.
   codingCommand?: string[] | undefined;
+  // Folders besides the workspace that file tools, uploads and delegate reach (D92).
+  folders?: (() => readonly string[]) | undefined;
 }
 
 export interface ResolvedBrowserOptions {
@@ -44,6 +46,7 @@ export interface ResolvedBrowserOptions {
   launcher?: BrowserLauncher;
   workspace: string;
   codingCommand: string[];
+  folders: () => readonly string[];
 }
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -143,5 +146,6 @@ export function resolveBrowserOptions(
     ...(options.launcher ? { launcher: options.launcher } : {}),
     workspace: resolve(merged.workspace ?? process.cwd()),
     codingCommand: merged.codingCommand ?? ["mu"],
+    folders: options.folders ?? (() => []),
   };
 }

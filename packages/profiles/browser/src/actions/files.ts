@@ -22,9 +22,13 @@ export function sensitivePath(path: string): boolean {
   return SENSITIVE_DIRS.test(normalized) && !DOWNLOADS.test(normalized);
 }
 
-// The agent's own folder and the browser's downloads: nothing else leaves the machine.
-export function uploadRoots(config: { workspace: string; downloadsDir: string }): string[] {
-  return [config.workspace, config.downloadsDir];
+// The session's folders and the browser's downloads: nothing else leaves the machine.
+export function uploadRoots(config: {
+  workspace: string;
+  downloadsDir: string;
+  folders: () => readonly string[];
+}): string[] {
+  return [config.workspace, ...config.folders(), config.downloadsDir];
 }
 
 function inside(root: string, path: string): boolean {
@@ -42,7 +46,7 @@ export function resolveUploadPaths(paths: string[], roots: string[]): string[] {
     const real = realpathSync(absolute);
     if (!realRoots.some((root) => inside(root, real))) {
       throw new Error(
-        `Refusing to upload ${absolute}: only files in ${roots[0]} (the folder mu was started in) or the browser's downloads can be uploaded.`,
+        `Refusing to upload ${absolute}: only files in ${roots[0]} (the folder mu was started in), folders added for this session or the browser's downloads can be uploaded.`,
       );
     }
     if (sensitivePath(absolute) || sensitivePath(real)) {
