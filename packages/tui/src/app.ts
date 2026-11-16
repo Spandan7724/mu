@@ -3728,6 +3728,11 @@ export class App {
     }
     if (key.name === "return" || key.name === "tab") {
       const selected = this.commandList.selected;
+      if (selected && this.mentionStart >= 0 && selected.label.endsWith("/")) {
+        this.editor.spliceBeforeCursor(this.mentionStart, `@${selected.label}`);
+        this.refreshMentions();
+        return;
+      }
       if (selected && this.mentionStart >= 0) {
         // Replace just the "@query" span; the unsent suffix is preserved.
         this.editor.spliceBeforeCursor(this.mentionStart, `${selected.label} `);
@@ -3796,6 +3801,11 @@ export class App {
       this.transcriptCache = undefined;
     }
     return true;
+  }
+
+  // Re-queries an open `@` popup, e.g. when its file index finishes loading.
+  refreshMentionList(): void {
+    if (this.mode === "mention") this.refreshMentions();
   }
 
   private refreshMentions(): void {

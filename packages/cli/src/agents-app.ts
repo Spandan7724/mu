@@ -1,5 +1,5 @@
-import { readdirSync, statSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename } from "node:path";
+import { resolveRipgrepExecutable } from "@mu/profile-coding";
 import {
   App,
   type ColorDepth,
@@ -47,6 +47,7 @@ import {
 import type { ParsedArgs } from "./args.ts";
 import { loadUserConfig, resolveCliModel, saveShowThinking, showThinkingChoice } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
+import { FileMentions } from "./file-mentions.ts";
 import {
   formatSubagentsOutput,
   renderCheckpointCommand,
@@ -92,35 +93,6 @@ function compareRecords(a: ManagedSessionRecord, b: ManagedSessionRecord): numbe
     stableOrderTime(b) - stableOrderTime(a) ||
     a.sessionId.localeCompare(b.sessionId)
   );
-}
-
-const MENTION_SKIP = new Set(["node_modules", ".git", "dist", "build", ".next"]);
-
-function mentionCandidates(root: string, query: string): { label: string }[] {
-  const out: { label: string }[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (depth > 3 || out.length >= 50) return;
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names.sort()) {
-      if (name.startsWith(".") || MENTION_SKIP.has(name)) continue;
-      const full = join(dir, name);
-      try {
-        if (statSync(full).isDirectory()) walk(full, depth + 1);
-        else {
-          const path = relative(root, full);
-          if (!query || path.includes(query)) out.push({ label: path });
-        }
-      } catch {}
-      if (out.length >= 50) return;
-    }
-  };
-  walk(root, 0);
-  return out;
 }
 
 function age(timestamp: number, now = Date.now()): string {
@@ -629,6 +601,14 @@ export async function runAgentView(
     dirtyFrom: 0,
   });
   const paint = () => renderer.requestRender(() => active?.app.renderFrame() ?? dashboardFrame());
+  const fileMentions = new FileMentions({
+    root: cwd,
+    ripgrep: resolveRipgrepExecutable(),
+    onReady: () => {
+      active?.app.refreshMentionList();
+      paint();
+    },
+  });
   const paintInput = () => renderer.renderNow(active?.app.renderFrame() ?? dashboardFrame());
 
   const showError = (error: unknown) => {
@@ -700,7 +680,7 @@ export async function runAgentView(
           },
           onShell: (command) =>
             void client.sessionOp(sessionId, { type: "shell", command }).catch(showError),
-          onMentionQuery: (query) => mentionCandidates(cwd, query),
+          onMentionQuery: (query) => fileMentions.query(query),
           onAbort: (via) =>
             void client.sessionOp(sessionId, { type: "abort", by: "user", via }).catch(showError),
           onStopBackground: (subagentId) =>

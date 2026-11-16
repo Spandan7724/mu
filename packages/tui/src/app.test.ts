@@ -4377,6 +4377,60 @@ describe("@-file mention popup", () => {
     expect(app.editor.text).toBe("@ser");
   });
 
+  test("picking a folder opens it instead of completing", () => {
+    const queries: string[] = [];
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+        onMentionQuery: (query) => {
+          queries.push(query);
+          return query === "config/"
+            ? [{ label: "config/.env" }]
+            : [{ label: "config/" }, { label: "README.md" }];
+        },
+      },
+    });
+    feed(app, "see @con");
+    app.handleInput({ type: "key", key: { name: "tab", ctrl: false, alt: false, shift: false } });
+    expect(app.editor.text).toBe("see @config/");
+    expect(app.currentMode).toBe("mention");
+    expect(queries.at(-1)).toBe("config/");
+    app.handleInput({
+      type: "key",
+      key: { name: "return", ctrl: false, alt: false, shift: false },
+    });
+    expect(app.editor.text).toBe("see config/.env ");
+    expect(app.currentMode).toBe("composing");
+  });
+
+  test("refreshMentionList re-queries only while the popup is open", () => {
+    let calls = 0;
+    const app = new App({
+      width: 60,
+      depth: "none",
+      model: "fake/fake-1",
+      callbacks: {
+        onSubmit: () => {},
+        onAbort: () => {},
+        onExit: () => {},
+        onMentionQuery: () => {
+          calls++;
+          return [{ label: calls > 1 ? "loaded.ts" : "early.ts" }];
+        },
+      },
+    });
+    app.refreshMentionList();
+    expect(calls).toBe(0);
+    feed(app, "@");
+    app.refreshMentionList();
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain("loaded.ts");
+  });
+
   test("a space closes the popup — @ was not a mention after all", () => {
     const { app } = mentionHarness();
     feed(app, "@ ");

@@ -61,7 +61,6 @@ import {
 import cliPackage from "../package.json";
 import { agentViewPaths, isProcessAlive, readSessionOwnership } from "./agent-view-store.ts";
 import type { ParsedArgs } from "./args.ts";
-import { FileMentions } from "./file-mentions.ts";
 import {
   applySavedThinking,
   loadUserConfig,
@@ -80,6 +79,7 @@ import {
 } from "./config.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
 import { transcriptExportCommand } from "./export-command.ts";
+import { FileMentions } from "./file-mentions.ts";
 import { forkedNotice, forkPickerItems, isForkedCommandData } from "./fork-picker.ts";
 import { observeGitBranch } from "./git-branch.ts";
 import {

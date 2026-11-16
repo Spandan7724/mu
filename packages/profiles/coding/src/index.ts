@@ -418,6 +418,7 @@ export {
   rememberAllow,
 } from "./permissions.ts";
 export { codingPrompt } from "./prompts.ts";
+export { resolveRipgrepExecutable } from "./ripgrep.ts";
 export { shellCommand, terminateProcessTree, windowsTaskkillCommand } from "./shell.ts";
 export {
   classifyShellCommand,
@@ -425,7 +426,6 @@ export {
   parseInspectionCommands,
   type ShellCommandClassification,
 } from "./shell-inspection.ts";
-export { resolveRipgrepExecutable } from "./ripgrep.ts";
 export { shellPermissionTargets } from "./shell-permissions.ts";
 export { FileState } from "./state.ts";
 export { bashTool } from "./tools/bash.ts";
