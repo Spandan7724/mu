@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.3 — 2026-11-17
+
+### Highlights
+
+- **Skills' own files are reachable.** The file tools of both agents now reach skill
+  folders, so a skill's `references/` and `scripts/` can be read from any project, and
+  skills can be created and edited with read/write/edit (edits ask in default mode).
+  Symlinked skills work.
+- **`--add-dir` and `/add-dir`.** Give the file tools another folder: `--add-dir <folder>`
+  (repeatable) for the run, or `/add-dir <path>` for the current session only. A session's
+  folders come back on resume and `/fork`, not in new sessions; `/add-dir` alone lists
+  them. Only you can add folders: any other path stays refused in every permission mode,
+  including yolo and autonomous.
+
+### Changes
+
+- The `@` file picker respects ignore rules, skips dependency and cache folders, hides
+  `.git`, and lists folders on disk after a slash. Tab opens a folder; Enter mentions it.
+
+### Browser
+
+- The browser agent reads skills under `~/.mu/skills` (they were refused as mu's own
+  state). Uploads and `delegate` follow the same folders as the file tools.
+
 ## 0.3.2 — 2026-11-14
 
 ### Highlights
