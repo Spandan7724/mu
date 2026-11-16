@@ -1,5 +1,5 @@
 import type { ToolPermissionDetails, ToolResult } from "@mu/core";
-import { reachableFolders, resolveReachable } from "@mu/profile-coding";
+import { resolveReachable } from "@mu/profile-coding";
 import { tool } from "mu";
 import { z } from "zod";
 
@@ -178,7 +178,7 @@ export function delegateTool(deps: DelegateDeps) {
           content: [
             {
               type: "text",
-              text: `The coding agent can only work in ${reachableFolders({ root: deps.workspace, ...(deps.folders ? { folders: deps.folders } : {}) }).join(", ")} or a folder inside one.`,
+              text: `The coding agent can only work in ${deps.workspace}, folders the user added or skill folders, or a folder inside one.`,
             },
           ],
           isError: true,

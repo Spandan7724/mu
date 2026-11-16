@@ -6,7 +6,6 @@ import {
   type FileReach,
   FileState,
   lsTool,
-  reachableFolders,
   readTool,
   resolveExisting,
   resolveReachable,
@@ -135,7 +134,7 @@ export function fileTools(reach: FileReach): AnyTool[] {
       } catch (error) {
         if (call[2].aborted) throw error;
         return refuse(
-          `${error instanceof Error ? error.message : String(error)}. Only files in ${reachableFolders(reach).join(", ")} are available.`,
+          `${error instanceof Error ? error.message : String(error)}. Only files in ${reach.root}, folders the user added and skill folders are available.`,
         );
       }
       return fence ? fenced(result, path) : result;

@@ -75,15 +75,18 @@ test("progress/ is writable without asking; nothing else is, however the path is
 test("a skill's files and added folders are reachable; writes there still ask", async () => {
   const base = mkdtempSync(join(tmpdir(), "mu-reach-"));
   const root = join(base, "work");
-  const skill = join(base, "skills", "jobs");
+  const skills = join(base, ".mu", "skills");
+  const skill = join(skills, "jobs");
   const added = join(base, "added");
   mkdirSync(root, { recursive: true });
   mkdirSync(join(skill, "references"), { recursive: true });
   mkdirSync(join(added, "progress"), { recursive: true });
   writeFileSync(join(skill, "references", "workflow.md"), "step one\n");
+  writeFileSync(join(skill, ".env"), "TOKEN=secret\n");
+  writeFileSync(join(base, ".mu", "auth.json"), "{}");
   writeFileSync(join(added, ".env"), "TOKEN=secret\n");
   writeFileSync(join(base, "elsewhere.md"), "private\n");
-  const reach = { root, folders: () => [join(base, "skills"), added] };
+  const reach = { root, folders: () => [skills, join(base, ".mu"), added] };
   const tools = Object.fromEntries(fileTools(reach).map((tool) => [tool.name, tool])) as Record<
     string,
     AnyTool
@@ -97,9 +100,13 @@ test("a skill's files and added folders are reachable; writes there still ask", 
     "step one",
   );
   expect(text(await run("read", { path: join(added, ".env") }))).toContain("Refusing to access");
+  expect(text(await run("read", { path: join(skill, ".env") }))).toContain("Refusing to access");
+  expect(text(await run("read", { path: join(skills, "..", "auth.json") }))).toContain(
+    "Refusing to access",
+  );
   const outside = await run("read", { path: join(base, "elsewhere.md") });
   expect(outside.isError).toBe(true);
-  expect(text(outside)).toContain(join(base, "skills"));
+  expect(text(outside)).toContain("skill folders are available");
 
   const rules = BROWSER_PERMISSION_DEFAULTS;
   const pattern = pathPattern(reach, join(added, "progress", "x.md"));

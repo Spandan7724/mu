@@ -13,13 +13,14 @@ const SENSITIVE_DIRS =
 const SENSITIVE_FILES =
   /(^|\/)(\.env(\..*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)|.*\.(pem|p12|pfx|kdbx|keychain)|(Login Data|Cookies|Web Data|Local State))$/i;
 
-// Files the browser itself downloaded may go back up (a filled-in form).
-const DOWNLOADS = /(^|\/)\.mu\/browser\/downloads\//;
+// Files the browser itself downloaded may go back up (a filled-in form); skills are
+// instructions and their files, not mu's state (D92).
+const NOT_STATE = /(^|\/)\.mu\/(browser\/downloads|skills)\//;
 
 export function sensitivePath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
   if (SENSITIVE_FILES.test(normalized)) return true;
-  return SENSITIVE_DIRS.test(normalized) && !DOWNLOADS.test(normalized);
+  return SENSITIVE_DIRS.test(normalized) && !NOT_STATE.test(normalized);
 }
 
 // The session's folders and the browser's downloads: nothing else leaves the machine.
