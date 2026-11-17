@@ -90,7 +90,7 @@ async function run(command: string[], timeoutMs = READ_TIMEOUT_MS): Promise<Buff
   }
 }
 
-const PREFERRED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const PREFERRED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"];
 
 function preferredType(listing: Buffer): string | undefined {
   const types = listing
@@ -134,6 +134,17 @@ async function viaOsascript(): Promise<Buffer | null | undefined> {
   return hex ? Buffer.from(hex, "hex") : null;
 }
 
+// Bun reads NSPasteboard and the Windows clipboard itself (it returns null on Linux).
+async function viaBun(): Promise<Buffer | null | undefined> {
+  if (typeof Bun.Image?.fromClipboard !== "function") return undefined;
+  try {
+    const image = Bun.Image.fromClipboard();
+    return image ? Buffer.from(await image.png().bytes()) : null;
+  } catch {
+    return undefined;
+  }
+}
+
 function isWsl(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP);
 }
@@ -144,8 +155,11 @@ export async function readClipboardImage(
   platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Buffer | null | undefined> {
-  if (platform === "darwin") return viaOsascript();
-  if (platform === "win32") return viaPowerShell("powershell");
+  if (platform === "darwin" || platform === "win32") {
+    const native = await viaBun();
+    if (native !== undefined) return native;
+    return platform === "darwin" ? viaOsascript() : viaPowerShell("powershell");
+  }
   let image: Buffer | null | undefined;
   if (env.WAYLAND_DISPLAY || env.XDG_SESSION_TYPE === "wayland") {
     image = await viaTool(["wl-paste", "--list-types"], (type) => [

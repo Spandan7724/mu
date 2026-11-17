@@ -146,13 +146,15 @@ export type { FileSessionStoreOptions } from "./file-store.ts";
 export { FileSessionStore } from "./file-store.ts";
 export type { ImageCheck, ImageInfo, LoadedImage } from "./images.ts";
 export {
-  checkImage,
   formatBytes,
   hasImageExtension,
   imageMarker,
+  jpegOrientation,
   loadImageFile,
-  MAX_IMAGE_BYTES,
+  MAX_IMAGE_BASE64,
   MAX_IMAGE_SIDE,
+  MAX_SOURCE_IMAGE_BYTES,
+  prepareImage,
   sniffImage,
   userContentWithImages,
 } from "./images.ts";

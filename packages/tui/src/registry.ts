@@ -1310,13 +1310,23 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           endLine?: number;
           returnedLines?: number;
           truncated?: boolean;
-          image?: { mimeType: string; width: number; height: number; bytes: number };
+          image?: {
+            mimeType: string;
+            width: number;
+            height: number;
+            bytes: number;
+            source?: { width: number; height: number };
+          };
         }
       | undefined;
     let summary: string | undefined;
     if (details?.image) {
-      const { mimeType, width, height, bytes } = details.image;
-      summary = `${mimeType.replace("image/", "")} image · ${width}×${height} · ${formatBytes(bytes)}`;
+      const { mimeType, width, height, bytes, source } = details.image;
+      const size =
+        source && (source.width !== width || source.height !== height)
+          ? `${source.width}×${source.height} → ${width}×${height}`
+          : `${width}×${height}`;
+      summary = `${mimeType.replace("image/", "")} image · ${size} · ${formatBytes(bytes)}`;
     } else if (details?.lines !== undefined) {
       if (details.returnedLines === 0) {
         summary = `0 lines returned · ${details.lines} total`;

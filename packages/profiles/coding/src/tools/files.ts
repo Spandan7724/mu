@@ -2,7 +2,14 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
-import { checkImage, formatBytes, type ImageCheck, tool } from "mu";
+import {
+  formatBytes,
+  hasImageExtension,
+  type ImageCheck,
+  MAX_SOURCE_IMAGE_BYTES,
+  prepareImage,
+  tool,
+} from "mu";
 import { z } from "zod";
 import type { FileState } from "../state.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
@@ -137,16 +144,18 @@ function imageResult(
   acceptsImages: boolean,
 ): ToolResult {
   if (!check.ok) return errorResult(`Cannot show ${shown}: ${check.reason}`);
-  const { info, bytes, image } = check.loaded;
-  const summary = `${info.mimeType.slice("image/".length).toUpperCase()} · ${info.width}×${info.height} · ${formatBytes(bytes)}`;
+  const { info, bytes, image, source } = check.loaded;
+  const sent = `${info.mimeType.slice("image/".length).toUpperCase()} · ${info.width}×${info.height} · ${formatBytes(bytes)}`;
   if (!acceptsImages) {
-    return errorResult(
-      `${shown} is an image (${summary}), and the current model cannot see images.`,
-    );
+    return errorResult(`${shown} is an image, and the current model cannot see images.`);
   }
+  // The model measures in the pixels it receives; it needs the scale to map back to the file.
+  const summary = source
+    ? `${source.width}×${source.height} · ${formatBytes(source.bytes)}; you see a copy at ${sent}`
+    : sent;
   return {
     content: [{ type: "text", text: `${shown} (${summary})` }, image],
-    details: { path: absolute, image: { ...info, bytes } },
+    details: { path: absolute, image: { ...info, bytes, ...(source ? { source } : {}) } },
   };
 }
 
@@ -155,7 +164,7 @@ export function readTool(deps: ToolDeps) {
     name: "read",
     changesState: false,
     description:
-      "Read a file from the filesystem. Returns text with line numbers for grounded path:line citations, or shows you a PNG, JPEG, GIF or WebP image. Read a file before editing it.",
+      "Read a file from the filesystem. Returns text with line numbers for grounded path:line citations, or shows you an image (PNG, JPEG, GIF, WebP, BMP; large ones are scaled down). Read a file before editing it.",
     inputSchema: z.object({
       path: z.string().describe("Path to the file, absolute or relative to the session root"),
       offset: z.number().int().min(1).optional().describe("First line to read (1-based)"),
@@ -168,9 +177,10 @@ export function readTool(deps: ToolDeps) {
       try {
         absolute = await resolveExisting(deps, path);
         const info = await stat(absolute);
-        if (info.size > MAX_READ_SOURCE_BYTES) {
+        const limit = hasImageExtension(absolute) ? MAX_SOURCE_IMAGE_BYTES : MAX_READ_SOURCE_BYTES;
+        if (info.size > limit) {
           return errorResult(
-            `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${MAX_READ_SOURCE_BYTES.toLocaleString()} bytes. Use rg through the bounded bash tool to inspect it.`,
+            `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${limit.toLocaleString()} bytes. Use rg through the bounded bash tool to inspect it.`,
           );
         }
         bytes = await readFile(absolute);
@@ -185,14 +195,14 @@ export function readTool(deps: ToolDeps) {
       }
 
       const shown = display(deps.root, absolute);
-      const image = checkImage(bytes);
+      const image = await prepareImage(bytes);
       if (image) return imageResult(shown, absolute, image, acceptsImages);
       if (
         bytes.subarray(0, 5).toString("latin1") === "%PDF-" ||
         bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)
       ) {
         return errorResult(
-          `${shown} is a binary file; read shows text files and PNG, JPEG, GIF or WebP images. To look at a PDF or slide deck, render the pages to PNG first (for example \`pdftoppm -png -r 80\`) and read those.`,
+          `${shown} is a binary file; read shows text files and images. To look at a PDF or slide deck, render the pages to PNG first (for example \`pdftoppm -png -r 80\`) and read those.`,
         );
       }
       const content = bytes.toString("utf8");

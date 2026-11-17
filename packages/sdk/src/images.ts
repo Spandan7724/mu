@@ -2,10 +2,15 @@ import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { ImageContent, UserContent } from "@mu/ai";
 
-// Anthropic refuses images over 5 MB of base64 or 8000 px a side; the other
-// providers accept at least that much.
-export const MAX_IMAGE_BYTES = 3_750_000;
-export const MAX_IMAGE_SIDE = 8000;
+// Images are fitted inside 2000 px a side and 4.5 MB of base64: Anthropic's
+// limits once a request holds more than 20 images, and below its 5 MB cap.
+export const MAX_IMAGE_SIDE = 2000;
+export const MAX_IMAGE_BASE64 = 4.5 * 1024 * 1024;
+// Without a resizer, what providers accept at all.
+const PROVIDER_MAX_SIDE = 8000;
+const PROVIDER_MAX_BASE64 = 5_000_000;
+export const MAX_SOURCE_IMAGE_BYTES = 64 * 1024 * 1024;
+const LOSSY_QUALITIES = [80, 70, 55, 40];
 
 export interface ImageInfo {
   mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
@@ -17,12 +22,14 @@ export interface LoadedImage {
   image: ImageContent;
   info: ImageInfo;
   bytes: number;
+  // Present when the image was resized, converted or turned upright.
+  source?: { width: number; height: number; bytes: number };
 }
 
 export type ImageCheck = { ok: true; loaded: LoadedImage } | { ok: false; reason: string };
 
-// Image formats a user may hand over that no provider reads directly.
-const UNSUPPORTED_IMAGE_EXTENSIONS = new Set([
+// Formats no provider reads directly; mu converts those Bun can decode here.
+const CONVERTED_IMAGE_EXTENSIONS = new Set([
   ".bmp",
   ".tif",
   ".tiff",
@@ -36,7 +43,7 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 export function hasImageExtension(path: string): boolean {
   const extension = extname(path).toLowerCase();
-  return IMAGE_EXTENSIONS.has(extension) || UNSUPPORTED_IMAGE_EXTENSIONS.has(extension);
+  return IMAGE_EXTENSIONS.has(extension) || CONVERTED_IMAGE_EXTENSIONS.has(extension);
 }
 
 function u16be(bytes: Uint8Array, at: number): number {
@@ -121,20 +128,39 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// undefined: the bytes are not an image mu recognizes.
-export function checkImage(bytes: Uint8Array): ImageCheck | undefined {
-  const info = sniffImage(bytes);
-  if (!info) return undefined;
-  if (
-    info.width > MAX_IMAGE_SIDE ||
-    info.height > MAX_IMAGE_SIDE ||
-    bytes.length > MAX_IMAGE_BYTES
-  ) {
-    return {
-      ok: false,
-      reason: `the image is ${info.width}×${info.height} px and ${formatBytes(bytes.length)}; models accept at most ${MAX_IMAGE_SIDE} px a side and ${formatBytes(MAX_IMAGE_BYTES)}. Make a smaller copy first (for example \`magick in.png -resize 1600x1600 out.png\`).`,
-    };
+// The EXIF orientation of a JPEG (1 = upright), read from its APP1 segment.
+export function jpegOrientation(bytes: Uint8Array): number {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return 1;
+  let at = 2;
+  while (at + 4 < bytes.length && bytes[at] === 0xff) {
+    const marker = bytes[at + 1] ?? 0;
+    const length = u16be(bytes, at + 2);
+    if (marker === 0xda || marker === 0xd9) return 1;
+    if (marker === 0xe1 && ascii(bytes, at + 4, 6) === "Exif\0\0") {
+      const tiff = at + 10;
+      const little = ascii(bytes, tiff, 2) === "II";
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (tiff + 8 > bytes.length) return 1;
+      const ifd = tiff + view.getUint32(tiff + 4, little);
+      if (ifd + 2 > bytes.length) return 1;
+      const entries = view.getUint16(ifd, little);
+      for (let entry = 0; entry < entries; entry++) {
+        const field = ifd + 2 + entry * 12;
+        if (field + 10 > bytes.length) return 1;
+        if (view.getUint16(field, little) === 0x0112) return view.getUint16(field + 8, little);
+      }
+      return 1;
+    }
+    at += 2 + length;
   }
+  return 1;
+}
+
+function base64Length(bytes: number): number {
+  return Math.ceil(bytes / 3) * 4;
+}
+
+function loaded(bytes: Uint8Array, info: ImageInfo, source?: LoadedImage["source"]): ImageCheck {
   return {
     ok: true,
     loaded: {
@@ -145,27 +171,149 @@ export function checkImage(bytes: Uint8Array): ImageCheck | undefined {
       },
       info,
       bytes: bytes.length,
+      ...(source ? { source } : {}),
     },
   };
+}
+
+const SHRINK_HINT =
+  "Make a smaller copy first (for example `magick in.png -resize 2000x2000 out.png`).";
+
+// Bun.Image arrived in Bun 1.4; an older Bun sends images as they are, within provider limits.
+function resizer(): typeof Bun.Image | undefined {
+  return typeof Bun !== "undefined" && typeof Bun.Image === "function" ? Bun.Image : undefined;
+}
+
+function unresized(bytes: Uint8Array, info: ImageInfo): ImageCheck {
+  if (
+    info.width <= PROVIDER_MAX_SIDE &&
+    info.height <= PROVIDER_MAX_SIDE &&
+    base64Length(bytes.length) <= PROVIDER_MAX_BASE64
+  ) {
+    return loaded(bytes, info);
+  }
+  return {
+    ok: false,
+    reason: `the image is ${info.width}×${info.height} px and ${formatBytes(bytes.length)}, over what models accept, and this Bun cannot resize images (Bun 1.4 or later can). ${SHRINK_HINT}`,
+  };
+}
+
+function fitSizes(width: number, height: number): { width: number; height: number }[] {
+  const scale = Math.min(1, MAX_IMAGE_SIDE / width, MAX_IMAGE_SIDE / height);
+  const sizes = [
+    {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+    },
+  ];
+  for (;;) {
+    const last = sizes.at(-1) as { width: number; height: number };
+    if (last.width === 1 && last.height === 1) return sizes;
+    sizes.push({
+      width: Math.max(1, Math.floor(last.width * 0.75)),
+      height: Math.max(1, Math.floor(last.height * 0.75)),
+    });
+  }
+}
+
+// BMP, TIFF and HEIF/AVIF containers, so plain files never reach the decoder.
+function convertibleHeader(bytes: Uint8Array): boolean {
+  if (bytes.length < 12) return false;
+  const start = ascii(bytes, 0, 4);
+  if (start.startsWith("BM") || start === "II*\0" || start === "MM\0*") return true;
+  return (
+    ascii(bytes, 4, 4) === "ftyp" &&
+    /^(heic|heix|hevc|mif1|msf1|avif|avis)$/.test(ascii(bytes, 8, 4))
+  );
+}
+
+function errorCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code: unknown }).code)
+    : undefined;
+}
+
+// Makes an image ready for a model: unchanged when it already fits, otherwise
+// turned upright, fitted inside the limits and re-encoded. Photos stay JPEG;
+// anything else tries lossless PNG, then WebP, which keeps transparency.
+// undefined: the bytes are not an image mu can read.
+export async function prepareImage(bytes: Uint8Array): Promise<ImageCheck | undefined> {
+  const sniffed = sniffImage(bytes);
+  const upright = sniffed?.mimeType !== "image/jpeg" || jpegOrientation(bytes) <= 1;
+  if (
+    sniffed &&
+    sniffed.mimeType !== "image/gif" &&
+    upright &&
+    sniffed.width <= MAX_IMAGE_SIDE &&
+    sniffed.height <= MAX_IMAGE_SIDE &&
+    base64Length(bytes.length) <= MAX_IMAGE_BASE64
+  ) {
+    return loaded(bytes, sniffed);
+  }
+  if (!sniffed && !convertibleHeader(bytes)) return undefined;
+  const Image = resizer();
+  if (!Image) return sniffed ? unresized(bytes, sniffed) : undefined;
+
+  let source: { width: number; height: number; format: string };
+  try {
+    source = await new Image(bytes).metadata();
+  } catch (error) {
+    const code = errorCode(error);
+    if (code === "ERR_IMAGE_FORMAT_UNSUPPORTED") {
+      return {
+        ok: false,
+        reason: "this image format cannot be decoded on this system; convert it to PNG or JPEG",
+      };
+    }
+    if (code === "ERR_IMAGE_TOO_MANY_PIXELS") {
+      return { ok: false, reason: `the image has too many pixels to open. ${SHRINK_HINT}` };
+    }
+    if (sniffed) return { ok: false, reason: "the image could not be decoded; it may be damaged" };
+    return undefined;
+  }
+
+  const photo = source.format === "jpeg";
+  const original = { width: source.width, height: source.height, bytes: bytes.length };
+  for (const size of fitSizes(source.width, source.height)) {
+    const resized = () => {
+      const image = new Image(bytes);
+      return size.width === source.width && size.height === source.height
+        ? image
+        : image.resize(size.width, size.height);
+    };
+    const encodings: [ImageInfo["mimeType"], () => Promise<Uint8Array>][] = photo
+      ? LOSSY_QUALITIES.map((quality) => ["image/jpeg", () => resized().jpeg({ quality }).bytes()])
+      : [
+          ["image/png", () => resized().png().bytes()],
+          ...LOSSY_QUALITIES.map(
+            (quality) =>
+              ["image/webp", () => resized().webp({ quality }).bytes()] as [
+                ImageInfo["mimeType"],
+                () => Promise<Uint8Array>,
+              ],
+          ),
+        ];
+    for (const [mimeType, encode] of encodings) {
+      const output = await encode();
+      if (base64Length(output.length) <= MAX_IMAGE_BASE64) {
+        return loaded(output, { mimeType, ...size }, original);
+      }
+    }
+  }
+  return { ok: false, reason: `the image could not be made small enough. ${SHRINK_HINT}` };
 }
 
 // Throws with a reason a person can act on.
 export async function loadImageFile(path: string): Promise<LoadedImage> {
   const info = await stat(path);
   if (info.isDirectory()) throw new Error(`${path} is a folder, not an image`);
-  if (info.size > MAX_IMAGE_BYTES * 4) {
+  if (info.size > MAX_SOURCE_IMAGE_BYTES) {
     throw new Error(
-      `${path} is ${formatBytes(info.size)}; images must be at most ${formatBytes(MAX_IMAGE_BYTES)}`,
+      `${path} is ${formatBytes(info.size)}; images must be at most ${formatBytes(MAX_SOURCE_IMAGE_BYTES)}`,
     );
   }
-  const checked = checkImage(await readFile(path));
-  if (!checked) {
-    throw new Error(
-      UNSUPPORTED_IMAGE_EXTENSIONS.has(extname(path).toLowerCase())
-        ? `${path}: this image format is not supported; convert it to PNG, JPEG, GIF or WebP`
-        : `${path} is not a PNG, JPEG, GIF or WebP image`,
-    );
-  }
+  const checked = await prepareImage(await readFile(path));
+  if (!checked) throw new Error(`${path} is not an image mu can read`);
   if (!checked.ok) throw new Error(`${path}: ${checked.reason}`);
   return checked.loaded;
 }

@@ -28,7 +28,6 @@ import {
   type AgentRunOptions,
   type CheckpointActionData,
   type CommandResult,
-  checkImage,
   customMessage,
   type DiffCommandData,
   defaultModelId,
@@ -42,6 +41,7 @@ import {
   type ModelInfo,
   type PermissionMode,
   type ProfileSideAccess,
+  prepareImage,
   providerConfig,
   readAuthFile,
   removeStoredCredential,
@@ -437,8 +437,8 @@ export async function runInteractive(
                 : `  Could not read the clipboard: ${clipboardToolHint()}.`,
             ]);
           } else {
-            const checked = checkImage(bytes);
-            if (!checked) commitLines(["  The clipboard image is not PNG, JPEG, GIF or WebP."]);
+            const checked = await prepareImage(bytes);
+            if (!checked) commitLines(["  The clipboard holds an image mu cannot read."]);
             else if (!checked.ok) commitLines([`  Clipboard image: ${checked.reason}`]);
             else attachImage(checked.loaded);
           }

@@ -131,6 +131,30 @@ describe("read", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  test("a large image is scaled down and the model is told the original size", async () => {
+    const root = await scratch();
+    const raw = new Uint8Array(54 + 3000 * 3 * 1500);
+    const view = new DataView(raw.buffer);
+    raw.set([0x42, 0x4d]);
+    view.setUint32(2, raw.length, true);
+    view.setUint32(10, 54, true);
+    view.setUint32(14, 40, true);
+    view.setInt32(18, 3000, true);
+    view.setInt32(22, 1500, true);
+    view.setUint16(26, 1, true);
+    view.setUint16(28, 24, true);
+    await writeFile(join(root, "wide.png"), await new Bun.Image(raw).png().bytes());
+
+    const result = await run(readTool({ root, state: new FileState() }), { path: "wide.png" });
+    expect(textOf(result)).toMatch(
+      /^wide\.png \(3000×1500 · .+; you see a copy at PNG · 2000×1000 · /,
+    );
+    expect(result.details).toMatchObject({
+      image: { width: 2000, height: 1000, source: { width: 3000, height: 1500 } },
+    });
+    await rm(root, { recursive: true, force: true });
+  });
+
   test("binary files and PDFs are refused instead of decoded as text", async () => {
     const root = await scratch();
     await writeFile(join(root, "deck.pdf"), "%PDF-1.7\n1 0 obj\n<< >>\nendobj\n");
