@@ -46,6 +46,7 @@ describeWithBrowser("context retention end to end", () => {
         provider,
         model: { ...fakeModel, modalities: ["text", "image"] },
         onPermission: async () => "allow",
+        completionCheck: false,
       }),
     );
     await agent.run("look around");
@@ -105,7 +106,11 @@ describeWithBrowser("per-tab retention", () => {
       { content: [{ type: "text", text: "done" }] },
     ]);
     const agent = new Agent(
-      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+      await optionsFromProfile(profile, "fake/fake-1", {
+        provider,
+        model: fakeModel,
+        completionCheck: false,
+      }),
     );
     await agent.run("compare two pages");
     const results = (provider.requests.at(-1)?.messages ?? []).filter(
@@ -157,7 +162,11 @@ describeWithBrowser("live-tab cap", () => {
       { content: [{ type: "text", text: "done" }] },
     ]);
     const agent = new Agent(
-      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+      await optionsFromProfile(profile, "fake/fake-1", {
+        provider,
+        model: fakeModel,
+        completionCheck: false,
+      }),
     );
     await agent.run("read many pages");
     const live = (request: number) =>
@@ -214,7 +223,11 @@ describeWithBrowser("read_page retention per page", () => {
       { content: [{ type: "text", text: "done" }] },
     ]);
     const agent = new Agent(
-      await optionsFromProfile(profile, "fake/fake-1", { provider, model: fakeModel }),
+      await optionsFromProfile(profile, "fake/fake-1", {
+        provider,
+        model: fakeModel,
+        completionCheck: false,
+      }),
     );
     await agent.run("compare pages");
     const reads = new Map(

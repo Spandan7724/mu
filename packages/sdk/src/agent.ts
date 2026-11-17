@@ -64,6 +64,7 @@ import {
 } from "@mu/core";
 import type { z } from "zod";
 import { type Budget, type BudgetBreach, checkBudget, totalTokens } from "./budget.ts";
+import { checkCompletion, completionReminder, completionScope } from "./completion-check.ts";
 import {
   attachedUsageLines,
   type CostReport,
@@ -151,6 +152,9 @@ export interface AgentOptions {
   extensionContext?: boolean;
   // Names the /cost context group for a profile's own custom message types.
   contextLabel?: (customType: string) => string | undefined;
+  // Before a run ends with an answer, one extra model call checks it against the
+  // user's messages for the task and sends the agent back once if work is left.
+  completionCheck?: boolean;
 }
 
 export interface RunResult {
@@ -2070,6 +2074,7 @@ export class Agent {
 
     let captured: T | undefined;
     let reminders = 0;
+    let completionChecked = false;
     let tools: AnyTool[] = this.tools;
     const runModel = this.withoutRefusedImages(
       opts?.model ? resolveModel(opts.model, this.options.extensions) : this.model,
@@ -2205,7 +2210,7 @@ export class Agent {
       },
       // An aborted loop returns before delivering, so notices stay queued for later.
       getNotices: () => (this.controller.signal.aborted ? [] : this.notices.splice(0)),
-      getFollowUpMessages: () => {
+      getFollowUpMessages: async () => {
         const next = this.followUps.shift();
         if (next) return [next];
         // Ending with prose instead of the tool would throw away the whole run.
@@ -2217,6 +2222,36 @@ export class Agent {
         ) {
           reminders++;
           return [structuredOutputReminder()];
+        }
+        if (
+          this.options.completionCheck &&
+          !opts?.output &&
+          !completionChecked &&
+          !this.stopping &&
+          !this.controller.signal.aborted &&
+          !this.options.runtime?.waitingOnUser?.()
+        ) {
+          const scope = completionScope(this.tree.messagesAt());
+          if (!scope) return [];
+          completionChecked = true;
+          const { verdict, usage } = await checkCompletion({
+            provider: runProvider,
+            model: runModel,
+            streamOpts: { ...run.streamOpts, thinkingLevel: runThinking },
+            scope,
+            signal: this.controller.signal,
+          });
+          if (usage) {
+            void this.recordExternalUsage({
+              source: "completion-check",
+              model: `${runModel.provider}/${runModel.id}`,
+              usage,
+              turns: 0,
+            });
+          }
+          if (verdict?.status === "incomplete" && !this.controller.signal.aborted) {
+            return [completionReminder(verdict.remaining)];
+          }
         }
         return [];
       },
