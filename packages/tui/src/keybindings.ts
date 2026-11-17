@@ -63,6 +63,12 @@ export const KEYBINDING_GROUPS: KeybindingGroup[] = [
       { keys: "/ at the start of an empty line", description: "open the command menu" },
       { keys: "@", description: "open the file-mention popup" },
       {
+        keys: "ctrl+v · alt+v",
+        description:
+          "attach the clipboard's image; pasting or dropping an image file's path attaches it too",
+      },
+      { keys: "backspace after [image N]", description: "remove that image" },
+      {
         keys: "! at the start of an empty line",
         description: "enter shell mode — a direct local command, no model call",
       },

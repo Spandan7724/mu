@@ -100,6 +100,49 @@ describe("read", () => {
     });
   });
 
+  test("an image comes back as an image the model can see", async () => {
+    const root = await scratch();
+    const png = new Uint8Array(40);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    new DataView(png.buffer).setUint32(16, 1280);
+    new DataView(png.buffer).setUint32(20, 720);
+    await writeFile(join(root, "slide.png"), png);
+    const tool = readTool({ root, state: new FileState() }) as AnyTool;
+    const read = (acceptsImages: boolean) =>
+      tool.execute("t1", { path: "slide.png" }, signal, undefined, undefined, {
+        model: "test/model",
+        acceptsImages,
+      });
+
+    const seen = await read(true);
+    expect(seen.isError).toBeUndefined();
+    expect(seen.content[1]).toEqual({
+      type: "image",
+      mimeType: "image/png",
+      data: Buffer.from(png).toString("base64"),
+    });
+    expect(textOf(seen)).toBe("slide.png (PNG · 1280×720 · 40 B)");
+    expect(seen.details).toMatchObject({ image: { width: 1280, height: 720, bytes: 40 } });
+
+    const blind = await read(false);
+    expect(blind.isError).toBe(true);
+    expect(blind.content.some((block) => block.type === "image")).toBe(false);
+    expect(textOf(blind)).toContain("cannot see images");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("binary files and PDFs are refused instead of decoded as text", async () => {
+    const root = await scratch();
+    await writeFile(join(root, "deck.pdf"), "%PDF-1.7\n1 0 obj\n<< >>\nendobj\n");
+    await writeFile(join(root, "blob.bin"), new Uint8Array([1, 2, 0, 3]));
+    for (const path of ["deck.pdf", "blob.bin"]) {
+      const result = await run(readTool({ root, state: new FileState() }), { path });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain("render the pages to PNG");
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+
   test("a missing file is a helpful error, not a throw", async () => {
     const root = await scratch();
     const result = await run(readTool({ root, state: new FileState() }), { path: "nope.txt" });

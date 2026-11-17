@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CommandRegistry } from "@mu/core";
 import { FakeProvider, fakeModel } from "@mu/core/testing/fake-provider.ts";
 import {
@@ -105,6 +108,51 @@ describe("runRpc", () => {
     expect(events[0]?.type === "event" && events[0].event.type).toBe("agent_start");
     // Every line is independently parseable — that is the wire contract.
     for (const line of written) expect(() => JSON.parse(line)).not.toThrow();
+  });
+
+  test("input attaches image files by path and refuses ones it cannot send", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mu-rpc-image-"));
+    const png = new Uint8Array(33);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    new DataView(png.buffer).setUint32(16, 64);
+    new DataView(png.buffer).setUint32(20, 32);
+    await writeFile(join(dir, "shot.png"), png);
+    const provider = new FakeProvider([{ content: [{ type: "text", text: "seen" }] }]);
+    const agent = new Agent({ provider, model: fakeModel });
+    const { io, written } = harness([
+      JSON.stringify({
+        type: "input",
+        text: "what",
+        images: [join(dir, "missing.png")],
+        operationId: "a",
+      }),
+      JSON.stringify({
+        type: "input",
+        text: "what",
+        images: [join(dir, "shot.png")],
+        operationId: "b",
+      }),
+      JSON.stringify({ type: "shutdown" }),
+    ]);
+
+    await runRpc(io, { agent });
+    const results = parsed(written).filter((out) => out.type === "op_result");
+    expect(results.map((out) => out.ok)).toEqual([false, true]);
+    const user = parsed(written).find(
+      (out) =>
+        out.type === "event" &&
+        out.event.type === "message_end" &&
+        out.event.message.role === "user",
+    );
+    expect(
+      user?.type === "event" && user.event.type === "message_end" && user.event.message,
+    ).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "what\n[image 1 · 64×32]" },
+        { type: "image", mimeType: "image/png", data: Buffer.from(png).toString("base64") },
+      ],
+    });
   });
 
   test("streamed updates carry the delta alone and rebuild into the final message", async () => {

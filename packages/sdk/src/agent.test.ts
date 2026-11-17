@@ -807,6 +807,30 @@ describe("steering, follow-ups and abort", () => {
     expect(result.text).toBe("second");
   });
 
+  test("steering and follow-ups can carry images", async () => {
+    const provider = new FakeProvider([
+      { content: [{ type: "text", text: "first" }], delayMs: 20 },
+      { content: [{ type: "text", text: "second" }] },
+      { content: [{ type: "text", text: "third" }] },
+    ]);
+    const agent = new Agent({
+      provider,
+      model: { ...fakeModel, modalities: ["text", "image"] },
+    });
+    expect(agent.acceptsImages).toBe(true);
+    const image = { type: "image" as const, mimeType: "image/png", data: "AAAA" };
+    const running = agent.run("go");
+    await Bun.sleep(3);
+    agent.send([{ type: "text", text: "steer [image 1 · 1×1]" }, image]);
+    agent.followUp([{ type: "text", text: "later [image 2 · 1×1]" }, image]);
+    await running;
+    const users = (provider.requests[2]?.messages ?? []).filter((m) => m.role === "user");
+    expect(users.map((m) => m.content.filter((block) => block.type === "image").length)).toEqual([
+      0, 1, 1,
+    ]);
+    expect(new Agent({ provider, model: fakeModel }).acceptsImages).toBe(false);
+  });
+
   test("multiple follow-ups are delivered one at a time in queue order", async () => {
     const provider = new FakeProvider([
       { content: [{ type: "text", text: "initial" }], delayMs: 20 },

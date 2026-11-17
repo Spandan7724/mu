@@ -6330,3 +6330,80 @@ describe("provider text and stalls", () => {
     expect(app.renderScreen().join("\n")).toContain("\ue200cite\ue201 icon");
   });
 });
+
+describe("image attachments", () => {
+  const image = (data: string) => ({ type: "image" as const, mimeType: "image/png", data });
+
+  test("an attached image shows as a marker and goes with the message after it", () => {
+    const sent: { text: string; content: unknown }[] = [];
+    const { app } = harness({ onSubmit: (text, content) => void sent.push({ text, content }) });
+    feed(app, "compare");
+    app.attachImage(image("AAA"), { width: 1280, height: 720 });
+    feed(app, "with this");
+    expect(app.renderBottom().map(stripAnsi).join("\n")).toContain(
+      "compare [image 1 · 1280×720] with this",
+    );
+    press(app, "return");
+    expect(sent).toEqual([
+      {
+        text: "compare [image 1 · 1280×720] with this",
+        content: [
+          { type: "text", text: "compare [image 1 · 1280×720]" },
+          image("AAA"),
+          { type: "text", text: " with this" },
+        ],
+      },
+    ]);
+  });
+
+  test("backspace removes a marker whole, and its image with it", () => {
+    const sent: { text: string; content: unknown }[] = [];
+    const { app } = harness({ onSubmit: (text, content) => void sent.push({ text, content }) });
+    feed(app, "look");
+    app.attachImage(image("AAA"), { width: 10, height: 20 });
+    press(app, "backspace");
+    press(app, "backspace");
+    press(app, "return");
+    expect(sent).toEqual([{ text: "look ", content: undefined }]);
+  });
+
+  test("a steer carries its images too", () => {
+    const steered: unknown[] = [];
+    const { app } = harness({
+      onSteer: (_text, content) => {
+        steered.push(content);
+        return true;
+      },
+    });
+    app.handleEvent({ type: "agent_start" });
+    app.attachImage(image("BBB"), { width: 1, height: 1 });
+    press(app, "return");
+    expect(steered).toEqual([[{ type: "text", text: "[image 1 · 1×1] " }, image("BBB")]]);
+  });
+
+  test("the surface may take a paste; otherwise it is typed", () => {
+    const pasted: string[] = [];
+    const { app, submitted } = harness({
+      onPaste: (text) => {
+        pasted.push(text);
+        return text.endsWith(".png");
+      },
+    });
+    app.handleInput({ type: "paste", text: "/tmp/shot.png" });
+    app.handleInput({ type: "paste", text: "hello" });
+    press(app, "return");
+    expect(pasted).toEqual(["/tmp/shot.png", "hello"]);
+    expect(submitted).toEqual(["hello"]);
+  });
+
+  test("ctrl+v asks the surface for a clipboard image only when it can attach one", () => {
+    let asked = 0;
+    const { app } = harness({ onPasteImage: () => void asked++ });
+    feed(app, "\u0016");
+    expect(asked).toBe(1);
+    const plain = harness();
+    feed(plain.app, "\u0016x");
+    press(plain.app, "return");
+    expect(plain.submitted).toEqual(["x"]);
+  });
+});

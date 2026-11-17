@@ -27,6 +27,7 @@ export interface ParsedArgs {
   noInstructions: boolean;
   noCheckpoints: boolean;
   addDirs: string[];
+  images: string[];
   purgeData: boolean;
   browserProfile?: string | undefined;
   cdpUrl?: string | undefined;
@@ -66,6 +67,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     noInstructions: false,
     noCheckpoints: false,
     addDirs: [],
+    images: [],
     purgeData: false,
     errors: [],
   };
@@ -191,6 +193,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
         else parsed.errors.push("--add-dir requires a folder");
         break;
       }
+      case "--image": {
+        const image = argv[++i];
+        if (image) parsed.images.push(image);
+        else parsed.errors.push("--image requires a file");
+        break;
+      }
       case "--permission-mode":
         parsed.permissionMode = argv[++i];
         if (!parsed.permissionMode) parsed.errors.push("--permission-mode requires a value");
@@ -200,6 +208,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         else if (parsed.prompt === undefined && parsed.mode === "headless") parsed.prompt = arg;
         else parsed.errors.push(`Unexpected argument: ${arg}`);
     }
+  }
+  if (parsed.images.length > 0 && parsed.mode !== "headless") {
+    parsed.errors.push("--image works with -p; in the app, paste or drop the image instead");
   }
 
   return parsed;
@@ -303,6 +314,7 @@ Browser agent (mu browser, or --profile browser)
 Options for both agents:
   -p, --print <prompt>       headless one-shot mode; prints the final answer
       --json                 with -p, stream every event as JSON lines instead
+      --image <file>         with -p, attach a PNG, JPEG, GIF or WebP image (repeatable)
       --rpc                  NDJSON mode for other programs (see RPC below)
       --model <ref>          model to use, e.g. anthropic/claude-opus-5 or openai/gpt-5.1
                              (default: "model" in ~/.mu/config.json)
@@ -341,13 +353,15 @@ In the app:
   !<command>       run a shell command yourself    @<path>    mention a file
   ctrl+o           review tool output              ctrl+t     cycle thinking level
   shift+tab        cycle permission mode           esc        stop the current run
-  ctrl+c           exit
+  ctrl+v           attach the clipboard's image    ctrl+c     exit
+  Paste or drop an image file's path to attach it.
 
 RPC (--rpc):
   One JSON object per line. Ops in: input, steer, follow_up, command, shell,
   permission_reply, permission_mode, cycle_permission_mode, thinking, resume,
   remove_queued, snapshot, resize, abort, shutdown. Out: ready, event, snapshot,
-  command_result, op_result, error, shutdown.
+  command_result, op_result, error, shutdown. input, steer and follow_up take an
+  optional "images" list of image file paths.
 
 Files:
   ~/.mu/config.json        default model, and a "browser" section (browserProfile, connect,

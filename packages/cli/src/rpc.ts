@@ -1,5 +1,6 @@
 // RPC mode: newline-delimited JSON over stdio. Events out, ops in — the same
 // AgentEvent union every other surface consumes.
+import { resolve } from "node:path";
 import type {
   Agent,
   AgentEvent,
@@ -9,38 +10,41 @@ import type {
   MarkdownCommandRun,
   PermissionModeTone,
   Usage,
+  UserContent,
   WireAgentEvent,
 } from "mu";
-import { toWireEvent } from "mu";
+import { loadImageFile, toWireEvent, userContentWithImages } from "mu";
 import { z } from "zod";
 
-export type RpcOp = (
-  | { type: "input"; text: string }
-  | { type: "steer"; text: string }
-  | { type: "follow_up"; text: string }
-  | {
-      type: "permission_reply";
-      requestId: string;
-      outcome: "allow" | "deny";
-      // true saves the allow; "session" keeps it until the process exits.
-      remember?: boolean | "session" | undefined;
-      // With a denial: why, or what to do instead, for the model.
-      message?: string | undefined;
-    }
-  | { type: "resume"; sessionId: string }
-  | { type: "command"; text: string }
-  | { type: "shell"; command: string }
-  | { type: "remove_queued"; kind: "steer" | "follow-up"; text: string }
-  | { type: "cycle_permission_mode" }
-  | { type: "permission_mode"; id: string }
-  | { type: "snapshot" }
-  | { type: "resize"; cols: number; rows: number }
-  | { type: "thinking"; level: string }
-  | { type: "abort"; by?: "user" | "host" | undefined; via?: string | undefined }
-  | { type: "stop_subagent"; subagentId: string }
-  | { type: "background_tools"; toolCallIds?: string[] | undefined }
-  | { type: "shutdown" }
-) & { operationId?: string | undefined };
+export type RpcOp =
+  // `images`: PNG, JPEG, GIF or WebP files, absolute or relative to mu's cwd.
+  (
+    | { type: "input"; text: string; images?: string[] | undefined }
+    | { type: "steer"; text: string; images?: string[] | undefined }
+    | { type: "follow_up"; text: string; images?: string[] | undefined }
+    | {
+        type: "permission_reply";
+        requestId: string;
+        outcome: "allow" | "deny";
+        // true saves the allow; "session" keeps it until the process exits.
+        remember?: boolean | "session" | undefined;
+        // With a denial: why, or what to do instead, for the model.
+        message?: string | undefined;
+      }
+    | { type: "resume"; sessionId: string }
+    | { type: "command"; text: string }
+    | { type: "shell"; command: string }
+    | { type: "remove_queued"; kind: "steer" | "follow-up"; text: string }
+    | { type: "cycle_permission_mode" }
+    | { type: "permission_mode"; id: string }
+    | { type: "snapshot" }
+    | { type: "resize"; cols: number; rows: number }
+    | { type: "thinking"; level: string }
+    | { type: "abort"; by?: "user" | "host" | undefined; via?: string | undefined }
+    | { type: "stop_subagent"; subagentId: string }
+    | { type: "background_tools"; toolCallIds?: string[] | undefined }
+    | { type: "shutdown" }
+  ) & { operationId?: string | undefined };
 
 export interface RpcRuntimeMetadata {
   sessionId: string;
@@ -107,12 +111,14 @@ export interface RpcDeps {
 
 const text = z.string().max(1_000_000);
 const rpcOperationId = z.string().min(1).max(128);
+// Image files by path, read by mu: base64 screenshots would not fit an RPC line.
+const imagePaths = z.array(z.string().min(1).max(4096)).max(20).optional();
 const MAX_RPC_LINE_CHARS = 2_000_000;
 const RPC_LINE_TOO_LONG = "__mu_rpc_line_too_long__";
 const rpcOpSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("input"), text }).strict(),
-  z.object({ type: z.literal("steer"), text }).strict(),
-  z.object({ type: z.literal("follow_up"), text }).strict(),
+  z.object({ type: z.literal("input"), text, images: imagePaths }).strict(),
+  z.object({ type: z.literal("steer"), text, images: imagePaths }).strict(),
+  z.object({ type: z.literal("follow_up"), text, images: imagePaths }).strict(),
   z
     .object({
       type: z.literal("permission_reply"),
@@ -237,7 +243,16 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
     }
   };
 
-  const launch = (text: string, options?: AgentRunOptions): string | undefined => {
+  const withImages = async (
+    text: string,
+    paths: string[] | undefined,
+  ): Promise<string | UserContent[]> => {
+    if (!paths || paths.length === 0) return text;
+    const images = await Promise.all(paths.map((path) => loadImageFile(resolve(path))));
+    return userContentWithImages(text, images);
+  };
+
+  const launch = (text: string | UserContent[], options?: AgentRunOptions): string | undefined => {
     if (active || deps.agent.isRunning) {
       return "a run is already active; use steer or wait for it";
     }
@@ -266,22 +281,27 @@ export async function runRpc(io: RpcIo, deps: RpcDeps): Promise<void> {
           reject(op, `invalid op: ${op.message}`);
           break;
 
-        case "input": {
-          const error = launch(op.text);
-          if (error) reject(op, error);
-          else accept(op);
+        case "input":
+        case "steer":
+        case "follow_up": {
+          let input: string | UserContent[];
+          try {
+            input = await withImages(op.text, op.images);
+          } catch (error) {
+            reject(op, error instanceof Error ? error.message : String(error));
+            break;
+          }
+          if (op.type === "input") {
+            const error = launch(input);
+            if (error) reject(op, error);
+            else accept(op);
+          } else {
+            if (op.type === "steer") deps.agent.send(input);
+            else deps.agent.followUp(input);
+            accept(op);
+          }
           break;
         }
-
-        case "steer":
-          deps.agent.send(op.text);
-          accept(op);
-          break;
-
-        case "follow_up":
-          deps.agent.followUp(op.text);
-          accept(op);
-          break;
 
         case "permission_reply": {
           const ok =

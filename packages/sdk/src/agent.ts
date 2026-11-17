@@ -60,6 +60,7 @@ import {
   type TreeEntry,
   type TurnInfo,
   type UserContent,
+  type UserMessage,
   userMessage,
 } from "@mu/core";
 import type { z } from "zod";
@@ -242,6 +243,12 @@ export interface BackgroundWork {
   // Settles once the work's result has been delivered or recorded.
   done: Promise<unknown>;
   stop: (reason: "user" | "session") => void;
+}
+
+function userInput(input: string | UserContent[]): UserMessage {
+  return typeof input === "string"
+    ? userMessage(input)
+    : { role: "user", content: input, timestamp: Date.now() };
 }
 
 function resolveModel(model: AgentOptions["model"], extensions?: ExtensionHost): ModelInfo {
@@ -433,6 +440,11 @@ export class Agent {
 
   get modelInfo(): ModelInfo {
     return this.model;
+  }
+
+  // Whether the current model is sent images, after any refusal it has shown.
+  get acceptsImages(): boolean {
+    return this.withoutRefusedImages(this.model).modalities.includes("image");
   }
 
   get contextWindow(): number {
@@ -892,17 +904,18 @@ export class Agent {
   }
 
   // Steer a run that is already in flight; delivered before the next LLM call.
-  send(message: string): void {
-    this.steering.push(userMessage(message));
+  send(message: string | UserContent[]): void {
+    this.steering.push(userInput(message));
   }
 
   // Wake a run that would otherwise stop (also how background work resumes it).
   // A string is the user's own words; a message lets a caller wake the run with
   // context the user never typed.
-  followUp(message: string | CustomMessage): void {
+  followUp(message: string | UserContent[] | CustomMessage): void {
     if (this.stopping) return;
-    if (typeof message === "string") this.releaseHeld();
-    this.followUps.push(typeof message === "string" ? userMessage(message) : message);
+    const custom = typeof message !== "string" && !Array.isArray(message);
+    if (!custom) this.releaseHeld();
+    this.followUps.push(custom ? message : userInput(message));
     if (!this.running) this.scheduleAutonomousRun();
   }
 

@@ -10,8 +10,10 @@ import type {
   PermissionModeTone,
   PermissionRequest,
   ToolResultMessage,
+  UserContent,
 } from "@mu/core";
 import { INTERRUPTED_TYPE, isInterruption } from "@mu/core";
+import { type ImageContent, imageMarker } from "mu";
 import {
   agentCell,
   type CompactionProgressState,
@@ -105,10 +107,16 @@ export interface InputPromptRequest {
 }
 
 export interface AppCallbacks {
+  // `content` is present when the text carries image markers: the text with
+  // each attached image following its marker.
   // biome-ignore lint/suspicious/noConfusingVoidType: false rejects; no return accepts.
-  onSubmit: (text: string) => boolean | void;
-  onSteer?: (text: string) => boolean;
-  onFollowUp?: (text: string) => boolean;
+  onSubmit: (text: string, content?: UserContent[]) => boolean | void;
+  onSteer?: (text: string, content?: UserContent[]) => boolean;
+  onFollowUp?: (text: string, content?: UserContent[]) => boolean;
+  // A composer paste; true when the surface took it (image paths it attaches).
+  onPaste?: (text: string) => boolean;
+  // Ctrl+V / Alt+V: the surface reads an image from the clipboard.
+  onPasteImage?: () => void;
   onEditQueued?: (kind: QueuedInputKind, text: string) => boolean;
   // Explicit user shell escape. The leading `!` stays in editor history, but
   // only the command text is passed to the surface.
@@ -234,6 +242,7 @@ interface LiveSubagent {
   ended?: Extract<AgentEvent, { type: "subagent_ended" }>;
 }
 
+const IMAGE_MARKER = /\[image \d+ · \d+×\d+\]/g;
 // Guardrails against a runaway process, independent of core's much tighter
 // model-facing token budget. Both dimensions matter: a line count alone still
 // permits a small number of enormous lines to exhaust the TUI.
@@ -751,6 +760,39 @@ export class App {
 
   private get view(): ConversationView {
     return this.eventView ?? (this.activeSource === "side" && this.side ? this.side : this.main);
+  }
+
+  // Attached images by marker, kept for the session so recalled history still resolves.
+  private images = new Map<string, ImageContent>();
+  private imageCount = 0;
+
+  // Inserts the image's marker at the cursor; the image goes with the message
+  // only while its marker is still in the text.
+  attachImage(image: ImageContent, size: { width: number; height: number }): void {
+    this.imageCount++;
+    const marker = imageMarker(this.imageCount, size);
+    this.images.set(marker, image);
+    const before = this.editor.textBeforeCursor;
+    this.editor.insert(`${before.length > 0 && !before.endsWith(" ") ? " " : ""}${marker} `);
+  }
+
+  private contentWithImages(text: string): UserContent[] | undefined {
+    const content: UserContent[] = [];
+    let from = 0;
+    for (const match of text.matchAll(IMAGE_MARKER)) {
+      const image = this.images.get(match[0]);
+      if (!image) continue;
+      const end = match.index + match[0].length;
+      content.push({ type: "text", text: text.slice(from, end) }, image);
+      from = end;
+    }
+    if (content.length === 0) return undefined;
+    const rest = text.slice(from);
+    // Providers refuse a whitespace-only text block; the joined text stays the same.
+    const last = content.at(-2);
+    if (rest.trim().length === 0 && last?.type === "text") last.text += rest;
+    else if (rest) content.push({ type: "text", text: rest });
+    return content;
   }
 
   get editor(): Editor {
@@ -2844,11 +2886,11 @@ export class App {
     this.transcriptCache = undefined;
   }
 
-  private submitUser(text: string): boolean | undefined {
+  private submitUser(text: string, content?: UserContent[]): boolean | undefined {
     const pending: TranscriptItem = { kind: "user", text, pending: true };
     this.pushTranscript(pending);
     try {
-      const accepted = this.options.callbacks.onSubmit(text);
+      const accepted = this.options.callbacks.onSubmit(text, content);
       if (accepted === false && pending.pending === true) this.removePendingSubmission(pending);
       return accepted === false ? false : undefined;
     } catch (error) {
@@ -3317,6 +3359,7 @@ export class App {
         this.refreshPicker();
         return;
       }
+      if (!this.isShellMode && this.options.callbacks.onPaste?.(event.text)) return;
       // A paste never submits, however many newlines it contains.
       this.editor.insert(event.text);
       return;
@@ -3395,6 +3438,11 @@ export class App {
       return;
     }
 
+    if ((key.ctrl || key.alt) && key.name === "v" && this.options.callbacks.onPasteImage) {
+      if (!this.isShellMode) this.options.callbacks.onPasteImage();
+      return;
+    }
+
     // Ctrl+J inserts a newline on every terminal — it's a raw control byte
     // (0x0A), not a reported modifier, so unlike Shift/Ctrl/Alt+Enter it needs
     // no terminal protocol support at all.
@@ -3440,13 +3488,14 @@ export class App {
         } else if (text.startsWith("/")) {
           if (!this.handleLocalCommand(text)) this.options.callbacks.onCommand?.(text);
         } else {
+          const content = this.contentWithImages(text);
           const queueDuringCompaction =
             this.running && this.compacting && this.options.callbacks.onFollowUp;
           const accepted = queueDuringCompaction
-            ? this.options.callbacks.onFollowUp?.(text)
+            ? this.options.callbacks.onFollowUp?.(text, content)
             : this.running && this.options.callbacks.onSteer
-              ? this.options.callbacks.onSteer(text)
-              : this.submitUser(text);
+              ? this.options.callbacks.onSteer(text, content)
+              : this.submitUser(text, content);
           if (this.running && accepted !== false) {
             this.pendingInputs.push({ kind: queueDuringCompaction ? "follow-up" : "steer", text });
           }
@@ -3457,7 +3506,7 @@ export class App {
         if (!this.running || !this.options.callbacks.onFollowUp) return;
         const text = this.editor.submit();
         if (text.trim().length === 0) return;
-        if (this.options.callbacks.onFollowUp(text) !== false) {
+        if (this.options.callbacks.onFollowUp(text, this.contentWithImages(text)) !== false) {
           this.pendingInputs.push({ kind: "follow-up", text });
         }
         return;
@@ -3487,9 +3536,13 @@ export class App {
         this.editor.move("up");
         return;
       }
-      case "backspace":
-        this.editor.backspace();
+      case "backspace": {
+        const before = this.editor.textBeforeCursor;
+        const marker = [...this.images.keys()].find((known) => before.endsWith(known));
+        if (marker) this.editor.spliceBeforeCursor(this.editor.offset - marker.length, "");
+        else this.editor.backspace();
         return;
+      }
       case "down":
         if (this.editor.isRecallingHistory) {
           this.editor.recallHistory("down");

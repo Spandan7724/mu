@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   type AgentOptions,
   type AgentRunOptions,
@@ -5,11 +6,14 @@ import {
   customMessage,
   type DiffCommandData,
   type HaltReason,
+  type LoadedImage,
+  loadImageFile,
   type MarkdownCommandRun,
   supportedThinkingLevels,
   type ThinkingLevel,
   toWireEvent,
   type UndoPointsCommandData,
+  userContentWithImages,
 } from "mu";
 import type { ParsedArgs } from "./args.ts";
 import { isCostReport, renderCostCommand } from "./cost-command.ts";
@@ -46,6 +50,15 @@ export async function runHeadless(
     io.stderr("mu: -p requires a prompt\n");
     return EXIT.usage;
   }
+  const images: LoadedImage[] = [];
+  for (const path of args.images) {
+    try {
+      images.push(await loadImageFile(resolve(path)));
+    } catch (error) {
+      io.stderr(`mu: ${error instanceof Error ? error.message : String(error)}\n`);
+      return EXIT.usage;
+    }
+  }
 
   let runtime: Awaited<ReturnType<typeof createCliSessionRuntime>>;
   try {
@@ -73,6 +86,9 @@ export async function runHeadless(
     return EXIT.usage;
   }
   const { agent } = runtime;
+  if (images.length > 0 && !agent.acceptsImages) {
+    io.stderr(`mu: ${agent.modelRef} cannot see images; it will get a note instead\n`);
+  }
 
   let interrupted = false;
   const onSigint = () => {
@@ -180,7 +196,10 @@ export async function runHeadless(
       if (event.type !== "agent_end" || event.reason === "done") return;
       laterReason = event.reason === "budget" ? "maxCostUsd" : event.reason;
     });
-    const result = await agent.run(prompt, runOptions);
+    const result = await agent.run(
+      images.length > 0 ? userContentWithImages(prompt, images) : prompt,
+      runOptions,
+    );
     mainDone = true;
     if (!args.json) io.stdout("\n");
     // Tasks the model was already told about are stopped at exit rather than

@@ -1,5 +1,6 @@
 export type {
   Credential,
+  ImageContent,
   ModelDiscoveryOptions,
   ModelInfo,
   Provider,
@@ -143,6 +144,18 @@ export type { LoadOptions, LoadReport } from "./extension-loader.ts";
 export { loadExtensions, resolveExtensionFiles } from "./extension-loader.ts";
 export type { FileSessionStoreOptions } from "./file-store.ts";
 export { FileSessionStore } from "./file-store.ts";
+export type { ImageCheck, ImageInfo, LoadedImage } from "./images.ts";
+export {
+  checkImage,
+  formatBytes,
+  hasImageExtension,
+  imageMarker,
+  loadImageFile,
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_SIDE,
+  sniffImage,
+  userContentWithImages,
+} from "./images.ts";
 export type {
   MarkdownCommand,
   MarkdownCommandOptions,

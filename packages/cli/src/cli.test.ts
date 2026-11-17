@@ -42,6 +42,14 @@ describe("parseArgs", () => {
     expect(headless.resumeSessionId).toBe("session-id");
   });
 
+  test("--image attaches files to a -p prompt and is refused elsewhere", () => {
+    const args = parseArgs(["-p", "what is this", "--image", "a.png", "--image", "b.jpg"]);
+    expect(args.errors).toEqual([]);
+    expect(args.images).toEqual(["a.png", "b.jpg"]);
+    expect(parseArgs(["-p", "x", "--image"]).errors[0]).toContain("requires a file");
+    expect(parseArgs(["--image", "a.png"]).errors[0]).toContain("works with -p");
+  });
+
   test("-p selects headless and captures the prompt", () => {
     const args = parseArgs(["-p", "do the thing"]);
     expect(args.mode).toBe("headless");
@@ -569,6 +577,7 @@ describe("runHeadless", () => {
         allowAll: false,
         noInstructions: false,
         noCheckpoints: false,
+        images: [],
         addDirs: [],
         purgeData: false,
         errors: [],

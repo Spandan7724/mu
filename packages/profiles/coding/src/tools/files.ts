@@ -2,7 +2,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { type CheckpointDiffFile, errorResult, type ToolResult } from "@mu/core";
-import { tool } from "mu";
+import { checkImage, formatBytes, type ImageCheck, tool } from "mu";
 import { z } from "zod";
 import type { FileState } from "../state.ts";
 import { truncateOutput, withNotice } from "../truncate.ts";
@@ -128,21 +128,43 @@ export function filePermissionDiff(
   return fileDiff(path, before, after);
 }
 
+const BINARY_SNIFF_BYTES = 8192;
+
+function imageResult(
+  shown: string,
+  absolute: string,
+  check: ImageCheck,
+  acceptsImages: boolean,
+): ToolResult {
+  if (!check.ok) return errorResult(`Cannot show ${shown}: ${check.reason}`);
+  const { info, bytes, image } = check.loaded;
+  const summary = `${info.mimeType.slice("image/".length).toUpperCase()} · ${info.width}×${info.height} · ${formatBytes(bytes)}`;
+  if (!acceptsImages) {
+    return errorResult(
+      `${shown} is an image (${summary}), and the current model cannot see images.`,
+    );
+  }
+  return {
+    content: [{ type: "text", text: `${shown} (${summary})` }, image],
+    details: { path: absolute, image: { ...info, bytes } },
+  };
+}
+
 export function readTool(deps: ToolDeps) {
   return tool({
     name: "read",
     changesState: false,
     description:
-      "Read a file from the filesystem. Returns contents with line numbers for grounded path:line citations. Read a file before editing it.",
+      "Read a file from the filesystem. Returns text with line numbers for grounded path:line citations, or shows you a PNG, JPEG, GIF or WebP image. Read a file before editing it.",
     inputSchema: z.object({
       path: z.string().describe("Path to the file, absolute or relative to the session root"),
       offset: z.number().int().min(1).optional().describe("First line to read (1-based)"),
       limit: z.number().int().min(1).optional().describe("Maximum number of lines to read"),
     }),
     isConcurrencySafe: () => true,
-    execute: async ({ path, offset, limit }): Promise<ToolResult | string> => {
+    execute: async ({ path, offset, limit }, { acceptsImages }): Promise<ToolResult | string> => {
       let absolute = resolveReachable(deps, path);
-      let content: string;
+      let bytes: Buffer;
       try {
         absolute = await resolveExisting(deps, path);
         const info = await stat(absolute);
@@ -151,7 +173,7 @@ export function readTool(deps: ToolDeps) {
             `${display(deps.root, absolute)} is ${info.size.toLocaleString()} bytes; read refuses files larger than ${MAX_READ_SOURCE_BYTES.toLocaleString()} bytes. Use rg through the bounded bash tool to inspect it.`,
           );
         }
-        content = await readFile(absolute, "utf8");
+        bytes = await readFile(absolute);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT")
@@ -162,6 +184,18 @@ export function readTool(deps: ToolDeps) {
         throw error;
       }
 
+      const shown = display(deps.root, absolute);
+      const image = checkImage(bytes);
+      if (image) return imageResult(shown, absolute, image, acceptsImages);
+      if (
+        bytes.subarray(0, 5).toString("latin1") === "%PDF-" ||
+        bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+      ) {
+        return errorResult(
+          `${shown} is a binary file; read shows text files and PNG, JPEG, GIF or WebP images. To look at a PDF or slide deck, render the pages to PNG first (for example \`pdftoppm -png -r 80\`) and read those.`,
+        );
+      }
+      const content = bytes.toString("utf8");
       deps.state.markRead(absolute, content);
       const allLines = fileLines(content);
       const start = (offset ?? 1) - 1;

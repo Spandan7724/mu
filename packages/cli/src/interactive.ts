@@ -28,12 +28,15 @@ import {
   type AgentRunOptions,
   type CheckpointActionData,
   type CommandResult,
+  checkImage,
   customMessage,
   type DiffCommandData,
   defaultModelId,
   type ForkedCommandData,
   type ForkPointsCommandData,
   formatSubagentRoutes,
+  type LoadedImage,
+  loadImageFile,
   loadMarkdownCommands,
   type MarkdownCommandRun,
   type ModelInfo,
@@ -56,6 +59,7 @@ import {
   thinkingLevelForModel,
   toCommand,
   type UndoPointsCommandData,
+  type UserContent,
   usageDelta,
 } from "mu";
 import cliPackage from "../package.json";
@@ -82,6 +86,7 @@ import { transcriptExportCommand } from "./export-command.ts";
 import { FileMentions } from "./file-mentions.ts";
 import { forkedNotice, forkPickerItems, isForkedCommandData } from "./fork-picker.ts";
 import { observeGitBranch } from "./git-branch.ts";
+import { clipboardToolHint, pastedImagePaths, readClipboardImage } from "./image-input.ts";
 import {
   type AccountLoginProvider,
   accountLoginProviders,
@@ -376,7 +381,7 @@ export async function runInteractive(
     showThinking: (await loadUserConfig(undefined, () => {})).showThinking !== false,
     registry,
     callbacks: {
-      onSubmit: (text) => {
+      onSubmit: (text, content) => {
         // A second concurrent run would share the Agent's abort controller,
         // session and usage totals. Mid-run input is steering, which is what
         // the loop's steering queue exists for.
@@ -385,27 +390,60 @@ export async function runInteractive(
           paint();
           return false;
         }
-        if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(text);
-        else beginRun(text);
+        if (activeRunPromise() || activeAgent().isRunning) activeAgent().send(content ?? text);
+        else beginRun(content ?? text);
         return true;
       },
-      onSteer: (text) => {
+      onSteer: (text, content) => {
         if (activeShell) {
           commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
           return false;
         }
-        activeAgent().send(text);
+        activeAgent().send(content ?? text);
         return true;
       },
-      onFollowUp: (text) => {
+      onFollowUp: (text, content) => {
         if (activeShell) {
           commitLines(["  A shell command is already running; press Esc to cancel it."]);
           paint();
           return false;
         }
-        activeAgent().followUp(text);
+        activeAgent().followUp(content ?? text);
         return true;
+      },
+      onPaste: (text) => {
+        const paths = pastedImagePaths(text, process.cwd());
+        if (!paths) return false;
+        void (async () => {
+          for (const path of paths) {
+            try {
+              attachImage(await loadImageFile(path));
+            } catch (error) {
+              commitLines([`  ${error instanceof Error ? error.message : String(error)}`]);
+            }
+          }
+          paint();
+        })();
+        return true;
+      },
+      onPasteImage: () => {
+        void (async () => {
+          const bytes = await readClipboardImage();
+          if (!bytes) {
+            commitLines([
+              bytes === null
+                ? "  No image on the clipboard."
+                : `  Could not read the clipboard: ${clipboardToolHint()}.`,
+            ]);
+          } else {
+            const checked = checkImage(bytes);
+            if (!checked) commitLines(["  The clipboard image is not PNG, JPEG, GIF or WebP."]);
+            else if (!checked.ok) commitLines([`  Clipboard image: ${checked.reason}`]);
+            else attachImage(checked.loaded);
+          }
+          paint();
+        })();
       },
       onEditQueued: (kind, text) => activeAgent().removeQueuedMessage(kind, text),
       onShell: (command) => beginUserShell(command),
@@ -1039,7 +1077,15 @@ export async function runInteractive(
     if (next) applyPermissionMode(next);
   }
 
-  function beginRun(text: string, options?: AgentRunOptions): void {
+  // The marker goes in the composer; a model that cannot see images gets a note in its place.
+  function attachImage(loaded: LoadedImage): void {
+    app.attachImage(loaded.image, loaded.info);
+    if (!activeAgent().acceptsImages) {
+      commitLines([`  ${activeAgent().modelRef} cannot see images; it will get a note instead.`]);
+    }
+  }
+
+  function beginRun(text: string | UserContent[], options?: AgentRunOptions): void {
     const source = app.activeConversation;
     const target = activeAgent();
     if (activeShell) {
@@ -1614,7 +1660,7 @@ export async function runInteractive(
   async function startRun(
     target: Agent,
     source: ConversationSource,
-    text: string,
+    text: string | UserContent[],
     options?: AgentRunOptions,
   ): Promise<void> {
     try {

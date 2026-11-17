@@ -1,5 +1,6 @@
 import type { AgentMessage, CheckpointDiffFile, ToolResultMessage } from "@mu/core";
 import type { SubagentDetails, SubagentKind, SubagentProgressUpdate } from "mu";
+import { formatBytes } from "mu";
 import {
   type DiffLine,
   diffCell,
@@ -1309,10 +1310,14 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
           endLine?: number;
           returnedLines?: number;
           truncated?: boolean;
+          image?: { mimeType: string; width: number; height: number; bytes: number };
         }
       | undefined;
     let summary: string | undefined;
-    if (details?.lines !== undefined) {
+    if (details?.image) {
+      const { mimeType, width, height, bytes } = details.image;
+      summary = `${mimeType.replace("image/", "")} image · ${width}×${height} · ${formatBytes(bytes)}`;
+    } else if (details?.lines !== undefined) {
       if (details.returnedLines === 0) {
         summary = `0 lines returned · ${details.lines} total`;
       } else if (details.startLine !== undefined && details.endLine !== undefined) {
@@ -1337,9 +1342,11 @@ export const codingRenderers: Record<string, ToolRendererFn> = {
       ),
       ...(info.result?.isError
         ? errorPreview(info, ctx)
-        : info.expanded
-          ? highlightedReadResult(info, ctx)
-          : resultPreview(info, ctx)),
+        : details?.image
+          ? []
+          : info.expanded
+            ? highlightedReadResult(info, ctx)
+            : resultPreview(info, ctx)),
     ];
   },
   write: (info, ctx, registry) => {
