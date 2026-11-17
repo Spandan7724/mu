@@ -27,9 +27,6 @@ export async function optionsFromProfile(
     ...((overrides.contextLabel ?? profile.contextLabel)
       ? { contextLabel: overrides.contextLabel ?? profile.contextLabel }
       : {}),
-    ...((overrides.completionCheck ?? profile.completionCheck) !== undefined
-      ? { completionCheck: overrides.completionCheck ?? profile.completionCheck }
-      : {}),
     ...(profile.carryoverExtractor ? { carryoverExtractor: profile.carryoverExtractor } : {}),
     ...((overrides.runtime ?? profile.runtime)
       ? { runtime: overrides.runtime ?? profile.runtime }

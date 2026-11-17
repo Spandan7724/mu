@@ -45,8 +45,6 @@ export interface ProfileRuntime {
   // One-shot surfaces wait on `done` rather than exit; it also settles if the
   // wait is cancelled.
   waitingOnUser?: () => { reason: string; done: Promise<void> } | undefined;
-  // Work the agent started that will wake it when it finishes.
-  busy?: () => boolean;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;
 }
@@ -129,8 +127,6 @@ export interface Profile {
   // surfaces show it once at startup.
   checkpointNotice?: string;
   runtime?: ProfileRuntime;
-  // Check each answer against the user's request before a run ends (see AgentOptions).
-  completionCheck?: boolean;
   // Session scope key, used by file-backed stores to group sessions.
   scope?: () => Promise<string> | string;
 }

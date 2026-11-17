@@ -341,7 +341,6 @@ export async function browserProfile(options: BrowserProfileOptions = {}): Promi
     },
     diagnostics,
     runtime,
-    completionCheck: true,
     scope: () => `browser-${config.browserProfile}`,
     browser,
     config,

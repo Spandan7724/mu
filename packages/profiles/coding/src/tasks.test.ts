@@ -500,7 +500,6 @@ describe("waiting on background tasks", () => {
         model: fakeModel,
         provider,
         permissions: [{ permission: "*", pattern: "*", action: "allow" }],
-        completionCheck: false,
       }),
     );
     return { profile, provider, agent };
