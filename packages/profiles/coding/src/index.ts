@@ -249,6 +249,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
 
   const stoppedByUser = new Set<string>();
   const runtime: ProfileRuntime = {
+    busy: () => processes.list().some((task) => task.status === "running" && !task.detached),
     attach: (host) => {
       processes.setEvents({
         onStarted: (task) => {
@@ -381,6 +382,7 @@ export async function codingProfile(options: CodingProfileOptions = {}): Promise
     ...(checkpointUnavailable ? { checkpointUnavailable } : {}),
     ...(checkpointNotice ? { checkpointNotice } : {}),
     runtime,
+    completionCheck: true,
     fileState,
     processes,
     instructions: instructionLoader,

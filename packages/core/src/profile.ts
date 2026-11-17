@@ -45,6 +45,8 @@ export interface ProfileRuntime {
   // One-shot surfaces wait on `done` rather than exit; it also settles if the
   // wait is cancelled.
   waitingOnUser?: () => { reason: string; done: Promise<void> } | undefined;
+  // Work the agent started that will wake it when it finishes.
+  busy?: () => boolean;
   stop?: () => void;
   shutdown?: () => void | Promise<void>;
 }

@@ -2229,7 +2229,10 @@ export class Agent {
           !completionChecked &&
           !this.stopping &&
           !this.controller.signal.aborted &&
-          !this.options.runtime?.waitingOnUser?.()
+          !this.options.runtime?.waitingOnUser?.() &&
+          // The run that work wakes is checked when it ends.
+          !this.options.runtime?.busy?.() &&
+          this.background.size === 0
         ) {
           const scope = completionScope(this.tree.messagesAt());
           if (!scope) return [];

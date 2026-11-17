@@ -218,6 +218,19 @@ describe("Agent completion check", () => {
     }
   });
 
+  test("waits while work the agent started will wake it", async () => {
+    const provider = new FakeProvider([workCall, text("Started; I'll report when it exits.")]);
+    const agent = new Agent({
+      provider,
+      model: fakeModel,
+      tools: [work],
+      completionCheck: true,
+      runtime: { attach: () => {}, busy: () => true },
+    });
+    await agent.run("run the build");
+    expect(provider.callCount).toBe(2);
+  });
+
   test("is off unless asked for", async () => {
     const provider = new FakeProvider([workCall, text("All done.")]);
     const agent = new Agent({ provider, model: fakeModel, tools: [work] });
