@@ -85,13 +85,14 @@ export interface LoopConfig {
   thinkingLevel?: ThinkingLevel;
   maxTurns?: number;
 
-  // Steering: polled between steps; injected before the next LLM call.
+  // Steering: polled after a turn's tool calls have all run; injected before
+  // the next LLM call. It never skips planned calls (abort does).
   getSteeringMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
   // Follow-ups keep the loop alive after it would otherwise stop. Also the
   // wake-up mechanism for background work completing.
   getFollowUpMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
   // News from outside the run (background work finishing): joins the context
-  // before the next LLM call, like steering, but never skips pending tool calls.
+  // before the next LLM call, like steering.
   getNotices?: () => AgentMessage[] | Promise<AgentMessage[]>;
 
   // Control hooks — the loop's public API.
@@ -275,7 +276,6 @@ export async function runLoop(
             : await executeCalls(calls, message, currentContext, currentConfig, emit, abort);
         toolResults.push(...batch.results);
         directResponse = batch.directResponse;
-        pending.push(...batch.steering);
         hasMoreToolCalls = !batch.terminate;
         for (const result of batch.results) {
           currentContext.messages.push(result);
@@ -540,7 +540,6 @@ interface ToolBatch {
   results: ToolResultMessage[];
   terminate: boolean;
   directResponse?: string;
-  steering: AgentMessage[];
 }
 
 function resultMessage(
@@ -586,7 +585,7 @@ async function failTruncatedCalls(calls: ToolCallContent[], emit: EventSink): Pr
     await emitResult(message, emit);
     results.push(message);
   }
-  return { results, terminate: false, steering: [] };
+  return { results, terminate: false };
 }
 
 async function skipCalls(
@@ -743,7 +742,6 @@ async function executeCalls(
   const results: ToolResultMessage[] = [];
   const terminateFlags: boolean[] = [];
   let directResponse: string | undefined;
-  let steering: AgentMessage[] = [];
   const endedEarly = new Set<string>();
   const emitEnded = async (message: ToolResultMessage) => {
     if (endedEarly.has(message.toolCallId)) {
@@ -799,8 +797,6 @@ async function executeCalls(
       results.push(message);
       i++;
       if (signal.aborted) break;
-      steering = (await config.getSteeringMessages?.()) ?? [];
-      if (steering.length > 0) break;
       continue;
     }
 
@@ -832,29 +828,16 @@ async function executeCalls(
       results.push(message);
     }
     if (signal.aborted) break;
-    steering = (await config.getSteeringMessages?.()) ?? [];
-    if (steering.length > 0) break;
   }
 
   // Every call gets a result, run or not: providers reject a transcript that
   // holds a tool call without one.
-  if (i < calls.length) {
-    results.push(
-      ...(await skipCalls(
-        calls.slice(i),
-        signal.aborted
-          ? INTERRUPTED
-          : "a steering message interrupted the remaining tool calls. Re-evaluate the plan before re-issuing it.",
-        emit,
-      )),
-    );
-  }
+  if (i < calls.length) results.push(...(await skipCalls(calls.slice(i), INTERRUPTED, emit)));
 
   return {
     results,
     terminate: terminateFlags.length > 0 && terminateFlags.every(Boolean),
     ...(directResponse !== undefined ? { directResponse } : {}),
-    steering,
   };
 }
 

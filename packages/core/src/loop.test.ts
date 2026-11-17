@@ -157,22 +157,25 @@ describe("agent loop", () => {
     expect(texts).toContain("actually, stop");
   });
 
-  test("steering interrupts tool calls that have not started", async () => {
+  test("steering waits for every planned tool call before the next LLM call", async () => {
     const provider = new FakeProvider([
       {
         content: [
           { type: "toolCall", id: "c1", name: "echo", arguments: { text: "first" } },
           { type: "toolCall", id: "c2", name: "echo", arguments: { text: "second" } },
+          { type: "toolCall", id: "c3", name: "echo", arguments: { text: "third" } },
         ],
       },
-      { content: [{ type: "text", text: "replanned" }] },
+      { content: [{ type: "text", text: "adjusted" }] },
     ]);
     const executed: string[] = [];
-    let delivered = false;
+    const queue: AgentMessage[] = [];
+    let polledMidBatch = false;
     const tool = echoTool({
       executionMode: "sequential",
       execute: async (_id, args) => {
         executed.push(String((args as { text?: string }).text));
+        if (executed.length === 1) queue.push(userMessage("change course"));
         return textResult("ok");
       },
     });
@@ -181,32 +184,72 @@ describe("agent loop", () => {
       ctx([tool]),
       baseConfig(provider, {
         getSteeringMessages: () => {
-          if (executed.length === 0 || delivered) return [];
-          delivered = true;
-          return [userMessage("change course")];
+          if (executed.length > 0 && executed.length < 3) polledMidBatch = true;
+          return queue.splice(0);
         },
       }),
       collector().emit,
     );
 
-    expect(executed).toEqual(["first"]);
+    expect(executed).toEqual(["first", "second", "third"]);
+    expect(polledMidBatch).toBe(false);
+    const toolResults = result.messages.filter((message) => message.role === "toolResult");
+    expect(toolResults.every((message) => message.role === "toolResult" && !message.isError)).toBe(
+      true,
+    );
+    const secondRequest = provider.requests[1]?.messages ?? [];
+    const steerIndex = secondRequest.findIndex(
+      (message) =>
+        message.role === "user" &&
+        message.content.some(
+          (content) => content.type === "text" && content.text === "change course",
+        ),
+    );
+    const lastResultIndex = secondRequest.findLastIndex((message) => message.role === "toolResult");
+    expect(steerIndex).toBeGreaterThan(lastResultIndex);
+  });
+
+  test("an abort after a steer still skips the calls that have not started", async () => {
+    const provider = new FakeProvider([
+      {
+        content: [
+          { type: "toolCall", id: "c1", name: "echo", arguments: { text: "first" } },
+          { type: "toolCall", id: "c2", name: "echo", arguments: { text: "second" } },
+          { type: "toolCall", id: "c3", name: "echo", arguments: { text: "third" } },
+        ],
+      },
+    ]);
+    const controller = new AbortController();
+    const executed: string[] = [];
+    const queue: AgentMessage[] = [];
+    const tool = echoTool({
+      executionMode: "sequential",
+      execute: async (_id, args) => {
+        executed.push(String((args as { text?: string }).text));
+        if (executed.length === 1) queue.push(userMessage("change course"));
+        if (executed.length === 2) controller.abort({ by: "user", via: "esc" });
+        return textResult("ok");
+      },
+    });
+    const result = await runLoop(
+      [userMessage("start")],
+      ctx([tool]),
+      baseConfig(provider, { getSteeringMessages: () => queue.splice(0) }),
+      collector().emit,
+      controller.signal,
+    );
+
+    expect(result.reason).toBe("aborted");
+    expect(executed).toEqual(["first", "second"]);
     const skipped = result.messages.find(
-      (message) => message.role === "toolResult" && message.toolCallId === "c2",
+      (message) => message.role === "toolResult" && message.toolCallId === "c3",
     );
     expect(
       skipped?.role === "toolResult" &&
         skipped.content[0]?.type === "text" &&
         skipped.content[0].text,
-    ).toContain("steering message interrupted");
-    const secondRequest = provider.requests[1];
-    const texts = secondRequest?.messages.flatMap((message) =>
-      message.role === "user"
-        ? message.content
-            .filter((content) => content.type === "text")
-            .map((content) => content.text)
-        : [],
-    );
-    expect(texts).toContain("change course");
+    ).toContain("interrupted");
+    expect(provider.callCount).toBe(1);
   });
 
   test("follow-up queue continues the loop after it would stop", async () => {
@@ -604,7 +647,7 @@ describe("tool batching", () => {
     );
   });
 
-  test("steering waits for an active parallel batch and skips later calls", async () => {
+  test("steering waits for parallel and sequential calls alike", async () => {
     const provider = new FakeProvider([
       {
         content: [
@@ -613,14 +656,15 @@ describe("tool batching", () => {
           { type: "toolCall", id: "c3", name: "echo", arguments: { text: "three" } },
         ],
       },
-      { content: [{ type: "text", text: "replanned" }] },
+      { content: [{ type: "text", text: "adjusted" }] },
     ]);
     const executed: string[] = [];
-    let delivered = false;
+    const queue: AgentMessage[] = [];
     const tool = echoTool({
       isConcurrencySafe: (args) => (args as { text?: string }).text !== "three",
       execute: async (_id, args) => {
         executed.push(String((args as { text?: string }).text));
+        if (executed.length === 1) queue.push(userMessage("change course"));
         await Bun.sleep(5);
         return textResult("ok");
       },
@@ -628,17 +672,19 @@ describe("tool batching", () => {
     await runLoop(
       [userMessage("start")],
       ctx([tool]),
-      baseConfig(provider, {
-        getSteeringMessages: () => {
-          if (executed.length < 2 || delivered) return [];
-          delivered = true;
-          return [userMessage("change course")];
-        },
-      }),
+      baseConfig(provider, { getSteeringMessages: () => queue.splice(0) }),
       collector().emit,
     );
 
-    expect(executed.sort()).toEqual(["one", "two"]);
+    expect(executed.sort()).toEqual(["one", "three", "two"]);
+    const texts = provider.requests[1]?.messages.flatMap((message) =>
+      message.role === "user"
+        ? message.content
+            .filter((content) => content.type === "text")
+            .map((content) => content.text)
+        : [],
+    );
+    expect(texts).toContain("change course");
   });
 
   test("unsafe calls serialize", async () => {
