@@ -427,7 +427,7 @@ other coding-domain assumptions.
 
 ## Development
 
-Development uses Bun 1.3.14, strict TypeScript, Biome, and `bun test`.
+Development uses Bun 1.4.4, strict TypeScript, Biome, and `bun test`.
 
 ```sh
 bun install
